@@ -233,12 +233,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     noreply(%{t | routing_data: updated_routing_data})
   end
 
-  def handle_info({:metadata_updates, updates}, %{mode: :running} = t) do
-    noreply(apply_metadata_updates(t, updates), timeout: t.empty_transaction_timeout_ms)
+  def handle_info({:metadata_updates, window}, %{mode: :running} = t) do
+    noreply(apply_metadata_window(t, window), timeout: t.empty_transaction_timeout_ms)
   end
 
-  def handle_info({:metadata_updates, updates}, t) do
-    noreply(apply_metadata_updates(t, updates))
+  def handle_info({:metadata_updates, window}, t) do
+    noreply(apply_metadata_window(t, window))
   end
 
   def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
@@ -258,7 +258,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       epoch: epoch,
       sequencer: sequencer,
       resolver_layout: resolver_layout,
-      routing_data: routing_data
+      routing_data: routing_data,
+      metadata: %{version: applied_metadata_version}
     } = state
 
     Task.start_link(fn ->
@@ -269,7 +270,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
              sequencer: sequencer,
              resolver_layout: resolver_layout,
              routing_data: routing_data,
-             metadata_merge_fn: fn updates -> send(server_pid, {:metadata_updates, updates}) end
+             # Stable proxy identity (this server, not the per-batch task) plus
+             # the metadata version this proxy has confirmed applying - the
+             # resolver keys its progress and differential windows off this.
+             metadata_ack: {server_pid, applied_metadata_version},
+             metadata_merge_fn: fn window -> send(server_pid, {:metadata_updates, window}) end
            ) do
         {:ok, _n_aborts, _n_oks, updated_routing_data} ->
           send(server_pid, {:routing_data_update, updated_routing_data})
@@ -280,18 +285,41 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end)
   end
 
-  # Folds version-ordered metadata updates from the resolver into the proxy's
-  # structured metadata. Applied in the server process so updates from
-  # concurrent finalization tasks are serialized; the version guard inside
-  # Metadata.apply_updates makes redelivered windows idempotent.
-  @spec apply_metadata_updates(State.t(), [term()]) :: State.t()
-  defp apply_metadata_updates(t, updates) do
-    {metadata, stats} = Metadata.apply_updates(t.metadata, updates)
+  # Folds a resolver metadata window into the proxy's structured metadata.
+  # Applied in the server process so windows from concurrent finalization
+  # tasks are serialized. Windows can arrive out of commit-version order (the
+  # tasks race to this mailbox), but every window covers (from, to] starting
+  # at a version this proxy had already confirmed applying, so a late-arriving
+  # earlier window is a subset of what has been applied - the per-entry
+  # version guard inside Metadata.apply_updates makes it a no-op.
+  #
+  # A window whose from_version exceeds what this proxy has applied means the
+  # resolver pruned history this proxy never saw (only possible after this
+  # proxy was expired for lagging beyond the retention horizon). Its metadata
+  # can never be completed differentially, so fail fast: the director-driven
+  # recovery rebuilds proxies with full state.
+  @spec apply_metadata_window(
+          State.t(),
+          {Bedrock.version() | nil, Bedrock.version(), [term()]}
+        ) :: State.t() | no_return()
+  defp apply_metadata_window(t, {from_version, to_version, entries}) do
+    applied_version = t.metadata.version
+
+    if from_version != nil and (applied_version == nil or from_version > applied_version) do
+      exit({:metadata_coverage_gap, %{from_version: from_version, applied_version: applied_version}})
+    end
+
+    {metadata, stats} = Metadata.apply_updates(t.metadata, entries)
 
     if stats.applied > 0, do: trace_metadata_applied(stats.applied, stats.families)
     if stats.skipped_keys != [], do: trace_unknown_key_skipped(stats.skipped_keys)
 
-    %{t | metadata: metadata}
+    # The window covers through to_version even when the last entry is older;
+    # acking to_version lets the resolver prune its window fully. Out-of-order
+    # windows keep this monotone.
+    version = if metadata.version == nil or to_version > metadata.version, do: to_version, else: metadata.version
+
+    %{t | metadata: %{metadata | version: version}}
   end
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()

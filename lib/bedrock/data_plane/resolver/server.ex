@@ -28,6 +28,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   import Bedrock.Internal.GenServer.Replies
 
+  alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Conflicts
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
   alias Bedrock.DataPlane.Resolver.State
@@ -105,13 +106,21 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   end
 
   @impl true
-  def handle_call({:resolve_transactions, epoch, {_last_version, _next_version}, _transactions, _metadata}, _from, t)
+  def handle_call(
+        {:resolve_transactions, epoch, {_last_version, _next_version}, _transactions, _metadata, _ack},
+        _from,
+        t
+      )
       when epoch != t.epoch do
     reply(t, {:error, {:epoch_mismatch, expected: t.epoch, received: epoch}})
   end
 
   @impl true
-  def handle_call({:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx}, from, t)
+  def handle_call(
+        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, metadata_ack},
+        from,
+        t
+      )
       when t.mode == :running and epoch == t.epoch and last_version == t.last_version do
     emit_received(transactions, next_version)
 
@@ -119,10 +128,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     |> Validation.check_transactions()
     |> case do
       :ok ->
-        proxy_pid = elem(from, 0)
-
         noreply(t,
-          continue: {:process_ready, {next_version, transactions, metadata_per_tx, proxy_pid, reply_fn(from)}}
+          continue: {:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, reply_fn(from)}}
         )
 
       {:error, reason} ->
@@ -132,7 +139,11 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   end
 
   @impl true
-  def handle_call({:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx}, from, t)
+  def handle_call(
+        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, metadata_ack},
+        from,
+        t
+      )
       when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version > t.last_version do
     emit_waiting_list(transactions, next_version)
 
@@ -140,8 +151,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     |> Validation.check_transactions()
     |> case do
       :ok ->
-        proxy_pid = elem(from, 0)
-        data = {next_version, transactions, metadata_per_tx, proxy_pid}
+        data = {next_version, transactions, metadata_per_tx, metadata_ack}
 
         {new_waiting, _timeout} =
           WaitingList.insert(
@@ -163,13 +173,16 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   end
 
   @impl true
-  def handle_call({:resolve_transactions, epoch, {last_version, _next_version}, transactions, _metadata}, from, t)
+  def handle_call(
+        {:resolve_transactions, epoch, {last_version, _next_version}, transactions, _metadata, metadata_ack},
+        _from,
+        t
+      )
       when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version < t.last_version do
-    # All transactions aborted due to stale version - return differential metadata for the proxy
-    proxy_pid = elem(from, 0)
-    {metadata_updates, t} = get_metadata_updates_for_proxy(t, proxy_pid)
+    # All transactions aborted due to stale version - return a differential metadata window for the proxy
+    {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack)
     aborted_indices = Enum.to_list(0..(length(transactions) - 1))
-    reply(t, {:ok, aborted_indices, metadata_updates})
+    reply(t, {:ok, aborted_indices, metadata_window})
   end
 
   @impl true
@@ -193,7 +206,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   end
 
   @impl true
-  def handle_continue({:process_ready, {next_version, transactions, metadata_per_tx, proxy_pid, reply_fn}}, t) do
+  def handle_continue({:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, reply_fn}}, t) do
     emit_processing(transactions, next_version)
 
     {conflicts, aborted} = resolve(t.conflicts, transactions, next_version)
@@ -203,21 +216,21 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     # Accumulate metadata from non-aborted transactions
     t = accumulate_committed_metadata(t, next_version, metadata_per_tx, aborted)
 
-    # Get differential updates for this proxy and update its progress
-    {metadata_updates, t} = get_metadata_updates_for_proxy(t, proxy_pid)
+    # Get the differential window for this proxy and record its confirmed progress
+    {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack)
 
-    reply_fn.({:ok, aborted, metadata_updates})
+    reply_fn.({:ok, aborted, metadata_window})
     emit_reply_sent(transactions, aborted, next_version)
 
     case WaitingList.remove(t.waiting, next_version) do
       {updated_waiting, nil} ->
         noreply(%{t | waiting: updated_waiting}, continue: :next_timeout)
 
-      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions, metadata_per_tx, proxy_pid}}} ->
+      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions, metadata_per_tx, metadata_ack}}} ->
         emit_waiting_resolved(transactions, [], waiting_next_version)
 
         noreply(%{t | waiting: updated_waiting},
-          continue: {:process_ready, {waiting_next_version, transactions, metadata_per_tx, proxy_pid, reply_fn}}
+          continue: {:process_ready, {waiting_next_version, transactions, metadata_per_tx, metadata_ack, reply_fn}}
         )
     end
   end
@@ -271,31 +284,91 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     end
   end
 
-  # Gets differential metadata updates for a proxy and updates its progress
-  @spec get_metadata_updates_for_proxy(State.t(), pid()) :: {[MetadataAccumulator.entry()], State.t()}
-  defp get_metadata_updates_for_proxy(t, proxy_pid) do
-    last_seen = Map.get(t.proxy_progress, proxy_pid)
-    updates = MetadataAccumulator.mutations_since(t.metadata_window, last_seen)
+  # Builds the differential metadata window for a proxy and records its
+  # confirmed progress.
+  #
+  # The window covers (from, t.last_version] where `from` is the version the
+  # proxy has CONFIRMED applying (its ack). Progress advances only via acks, so
+  # a reply lost to a call timeout is simply re-sent on the proxy's next call,
+  # and windows to concurrently in-flight batches overlap - out-of-order
+  # arrival at the proxy is lossless (its per-entry version guard skips
+  # already-applied entries).
+  #
+  # If pruning has discarded entries the proxy never confirmed (only possible
+  # after the proxy was expired from proxy_progress), the window's
+  # from_version is the pruned floor - above the proxy's applied version -
+  # which the proxy detects as an unrecoverable coverage gap.
+  @spec get_metadata_window_for_proxy(State.t(), Resolver.metadata_ack()) ::
+          {Resolver.metadata_window(), State.t()}
+  defp get_metadata_window_for_proxy(t, {proxy_id, acked}) do
+    t =
+      t
+      |> record_proxy_progress(proxy_id, acked)
+      |> expire_stale_proxies()
+      |> prune_metadata_window()
 
-    # Update proxy progress to current version
-    updated_progress = Map.put(t.proxy_progress, proxy_pid, t.last_version)
-    t = %{t | proxy_progress: updated_progress}
+    floor = t.metadata_pruned_through
+    gap? = floor != nil and (acked == nil or acked < floor)
+    from = if gap?, do: floor, else: acked
+    entries = MetadataAccumulator.mutations_since(t.metadata_window, from)
 
-    # Prune metadata window based on minimum progress across all proxies
-    t = prune_metadata_window(t)
+    window = if entries == [] and not gap?, do: nil, else: {from, t.last_version, entries}
 
-    {updates, t}
+    {window, t}
   end
 
-  # Prunes the metadata window based on the minimum version seen by any proxy
+  @spec record_proxy_progress(State.t(), pid(), Bedrock.version() | nil) :: State.t()
+  defp record_proxy_progress(t, proxy_id, acked) do
+    updated_progress =
+      Map.update(t.proxy_progress, proxy_id, {acked, t.last_version}, fn {prev_acked, _} ->
+        {max_ack(prev_acked, acked), t.last_version}
+      end)
+
+    %{t | proxy_progress: updated_progress}
+  end
+
+  # Acks are monotone per proxy; a retried call may carry a stale ack.
+  defp max_ack(nil, acked), do: acked
+  defp max_ack(prev, nil), do: prev
+  defp max_ack(prev, acked), do: max(prev, acked)
+
+  # Drops proxies not seen within the version retention horizon so a dead (or
+  # pathologically stalled) proxy neither leaks a progress entry nor blocks
+  # window pruning forever. A live proxy calls at least once per empty-batch
+  # interval, far inside the horizon.
+  @spec expire_stale_proxies(State.t()) :: State.t()
+  defp expire_stale_proxies(t) do
+    retention = t.version_retention_ms * 1000
+
+    if Version.to_integer(t.last_version) >= retention do
+      cutoff = Version.subtract(t.last_version, retention)
+      %{t | proxy_progress: Map.filter(t.proxy_progress, fn {_pid, {_acked, seen}} -> seen >= cutoff end)}
+    else
+      t
+    end
+  end
+
+  # Prunes the metadata window through the minimum version confirmed by every
+  # known proxy. A proxy that has confirmed nothing (nil ack) blocks pruning
+  # until it confirms or expires.
   @spec prune_metadata_window(State.t()) :: State.t()
-  defp prune_metadata_window(%{proxy_progress: progress} = t) when map_size(progress) == 0 do
-    t
-  end
+  defp prune_metadata_window(%{proxy_progress: progress} = t) when map_size(progress) == 0, do: t
 
   defp prune_metadata_window(t) do
-    min_version = t.proxy_progress |> Map.values() |> Enum.min()
-    updated_window = MetadataAccumulator.prune_before(t.metadata_window, min_version)
-    %{t | metadata_window: updated_window}
+    t.proxy_progress
+    |> Map.values()
+    |> Enum.map(fn {acked, _seen} -> acked end)
+    |> Enum.min()
+    |> case do
+      nil ->
+        t
+
+      min_acked ->
+        %{
+          t
+          | metadata_window: MetadataAccumulator.prune_through(t.metadata_window, min_acked),
+            metadata_pruned_through: max_ack(t.metadata_pruned_through, min_acked)
+        }
+    end
   end
 end

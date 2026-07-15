@@ -10,11 +10,15 @@
     {
       "text": "Also from PR #98 audit: two rapid placeholder restarts can land republish deltas out of order (dead placeholder pid briefly in slots, heals on next restart); and a failed non-epoch sweep publication is warn-only with no retry (backstop covers until placeholder restart). All same root cause — unordered last-writer-wins delta channel. Accepted as-is pending Phase B channel deletion; retry worth adding only if Phase B slips.",
       "timestamp": "2026-07-15T13:33:17Z"
+    },
+    {
+      "text": "PR #100 audit residual (same last-writer-wins family): placeholder dies between a materializer-DOWN and the swap task's delta landing -\u003e restart republish (new pid) and in-flight swap task (dead pid) race at the director; dead pid can transiently win, self-heals via chained maybe_recruit unless the tag is in backoff (then waits for next post-backoff demand).",
+      "timestamp": "2026-07-15T14:12:16Z"
     }
   ],
   "priority": 3,
   "status": "open",
   "title": "TSL delta channel is last-writer-wins: concurrent delta tasks can strand placeholder/dead pids in slots",
   "type": "task",
-  "updated_at": "2026-07-15T13:33:17Z"
+  "updated_at": "2026-07-15T14:12:16Z"
 }

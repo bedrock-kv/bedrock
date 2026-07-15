@@ -66,6 +66,8 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           director: director,
           shard_layout: Keyword.get(opts, :shard_layout, %{}),
           transaction_system_layout: Keyword.get(opts, :transaction_system_layout, %{}),
+          node_capabilities: Keyword.get(opts, :node_capabilities, %{}),
+          recruitment: Keyword.get(opts, :recruitment, %{}),
           otp_name: unique_otp_name()
         )
       )
@@ -321,7 +323,19 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
     test "deliver_coverage relays to the placeholder and clears the pending demand" do
       attach_demand_telemetry(self())
       shard_layout = %{<<0xFF, 0xFF>> => {1, <<>>}}
-      {pid, _director} = start_distributor(shard_layout: shard_layout)
+
+      # Keep the demand-triggered recruitment in flight (rather than letting
+      # it fail fast on the missing foreman and shed the parked read) so
+      # deliver_coverage deterministically drains the read.
+      recruitment = %{create_worker_fn: fn _foreman, _worker_id, :materializer, _opts -> Process.sleep(:infinity) end}
+
+      {pid, _director} =
+        start_distributor(
+          shard_layout: shard_layout,
+          node_capabilities: %{materializer: [node()]},
+          recruitment: recruitment
+        )
+
       %State{placeholder: placeholder} = :sys.get_state(pid)
 
       stub =

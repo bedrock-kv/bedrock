@@ -25,6 +25,9 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       emit_recruitment_started: 3,
       emit_recruitment_succeeded: 5,
       emit_recruitment_failed: 5,
+      emit_readoption_started: 4,
+      emit_readoption_succeeded: 5,
+      emit_readoption_failed: 6,
       emit_materializer_down: 4,
       emit_healing_started: 3,
       emit_healing_completed: 3
@@ -39,6 +42,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   alias Bedrock.ControlPlane.Distributor.Recruitment
   alias Bedrock.ControlPlane.Distributor.State
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Service.Worker
 
   require Logger
 
@@ -54,6 +58,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
             transaction_system_layout: TransactionSystemLayout.t(),
             durable_version: Bedrock.version(),
             node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
+            services: %{Worker.id() => {atom(), {Worker.ref(), node()}}},
             backoff_ms: pos_integer(),
             recruitment: map(),
             otp_name: atom()
@@ -80,6 +85,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       transaction_system_layout: Keyword.get(opts, :transaction_system_layout, %{}),
       durable_version: Keyword.get_lazy(opts, :durable_version, &Version.zero/0),
       node_capabilities: Keyword.get(opts, :node_capabilities, %{}),
+      services: Keyword.get(opts, :services, %{}),
       backoff_ms: Keyword.get(opts, :backoff_ms, @default_backoff_ms),
       recruitment_overrides: Keyword.get(opts, :recruitment, %{})
     }
@@ -204,10 +210,59 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     |> noreply()
   end
 
+  # The identification task reports the candidates it matched to swept
+  # tags. Each is re-adopted unless the tag has been claimed in the
+  # meantime (guards in `maybe_readopt/3`); state mutation stays serialized
+  # here, so re-adoption and demand-driven recruitment can never both take
+  # the same tag.
+  def handle_cast({:readoption_candidates, matches}, %State{} = t) do
+    matches
+    |> Enum.reduce(t, fn {tag, worker}, acc -> maybe_readopt(acc, tag, worker) end)
+    |> noreply()
+  end
+
+  # Completion of an asynchronous re-adoption attempt: delivered through
+  # the same path as a completed recruitment (coverage notification,
+  # monitor for death healing, placeholder_tags removal). The TSL delta
+  # already landed inside the task.
+  def handle_cast({:readoption_complete, tag, node, {:ok, materializer, _node}, duration_us}, %State{} = t) do
+    emit_readoption_succeeded(t.cluster, t.epoch, tag, node, duration_us)
+    if t.placeholder, do: Placeholder.notify_covered(t.placeholder, tag, materializer)
+
+    t
+    |> monitor_materializer(tag, materializer)
+    |> Map.update!(:pending_demands, &MapSet.delete(&1, tag))
+    |> Map.update!(:placeholder_tags, &MapSet.delete(&1, tag))
+    |> noreply()
+  end
+
+  def handle_cast({:readoption_complete, tag, _node, {:error, :newer_epoch_exists}, _duration_us}, %State{} = t) do
+    Logger.info(
+      "Distributor for epoch #{t.epoch} superseded (re-adoption delta for shard tag #{inspect(tag)} rejected); stopping"
+    )
+
+    stop(t, :normal)
+  end
+
+  def handle_cast({:readoption_complete, tag, node, {:error, reason}, duration_us}, %State{} = t) do
+    t
+    |> readoption_failed(tag, node, reason, duration_us)
+    |> noreply()
+  end
+
   # Completion of an asynchronous coverage-sweep publication. A rejection
   # on epoch grounds means this distributor has been superseded, mirroring
   # check_epoch semantics: stop and cede to the new epoch's distributor.
-  def handle_cast({:sweep_complete, _tags, :ok}, %State{} = t), do: noreply(t)
+  # Placeholder coverage for the swept tags is now live at the director, so
+  # this is also the moment to attempt re-adoption of the previous epoch's
+  # materializers - strictly after the placeholder delta, never instead of
+  # it. (A placeholder-restart republish reports through the same message;
+  # the one-shot guard in `maybe_start_readoption/2` keeps it sweep-only.)
+  def handle_cast({:sweep_complete, tags, :ok}, %State{} = t) do
+    t
+    |> maybe_start_readoption(tags)
+    |> noreply()
+  end
 
   def handle_cast({:sweep_complete, _tags, {:error, :newer_epoch_exists}}, %State{} = t) do
     Logger.info("Distributor for epoch #{t.epoch} superseded (coverage sweep delta rejected); stopping")
@@ -550,6 +605,129 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     # Re-assert the live placeholder for a placeholder-owned slot: a
     # placeholder restart during this recruitment skipped the tag in its
     # republish (see the :EXIT handler), so the slot may still hold the dead
+    # pid. Otherwise this is an idempotent re-publication of the same pid.
+    if MapSet.member?(updated.placeholder_tags, tag) do
+      publish_placeholder(updated, MapSet.new([tag]))
+    else
+      updated
+    end
+  end
+
+  # Re-adoption
+
+  # After the startup sweep's placeholder delta lands, try - at most once -
+  # to take the previous epoch's materializers back into the fold: identify
+  # candidates among the services the director already knows about and
+  # upgrade the matching placeholder slots to their (re-locked) pids. This
+  # never blocks the fast path: placeholder coverage is already published,
+  # identification runs off the message loop under a hard deadline, and on
+  # any failure the tag simply stays on the placeholder with demand-driven
+  # recruitment as the fallback.
+  @spec maybe_start_readoption(State.t(), [Bedrock.range_tag()]) :: State.t()
+  defp maybe_start_readoption(%State{readoption_attempted: true} = t, _tags), do: t
+  defp maybe_start_readoption(%State{} = t, tags) when t.services == %{} or tags == [], do: t
+
+  defp maybe_start_readoption(%State{} = t, tags) do
+    distributor = self()
+    services = t.services
+    tag_set = MapSet.new(tags)
+    context = recruitment_context(t)
+
+    {:ok, _pid} =
+      Task.start(fn ->
+        matches =
+          try do
+            Recruitment.identify_readoption_candidates(services, tag_set, context)
+          rescue
+            _exception -> %{}
+          catch
+            _kind, _reason -> %{}
+          end
+
+        GenServer.cast(distributor, {:readoption_candidates, matches})
+      end)
+
+    %{t | readoption_attempted: true}
+  end
+
+  # Interaction guards against double coverage: a tag already owned by a
+  # live monitored materializer, an in-flight demand recruitment (or
+  # in-flight re-adoption), or one that is no longer placeholder-covered is
+  # left alone. Reserving the tag in `pending_demands` before the lock task
+  # starts makes `maybe_recruit/2` skip it for the whole attempt.
+  @spec maybe_readopt(State.t(), Bedrock.range_tag(), {Worker.ref(), node()}) :: State.t()
+  defp maybe_readopt(%State{} = t, tag, worker) do
+    if match?({:ok, _}, covered_materializer(t, tag)) or
+         MapSet.member?(t.pending_demands, tag) or
+         not MapSet.member?(t.placeholder_tags, tag) do
+      t
+    else
+      {_worker_ref, node} = worker
+      emit_readoption_started(t.cluster, t.epoch, tag, node)
+      spawn_readoption_task(t, tag, worker)
+      %{t | pending_demands: MapSet.put(t.pending_demands, tag)}
+    end
+  end
+
+  # Runs the re-adoption (epoch lock/unlock through the recruitment seams -
+  # no worker creation - and the TSL delta to the director) off the
+  # distributor's message loop, then casts the outcome back so state
+  # mutation stays serialized.
+  @spec spawn_readoption_task(State.t(), Bedrock.range_tag(), {Worker.ref(), node()}) :: :ok
+  defp spawn_readoption_task(%State{} = t, tag, {_worker_ref, node} = worker) do
+    distributor = self()
+    director = t.director
+    epoch = t.epoch
+    context = recruitment_context(t)
+
+    {:ok, _pid} =
+      Task.start(fn ->
+        started_at = System.monotonic_time(:microsecond)
+
+        result =
+          try do
+            with {:ok, materializer, node} <- Recruitment.readopt(tag, worker, context),
+                 :ok <- Director.apply_tsl_delta(director, %{tag => materializer}, epoch) do
+              {:ok, materializer, node}
+            end
+          rescue
+            exception -> {:error, {:readoption_crashed, Exception.message(exception)}}
+          catch
+            :exit, reason -> {:error, {:readoption_exited, reason}}
+          end
+
+        duration_us = System.monotonic_time(:microsecond) - started_at
+        GenServer.cast(distributor, {:readoption_complete, tag, node, result, duration_us})
+      end)
+
+    :ok
+  end
+
+  # One shot per sweep: no retry and no backoff (unlike a failed
+  # recruitment) - the tag stays placeholder-covered and the next real read
+  # falls back to demand-driven recruitment. The worker is never removed;
+  # it pre-exists this attempt and holds real state.
+  @spec readoption_failed(
+          State.t(),
+          Bedrock.range_tag(),
+          node(),
+          reason :: term(),
+          duration_us :: non_neg_integer()
+        ) :: State.t()
+  defp readoption_failed(%State{} = t, tag, node, reason, duration_us) do
+    Logger.warning(
+      "Distributor for epoch #{t.epoch} failed to re-adopt a materializer for shard tag " <>
+        "#{inspect(tag)} on #{inspect(node)}: #{inspect(reason)}; leaving placeholder coverage"
+    )
+
+    emit_readoption_failed(t.cluster, t.epoch, tag, node, reason, duration_us)
+    if t.placeholder, do: Placeholder.notify_coverage_failed(t.placeholder, tag, reason)
+
+    updated = %{t | pending_demands: MapSet.delete(t.pending_demands, tag)}
+
+    # Re-assert the live placeholder for the slot, mirroring
+    # `recruitment_failed/4`: a placeholder restart during this attempt
+    # skipped the tag in its republish, so the slot may still hold the dead
     # pid. Otherwise this is an idempotent re-publication of the same pid.
     if MapSet.member?(updated.placeholder_tags, tag) do
       publish_placeholder(updated, MapSet.new([tag]))

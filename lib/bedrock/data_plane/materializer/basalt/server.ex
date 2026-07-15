@@ -15,6 +15,8 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.Server do
     foreman = opts[:foreman] || raise "Missing :foreman option"
     id = opts[:id] || raise "Missing :id option"
     path = opts[:path] || raise "Missing :path option"
+    params = opts[:params] || %{}
+    shard_id = params["shard_id"]
 
     %{
       id: {__MODULE__, id},
@@ -22,7 +24,7 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {otp_name, foreman, id, path},
+           {otp_name, foreman, id, path, shard_id},
            [name: otp_name]
          ]}
     }
@@ -88,9 +90,9 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.Server do
   def handle_call(_, _from, t), do: reply(t, {:error, :not_ready})
 
   @impl true
-  def handle_continue(:finish_startup, {otp_name, foreman, id, path}) do
+  def handle_continue(:finish_startup, {otp_name, foreman, id, path, shard_id}) do
     otp_name
-    |> Logic.startup(foreman, id, path)
+    |> Logic.startup(foreman, id, path, shard_id: shard_id)
     |> case do
       {:ok, t} -> noreply(t, continue: :report_health_to_foreman)
       {:error, reason} -> stop(:no_state, reason)

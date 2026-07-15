@@ -22,15 +22,20 @@ defmodule Bedrock.Service.Foreman do
 
   @doc """
   Create a new worker.
+
+  `:params` are persisted in the worker's manifest and handed to the worker
+  on every start (e.g. `%{"shard_id" => tag}` records a materializer's shard
+  assignment so it can later be identified and re-adopted).
   """
   @spec new_worker(
           foreman :: ref(),
           id :: Worker.id(),
           kind :: :log | :materializer,
-          opts :: [timeout: timeout()]
+          opts :: [timeout: timeout(), params: %{String.t() => term()}]
         ) ::
           {:ok, Worker.ref()} | {:error, :timeout}
-  def new_worker(foreman, id, kind, opts \\ []), do: call(foreman, {:new_worker, id, kind}, opts[:timeout] || :infinity)
+  def new_worker(foreman, id, kind, opts \\ []),
+    do: call(foreman, {:new_worker, id, kind, opts[:params] || %{}}, opts[:timeout] || :infinity)
 
   @doc """
   Return a list of running materializer workers only.

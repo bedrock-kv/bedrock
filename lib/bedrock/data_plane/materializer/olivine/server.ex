@@ -33,13 +33,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     params = opts[:params] || %{}
     shard_id = params["shard_id"]
 
-    # Build startup opts only if cluster and shard_id are provided
-    startup_opts =
-      if cluster && shard_id do
-        [cluster: cluster, shard_id: shard_id]
-      else
-        []
-      end
+    # shard_id is always threaded through (it identifies the worker's shard
+    # assignment for info facts and re-adoption); the ObjectStorage snapshot
+    # handle additionally requires a cluster, which Logic guards on.
+    startup_opts = [cluster: cluster, shard_id: shard_id]
 
     %{
       id: {__MODULE__, id},

@@ -21,6 +21,7 @@ defmodule Bedrock.DataPlane.Materializer do
           | :durable_version
           | :n_objects
           | :path
+          | :shard_id
           | :size_in_bytes
           | :utilization
 

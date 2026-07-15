@@ -62,6 +62,10 @@ defmodule Bedrock.Service.Foreman.Server do
     do: t |> do_new_worker(id, kind) |> then(fn {t, health} -> reply(t, {:ok, health}) end)
 
   @impl true
+  def handle_call({:new_worker, id, kind, params}, _from, t),
+    do: t |> do_new_worker(id, kind, params) |> then(fn {t, health} -> reply(t, {:ok, health}) end)
+
+  @impl true
   def handle_call({:remove_worker, worker_id}, _from, t),
     do: t |> do_remove_worker(worker_id) |> then(fn {t, result} -> reply(t, result) end)
 

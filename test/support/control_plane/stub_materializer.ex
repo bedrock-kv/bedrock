@@ -11,8 +11,11 @@ defmodule Bedrock.Test.ControlPlane.StubMaterializer do
   Also speaks the recovery worker protocol (`{:lock_for_recovery, epoch}`
   and `{:unlock_after_recovery, durable_version, tsl}`) so recruitment
   tests can stub only the foreman worker-creation boundary while keeping
-  the real epoch lock/unlock calls. Lock/unlock activity is reported to an
-  optional observer pid as `{:stub_materializer, event}` messages.
+  the real epoch lock/unlock calls, and answers `{:info, fact_names}` with
+  the `:shard_id` / `:durable_version` it was started with (so re-adoption
+  tests can exercise the real identity-query path). Lock/unlock/info
+  activity is reported to an optional observer pid as
+  `{:stub_materializer, event}` messages.
   """
   use GenServer
 
@@ -22,12 +25,17 @@ defmodule Bedrock.Test.ControlPlane.StubMaterializer do
   @spec start_link(%{Bedrock.key() => Bedrock.value()}, opts :: keyword()) :: GenServer.on_start()
   def start_link(kvs, opts \\ []) do
     {observer, opts} = Keyword.pop(opts, :observer)
-    GenServer.start_link(__MODULE__, {kvs, observer}, opts)
+    {shard_id, opts} = Keyword.pop(opts, :shard_id)
+    {durable_version, opts} = Keyword.pop(opts, :durable_version, Version.zero())
+    GenServer.start_link(__MODULE__, {kvs, observer, shard_id, durable_version}, opts)
   end
 
   @impl true
-  def init({kvs, observer}), do: {:ok, %{kvs: kvs, observer: observer}}
-  def init(kvs), do: {:ok, %{kvs: kvs, observer: nil}}
+  def init({kvs, observer, shard_id, durable_version}),
+    do: {:ok, %{kvs: kvs, observer: observer, shard_id: shard_id, durable_version: durable_version}}
+
+  def init({kvs, observer}), do: {:ok, %{kvs: kvs, observer: observer, shard_id: nil, durable_version: Version.zero()}}
+  def init(kvs), do: {:ok, %{kvs: kvs, observer: nil, shard_id: nil, durable_version: Version.zero()}}
 
   @impl true
   def handle_call({:get, %KeySelector{key: key}, _version, _opts}, _from, %{kvs: kvs} = state) do
@@ -55,11 +63,16 @@ defmodule Bedrock.Test.ControlPlane.StubMaterializer do
 
     recovery_info = %{
       kind: :materializer,
-      durable_version: Version.zero(),
+      durable_version: state.durable_version,
       oldest_durable_version: Version.zero()
     }
 
     {:reply, {:ok, self(), recovery_info}, state}
+  end
+
+  def handle_call({:info, fact_names}, _from, state) when is_list(fact_names) do
+    notify(state, {:info, self(), fact_names})
+    {:reply, {:ok, Map.new(fact_names, &{&1, gather_info(&1, state)})}, state}
   end
 
   def handle_call({:unlock_after_recovery, durable_version, tsl}, _from, state) do
@@ -69,4 +82,10 @@ defmodule Bedrock.Test.ControlPlane.StubMaterializer do
 
   defp notify(%{observer: nil}, _event), do: :ok
   defp notify(%{observer: observer}, event), do: send(observer, {:stub_materializer, event})
+
+  defp gather_info(:kind, _state), do: :materializer
+  defp gather_info(:pid, _state), do: self()
+  defp gather_info(:shard_id, state), do: state.shard_id
+  defp gather_info(:durable_version, state), do: state.durable_version
+  defp gather_info(_unsupported, _state), do: {:error, :unsupported_info}
 end

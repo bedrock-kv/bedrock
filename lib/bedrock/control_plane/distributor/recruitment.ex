@@ -37,6 +37,9 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
              :ok | {:error, term()} | {:failure, term(), term()})
   @type remove_worker_fn ::
           (foreman :: {atom(), node()}, Worker.id(), keyword() -> :ok | {:error, term()})
+  @type info_fn ::
+          (worker :: {Worker.ref(), node()}, [Materializer.fact_name()], keyword() ->
+             {:ok, %{Materializer.fact_name() => term()}} | {:error, term()})
 
   @type context :: %{
           required(:cluster) => module(),
@@ -47,8 +50,15 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
           optional(:create_worker_fn) => create_worker_fn(),
           optional(:lock_materializer_fn) => lock_materializer_fn(),
           optional(:unlock_materializer_fn) => unlock_materializer_fn(),
-          optional(:remove_worker_fn) => remove_worker_fn()
+          optional(:remove_worker_fn) => remove_worker_fn(),
+          optional(:info_fn) => info_fn(),
+          optional(:readoption_deadline_ms) => pos_integer()
         }
+
+  # A candidate must answer its identity query well inside the point where
+  # anyone could be waiting on the answer; placeholder coverage is already
+  # live, so this is a pure-upgrade budget, not a liveness one.
+  @readoption_deadline_ms 2_000
 
   @doc """
   Recruits a materializer for the given shard tag: node selection, worker
@@ -76,6 +86,79 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
           error
       end
     end
+  end
+
+  @doc """
+  Re-adopts an existing materializer worker into coverage for the given
+  shard tag: recruitment minus worker creation. The worker (typically a
+  previous epoch's materializer the services map still names) is epoch
+  locked and unlocked with the durable version IT reports at lock time, so
+  it resumes pulling from exactly where its own store left off.
+
+  Unlike a failed recruitment, a failed re-adoption never removes the
+  worker: it pre-exists this attempt and holds real state. The caller
+  leaves the tag on placeholder coverage and demand-driven recruitment
+  remains the fallback.
+  """
+  @spec readopt(Bedrock.range_tag(), worker :: {Worker.ref(), node()}, context()) ::
+          {:ok, pid(), node()} | {:error, term()}
+  def readopt(tag, {_worker_ref, node} = worker, context) do
+    with {:ok, pid, recovery_info} <- lock_materializer(worker, node, context),
+         :ok <- unlock_and_start_pulling(pid, tag, node, recovery_info, context) do
+      {:ok, pid, node}
+    end
+  end
+
+  @doc """
+  Identifies re-adoption candidates among the given services for the given
+  uncovered shard tags: every `:materializer` service is asked for its
+  `:shard_id` fact concurrently, each under a short deadline, and the first
+  candidate claiming each uncovered tag wins its slot. Candidates that are
+  slow, dead, unreachable, or claim no/other shards are simply dropped -
+  placeholder coverage is already live, so identification is a pure
+  best-effort upgrade and must never block on a corpse.
+  """
+  @spec identify_readoption_candidates(
+          services :: %{Worker.id() => {atom(), {Worker.ref(), node()}}},
+          tags :: MapSet.t(Bedrock.range_tag()),
+          context()
+        ) :: %{Bedrock.range_tag() => {Worker.ref(), node()}}
+  def identify_readoption_candidates(services, tags, context) do
+    info_fn = Map.get(context, :info_fn, &Materializer.info/3)
+    deadline_ms = Map.get(context, :readoption_deadline_ms, @readoption_deadline_ms)
+
+    candidates = for {_id, {:materializer, {name, node}}} <- services, do: {name, node}
+
+    candidates
+    |> Task.async_stream(
+      fn worker -> {worker, candidate_shard_id(info_fn, worker, deadline_ms)} end,
+      max_concurrency: max(length(candidates), 1),
+      ordered: false,
+      timeout: deadline_ms,
+      on_timeout: :kill_task
+    )
+    |> Enum.reduce(%{}, fn
+      {:ok, {worker, {:ok, shard_id}}}, acc ->
+        if MapSet.member?(tags, shard_id) and not Map.has_key?(acc, shard_id) do
+          Map.put(acc, shard_id, worker)
+        else
+          acc
+        end
+
+      _slow_dead_or_unidentified, acc ->
+        acc
+    end)
+  end
+
+  # One short-timeout info call per candidate; a dead node or unregistered
+  # name exits the call, which counts the candidate out rather than raising.
+  defp candidate_shard_id(info_fn, worker, deadline_ms) do
+    case info_fn.(worker, [:shard_id], timeout_in_ms: deadline_ms) do
+      {:ok, %{shard_id: shard_id}} when is_integer(shard_id) -> {:ok, shard_id}
+      _no_identity -> :error
+    end
+  catch
+    _kind, _reason -> :error
   end
 
   @doc """
@@ -117,7 +200,10 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
     worker_id = Worker.random_id()
     create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
 
-    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000) do
+    # The shard assignment is recorded in the worker's manifest params so
+    # the worker can later be identified (`:shard_id` info fact) and
+    # re-adopted after an epoch change.
+    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000, params: %{"shard_id" => tag}) do
       {:ok, worker_ref} -> {:ok, worker_ref, worker_id}
       {:error, reason} -> {:error, {:worker_creation_failed, reason, tag, node}}
     end

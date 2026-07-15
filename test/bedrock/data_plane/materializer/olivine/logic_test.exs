@@ -243,11 +243,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
             :pid,
             :key_ranges,
             :n_keys,
+            :shard_id,
             :size_in_bytes,
             :utilization
           ] do
         assert fact in supported, "expected #{inspect(fact)} to be advertised in :supported_info"
       end
+
+      # No shard assignment was supplied at startup, so the fact is nil.
+      assert {:ok, nil} = Logic.info(state, :shard_id)
 
       zero_version = Version.zero()
       assert {:ok, ^zero_version} = Logic.info(state, :durable_version)
@@ -273,6 +277,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
 
       assert {:ok, utilization} = Logic.info(state, :utilization)
       assert is_number(utilization) and utilization >= 0
+
+      Logic.shutdown(state)
+    end
+
+    test "reports the shard assignment supplied at startup as :shard_id", %{test_dir: test_dir} do
+      {result, _logs} =
+        with_log(fn ->
+          Logic.startup(:info_shard_id_test, self(), "test", test_dir, pool_size: 1, shard_id: 7)
+        end)
+
+      {:ok, state} = result
+
+      assert {:ok, 7} = Logic.info(state, :shard_id)
 
       Logic.shutdown(state)
     end

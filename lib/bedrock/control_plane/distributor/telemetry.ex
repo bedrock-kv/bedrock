@@ -78,6 +78,46 @@ defmodule Bedrock.ControlPlane.Distributor.Telemetry do
     )
   end
 
+  @spec emit_readoption_started(module(), Bedrock.epoch(), Bedrock.range_tag(), node()) :: :ok
+  def emit_readoption_started(cluster, epoch, tag, node) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :readoption, :started],
+      %{},
+      %{cluster: cluster, epoch: epoch, tag: tag, node: node}
+    )
+  end
+
+  @spec emit_readoption_succeeded(
+          module(),
+          Bedrock.epoch(),
+          Bedrock.range_tag(),
+          node(),
+          duration_us :: non_neg_integer()
+        ) :: :ok
+  def emit_readoption_succeeded(cluster, epoch, tag, node, duration_us) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :readoption, :succeeded],
+      %{duration_us: duration_us},
+      %{cluster: cluster, epoch: epoch, tag: tag, node: node}
+    )
+  end
+
+  @spec emit_readoption_failed(
+          module(),
+          Bedrock.epoch(),
+          Bedrock.range_tag(),
+          node(),
+          reason :: term(),
+          duration_us :: non_neg_integer()
+        ) :: :ok
+  def emit_readoption_failed(cluster, epoch, tag, node, reason, duration_us) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :readoption, :failed],
+      %{duration_us: duration_us},
+      %{cluster: cluster, epoch: epoch, tag: tag, node: node, reason: reason}
+    )
+  end
+
   @spec emit_materializer_down(module(), Bedrock.epoch(), Bedrock.range_tag(), reason :: term()) :: :ok
   def emit_materializer_down(cluster, epoch, tag, reason) do
     :telemetry.execute(

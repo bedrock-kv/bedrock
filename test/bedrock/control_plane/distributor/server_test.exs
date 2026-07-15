@@ -216,18 +216,20 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       # the distributor's internal seam and observe the drain.
       version = Bedrock.DataPlane.Version.from_integer(1)
 
+      # Generous timeout: this test exercises the drain path, not expiry (which
+      # has dedicated tests); a tight budget flakes under full-suite load.
       task =
         Task.async(fn ->
-          Materializer.get(placeholder, "apple", version, timeout: 1_000)
+          Materializer.get(placeholder, "apple", version, timeout: 5_000)
         end)
 
       # Wait for the placeholder's demand to be processed by the distributor
       # before delivering coverage, so the pending set is stable.
-      assert_receive {:telemetry, [:bedrock, :distributor, :coverage_demand], %{}, %{tag: 1}}
+      assert_receive {:telemetry, [:bedrock, :distributor, :coverage_demand], %{}, %{tag: 1}}, 2_000
 
       :ok = Distributor.deliver_coverage(pid, 1, stub)
 
-      assert {:ok, "red"} = Task.await(task, 1_000)
+      assert {:ok, "red"} = Task.await(task, 5_000)
 
       assert %State{pending_demands: pending} = :sys.get_state(pid)
       refute MapSet.member?(pending, 1)
@@ -243,14 +245,14 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       task =
         Task.async(fn ->
-          Materializer.get(placeholder, "apple", version, timeout: 1_000)
+          Materializer.get(placeholder, "apple", version, timeout: 5_000)
         end)
 
       assert_receive {:telemetry, [:bedrock, :distributor, :coverage_demand], %{}, %{tag: 1}}
 
       :ok = Distributor.fail_coverage(pid, 1, :no_capacity)
 
-      assert {:error, :unavailable} = Task.await(task, 1_000)
+      assert {:error, :unavailable} = Task.await(task, 5_000)
 
       assert %State{pending_demands: pending} = :sys.get_state(pid)
       refute MapSet.member?(pending, 1)

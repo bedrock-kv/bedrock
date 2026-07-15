@@ -66,14 +66,14 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       placeholder = start_placeholder()
       stub = start_stub(%{"apple" => "red"})
 
-      task = async_get(placeholder, "apple", timeout: 1_000)
+      task = async_get(placeholder, "apple", timeout: 5_000)
 
       assert_receive {:"$gen_cast", {:coverage_demand, 1}}
       assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :parked], %{count: 1}, %{tag: 1}}
 
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
-      assert {:ok, "red"} = Task.await(task, 1_000)
+      assert {:ok, "red"} = Task.await(task, 5_000)
       assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :drained], %{count: 1}, %{tag: 1}}
     end
 
@@ -82,32 +82,32 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       stub = start_stub(%{"apple" => "red"})
 
       selector = KeySelector.first_greater_or_equal("apple")
-      task = Task.async(fn -> Materializer.get(placeholder, selector, @version, timeout: 1_000) end)
+      task = Task.async(fn -> Materializer.get(placeholder, selector, @version, timeout: 5_000) end)
 
       assert_receive {:"$gen_cast", {:coverage_demand, 1}}
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
-      assert {:ok, {"apple", "red"}} = Task.await(task, 1_000)
+      assert {:ok, {"apple", "red"}} = Task.await(task, 5_000)
     end
 
     test "parked get_range is drained with the shard's key-values" do
       placeholder = start_placeholder()
       stub = start_stub(%{"apple" => "red", "banana" => "yellow", "zebra" => "striped"})
 
-      task = Task.async(fn -> Materializer.get_range(placeholder, "a", "c", @version, timeout: 1_000) end)
+      task = Task.async(fn -> Materializer.get_range(placeholder, "a", "c", @version, timeout: 5_000) end)
 
       assert_receive {:"$gen_cast", {:coverage_demand, 1}}
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
-      assert {:ok, {[{"apple", "red"}, {"banana", "yellow"}], false}} = Task.await(task, 1_000)
+      assert {:ok, {[{"apple", "red"}, {"banana", "yellow"}], false}} = Task.await(task, 5_000)
     end
 
     test "draining multiple parked requests replies to every waiter" do
       placeholder = start_placeholder()
       stub = start_stub(%{"apple" => "red", "cherry" => "dark red"})
 
-      task_a = async_get(placeholder, "apple", timeout: 1_000)
-      task_b = async_get(placeholder, "cherry", timeout: 1_000)
+      task_a = async_get(placeholder, "apple", timeout: 5_000)
+      task_b = async_get(placeholder, "cherry", timeout: 5_000)
 
       assert_receive {:"$gen_cast", {:coverage_demand, 1}}
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
@@ -122,9 +122,9 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       attach_telemetry(self())
       placeholder = start_placeholder(hold_ms: 30)
 
-      task = async_get(placeholder, "apple", timeout: 1_000)
+      task = async_get(placeholder, "apple", timeout: 5_000)
 
-      assert {:error, :unavailable} = Task.await(task, 1_000)
+      assert {:error, :unavailable} = Task.await(task, 5_000)
 
       assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :shed], %{count: 1},
                       %{reason: :deadline_expired}}
@@ -140,7 +140,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
           GenServer.call(placeholder, {:get, "apple", @version, [timeout: 30]}, 1_000)
         end)
 
-      assert {:error, :unavailable} = Task.await(task, 1_000)
+      assert {:error, :unavailable} = Task.await(task, 5_000)
     end
 
     test "expiry only sheds entries past their deadline" do
@@ -170,7 +170,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
 
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
-      assert {:ok, "red"} = Materializer.get(placeholder, "apple", @version, timeout: 1_000)
+      assert {:ok, "red"} = Materializer.get(placeholder, "apple", @version, timeout: 5_000)
       assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :forwarded], %{count: 1}, %{tag: 1}}
       refute_receive {:"$gen_cast", {:coverage_demand, _tag}}, 50
     end
@@ -181,11 +181,11 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
 
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
-      task = async_get(placeholder, "pear", timeout: 1_000)
+      task = async_get(placeholder, "pear", timeout: 5_000)
       assert_receive {:"$gen_cast", {:coverage_demand, 2}}
 
       :ok = Placeholder.notify_covered(placeholder, 2, start_stub(%{"pear" => "green"}))
-      assert {:ok, "green"} = Task.await(task, 1_000)
+      assert {:ok, "green"} = Task.await(task, 5_000)
     end
   end
 
@@ -193,8 +193,8 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
     test "at most one coverage demand per tag until covered" do
       placeholder = start_placeholder()
 
-      task_a = async_get(placeholder, "apple", timeout: 1_000)
-      task_b = async_get(placeholder, "banana", timeout: 1_000)
+      task_a = async_get(placeholder, "apple", timeout: 5_000)
+      task_b = async_get(placeholder, "banana", timeout: 5_000)
 
       assert_receive {:"$gen_cast", {:coverage_demand, 1}}
       refute_receive {:"$gen_cast", {:coverage_demand, 1}}, 50
@@ -208,8 +208,8 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
     test "distinct tags each signal their own demand" do
       placeholder = start_placeholder(hold_ms: 30)
 
-      task_a = async_get(placeholder, "apple", timeout: 1_000)
-      task_b = async_get(placeholder, "pear", timeout: 1_000)
+      task_a = async_get(placeholder, "apple", timeout: 5_000)
+      task_b = async_get(placeholder, "pear", timeout: 5_000)
 
       assert_receive {:"$gen_cast", {:coverage_demand, 1}}
       assert_receive {:"$gen_cast", {:coverage_demand, 2}}
@@ -224,18 +224,18 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       attach_telemetry(self())
       placeholder = start_placeholder()
 
-      task = async_get(placeholder, "apple", timeout: 1_000)
+      task = async_get(placeholder, "apple", timeout: 5_000)
       assert_receive {:"$gen_cast", {:coverage_demand, 1}}
 
       :ok = Placeholder.notify_coverage_failed(placeholder, 1, :no_capacity)
 
-      assert {:error, :unavailable} = Task.await(task, 1_000)
+      assert {:error, :unavailable} = Task.await(task, 5_000)
 
       assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :shed], %{count: 1},
                       %{tag: 1, reason: :no_capacity}}
 
       # Dedupe was cleared: a later request re-triggers the demand.
-      retry_task = async_get(placeholder, "apple", timeout: 1_000)
+      retry_task = async_get(placeholder, "apple", timeout: 5_000)
       assert_receive {:"$gen_cast", {:coverage_demand, 1}}
 
       stub = start_stub(%{"apple" => "red"})

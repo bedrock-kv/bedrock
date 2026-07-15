@@ -33,6 +33,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.ClusterBootstrap
   alias Bedrock.SystemKeys.ShardMetadata
+  alias Bedrock.SystemKeys.Values
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -206,11 +207,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map()) :: Tx.t()
   defp build_monolithic_keys(tx, epoch, encoded_config) do
     tx
-    |> Tx.set(SystemKeys.config_monolithic(), :erlang.term_to_binary({epoch, encoded_config}))
-    |> Tx.set(SystemKeys.epoch_legacy(), :erlang.term_to_binary(epoch))
+    |> Tx.set(SystemKeys.config_monolithic(), Values.encode_structured({epoch, encoded_config}))
+    |> Tx.set(SystemKeys.epoch_legacy(), Values.encode_integer(epoch))
     |> Tx.set(
       SystemKeys.last_recovery_legacy(),
-      :erlang.term_to_binary(System.system_time(:millisecond))
+      Values.encode_integer(System.system_time(:millisecond))
     )
   end
 
@@ -229,83 +230,82 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       tx
       |> Tx.set(
         SystemKeys.cluster_coordinators(),
-        :erlang.term_to_binary(cluster_config.coordinators)
+        Values.encode_node_list(cluster_config.coordinators)
       )
-      |> Tx.set(SystemKeys.cluster_epoch(), :erlang.term_to_binary(epoch))
+      |> Tx.set(SystemKeys.cluster_epoch(), Values.encode_integer(epoch))
       |> Tx.set(
         SystemKeys.cluster_policies_volunteer_nodes(),
-        :erlang.term_to_binary(cluster_config.policies.allow_volunteer_nodes_to_join)
+        Values.encode_boolean(cluster_config.policies.allow_volunteer_nodes_to_join || false)
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_desired_logs(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_logs)
+        Values.encode_integer(cluster_config.parameters.desired_logs)
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_desired_replication(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_replication_factor)
+        Values.encode_integer(cluster_config.parameters.desired_replication_factor)
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_desired_commit_proxies(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_commit_proxies)
+        Values.encode_integer(cluster_config.parameters.desired_commit_proxies)
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_desired_coordinators(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_coordinators)
+        Values.encode_integer(cluster_config.parameters.desired_coordinators)
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_desired_read_version_proxies(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_read_version_proxies)
+        Values.encode_integer(cluster_config.parameters.desired_read_version_proxies)
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_empty_transaction_timeout_ms(),
-        :erlang.term_to_binary(Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000))
+        Values.encode_integer(Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000))
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_ping_rate_in_hz(),
-        :erlang.term_to_binary(cluster_config.parameters.ping_rate_in_hz)
+        Values.encode_integer(cluster_config.parameters.ping_rate_in_hz)
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_retransmission_rate_in_hz(),
-        :erlang.term_to_binary(cluster_config.parameters.retransmission_rate_in_hz)
+        Values.encode_integer(cluster_config.parameters.retransmission_rate_in_hz)
       )
       |> Tx.set(
         SystemKeys.cluster_parameters_transaction_window_in_ms(),
-        :erlang.term_to_binary(cluster_config.parameters.transaction_window_in_ms)
+        Values.encode_integer(cluster_config.parameters.transaction_window_in_ms)
       )
 
     # Only durable layout config (services and id)
     tx =
       tx
-      |> Tx.set(SystemKeys.layout_services(), :erlang.term_to_binary(encoded_services))
-      |> Tx.set(SystemKeys.layout_id(), :erlang.term_to_binary(transaction_system_layout.id))
+      |> Tx.set(SystemKeys.layout_services(), Values.encode_structured(encoded_services))
+      |> Tx.set(SystemKeys.layout_id(), Values.encode_id(transaction_system_layout.id))
 
     tx =
       Enum.reduce(transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
-        encoded_descriptor =
-          log_descriptor
-          |> encode_log_descriptor_for_storage()
-          |> :erlang.term_to_binary()
-
-        Tx.set(tx, SystemKeys.layout_log(log_id), encoded_descriptor)
+        Tx.set(tx, SystemKeys.layout_log(log_id), Values.encode_tag_list(log_descriptor))
       end)
 
     # Shard keys use ceiling-search pattern
     tx = build_shard_keys(tx, transaction_system_layout.shard_layout)
 
     tx
-    |> Tx.set(SystemKeys.recovery_attempt(), :erlang.term_to_binary(1))
+    |> Tx.set(SystemKeys.recovery_attempt(), Values.encode_integer(1))
     |> Tx.set(
       SystemKeys.recovery_last_completed(),
-      :millisecond |> System.system_time() |> :erlang.term_to_binary()
+      Values.encode_integer(System.system_time(:millisecond))
     )
   end
 
-  defp encode_services_for_storage(services) when is_map(services), do: services
-
-  @spec encode_log_descriptor_for_storage([term()]) :: [term()]
-  defp encode_log_descriptor_for_storage(log_descriptor) do
-    # Log descriptors typically don't contain PIDs directly
-    log_descriptor
+  # Runtime PIDs are meaningless in durable storage: a later epoch cannot use
+  # them, so live statuses are stored as :unknown. Service refs are
+  # re-populated at runtime by the director.
+  defp encode_services_for_storage(services) when is_map(services) do
+    Map.new(services, fn {service_id, descriptor} ->
+      case descriptor do
+        %{status: {:up, pid}} when is_pid(pid) -> {service_id, %{descriptor | status: :unknown}}
+        _ -> {service_id, descriptor}
+      end
+    end)
   end
 
   # Creates shard_key(end_key) -> tag and shard(tag) -> ShardMetadata entries
@@ -316,8 +316,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   defp build_shard_keys(tx, shard_layout) when is_map(shard_layout) do
     Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
-      # Write shard_key(end_key) -> tag (for ceiling search)
-      tx = Tx.set(tx, SystemKeys.shard_key(end_key), :erlang.term_to_binary(tag))
+      # Write shard_key(end_key) -> {tag, start_key} (for ceiling search)
+      tx = Tx.set(tx, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key))
 
       # Write shard(tag) -> ShardMetadata (FlatBuffer encoded)
       # born_at is 0 for now - will be set properly once we track shard versions

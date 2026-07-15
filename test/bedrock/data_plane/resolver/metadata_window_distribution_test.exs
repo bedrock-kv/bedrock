@@ -31,6 +31,7 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
   alias Bedrock.DataPlane.Resolver.Server, as: ResolverServer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.SystemKeys.Values
 
   defp encode_tx(key) do
     Transaction.encode(%{
@@ -71,8 +72,8 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
     v1 = Version.from_integer(1)
     v2 = Version.from_integer(2)
 
-    mutation1 = {:set, <<0xFF, "/system/shard_keys/a">>, :erlang.term_to_binary(1)}
-    mutation2 = {:set, <<0xFF, "/system/shard_keys/b">>, :erlang.term_to_binary(2)}
+    mutation1 = {:set, <<0xFF, "/system/shard_keys/a">>, Values.encode_shard_key_entry(1, "")}
+    mutation2 = {:set, <<0xFF, "/system/shard_keys/b">>, Values.encode_shard_key_entry(2, "")}
 
     assert {:ok, [], window1} = resolve_from_fresh_task(resolver, v0, v1, "k1", [mutation1])
     assert {:ok, [], window2} = resolve_from_fresh_task(resolver, v1, v2, "k2", [mutation2])

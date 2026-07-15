@@ -25,6 +25,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   defmodule TestCluster do
     @moduledoc false
@@ -151,7 +152,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     epoch: epoch
   } do
     shard_key = SystemKeys.shard_key("m")
-    encoded_tag = :erlang.term_to_binary(7)
+    encoded_tag = Values.encode_shard_key_entry(7, "")
 
     version =
       commit!(
@@ -178,10 +179,10 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
   } do
     shard_key = SystemKeys.shard_key("m")
 
-    _v1 = commit!(proxy, epoch, [{:set, shard_key, :erlang.term_to_binary(7)}], "key_a")
+    _v1 = commit!(proxy, epoch, [{:set, shard_key, Values.encode_shard_key_entry(7, "")}], "key_a")
     wait_until(fn -> proxy_metadata(proxy).shards == %{"m" => 7} end)
 
-    v2 = commit!(proxy, epoch, [{:set, shard_key, :erlang.term_to_binary(9)}], "key_b")
+    v2 = commit!(proxy, epoch, [{:set, shard_key, Values.encode_shard_key_entry(9, "")}], "key_b")
     wait_until(fn -> proxy_metadata(proxy).shards == %{"m" => 9} end)
 
     assert %Metadata{shards: %{"m" => 9}, version: ^v2} = proxy_metadata(proxy)
@@ -199,12 +200,12 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
 
   test "multiple key families parse into their structured slots", %{proxy: proxy, epoch: epoch} do
     mutations = [
-      {:set, SystemKeys.shard_key("g"), :erlang.term_to_binary(3)},
-      {:set, SystemKeys.layout_log("log-abc"), :erlang.term_to_binary([0, 1])},
-      {:set, SystemKeys.layout_services(), :erlang.term_to_binary(%{"log-abc" => %{kind: :log}})},
-      {:set, SystemKeys.cluster_epoch(), :erlang.term_to_binary(1)},
-      {:set, SystemKeys.cluster_parameters_desired_logs(), :erlang.term_to_binary(2)},
-      {:set, SystemKeys.recovery_attempt(), :erlang.term_to_binary(1)}
+      {:set, SystemKeys.shard_key("g"), Values.encode_shard_key_entry(3, "")},
+      {:set, SystemKeys.layout_log("log-abc"), Values.encode_tag_list([0, 1])},
+      {:set, SystemKeys.layout_services(), Values.encode_structured(%{"log-abc" => %{kind: :log}})},
+      {:set, SystemKeys.cluster_epoch(), Values.encode_integer(1)},
+      {:set, SystemKeys.cluster_parameters_desired_logs(), Values.encode_integer(2)},
+      {:set, SystemKeys.recovery_attempt(), Values.encode_integer(1)}
     ]
 
     version = commit!(proxy, epoch, mutations, "families_key")
@@ -231,7 +232,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     )
 
     mutations = [
-      {:set, SystemKeys.shard_key("z"), :erlang.term_to_binary(5)},
+      {:set, SystemKeys.shard_key("z"), Values.encode_shard_key_entry(5, "")},
       {:set, <<0xFF, "/system/future/feature">>, "opaque"}
     ]
 

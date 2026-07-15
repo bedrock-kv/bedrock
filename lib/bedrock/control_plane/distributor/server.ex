@@ -7,9 +7,11 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   stops (`:normal`) when the director exits or when a newer epoch is
   signaled - the next director recruits a fresh distributor.
 
-  This is the Phase A skeleton: coverage tracking, recruitment, and
-  placeholder supervision arrive in later tickets and will all pass
-  through the epoch guard implemented here.
+  Owns Phase A coverage policy: placeholder supervision, on-demand
+  materializer recruitment, and materializer-death healing (monitor the
+  shard's materializers; on death swap the placeholder into the TSL slot
+  and re-recruit). Every shard-map mutation passes through the epoch
+  guard implemented here.
   """
 
   use GenServer
@@ -22,7 +24,10 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       emit_coverage_demand: 2,
       emit_recruitment_started: 3,
       emit_recruitment_succeeded: 5,
-      emit_recruitment_failed: 5
+      emit_recruitment_failed: 5,
+      emit_materializer_down: 4,
+      emit_healing_started: 3,
+      emit_healing_completed: 3
     ]
 
   import Bedrock.Internal.GenServer.Replies
@@ -91,7 +96,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
     emit_distributor_started(state.cluster, state.epoch, state.director)
 
-    {:ok, start_placeholder(state), {:continue, :coverage_sweep}}
+    {:ok, state |> start_placeholder() |> monitor_existing_materializers(), {:continue, :coverage_sweep}}
   end
 
   # The distributor's first act: diff the shard layout against the
@@ -149,14 +154,24 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   # Coverage demand from the placeholder: recruit a materializer for the
   # shard unless a recruitment is already in flight or the tag is inside
-  # its failure-backoff window.
+  # its failure-backoff window. A tag we already cover with a monitored,
+  # live materializer is re-delivered instead of re-recruited: a restarted
+  # placeholder loses its `covered` map, and the `notify_covered` for a
+  # completed recruitment may have been cast to the dead placeholder pid.
   def handle_cast({:coverage_demand, tag}, %State{} = t) do
     Logger.info("Distributor for epoch #{t.epoch} received coverage demand for shard tag #{inspect(tag)}")
     emit_coverage_demand(t.cluster, tag)
 
-    t
-    |> maybe_recruit(tag)
-    |> noreply()
+    case covered_materializer(t, tag) do
+      {:ok, materializer} ->
+        if t.placeholder, do: Placeholder.notify_covered(t.placeholder, tag, materializer)
+        noreply(t)
+
+      :error ->
+        t
+        |> maybe_recruit(tag)
+        |> noreply()
+    end
   end
 
   # Completion of an asynchronous recruitment attempt (cast back to
@@ -167,11 +182,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
     # The recruited materializer now occupies the TSL slot, so a placeholder
     # restart must no longer republish the placeholder into it.
-    noreply(%{
-      t
-      | pending_demands: MapSet.delete(t.pending_demands, tag),
-        placeholder_tags: MapSet.delete(t.placeholder_tags, tag)
-    })
+    t
+    |> monitor_materializer(tag, materializer)
+    |> complete_healing(tag)
+    |> Map.update!(:pending_demands, &MapSet.delete(&1, tag))
+    |> Map.update!(:placeholder_tags, &MapSet.delete(&1, tag))
+    |> noreply()
   end
 
   def handle_cast({:recruitment_complete, tag, {:error, :newer_epoch_exists}, _duration_us}, %State{} = t) do
@@ -223,6 +239,39 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     noreply(%{t | pending_demands: MapSet.delete(t.pending_demands, tag)})
   end
 
+  # Outcome of the placeholder swap a materializer death triggered. On
+  # success, re-recruit eagerly: the shard demonstrably had traffic (it was
+  # materialized), so healing should not wait for the next read; the
+  # per-tag failure backoff in `maybe_recruit/2` still applies. Chaining
+  # the recruitment after the swap also guarantees the recruitment's TSL
+  # delta lands after the placeholder's.
+  def handle_cast({:placeholder_swap_complete, tag, :ok}, %State{} = t) do
+    t
+    |> maybe_recruit(tag)
+    |> noreply()
+  end
+
+  def handle_cast({:placeholder_swap_complete, tag, {:error, :newer_epoch_exists}}, %State{} = t) do
+    Logger.info(
+      "Distributor for epoch #{t.epoch} superseded (placeholder swap for shard tag #{inspect(tag)} rejected); stopping"
+    )
+
+    stop(t, :normal)
+  end
+
+  def handle_cast({:placeholder_swap_complete, tag, error}, %State{} = t) do
+    Logger.warning(
+      "Distributor for epoch #{t.epoch} failed to swap the placeholder into shard tag " <>
+        "#{inspect(tag)}: #{inspect(error)}"
+    )
+
+    # Recruit anyway: a successful recruitment writes its own TSL delta,
+    # which heals the slot without the intermediate placeholder hop.
+    t
+    |> maybe_recruit(tag)
+    |> noreply()
+  end
+
   @impl true
   def handle_info({:DOWN, _ref, :process, director, reason}, %State{director: director} = t) do
     Logger.info("Distributor for epoch #{t.epoch} stopping: director exited (#{inspect(reason)})")
@@ -230,10 +279,38 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     stop(t, :normal)
   end
 
+  # A monitored materializer died: heal the shard. The placeholder is told
+  # the tag is uncovered (so requests park and re-demand instead of being
+  # forwarded to the corpse), the placeholder pid is swapped into the TSL
+  # slot, and - once the swap completes - the tag is eagerly re-recruited.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %State{} = t) when is_map_key(t.materializer_monitors, ref) do
+    {{tag, _pid}, monitors} = Map.pop(t.materializer_monitors, ref)
+
+    Logger.warning(
+      "Distributor for epoch #{t.epoch} healing shard tag #{inspect(tag)}: materializer exited (#{inspect(reason)})"
+    )
+
+    if t.placeholder, do: Placeholder.notify_uncovered(t.placeholder, tag)
+    emit_materializer_down(t.cluster, t.epoch, tag, reason)
+    emit_healing_started(t.cluster, t.epoch, tag)
+
+    # A healed tag is placeholder-covered: track it in placeholder_tags so a
+    # placeholder restart republishes the new pid into its slot.
+    %{
+      t
+      | materializer_monitors: monitors,
+        healing: MapSet.put(t.healing, tag),
+        placeholder_tags: MapSet.put(t.placeholder_tags, tag)
+    }
+    |> swap_placeholder_into_slot(tag)
+    |> noreply()
+  end
+
   def handle_info({:EXIT, placeholder, reason}, %State{placeholder: placeholder} = t) do
     Logger.warning("Distributor for epoch #{t.epoch} restarting placeholder (exited: #{inspect(reason)})")
 
-    # The old pid is stale in every TSL slot it occupied: republish the new
+    # The old pid is stale in every TSL slot it occupied - swept, and slots
+    # healed onto it after a materializer death: republish the new
     # placeholder pid into those slots so clients keep routing somewhere live.
     # Tags with a recruitment in flight are excluded: the recruitment's real
     # pid may already occupy the slot (its delta is applied before its
@@ -297,10 +374,19 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # Publishes the current placeholder pid into the given tags' TSL slots as
   # a single batched delta. Runs off the message loop (an in-line call from
   # init/handle_continue would deadlock against the director, which blocks
-  # on check_epoch right after starting us); the outcome is cast back as
-  # {:sweep_complete, tags, result}.
+  # on check_epoch right after starting us); the outcome is cast back
+  # through `completion` so state mutation stays serialized. The sweep and
+  # restart-republish paths report as {:sweep_complete, tags, result}; the
+  # death-healing swap reports as {:placeholder_swap_complete, tag, result},
+  # whose handler chains the per-tag eager re-recruitment after the swap's
+  # delta has landed.
   @spec publish_placeholder(State.t(), MapSet.t(Bedrock.range_tag())) :: State.t()
-  defp publish_placeholder(%State{} = t, tags) do
+  defp publish_placeholder(%State{} = t, tags),
+    do: publish_placeholder(t, tags, &{:sweep_complete, MapSet.to_list(tags), &1})
+
+  @spec publish_placeholder(State.t(), MapSet.t(Bedrock.range_tag()), (result :: term() -> message :: term())) ::
+          State.t()
+  defp publish_placeholder(%State{} = t, tags, completion) do
     if MapSet.size(tags) == 0 do
       t
     else
@@ -315,12 +401,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
             try do
               Director.apply_tsl_delta(director, delta, epoch)
             rescue
-              exception -> {:error, {:sweep_crashed, Exception.message(exception)}}
+              exception -> {:error, {:placeholder_publish_crashed, Exception.message(exception)}}
             catch
-              :exit, reason -> {:error, {:sweep_exited, reason}}
+              :exit, reason -> {:error, {:placeholder_publish_exited, reason}}
             end
 
-          GenServer.cast(distributor, {:sweep_complete, MapSet.to_list(tags), result})
+          GenServer.cast(distributor, completion.(result))
         end)
 
       t
@@ -332,6 +418,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   @spec maybe_recruit(State.t(), Bedrock.range_tag()) :: State.t()
   defp maybe_recruit(%State{} = t, tag) do
     cond do
+      match?({:ok, _}, covered_materializer(t, tag)) ->
+        # Already covered by a live monitored materializer: a demand-raced
+        # recruitment completed while a placeholder swap was in flight.
+        # Recruiting again would orphan the live recruit.
+        t
+
       MapSet.member?(t.pending_demands, tag) ->
         # A recruitment for this tag is already in flight.
         t
@@ -339,6 +431,11 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       in_backoff?(t, tag) ->
         Logger.debug("Distributor for epoch #{t.epoch} ignoring demand for shard tag #{inspect(tag)} (in backoff)")
 
+        # Shed promptly and clear the placeholder's demand dedupe: parked
+        # readers would otherwise wait out their full budget, and a stuck
+        # `demanded` flag would suppress the re-demand that retries
+        # recruitment once the backoff expires.
+        if t.placeholder, do: Placeholder.notify_coverage_failed(t.placeholder, tag, :backoff)
         t
 
       true ->
@@ -393,9 +490,18 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
         result =
           try do
-            with {:ok, materializer, node} <- Recruitment.recruit(tag, context),
-                 :ok <- Director.apply_tsl_delta(director, %{tag => materializer}, epoch) do
-              {:ok, materializer, node}
+            with {:ok, materializer, node, worker_id} <- Recruitment.recruit(tag, context) do
+              case Director.apply_tsl_delta(director, %{tag => materializer}, epoch) do
+                :ok ->
+                  {:ok, materializer, node}
+
+                error ->
+                  # The recruit is unfenced: no layout slot will ever name
+                  # it, so nothing can read from it or heal it. Remove it
+                  # rather than leak an orphaned worker.
+                  Recruitment.remove_orphaned_worker(worker_id, node, context)
+                  error
+              end
             end
           rescue
             exception -> {:error, {:recruitment_crashed, Exception.message(exception)}}
@@ -452,14 +558,81 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     end
   end
 
+  # Death healing
+
+  # Monitors the materializers the recovery-built TSL snapshot already
+  # names: the director deliberately does not monitor materializers, so
+  # without this the death of a bootstrap-created materializer would go
+  # unhealed. The system shard is excluded - clients route it via the
+  # TSL's `metadata_materializer` field, which a `shard_materializers`
+  # delta cannot heal, so its death is a recovery-level concern.
+  @system_shard RecoveryAttempt.system_shard_id()
+
+  @spec monitor_existing_materializers(State.t()) :: State.t()
+  defp monitor_existing_materializers(%State{} = t) do
+    monitors =
+      t.transaction_system_layout
+      |> Map.get(:shard_materializers, %{})
+      |> Enum.reduce(t.materializer_monitors, fn
+        {tag, pid}, acc when is_pid(pid) and tag != @system_shard ->
+          Map.put(acc, Process.monitor(pid), {tag, pid})
+
+        _other, acc ->
+          acc
+      end)
+
+    %{t | materializer_monitors: monitors}
+  end
+
+  # Monitors a newly recruited materializer, replacing any stale monitor
+  # held for the same tag.
+  @spec monitor_materializer(State.t(), Bedrock.range_tag(), pid()) :: State.t()
+  defp monitor_materializer(%State{} = t, tag, materializer) do
+    {stale, live} =
+      Enum.split_with(t.materializer_monitors, fn {_ref, {monitored_tag, _pid}} -> monitored_tag == tag end)
+
+    Enum.each(stale, fn {ref, _entry} -> Process.demonitor(ref, [:flush]) end)
+
+    monitors = live |> Map.new() |> Map.put(Process.monitor(materializer), {tag, materializer})
+
+    %{t | materializer_monitors: monitors}
+  end
+
+  @spec covered_materializer(State.t(), Bedrock.range_tag()) :: {:ok, pid()} | :error
+  defp covered_materializer(%State{materializer_monitors: monitors}, tag) do
+    Enum.find_value(monitors, :error, fn {_ref, {monitored_tag, pid}} ->
+      if monitored_tag == tag, do: {:ok, pid}
+    end)
+  end
+
+  @spec complete_healing(State.t(), Bedrock.range_tag()) :: State.t()
+  defp complete_healing(%State{} = t, tag) do
+    if MapSet.member?(t.healing, tag) do
+      emit_healing_completed(t.cluster, t.epoch, tag)
+      %{t | healing: MapSet.delete(t.healing, tag)}
+    else
+      t
+    end
+  end
+
+  # Swaps the placeholder pid into a dead materializer's TSL slot so
+  # stale-layout clients park at the placeholder instead of erroring
+  # against a corpse. The delta is epoch-guarded at the director; the
+  # {:placeholder_swap_complete, ...} outcome stops a superseded
+  # distributor and serializes the eager re-recruitment after the swap.
+  @spec swap_placeholder_into_slot(State.t(), Bedrock.range_tag()) :: State.t()
+  defp swap_placeholder_into_slot(%State{} = t, tag),
+    do: publish_placeholder(t, MapSet.new([tag]), &{:placeholder_swap_complete, tag, &1})
+
   # The placeholder is linked (so it dies with the distributor) and its
   # exit is caught via trap_exit above so the distributor can restart it.
   #
   # A restarted placeholder loses its `covered` and `demanded` state while
-  # `pending_demands` here survives, so the recruitment flow (bedrock-q67.5)
-  # must tolerate duplicate `{:coverage_demand, tag}` casts for tags already
-  # pending, and should re-deliver coverage if a delivery races a restart
-  # (a `notify_covered` cast to the dead pid is silently dropped).
+  # `pending_demands` here survives, so `maybe_recruit/2` tolerates
+  # duplicate `{:coverage_demand, tag}` casts for tags already pending, and
+  # the demand handler re-delivers coverage for tags with a live monitored
+  # materializer (a `notify_covered` cast to the dead pid is silently
+  # dropped).
   @spec start_placeholder(State.t()) :: State.t()
   defp start_placeholder(%State{} = t) do
     {:ok, placeholder} =

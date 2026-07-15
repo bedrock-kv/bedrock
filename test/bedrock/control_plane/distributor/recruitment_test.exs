@@ -10,6 +10,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
   import ExUnit.CaptureLog
 
   alias Bedrock.ControlPlane.Distributor
+  alias Bedrock.ControlPlane.Distributor.Recruitment
   alias Bedrock.ControlPlane.Distributor.State
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Version
@@ -23,20 +24,27 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
   defmodule CaptureDirector do
     @moduledoc """
     A stand-in director that captures `apply_tsl_delta` calls, forwards them
-    to the test process, and replies with a configured result.
+    to the test process, and replies with a configured result. A list of
+    results is consumed one per call, repeating the last.
     """
     use GenServer
 
-    def start_link(test_pid, reply \\ :ok), do: GenServer.start_link(__MODULE__, {test_pid, reply})
+    def start_link({test_pid, reply}), do: GenServer.start_link(__MODULE__, {test_pid, reply})
+    def start_link(test_pid) when is_pid(test_pid), do: GenServer.start_link(__MODULE__, {test_pid, :ok})
 
     @impl true
     def init(state), do: {:ok, state}
 
     @impl true
-    def handle_call({:apply_tsl_delta, delta, epoch}, _from, {test_pid, reply} = state) do
+    def handle_call({:apply_tsl_delta, delta, epoch}, _from, {test_pid, replies}) do
       send(test_pid, {:apply_tsl_delta, delta, epoch})
-      {:reply, reply, state}
+      {reply, rest} = pop_reply(replies)
+      {:reply, reply, {test_pid, rest}}
     end
+
+    defp pop_reply([reply]), do: {reply, [reply]}
+    defp pop_reply([reply | rest]), do: {reply, rest}
+    defp pop_reply(reply), do: {reply, reply}
   end
 
   # A single data shard (tag 1) covering the whole keyspace.
@@ -347,11 +355,13 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
       test_pid = self()
       stub = start_stub(%{})
 
+      # The director accepts the startup sweep's delta and rejects the next
+      # one; the rejected delta under test is recruitment's own.
       director =
-        start_supervised!(%{
-          id: :stale_director,
-          start: {CaptureDirector, :start_link, [test_pid, {:error, :newer_epoch_exists}]}
-        })
+        start_supervised!(
+          {CaptureDirector, {test_pid, [:ok, {:error, :newer_epoch_exists}]}},
+          id: :stale_director
+        )
 
       recruitment = %{
         create_worker_fn: fn _foreman, _worker_id, _kind, _opts -> {:ok, :stub_worker_ref} end,
@@ -359,20 +369,98 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         unlock_materializer_fn: fn _pid, _durable_version, _tsl -> :ok end
       }
 
-      # The shard starts covered so the startup coverage sweep publishes
-      # nothing; the rejected delta under test is recruitment's own.
-      {distributor, _director} =
-        start_distributor(
-          recruitment: recruitment,
-          director: director,
-          transaction_system_layout: %{shard_materializers: %{1 => stub}}
-        )
+      {distributor, _director} = start_distributor(recruitment: recruitment, director: director)
+
+      # The sweep's delta has been accepted before the demand is issued, so
+      # the queued rejection deterministically hits recruitment's delta.
+      placeholder = placeholder_of(distributor)
+      assert_receive {:apply_tsl_delta, %{1 => ^placeholder}, 42}, 5_000
 
       ref = Process.monitor(distributor)
 
       GenServer.cast(distributor, {:coverage_demand, 1})
 
       assert_receive {:DOWN, ^ref, :process, ^distributor, :normal}, 5_000
+    end
+  end
+
+  describe "orphaned worker cleanup" do
+    defp cleanup_context(test_pid, overrides) do
+      Map.merge(
+        %{
+          cluster: TestCluster,
+          epoch: 42,
+          durable_version: Version.zero(),
+          transaction_system_layout: %{},
+          node_capabilities: %{materializer: [node()]},
+          create_worker_fn: fn _foreman, worker_id, :materializer, _opts ->
+            send(test_pid, {:created, worker_id})
+            {:ok, :stub_worker_ref}
+          end,
+          remove_worker_fn: fn foreman, worker_id, _opts ->
+            send(test_pid, {:removed, foreman, worker_id})
+            :ok
+          end
+        },
+        overrides
+      )
+    end
+
+    test "a created worker whose lock fails is removed" do
+      context = cleanup_context(self(), %{lock_materializer_fn: fn _worker, _epoch -> {:error, :timeout} end})
+
+      assert {:error, {:materializer_lock_failed, :timeout, _node}} = Recruitment.recruit(1, context)
+
+      expected_foreman = {TestCluster.otp_name(:foreman), node()}
+      assert_receive {:created, worker_id}
+      assert_receive {:removed, ^expected_foreman, ^worker_id}
+    end
+
+    test "a locked worker whose unlock fails is removed" do
+      stub = start_stub(%{})
+
+      context =
+        cleanup_context(self(), %{
+          lock_materializer_fn: fn _worker, _epoch -> {:ok, stub, %{}} end,
+          unlock_materializer_fn: fn _pid, _durable_version, _tsl -> {:error, :timeout} end
+        })
+
+      assert {:error, {:unlock_failed, :timeout, _node}} = Recruitment.recruit(1, context)
+
+      expected_foreman = {TestCluster.otp_name(:foreman), node()}
+      assert_receive {:created, worker_id}
+      assert_receive {:removed, ^expected_foreman, ^worker_id}
+    end
+
+    test "a recruited worker whose TSL delta is rejected is removed" do
+      test_pid = self()
+      stub = start_stub(%{})
+      director = start_supervised!({CaptureDirector, {test_pid, {:error, :unavailable}}}, id: :unavailable_director)
+
+      recruitment = %{
+        create_worker_fn: fn _foreman, worker_id, :materializer, _opts ->
+          send(test_pid, {:created, worker_id})
+          {:ok, :stub_worker_ref}
+        end,
+        lock_materializer_fn: fn _worker, _epoch -> {:ok, stub, %{}} end,
+        unlock_materializer_fn: fn _pid, _durable_version, _tsl -> :ok end,
+        remove_worker_fn: fn foreman, worker_id, _opts ->
+          send(test_pid, {:removed, foreman, worker_id})
+          :ok
+        end
+      }
+
+      {distributor, _director} = start_distributor(recruitment: recruitment, director: director)
+
+      GenServer.cast(distributor, {:coverage_demand, 1})
+
+      expected_foreman = {TestCluster.otp_name(:foreman), node()}
+      assert_receive {:created, worker_id}, 5_000
+      assert_receive {:removed, ^expected_foreman, ^worker_id}, 5_000
+
+      # The unfenced recruit was cleaned up and the failure backs off as usual.
+      assert %State{backoff: backoff} = :sys.get_state(distributor)
+      assert Map.has_key?(backoff, 1)
     end
   end
 

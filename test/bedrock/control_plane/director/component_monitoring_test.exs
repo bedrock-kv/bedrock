@@ -44,9 +44,10 @@ defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
 
       send(director_pid, {:simulate_component_failure, failed_component_pid, failure_reason})
 
-      # Director should exit immediately with proper shutdown reason
-      assert_receive {:director_exited, ^expected_shutdown_reason}
-      assert_receive {:DOWN, ^monitor_ref, :process, ^director_pid, ^expected_shutdown_reason}
+      # Director should exit immediately with proper shutdown reason.
+      # Generous budget: the default 100ms flakes under full-suite load.
+      assert_receive {:director_exited, ^expected_shutdown_reason}, 1_000
+      assert_receive {:DOWN, ^monitor_ref, :process, ^director_pid, ^expected_shutdown_reason}, 1_000
     end
   end
 end

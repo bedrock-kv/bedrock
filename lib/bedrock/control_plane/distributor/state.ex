@@ -13,10 +13,11 @@ defmodule Bedrock.ControlPlane.Distributor.State do
           transaction_system_layout: TransactionSystemLayout.t() | %{},
           durable_version: Bedrock.version(),
           node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
-          materializer_monitors: %{reference() => Bedrock.range_tag()},
+          materializer_monitors: %{reference() => {Bedrock.range_tag(), pid()}},
           placeholder: pid() | nil,
           placeholder_tags: MapSet.t(Bedrock.range_tag()),
           pending_demands: MapSet.t(Bedrock.range_tag()),
+          healing: MapSet.t(Bedrock.range_tag()),
           backoff: %{Bedrock.range_tag() => expires_at_ms :: integer()},
           backoff_ms: pos_integer(),
           recruitment_overrides: map()
@@ -32,6 +33,7 @@ defmodule Bedrock.ControlPlane.Distributor.State do
             placeholder: nil,
             placeholder_tags: MapSet.new(),
             pending_demands: MapSet.new(),
+            healing: MapSet.new(),
             backoff: %{},
             backoff_ms: 5_000,
             recruitment_overrides: %{}

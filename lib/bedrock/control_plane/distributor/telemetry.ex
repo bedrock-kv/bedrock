@@ -78,6 +78,33 @@ defmodule Bedrock.ControlPlane.Distributor.Telemetry do
     )
   end
 
+  @spec emit_materializer_down(module(), Bedrock.epoch(), Bedrock.range_tag(), reason :: term()) :: :ok
+  def emit_materializer_down(cluster, epoch, tag, reason) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :materializer_down],
+      %{},
+      %{cluster: cluster, epoch: epoch, tag: tag, reason: reason}
+    )
+  end
+
+  @spec emit_healing_started(module(), Bedrock.epoch(), Bedrock.range_tag()) :: :ok
+  def emit_healing_started(cluster, epoch, tag) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :healing, :started],
+      %{},
+      %{cluster: cluster, epoch: epoch, tag: tag}
+    )
+  end
+
+  @spec emit_healing_completed(module(), Bedrock.epoch(), Bedrock.range_tag()) :: :ok
+  def emit_healing_completed(cluster, epoch, tag) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :healing, :completed],
+      %{},
+      %{cluster: cluster, epoch: epoch, tag: tag}
+    )
+  end
+
   @spec emit_placeholder_parked(module(), Bedrock.range_tag()) :: :ok
   def emit_placeholder_parked(cluster, tag) do
     :telemetry.execute(

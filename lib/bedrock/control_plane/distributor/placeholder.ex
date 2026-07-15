@@ -49,6 +49,15 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder do
   def notify_covered(placeholder, tag, materializer), do: cast(placeholder, {:covered, tag, materializer})
 
   @doc """
+  Notifies the placeholder that a shard tag's materializer has died and
+  the tag is uncovered again. The tag's `covered` entry (and demand
+  dedupe) is cleared so subsequent requests park and re-demand coverage
+  instead of being forwarded to the dead pid.
+  """
+  @spec notify_uncovered(ref(), Bedrock.range_tag()) :: :ok
+  def notify_uncovered(placeholder, tag), do: cast(placeholder, {:uncovered, tag})
+
+  @doc """
   Notifies the placeholder that recruitment for a shard tag has failed.
   Parked requests for the tag are shed with `{:error, :unavailable}` and
   the demand dedupe is cleared so a later request re-triggers recruitment.

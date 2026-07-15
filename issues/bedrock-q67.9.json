@@ -4,6 +4,7 @@
     "bedrock-q67.15",
     "bedrock-q67.16",
     "bedrock-q67.17",
+    "bedrock-q67.18",
     "bedrock-ri40"
   ],
   "blocks": [
@@ -24,5 +25,5 @@
   "status": "open",
   "title": "Phase B headline: shard map out of TSL into system keys; retire TSL-delta channel",
   "type": "task",
-  "updated_at": "2026-07-15T21:12:50Z"
+  "updated_at": "2026-07-15T21:19:54Z"
 }

@@ -18,7 +18,9 @@ defmodule Bedrock.ControlPlane.Director.Server do
       try_to_recover: 1
     ]
 
-  import Bedrock.ControlPlane.Director.Telemetry, only: [trace_tsl_delta_applied: 3]
+  import Bedrock.ControlPlane.Director.Telemetry,
+    only: [trace_metadata_materializer_failure: 4, trace_tsl_delta_applied: 3]
+
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.ControlPlane.Config
@@ -131,6 +133,25 @@ defmodule Bedrock.ControlPlane.Director.Server do
     t
     |> maybe_start_distributor()
     |> noreply()
+  end
+
+  def handle_info(
+        {:DOWN, _monitor_ref, :process, failed_pid, reason},
+        %State{transaction_system_layout: %{metadata_materializer: failed_pid}} = t
+      ) do
+    # The metadata materializer is the tag-0 (system shard) read path.
+    # The distributor cannot heal it: clients route tag 0 through the TSL's
+    # metadata_materializer field, which a shard_materializers delta cannot
+    # update. Its death is a core-component failure: stop and let the
+    # coordinator restart recovery, whose bootstrap phase re-creates and
+    # re-locks the system materializer.
+    Logger.error("Metadata materializer (system shard) failed: #{inspect(reason)}; triggering recovery")
+
+    trace_metadata_materializer_failure(t.cluster, t.epoch, failed_pid, reason)
+
+    t
+    |> Map.put(:state, :stopped)
+    |> stop({:shutdown, {:component_failure, failed_pid, reason}})
   end
 
   def handle_info({:DOWN, _monitor_ref, :process, failed_pid, reason}, t) do

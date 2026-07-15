@@ -103,6 +103,82 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       refute_received {:monitored, ^storage_pid}
     end
 
+    test "monitors the metadata materializer (tag 0 is transaction-core)" do
+      metadata_pid = test_process()
+
+      monitor_fn = fn pid ->
+        send(self(), {:monitored, pid})
+        make_ref()
+      end
+
+      recovery_attempt = %{
+        transaction_system_layout: Map.put(create_layout(), :metadata_materializer, metadata_pid)
+      }
+
+      execute_and_verify(recovery_attempt, %{monitor_fn: monitor_fn})
+
+      assert_received {:monitored, ^metadata_pid}
+    end
+
+    test "does not monitor data-shard materializers (distributor-owned healing)" do
+      metadata_pid = test_process()
+      data_shard_pid = test_process()
+
+      monitor_fn = fn pid ->
+        send(self(), {:monitored, pid})
+        make_ref()
+      end
+
+      recovery_attempt = %{
+        transaction_system_layout:
+          create_layout()
+          |> Map.put(:metadata_materializer, metadata_pid)
+          |> Map.put(:shard_materializers, %{0 => metadata_pid, 1 => data_shard_pid})
+      }
+
+      execute_and_verify(recovery_attempt, %{monitor_fn: monitor_fn})
+
+      # The metadata materializer is monitored exactly once, even though the
+      # same pid also appears as shard_materializers[0] (fresh-cluster case).
+      assert_received {:monitored, ^metadata_pid}
+      refute_received {:monitored, ^metadata_pid}
+      # Data-shard materializer death is the distributor's job to heal.
+      refute_received {:monitored, ^data_shard_pid}
+    end
+
+    test "director's mailbox sees :DOWN only for the metadata materializer" do
+      metadata_pid = spawn(fn -> Process.sleep(:infinity) end)
+      data_shard_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt = %{
+        transaction_system_layout:
+          create_layout()
+          |> Map.put(:metadata_materializer, metadata_pid)
+          |> Map.put(:shard_materializers, %{0 => metadata_pid, 1 => data_shard_pid})
+      }
+
+      # Use the real Process.monitor so :DOWN routing lands in this process,
+      # standing in for the director.
+      execute_and_verify(recovery_attempt, %{})
+
+      Process.exit(data_shard_pid, :kill)
+      refute_receive {:DOWN, _ref, :process, ^data_shard_pid, _reason}, 100
+
+      Process.exit(metadata_pid, :kill)
+      assert_receive {:DOWN, _ref, :process, ^metadata_pid, :killed}
+    end
+
+    test "tolerates a layout without a metadata materializer" do
+      monitor_fn = fn pid ->
+        send(self(), {:monitored, pid})
+        make_ref()
+      end
+
+      recovery_attempt = %{transaction_system_layout: create_layout()}
+
+      execute_and_verify(recovery_attempt, %{monitor_fn: monitor_fn})
+    end
+
     test "crashes if services are not in :up status" do
       down_log_pid = test_process()
 

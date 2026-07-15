@@ -4,6 +4,26 @@ defmodule Bedrock.ControlPlane.Director.Telemetry do
   alias Bedrock.Telemetry
 
   @doc """
+  Emits a telemetry event indicating that the metadata materializer (system
+  shard, tag 0) died. Its death is a core-component failure: the director
+  stops and the coordinator restarts recovery.
+  """
+  @spec trace_metadata_materializer_failure(
+          cluster :: module(),
+          epoch :: Bedrock.epoch(),
+          pid :: pid(),
+          reason :: term()
+        ) :: :ok
+  def trace_metadata_materializer_failure(cluster, epoch, pid, reason) do
+    Telemetry.execute([:bedrock, :director, :metadata_materializer_failure], %{}, %{
+      cluster: cluster,
+      epoch: epoch,
+      pid: pid,
+      reason: reason
+    })
+  end
+
+  @doc """
   Emits a telemetry event indicating that the director applied a post-recovery
   delta to the transaction system layout's `shard_materializers` map.
   """

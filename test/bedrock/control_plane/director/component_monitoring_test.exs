@@ -1,7 +1,10 @@
 defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Bedrock.ControlPlane.Director.Server
+  alias Bedrock.ControlPlane.Director.State
 
   describe "component failure handling" do
     test "terminates with shutdown reason when component fails" do
@@ -48,6 +51,64 @@ defmodule Bedrock.ControlPlane.Director.ComponentMonitoringTest do
       # Generous budget: the default 100ms flakes under full-suite load.
       assert_receive {:director_exited, ^expected_shutdown_reason}, 1_000
       assert_receive {:DOWN, ^monitor_ref, :process, ^director_pid, ^expected_shutdown_reason}, 1_000
+    end
+  end
+
+  describe "metadata materializer failure" do
+    test "a :DOWN for the metadata materializer stops the director with component_failure" do
+      materializer = spawn(fn -> :ok end)
+
+      state = %State{
+        state: :running,
+        cluster: __MODULE__,
+        epoch: 7,
+        transaction_system_layout: %{metadata_materializer: materializer}
+      }
+
+      log =
+        capture_log(fn ->
+          assert {:stop, {:shutdown, {:component_failure, ^materializer, :killed}}, stopped} =
+                   Server.handle_info({:DOWN, make_ref(), :process, materializer, :killed}, state)
+
+          assert stopped.state == :stopped
+        end)
+
+      # The log line distinguishes metadata-materializer failure from a
+      # generic component failure.
+      assert log =~ "Metadata materializer"
+    end
+
+    test "a metadata materializer :DOWN emits a distinguishing telemetry event" do
+      test_pid = self()
+      handler_id = {__MODULE__, :metadata_materializer_failure}
+
+      :telemetry.attach(
+        handler_id,
+        [:bedrock, :director, :metadata_materializer_failure],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      materializer = spawn(fn -> :ok end)
+
+      state = %State{
+        state: :running,
+        cluster: __MODULE__,
+        epoch: 7,
+        transaction_system_layout: %{metadata_materializer: materializer}
+      }
+
+      capture_log(fn ->
+        assert {:stop, {:shutdown, {:component_failure, ^materializer, :killed}}, _} =
+                 Server.handle_info({:DOWN, make_ref(), :process, materializer, :killed}, state)
+      end)
+
+      assert_receive {:telemetry, [:bedrock, :director, :metadata_materializer_failure], _measurements,
+                      %{epoch: 7, pid: ^materializer, reason: :killed}}
     end
   end
 end

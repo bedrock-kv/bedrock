@@ -23,7 +23,8 @@ defmodule Bedrock.ControlPlane.Director.State do
           timers: timer_registry() | nil,
           services: %{Worker.id() => {atom(), {atom(), node()}}},
           lock_token: binary(),
-          recovery_attempt: Config.RecoveryAttempt.t() | nil
+          recovery_attempt: Config.RecoveryAttempt.t() | nil,
+          distributor: pid() | nil
         }
   defstruct state: :starting,
             epoch: nil,
@@ -36,7 +37,8 @@ defmodule Bedrock.ControlPlane.Director.State do
             timers: nil,
             services: %{},
             lock_token: nil,
-            recovery_attempt: nil
+            recovery_attempt: nil,
+            distributor: nil
 
   defmodule Changes do
     @moduledoc false

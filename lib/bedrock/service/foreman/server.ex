@@ -58,6 +58,10 @@ defmodule Bedrock.Service.Foreman.Server do
     do: t |> do_get_all_running_services() |> then(&reply(t, {:ok, &1}))
 
   @impl true
+  def handle_call({:new_worker, id, kind, params}, _from, t),
+    do: t |> do_new_worker(id, kind, params) |> then(fn {t, health} -> reply(t, {:ok, health}) end)
+
+  @impl true
   def handle_call({:new_worker, id, kind}, _from, t),
     do: t |> do_new_worker(id, kind) |> then(fn {t, health} -> reply(t, {:ok, health}) end)
 

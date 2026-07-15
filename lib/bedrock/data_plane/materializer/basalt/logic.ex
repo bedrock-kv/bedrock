@@ -13,11 +13,9 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.Logic do
   alias Bedrock.Internal.WaitingList
   alias Bedrock.Service.Worker
 
-  @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t()) ::
+  @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t(), opts :: keyword()) ::
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
-  @spec startup(atom(), GenServer.server(), term(), String.t()) ::
-          {:ok, State.t()} | {:error, term()}
-  def startup(otp_name, foreman, id, path) do
+  def startup(otp_name, foreman, id, path, opts \\ []) do
     with :ok <- ensure_directory_exists(path),
          {:ok, database} <- Database.open(:"#{otp_name}_db", Path.join(path, "dets")) do
       {:ok,
@@ -25,6 +23,7 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.Logic do
          path: path,
          otp_name: otp_name,
          id: id,
+         shard_id: Keyword.get(opts, :shard_id),
          foreman: foreman,
          database: database
        }}
@@ -174,6 +173,7 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.Logic do
       kind
       n_keys
       otp_name
+      shard_id
       size_in_bytes
       supported_info
       utilization
@@ -188,6 +188,7 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.Logic do
   defp gather_info(:otp_name, t), do: t.otp_name
   defp gather_info(:path, t), do: t.path
   defp gather_info(:pid, _t), do: self()
+  defp gather_info(:shard_id, t), do: t.shard_id
   defp gather_info(:size_in_bytes, t), do: Database.info(t.database, :size_in_bytes)
   defp gather_info(:supported_info, _t), do: supported_info()
   defp gather_info(:utilization, t), do: Database.info(t.database, :utilization)

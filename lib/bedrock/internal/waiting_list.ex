@@ -1,9 +1,11 @@
 defmodule Bedrock.Internal.WaitingList do
   @moduledoc """
-  Unified waiting list for version-based out-of-order request handling.
+  Unified waiting list for out-of-order request handling.
 
   Supports both single-waiter (Resolver) and multi-waiter (LongPulls) patterns
-  using a map of deadline-sorted lists.
+  using a map of deadline-sorted lists. Entries are typically keyed by
+  version, but any ordered key works (the Distributor's placeholder keys by
+  shard tag).
 
   Structure: %{version => [{deadline, reply_fn, data}, ...]}
   Lists are sorted by deadline (earliest first).
@@ -11,7 +13,7 @@ defmodule Bedrock.Internal.WaitingList do
 
   alias Bedrock.Internal.Time
 
-  @type version :: Bedrock.version()
+  @type version :: Bedrock.version() | Bedrock.range_tag()
   @type reply_fn :: (any() -> :ok)
   @type timeout_ms :: non_neg_integer()
 

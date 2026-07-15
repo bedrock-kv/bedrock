@@ -30,6 +30,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   import Bedrock, only: [end_of_keyspace: 0]
+  import Bedrock.ControlPlane.Director.Recovery.Telemetry, only: [trace_recovery_bootstrap_shard_skipped: 2]
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
@@ -112,15 +113,29 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     |> Enum.uniq()
   end
 
-  # Create materializers for multiple shards
+  # Create materializers for multiple shards. Only a system-shard failure
+  # stalls recovery: a failed data shard's slot is left ABSENT and the
+  # Distributor's coverage sweep fills it with the placeholder after
+  # recovery completes, so the shard materializes on first touch.
   defp create_materializers_for_shards(shard_tags, recovery_attempt, context) do
+    system_shard = RecoveryAttempt.system_shard_id()
+
     Enum.reduce_while(shard_tags, {:ok, %{}}, fn shard_tag, {:ok, acc} ->
       case create_and_start_materializer(shard_tag, recovery_attempt, context) do
         {:ok, pid} ->
           {:cont, {:ok, Map.put(acc, shard_tag, pid)}}
 
-        {:error, reason} ->
+        {:error, reason} when shard_tag == system_shard ->
           {:halt, {:error, {shard_tag, reason}}}
+
+        {:error, reason} ->
+          Logger.warning(
+            "Skipping materializer bootstrap for data shard #{inspect(shard_tag)}: #{inspect(reason)}; " <>
+              "the distributor's coverage sweep will cover it with the placeholder"
+          )
+
+          trace_recovery_bootstrap_shard_skipped(shard_tag, reason)
+          {:cont, {:ok, acc}}
       end
     end)
   end
@@ -136,13 +151,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
-  # Create worker via Foreman for a specific shard
+  # Create worker via Foreman for a specific shard. The shard assignment is
+  # persisted in the worker's manifest (mirroring the distributor's
+  # recruitment path) so the worker exposes its `:shard_id` info fact and
+  # can be identified and re-adopted after an epoch change.
   defp create_materializer_worker(node, shard_tag, recovery_attempt, context) do
     foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
     worker_id = Worker.random_id()
     create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
 
-    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000) do
+    case create_worker_fn.(foreman_ref, worker_id, :materializer,
+           timeout: 30_000,
+           params: %{"shard_id" => shard_tag}
+         ) do
       {:ok, worker_ref} -> {:ok, {worker_ref, node}}
       {:error, reason} -> {:error, {:failed_to_create_materializer, reason, shard_tag}}
     end
@@ -273,7 +294,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
 
     # Pass shard_id in params so materializer knows its assignment
-    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000) do
+    case create_worker_fn.(foreman_ref, worker_id, :materializer,
+           timeout: 30_000,
+           params: %{"shard_id" => system_shard}
+         ) do
       {:ok, worker_ref} -> {:ok, {worker_ref, node}}
       {:error, reason} -> {:error, {:failed_to_create_materializer, reason, system_shard}}
     end

@@ -18,16 +18,23 @@ defmodule Bedrock.ControlPlane.Director.Server do
       try_to_recover: 1
     ]
 
+  import Bedrock.ControlPlane.Director.Telemetry, only: [trace_tsl_delta_applied: 3]
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director
+  alias Bedrock.ControlPlane.Director.Recovery.Shared
   alias Bedrock.ControlPlane.Director.State
+  alias Bedrock.ControlPlane.Distributor
+  alias Bedrock.DataPlane.Version
   alias Bedrock.Service.Worker
 
   require Logger
+
+  @distributor_retry_ms 1_000
 
   @doc false
   @spec child_spec(
@@ -83,7 +90,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     # Services are already provided by coordinator from service directory
     t
     |> ping_all_coordinators()
-    |> try_to_recover()
+    |> advance_recovery()
     |> noreply()
   end
 
@@ -95,6 +102,37 @@ defmodule Bedrock.ControlPlane.Director.Server do
   end
 
   @impl true
+  def handle_info({:DOWN, _monitor_ref, :process, distributor_pid, :normal}, %State{distributor: distributor_pid} = t) do
+    # A :normal exit means the distributor ceded deliberately (superseded by
+    # a newer epoch): a newer director owns coverage now, so re-recruiting
+    # here would only create a stale distributor.
+    Logger.info("Distributor exited normally (superseded); not re-recruiting")
+
+    t
+    |> Map.put(:distributor, nil)
+    |> noreply()
+  end
+
+  def handle_info({:DOWN, _monitor_ref, :process, distributor_pid, reason}, %State{distributor: distributor_pid} = t) do
+    # The distributor is off the request path: its death degrades coverage
+    # healing only, so we re-recruit it rather than restarting recovery. The
+    # retry timer (rather than an immediate restart) puts a floor under a
+    # crash-looping distributor.
+    Logger.warning("Distributor exited (#{inspect(reason)}); re-recruiting in #{@distributor_retry_ms}ms")
+
+    Process.send_after(self(), {:timeout, :retry_start_distributor}, @distributor_retry_ms)
+
+    t
+    |> Map.put(:distributor, nil)
+    |> noreply()
+  end
+
+  def handle_info({:timeout, :retry_start_distributor}, t) do
+    t
+    |> maybe_start_distributor()
+    |> noreply()
+  end
+
   def handle_info({:DOWN, _monitor_ref, :process, failed_pid, reason}, t) do
     t
     |> Map.put(:state, :stopped)
@@ -116,6 +154,18 @@ defmodule Bedrock.ControlPlane.Director.Server do
     end
   end
 
+  def handle_call({:apply_tsl_delta, _delta, epoch}, _from, %State{epoch: current_epoch} = t)
+      when epoch != current_epoch, do: reply(t, {:error, :newer_epoch_exists})
+
+  def handle_call({:apply_tsl_delta, _delta, _epoch}, _from, %State{transaction_system_layout: nil} = t),
+    do: reply(t, {:error, :unavailable})
+
+  def handle_call({:apply_tsl_delta, delta, _epoch}, _from, %State{} = t) do
+    t
+    |> apply_tsl_delta(delta)
+    |> reply(:ok)
+  end
+
   def handle_call({:request_worker_creation, node, worker_id, kind}, _from, t) do
     t
     |> request_worker_creation(node, worker_id, kind)
@@ -126,7 +176,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     {:ok, updated_t} = request_to_rejoin(t, node, capabilities, Map.values(running_services), now())
 
     updated_t
-    |> try_to_recover()
+    |> advance_recovery()
     |> reply(:ok)
   end
 
@@ -147,7 +197,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def handle_cast({:node_added_worker, node, worker_info}, %State{} = t) do
     t
     |> node_added_worker(node, worker_info, now())
-    |> try_to_recover()
+    |> advance_recovery()
     |> noreply()
   end
 
@@ -180,6 +230,34 @@ defmodule Bedrock.ControlPlane.Director.Server do
   @spec now() :: DateTime.t()
   defp now, do: DateTime.utc_now()
 
+  # Applies a shard_materializers delta to the retained TSL, hands the new TSL
+  # to the coordinator for broadcast to subscribed Links, and emits telemetry.
+  @spec apply_tsl_delta(State.t(), Director.tsl_delta()) :: State.t()
+  defp apply_tsl_delta(t, delta) do
+    updated_shard_materializers =
+      t.transaction_system_layout
+      |> Map.get(:shard_materializers, %{})
+      |> apply_delta_to_shard_materializers(delta)
+
+    updated_tsl = Map.put(t.transaction_system_layout, :shard_materializers, updated_shard_materializers)
+
+    Coordinator.notify_transaction_system_layout(t.coordinator, updated_tsl)
+    trace_tsl_delta_applied(t.cluster, t.epoch, delta)
+
+    %{t | transaction_system_layout: updated_tsl}
+  end
+
+  @spec apply_delta_to_shard_materializers(
+          TransactionSystemLayout.shard_materializers(),
+          Director.tsl_delta()
+        ) :: TransactionSystemLayout.shard_materializers()
+  defp apply_delta_to_shard_materializers(shard_materializers, delta) do
+    Enum.reduce(delta, shard_materializers, fn
+      {tag, :remove}, acc -> Map.delete(acc, tag)
+      {tag, pid}, acc when is_pid(pid) -> Map.put(acc, tag, pid)
+    end)
+  end
+
   @spec get_services_from_transaction_system_layout(TransactionSystemLayout.t()) ::
           %{Worker.id() => ServiceDescriptor.t()}
   def get_services_from_transaction_system_layout(%{services: services}), do: services || %{}
@@ -201,11 +279,95 @@ defmodule Bedrock.ControlPlane.Director.Server do
   def try_to_recover_if_stalled(%{state: :recovery} = t) do
     # If we're in recovery state, new services might resolve insufficient_nodes
     # So we should retry recovery
-    try_to_recover(t)
+    advance_recovery(t)
   end
 
   def try_to_recover_if_stalled(t) do
     # If not in recovery state, no need to retry
     t
   end
+
+  @doc false
+  @spec advance_recovery(State.t()) :: State.t()
+  def advance_recovery(t) do
+    t
+    |> try_to_recover()
+    |> maybe_start_distributor()
+  end
+
+  # Recruits the Distributor once recovery has completed (FDB: the cluster
+  # controller recruits the data distributor only after the cluster is
+  # accepting commits). The distributor is monitored and re-recruited on
+  # death; it never participates in recovery itself.
+  @doc false
+  @spec maybe_start_distributor(State.t()) :: State.t()
+  def maybe_start_distributor(%State{state: :running, distributor: nil} = t) do
+    transaction_system_layout = t.transaction_system_layout || %{}
+
+    child_spec =
+      Distributor.child_spec(
+        cluster: t.cluster,
+        epoch: t.epoch,
+        director: self(),
+        shard_layout: transaction_system_layout[:shard_layout] || %{},
+        transaction_system_layout: transaction_system_layout,
+        durable_version: recovered_durable_version(t),
+        node_capabilities: t.node_capabilities,
+        services: t.services,
+        otp_name: t.cluster.otp_name(:distributor)
+      )
+
+    starter_fn = :sup |> t.cluster.otp_name() |> Shared.starter_for()
+
+    case starter_fn.(child_spec, node()) do
+      {:ok, distributor} ->
+        confirm_distributor_epoch(t, distributor)
+
+      {:error, reason} ->
+        Logger.error("Failed to start distributor: #{inspect(reason)}; retrying in #{@distributor_retry_ms}ms")
+
+        Process.send_after(self(), {:timeout, :retry_start_distributor}, @distributor_retry_ms)
+        t
+    end
+  end
+
+  def maybe_start_distributor(t), do: t
+
+  # `Shared.starter_for/1` maps `{:error, {:already_started, pid}}` to
+  # `{:ok, pid}`, so a start can *adopt* a distributor left over from another
+  # epoch under the shared otp name. Confirm the epoch before trusting it: a
+  # stale (older-epoch) distributor stops itself on the check, and we retry
+  # once its registration clears; a newer-epoch distributor means this
+  # director is the stale one and must not recruit.
+  @spec confirm_distributor_epoch(State.t(), pid()) :: State.t()
+  defp confirm_distributor_epoch(t, distributor) do
+    case Distributor.check_epoch(distributor, t.epoch) do
+      :ok ->
+        Process.monitor(distributor)
+        %{t | distributor: distributor}
+
+      {:error, :newer_epoch_exists} ->
+        Logger.warning(
+          "Adopted distributor belongs to a newer epoch than #{t.epoch}; " <>
+            "this director has been superseded and will not recruit"
+        )
+
+        t
+
+      {:error, reason} ->
+        Logger.warning("Distributor epoch check failed (#{inspect(reason)}); retrying in #{@distributor_retry_ms}ms")
+
+        Process.send_after(self(), {:timeout, :retry_start_distributor}, @distributor_retry_ms)
+        t
+    end
+  end
+
+  # The durable version recovery settled on. Recruitment unlocks a new
+  # materializer at the version the worker itself reports at lock time;
+  # this cluster-wide value is only its fallback when no report is present.
+  @spec recovered_durable_version(State.t()) :: Bedrock.version()
+  defp recovered_durable_version(%State{recovery_attempt: %{durable_version: durable_version}})
+       when not is_nil(durable_version), do: durable_version
+
+  defp recovered_durable_version(_t), do: Version.zero()
 end

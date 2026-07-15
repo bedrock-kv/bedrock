@@ -22,15 +22,23 @@ defmodule Bedrock.Service.Foreman do
 
   @doc """
   Create a new worker.
+
+  `:params` are persisted in the worker's manifest and handed back to the
+  worker's `child_spec/1` on every start (keys are strings, matching the
+  manifest's JSON round-trip) - e.g. `%{"idle_timeout" => ms}` opts a
+  materializer into idle spin-down, and `%{"shard_id" => tag}` records a
+  materializer's shard assignment so it can later be identified and
+  re-adopted.
   """
   @spec new_worker(
           foreman :: ref(),
           id :: Worker.id(),
           kind :: :log | :materializer,
-          opts :: [timeout: timeout()]
+          opts :: [timeout: timeout(), params: %{String.t() => term()}]
         ) ::
           {:ok, Worker.ref()} | {:error, :timeout}
-  def new_worker(foreman, id, kind, opts \\ []), do: call(foreman, {:new_worker, id, kind}, opts[:timeout] || :infinity)
+  def new_worker(foreman, id, kind, opts \\ []),
+    do: call(foreman, {:new_worker, id, kind, opts[:params] || %{}}, opts[:timeout] || :infinity)
 
   @doc """
   Return a list of running materializer workers only.

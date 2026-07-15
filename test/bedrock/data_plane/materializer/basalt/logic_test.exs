@@ -335,5 +335,25 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.LogicTest do
 
       Logic.shutdown(state)
     end
+
+    @tag :tmp_dir
+    test "advertises :shard_id and reports the assignment supplied at startup", %{tmp_dir: tmp_dir} do
+      otp_name = :"basalt_logic_shard_id_#{System.unique_integer([:positive])}"
+      {:ok, state} = Logic.startup(otp_name, self(), "basalt_shard_id_worker", tmp_dir, shard_id: 7)
+
+      assert {:ok, supported} = Logic.info(state, :supported_info)
+      assert :shard_id in supported
+      assert {:ok, 7} = Logic.info(state, :shard_id)
+
+      Logic.shutdown(state)
+    end
+
+    @tag :tmp_dir
+    test "reports a nil :shard_id when no assignment was supplied", %{tmp_dir: tmp_dir} do
+      {_otp_name, state} = start_state(tmp_dir)
+
+      assert {:ok, nil} = Logic.info(state, :shard_id)
+      Logic.shutdown(state)
+    end
   end
 end

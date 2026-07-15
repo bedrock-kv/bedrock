@@ -47,10 +47,43 @@ defmodule Bedrock.ControlPlane.Director do
 
   @type running_service_info_by_id :: %{Worker.id() => running_service_info()}
 
+  @typedoc """
+  A minimal delta over the transaction system layout's `shard_materializers`
+  map. Each entry either assigns a materializer pid to a shard tag
+  (put/replace semantics) or removes the shard's entry with `:remove`.
+  """
+  @type tsl_delta :: %{Bedrock.range_tag() => pid() | :remove}
+
   @spec fetch_transaction_system_layout(director_ref :: ref(), timeout_in_ms :: timeout_in_ms()) ::
           {:ok, TransactionSystemLayout.t()} | {:error, :unavailable | :timeout | :unknown}
   def fetch_transaction_system_layout(director, timeout_in_ms \\ 5_000),
     do: call(director, :fetch_transaction_system_layout, timeout_in_ms)
+
+  @doc """
+  Apply a post-recovery delta to the transaction system layout's
+  `shard_materializers` map and broadcast the resulting TSL.
+
+  The delta is epoch-stamped: it is applied only when `epoch` matches the
+  director's own epoch. A delta carrying any other epoch (stale, or produced
+  against a generation this director doesn't know) is rejected with
+  `{:error, :newer_epoch_exists}`, mirroring the epoch guard used by
+  `lock_for_recovery` on data-plane services.
+
+  On success the director updates its retained TSL and hands the new TSL to
+  the coordinator, which broadcasts `{:tsl_updated, new_tsl}` to all
+  subscribed Links.
+
+  Returns `{:error, :unavailable}` if recovery has not yet produced a TSL.
+  """
+  @spec apply_tsl_delta(
+          director :: ref(),
+          delta :: tsl_delta(),
+          epoch :: Bedrock.epoch(),
+          timeout_in_ms :: timeout_in_ms()
+        ) ::
+          :ok | {:error, :newer_epoch_exists | :unavailable | :timeout | :unknown}
+  def apply_tsl_delta(director, delta, epoch, timeout_in_ms \\ 5_000),
+    do: call(director, {:apply_tsl_delta, delta, epoch}, timeout_in_ms)
 
   @doc """
   Sends a 'pong' message to the specified cluster director from the given node.

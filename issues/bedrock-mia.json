@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-15T13:32:32Z",
+  "description": "From PR #99 gating audit: apply_tsl_delta has no expected-old-value semantics. Narrow race: demand-raced recruit's delta and death-healing swap delta reach the director concurrently; if recruit lands first, swap leaves slot pointing at placeholder (permanent extra forward hop); combined with placeholder restart can strand a dead placeholder pid. Needs CAS-style expected-old-value or single-flight-per-tag serialization at the distributor. NOTE: interacts with Phase B (bedrock-q67.9) which retires this channel entirely — transactional system-key writes get versionstamp ordering for free; consider whether to fix interim or accept-and-document until Phase B.",
+  "id": "bedrock-mia",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "TSL delta channel is last-writer-wins: concurrent delta tasks can strand placeholder/dead pids in slots",
+  "type": "task",
+  "updated_at": "2026-07-15T13:32:32Z"
+}

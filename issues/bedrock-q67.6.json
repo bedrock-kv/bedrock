@@ -10,6 +10,12 @@
   "id": "bedrock-q67.6",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Workflow: branch from feature/q67-phase-a, PR into it (CI now fires on such PRs). DESIGN NOTE: the placeholder pid is unknown during recovery (Distributor starts AFTER recovery, FDB-style) — so relaxation is two-part: (1) bootstrap phase stalls only for tag 0, leaving failed data-shard slots ABSENT; (2) the Distributor's first act at startup is a coverage sweep: diff shard_layout vs shard_materializers and publish the placeholder into uncovered slots (apply_tsl_delta for now; Phase B swaps the publication mechanism). The q67.1 LayoutIndex loud-failure backstop covers the brief window between recovery completion and the sweep.",
+      "timestamp": "2026-07-15T12:55:20Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Recovery relaxation: stall only for system shard, placeholder coverage for data shards",

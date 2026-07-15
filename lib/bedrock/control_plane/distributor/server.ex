@@ -235,10 +235,15 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
     # The old pid is stale in every TSL slot it occupied: republish the new
     # placeholder pid into those slots so clients keep routing somewhere live.
+    # Tags with a recruitment in flight are excluded: the recruitment's real
+    # pid may already occupy the slot (its delta is applied before its
+    # completion cast is processed here) and must never regress to the
+    # placeholder. If the recruitment fails instead, recruitment_failed/4
+    # re-asserts the live placeholder for the slot.
     restarted = start_placeholder(t)
 
     restarted
-    |> publish_placeholder(restarted.placeholder_tags)
+    |> publish_placeholder(MapSet.difference(restarted.placeholder_tags, restarted.pending_demands))
     |> noreply()
   end
 
@@ -430,11 +435,21 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     emit_recruitment_failed(t.cluster, t.epoch, tag, reason, duration_us)
     if t.placeholder, do: Placeholder.notify_coverage_failed(t.placeholder, tag, reason)
 
-    %{
+    updated = %{
       t
       | pending_demands: MapSet.delete(t.pending_demands, tag),
         backoff: Map.put(t.backoff, tag, System.monotonic_time(:millisecond) + t.backoff_ms)
     }
+
+    # Re-assert the live placeholder for a placeholder-owned slot: a
+    # placeholder restart during this recruitment skipped the tag in its
+    # republish (see the :EXIT handler), so the slot may still hold the dead
+    # pid. Otherwise this is an idempotent re-publication of the same pid.
+    if MapSet.member?(updated.placeholder_tags, tag) do
+      publish_placeholder(updated, MapSet.new([tag]))
+    else
+      updated
+    end
   end
 
   # The placeholder is linked (so it dies with the distributor) and its

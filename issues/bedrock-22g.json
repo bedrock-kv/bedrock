@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-15T13:32:32Z",
+  "description": "From PR #99 gating audit: node loss -\u003e N :noproc DOWNs -\u003e N concurrent recruitments, uncapped, and find_materializer_capable_node (q67.5) always picks the FIRST node in node_capabilities[:materializer] — all recruits pile on one foreman with 30s-timeout calls. Add recruitment concurrency cap and rotate/spread placement (round-robin or load-aware). Phase A hardening.",
+  "id": "bedrock-22g",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Mass-death recruitment thundering herd; placement always picks first capable node",
+  "type": "task",
+  "updated_at": "2026-07-15T13:32:32Z"
+}

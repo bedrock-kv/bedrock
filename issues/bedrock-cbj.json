@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-15T13:33:17Z",
+  "description": "From PR #98 gating audit residual: handle_existing_cluster only bootstraps the system shard and never populates data-shard shard_materializers — so after EVERY epoch change, all data shards go placeholder + on-demand re-recruitment (cold-start latency per recovery), and previously-running data-shard materializers are left behind (potential mass orphaning as new recruits replace them). Pre-Phase-A this manifested as the original uncovered-gap behavior. FDB analogue: storage servers rejoin and are re-adopted. Design: recovery (or the Distributor sweep) should re-lock/re-adopt still-running materializers into coverage rather than recruiting fresh. Relates: bedrock-q67.11 (orphan reconciliation), bedrock-22g (thundering herd — every epoch change currently triggers herd conditions on first reads).",
+  "id": "bedrock-cbj",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Warm-cluster recovery re-covers all data shards via placeholder instead of re-adopting running materializers",
+  "type": "task",
+  "updated_at": "2026-07-15T13:33:17Z"
+}

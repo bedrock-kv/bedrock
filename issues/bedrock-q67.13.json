@@ -7,9 +7,15 @@
   "id": "bedrock-q67.13",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Implementation up as draft PR #101 (feature/q67-idle-spindown -\u003e feature/q67-phase-a, commit 0db98bde). Default DISABLED (:infinity); opt-in per worker via manifest param \"idle_timeout\" threaded through Foreman.new_worker params / recruitment :worker_params. Idle exit: sync best-effort snapshot upload, {:shutdown, :idle}, foreman remove_worker after exit (dir deleted). Distributor: placeholder swap, no eager re-recruitment. Awaiting gating audit - ticket left open.",
+      "timestamp": "2026-07-15T14:28:58Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Materializer idle spin-down: configurable inactivity timeout reclaims disk/memory",
   "type": "task",
-  "updated_at": "2026-07-15T14:06:05Z"
+  "updated_at": "2026-07-15T14:28:58Z"
 }

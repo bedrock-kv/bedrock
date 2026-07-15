@@ -21,6 +21,15 @@ defmodule Bedrock.ControlPlane.Distributor.Telemetry do
     )
   end
 
+  @spec emit_coverage_sweep(module(), Bedrock.epoch(), uncovered :: non_neg_integer()) :: :ok
+  def emit_coverage_sweep(cluster, epoch, uncovered) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :coverage_sweep],
+      %{uncovered: uncovered},
+      %{cluster: cluster, epoch: epoch}
+    )
+  end
+
   @spec emit_coverage_demand(module(), Bedrock.range_tag()) :: :ok
   def emit_coverage_demand(cluster, tag) do
     :telemetry.execute(

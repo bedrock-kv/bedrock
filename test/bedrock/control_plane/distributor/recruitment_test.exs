@@ -219,6 +219,81 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
     end
   end
 
+  describe "placeholder restart racing recruitment" do
+    test "a restart does not republish a tag whose recruitment is in flight" do
+      test_pid = self()
+      stub = start_stub(%{})
+
+      recruitment = %{
+        create_worker_fn: fn _foreman, _worker_id, _kind, _opts ->
+          send(test_pid, {:recruiting, self()})
+
+          receive do
+            :release -> {:ok, :stub_worker_ref}
+          end
+        end,
+        lock_materializer_fn: fn _worker, _epoch -> {:ok, stub, %{}} end,
+        unlock_materializer_fn: fn _pid, _durable_version, _tsl -> :ok end
+      }
+
+      {distributor, _director} = start_distributor(recruitment: recruitment)
+
+      # The startup sweep covers the uncovered tag with the placeholder.
+      placeholder = placeholder_of(distributor)
+      assert_receive {:apply_tsl_delta, %{1 => ^placeholder}, 42}, 2_000
+
+      GenServer.cast(distributor, {:coverage_demand, 1})
+      assert_receive {:recruiting, task}
+
+      capture_log(fn ->
+        # The placeholder dies while recruitment is in flight. The restart
+        # must NOT republish tag 1: the recruitment's real pid may already
+        # occupy the slot and would be clobbered back to the placeholder.
+        Process.exit(placeholder, :kill)
+        refute_receive {:apply_tsl_delta, %{1 => _}, 42}, 200
+
+        # The in-flight recruitment lands its real pid.
+        send(task, :release)
+        assert_receive {:apply_tsl_delta, %{1 => ^stub}, 42}, 2_000
+      end)
+    end
+
+    test "a recruitment failure re-asserts the live placeholder after a mid-flight restart" do
+      test_pid = self()
+
+      recruitment = %{
+        create_worker_fn: fn _foreman, _worker_id, _kind, _opts ->
+          send(test_pid, {:recruiting, self()})
+
+          receive do
+            :fail -> {:error, :no_capacity}
+          end
+        end
+      }
+
+      {distributor, _director} = start_distributor(recruitment: recruitment)
+
+      placeholder = placeholder_of(distributor)
+      assert_receive {:apply_tsl_delta, %{1 => ^placeholder}, 42}, 2_000
+
+      GenServer.cast(distributor, {:coverage_demand, 1})
+      assert_receive {:recruiting, task}
+
+      capture_log(fn ->
+        # Restart skips the pending tag, leaving the dead pid in the slot...
+        Process.exit(placeholder, :kill)
+        refute_receive {:apply_tsl_delta, %{1 => _}, 42}, 200
+
+        # ...so when the recruitment fails, the slot is healed with the
+        # restarted placeholder's pid.
+        send(task, :fail)
+        assert_receive {:apply_tsl_delta, %{1 => new_placeholder}, 42}, 2_000
+        assert new_placeholder != placeholder
+        assert new_placeholder == placeholder_of(distributor)
+      end)
+    end
+  end
+
   describe "failed recruitment" do
     test "failure sheds the parked read, emits telemetry, and backs off until expiry" do
       attach_recruitment_telemetry(self())
@@ -271,7 +346,12 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
     test "a rejected TSL delta (newer epoch exists) stops the distributor" do
       test_pid = self()
       stub = start_stub(%{})
-      director = start_supervised!({CaptureDirector, [test_pid, {:error, :newer_epoch_exists}]}, id: :stale_director)
+
+      director =
+        start_supervised!(%{
+          id: :stale_director,
+          start: {CaptureDirector, :start_link, [test_pid, {:error, :newer_epoch_exists}]}
+        })
 
       recruitment = %{
         create_worker_fn: fn _foreman, _worker_id, _kind, _opts -> {:ok, :stub_worker_ref} end,
@@ -279,7 +359,15 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         unlock_materializer_fn: fn _pid, _durable_version, _tsl -> :ok end
       }
 
-      {distributor, _director} = start_distributor(recruitment: recruitment, director: director)
+      # The shard starts covered so the startup coverage sweep publishes
+      # nothing; the rejected delta under test is recruitment's own.
+      {distributor, _director} =
+        start_distributor(
+          recruitment: recruitment,
+          director: director,
+          transaction_system_layout: %{shard_materializers: %{1 => stub}}
+        )
+
       ref = Process.monitor(distributor)
 
       GenServer.cast(distributor, {:coverage_demand, 1})

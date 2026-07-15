@@ -64,7 +64,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderIntegrationTest do
     task = Task.async(fn -> PointReads.get_key(state, "apple") end)
 
     # The client's read is parked; the placeholder signaled coverage demand.
-    assert_receive {:"$gen_cast", {:coverage_demand, 1}}
+    assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 2_000
 
     stub = start_stub(%{"apple" => "red"})
     :ok = Placeholder.notify_covered(placeholder, 1, stub)
@@ -78,7 +78,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderIntegrationTest do
 
     task = Task.async(fn -> RangeReads.get_range(state, {"a", "c"}, 100) end)
 
-    assert_receive {:"$gen_cast", {:coverage_demand, 1}}
+    assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 2_000
 
     stub = start_stub(%{"apple" => "red", "banana" => "yellow", "zebra" => "striped"})
     :ok = Placeholder.notify_covered(placeholder, 1, stub)
@@ -92,7 +92,9 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderIntegrationTest do
 
     task = Task.async(fn -> PointReads.get_key(state, "apple") end)
 
-    assert_receive {:"$gen_cast", {:coverage_demand, 1}}
+    # Generous timeout: under full-suite load the read can take longer than
+    # the default 100ms to reach the placeholder and emit its demand.
+    assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 2_000
 
     assert {%State{}, {:failure, %{unavailable: [^placeholder]}}} = Task.await(task, 2_000)
   end

@@ -124,6 +124,103 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       :ets.delete(unlocks)
     end
 
+    test "for fresh cluster, data-shard materializer failure completes recovery with the slot absent" do
+      system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      test_pid = self()
+      handler_id = "bootstrap-skip-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:bedrock, :recovery, :bootstrap_shard_skipped],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:metadata_materializer, nil)
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0, 1]})
+
+      context =
+        [
+          old_transaction_system_layout: %{logs: %{}},
+          node_capabilities: %{
+            log: [Node.self()],
+            materializer: [Node.self()]
+          }
+        ]
+        |> create_test_context()
+        |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
+          {:ok, :new_materializer_ref}
+        end)
+        |> Map.put(:lock_materializer_fn, fn {:materializer, _ref, shard_tag}, _epoch ->
+          if shard_tag == 0 do
+            {:ok, system_materializer_pid}
+          else
+            {:error, {:materializer_lock_failed, :unavailable}}
+          end
+        end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+
+      log =
+        capture_log(fn ->
+          assert {updated_attempt, CommitProxyStartupPhase} =
+                   MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+          # The system shard slot is filled; the failed data shard's slot is
+          # ABSENT (the distributor's coverage sweep fills it post-recovery).
+          assert updated_attempt.shard_materializers == %{0 => system_materializer_pid}
+          assert updated_attempt.metadata_materializer == system_materializer_pid
+          assert map_size(updated_attempt.shard_layout) == 2
+        end)
+
+      assert log =~ "Skipping materializer bootstrap for data shard 1"
+
+      assert_receive {:telemetry, [:bedrock, :recovery, :bootstrap_shard_skipped], %{},
+                      %{shard_tag: 1, reason: {:materializer_lock_failed, :unavailable}}}
+    end
+
+    test "for fresh cluster, system-shard materializer failure still stalls recovery" do
+      user_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:metadata_materializer, nil)
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0, 1]})
+
+      context =
+        [
+          old_transaction_system_layout: %{logs: %{}},
+          node_capabilities: %{
+            log: [Node.self()],
+            materializer: [Node.self()]
+          }
+        ]
+        |> create_test_context()
+        |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
+          {:ok, :new_materializer_ref}
+        end)
+        |> Map.put(:lock_materializer_fn, fn {:materializer, _ref, shard_tag}, _epoch ->
+          if shard_tag == 0 do
+            {:error, {:materializer_lock_failed, :unavailable}}
+          else
+            {:ok, user_materializer_pid}
+          end
+        end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+
+      capture_log(fn ->
+        assert {_attempt, {:stalled, {:materializer_creation_failed, {0, {:materializer_lock_failed, :unavailable}}}}} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+      end)
+    end
+
     test "stalls when no materializer capable nodes exist" do
       recovery_attempt =
         recovery_attempt()

@@ -131,6 +131,54 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentIntegrationTest do
     refute_receive {:stub_materializer, {:locked_for_recovery, _, _}}, 100
   end
 
+  test "recovery gap: the sweep covers the shard, a client read parks at the placeholder, and recruitment serves it" do
+    # Recovery-like state: the data shard (tag 1) has NO materializer - its
+    # bootstrap failed, so recovery completed with the slot absent. The
+    # distributor starts with an empty shard_materializers snapshot (the
+    # default transaction_system_layout here) and must sweep.
+    worker_name = :"swept_stub_#{System.unique_integer([:positive])}"
+
+    start_supervised!(%{
+      id: :swept_stub,
+      start: {StubMaterializer, :start_link, [%{"apple" => "red"}, [name: worker_name, observer: self()]]}
+    })
+
+    recruitment = %{
+      create_worker_fn: fn {_foreman_name, _node}, _worker_id, :materializer, _opts -> {:ok, worker_name} end
+    }
+
+    {_distributor, placeholder} = start_distributor(recruitment: recruitment)
+
+    # The distributor's startup sweep publishes ONE delta filling the
+    # uncovered slot with the placeholder pid. No recruitment yet: the
+    # sweep is publication only, demand stays read-driven.
+    assert_receive {:apply_tsl_delta, %{1 => ^placeholder} = sweep_delta, @epoch}, 5_000
+    assert map_size(sweep_delta) == 1
+    refute_receive {:stub_materializer, {:locked_for_recovery, _, _}}, 100
+
+    # The client routes through the swept TSL: its layout is built from the
+    # sweep delta, so the read lands on the placeholder and parks there.
+    layout_index =
+      LayoutIndex.build_index(%{shard_layout: @shard_layout, shard_materializers: sweep_delta})
+
+    state = %State{
+      state: :valid,
+      layout_index: layout_index,
+      read_version: Version.from_integer(1),
+      fetch_timeout_in_ms: 5_000
+    }
+
+    task = Task.async(fn -> PointReads.get_key(state, "apple") end)
+
+    # The parked read produces demand; recruitment runs and publishes the
+    # real materializer over the placeholder's slot.
+    assert_receive {:stub_materializer, {:locked_for_recovery, worker_pid, @epoch}}, 5_000
+    assert_receive {:apply_tsl_delta, %{1 => ^worker_pid}, @epoch}, 5_000
+
+    # The SAME read is served with the real value.
+    assert {%State{}, {:ok, {"apple", "red"}}} = Task.await(task, 5_000)
+  end
+
   test "recruits a REAL olivine materializer and serves a read through it" do
     tmp_dir = "/tmp/recruitment_olivine_#{System.unique_integer([:positive])}"
     File.mkdir_p!(tmp_dir)

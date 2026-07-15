@@ -118,6 +118,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
+  @spec trace_recovery_bootstrap_shard_skipped(Bedrock.range_tag(), reason :: term()) :: :ok
+  def trace_recovery_bootstrap_shard_skipped(shard_tag, reason) do
+    Telemetry.execute([:bedrock, :recovery, :bootstrap_shard_skipped], %{}, %{
+      shard_tag: shard_tag,
+      reason: reason
+    })
+  end
+
   @spec trace_recovery_persisting_system_state() :: :ok
   def trace_recovery_persisting_system_state do
     Telemetry.execute([:bedrock, :recovery, :persisting_system_state], %{}, %{})

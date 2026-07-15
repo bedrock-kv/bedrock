@@ -23,7 +23,13 @@ defmodule Bedrock.ControlPlane.Director.DistributorRecruitmentTest do
         state: :running,
         cluster: TestCluster,
         epoch: 5,
-        transaction_system_layout: %{shard_layout: %{<<0xFF>> => {0, <<>>}}}
+        # The metadata materializer covers the system shard, as recovery
+        # guarantees; otherwise the distributor's startup coverage sweep
+        # would try to publish placeholder coverage through this test pid.
+        transaction_system_layout: %{
+          shard_layout: %{<<0xFF>> => {0, <<>>}},
+          metadata_materializer: self()
+        }
       },
       overrides
     )

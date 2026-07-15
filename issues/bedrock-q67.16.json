@@ -14,11 +14,16 @@
       "text": "Design (q67.16 implementation): (1) Identity+ack carrier: opts[:metadata_ack] = {proxy_server_pid, applied_metadata_version} on Resolver.resolve_transactions/7, made an explicit 6th element of the GenServer call message (keeps resolver_fn arity-7 DI seam; proxy server pid is stable per epoch). (2) Resolver keys proxy_progress by proxy_id: %{pid =\u003e {acked, last_seen_version}}; differentials computed from CONFIRMED-applied version (the ack), so windows to a proxy overlap until confirmed: (ack, now]. Out-of-order task arrivals at the proxy are safe by construction (late earlier window is a subset; per-entry version guard in Metadata.apply_updates skips it) - no buffering, no resync in the normal path. (3) Timeout-retry safety falls out: a lost reply never advances progress; the next call re-carries the same ack and the resolver re-sends. (4) Reply is nil (no window) or {from, to, entries}; proxy applies in server, sets version=max(version,to); gap iff from != nil and from \u003e applied -\u003e exit({:metadata_coverage_gap,..}) (fail-fast: resolver only retains a window, pruned data is unrecoverable; recovery rebuilds proxies with full state). (5) Bounds: window pruned through min(acked); proxies not seen within version_retention expire from proxy_progress (bounds map to ~live proxies and unblocks pruning); steady-state payload is nil/O(new updates).",
       "author": "claude",
       "timestamp": "2026-07-15T20:31:24Z"
+    },
+    {
+      "text": "Implemented on feature/q67-metadata-window-protocol, commit c89db5e0, draft PR #106 into feature/q67-phase-a. Tripwire test replaced with the new protocol's invariants (differential/empty steady-state windows, timeout-retry re-send, identity-keyed progress + pruning, laggard expiry + gap fail-fast); proxy-side window application tests added; #105 integration test passes unchanged. Full suite 2661 tests 0 failures; credo --strict + dialyzer clean. Not merged, ticket left open per instructions.",
+      "author": "claude",
+      "timestamp": "2026-07-15T20:44:55Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Resolver metadata window protocol: per-task proxy identity breaks differential design (leak + O(history) per batch)",
   "type": "task",
-  "updated_at": "2026-07-15T20:31:24Z"
+  "updated_at": "2026-07-15T20:44:55Z"
 }

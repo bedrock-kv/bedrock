@@ -89,7 +89,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       resolver_fn = fn ref, 1, @last_commit_version, @commit_version, transactions, metadata, _opts ->
         send(test_pid, {:resolved, ref, transactions, metadata})
-        {:ok, [], []}
+        {:ok, [], nil}
       end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
@@ -109,8 +109,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         ])
 
       resolver_fn = fn
-        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [0], []}
-        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [1], []}
+        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [0], nil}
+        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [1], nil}
       end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
@@ -128,7 +128,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
           {reply_fn(self(), :tx1), encode_tx("zebra", "v1")}
         ])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
 
@@ -146,7 +146,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         ])
 
       resolver_fn = fn
-        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []}
+        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil}
         :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:error, :resolver_crashed}
       end
 
@@ -185,7 +185,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       batch = batch_with([{reply_fn(self(), :tx0), no_mutations_tx}])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
 
       opts = base_opts(single_layout(), routing_data(), resolver_fn: resolver_fn)
 
@@ -208,7 +208,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       batch = batch_with([{reply_fn(self(), :tx0), hostile_tx}])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
 
       opts = base_opts(single_layout(), routing_data(), resolver_fn: resolver_fn)
 
@@ -234,7 +234,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       batch = batch_with([{reply_fn(self(), :tx0), spanning_tx}])
       test_pid = self()
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
 
       log_push_fn = fn _last, transactions_by_log, _commit, _opts ->
         send(test_pid, {:pushed, transactions_by_log})
@@ -269,7 +269,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       batch = batch_with([{reply_fn(self(), :tx0), atomic_tx}])
       test_pid = self()
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
 
       log_push_fn = fn _last, transactions_by_log, _commit, _opts ->
         send(test_pid, {:pushed, transactions_by_log})
@@ -293,7 +293,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
     batch = batch_with([{reply_fn(self(), :tx0), encode_tx("key", "value")}])
     test_pid = self()
 
-    resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+    resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
 
     log_push_fn = fn _last, transactions_by_log, _commit, _opts ->
       send(test_pid, {:pushed, transactions_by_log})

@@ -170,6 +170,10 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     wait_until(fn -> proxy_metadata(proxy).shards != %{} end)
 
     assert %Metadata{shards: %{"m" => 7}, version: ^version} = proxy_metadata(proxy)
+
+    # 3. The resolver tracks progress under the commit proxy SERVER's stable
+    #    identity, not the per-batch finalization task pid (bedrock-q67.16).
+    assert %{^proxy => {_acked, _last_seen}} = :sys.get_state(resolver).proxy_progress
   end
 
   test "metadata updates arrive ordered across multiple batches; later value wins", %{

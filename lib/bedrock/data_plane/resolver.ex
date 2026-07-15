@@ -14,9 +14,15 @@ defmodule Bedrock.DataPlane.Resolver do
   ## Metadata Distribution
 
   The Resolver also acts as a distribution point for system metadata mutations
-  (keys with \\xFF prefix). Each request includes metadata mutations per transaction,
-  and the response includes differential metadata updates for the calling proxy.
-
+  (keys with \\xFF prefix). Each request includes metadata mutations per
+  transaction plus a `metadata_ack` - the calling commit proxy's stable
+  identity (its server pid, not the per-batch finalization task pid) and the
+  highest metadata window version that proxy has confirmed applying. The
+  response includes a differential metadata window covering everything since
+  the confirmed version, or `nil` when there is nothing to report. Because
+  progress only advances via acks, lost replies are re-sent on the proxy's
+  next call and concurrent in-flight windows overlap (out-of-order arrival at
+  the proxy is lossless).
   """
 
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
@@ -26,6 +32,24 @@ defmodule Bedrock.DataPlane.Resolver do
 
   @type metadata_mutations :: [Bedrock.Internal.TransactionBuilder.Tx.mutation()]
 
+  @typedoc """
+  The calling proxy's stable identity and the highest metadata window
+  `to_version` it has confirmed applying (nil if none yet).
+  """
+  @type metadata_ack :: {proxy_id :: pid(), applied_version :: Bedrock.version() | nil}
+
+  @typedoc """
+  A differential window of metadata mutations covering `(from_version,
+  to_version]`. `from_version` is nil when coverage starts at the beginning of
+  the resolver's history; a `from_version` beyond what the proxy has applied
+  signals an unrecoverable coverage gap (the resolver pruned history the proxy
+  never confirmed).
+  """
+  @type metadata_window ::
+          {from_version :: Bedrock.version() | nil, to_version :: Bedrock.version(),
+           entries :: [MetadataAccumulator.entry()]}
+          | nil
+
   @spec resolve_transactions(
           ref(),
           epoch :: Bedrock.epoch(),
@@ -33,13 +57,14 @@ defmodule Bedrock.DataPlane.Resolver do
           commit_version :: Bedrock.version(),
           [Transaction.encoded()],
           metadata_per_tx :: [metadata_mutations()],
-          opts :: [timeout: Bedrock.timeout_in_ms()]
+          opts :: [timeout: Bedrock.timeout_in_ms(), metadata_ack: metadata_ack()]
         ) ::
-          {:ok, aborted :: [transaction_index :: non_neg_integer()], metadata_updates :: [MetadataAccumulator.entry()]}
+          {:ok, aborted :: [transaction_index :: non_neg_integer()], metadata_window()}
           | {:failure, :timeout, ref()}
           | {:failure, :unavailable, ref()}
   def resolve_transactions(ref, epoch, last_version, commit_version, transaction_summaries, metadata_per_tx, opts \\ []) do
     timeout = opts[:timeout] || :infinity
+    metadata_ack = opts[:metadata_ack] || {self(), nil}
 
     :telemetry.span(
       [:bedrock, :data_plane, :resolver, :call, :resolve_transactions],
@@ -54,12 +79,13 @@ defmodule Bedrock.DataPlane.Resolver do
       fn ->
         ref
         |> GenServer.call(
-          {:resolve_transactions, epoch, {last_version, commit_version}, transaction_summaries, metadata_per_tx},
+          {:resolve_transactions, epoch, {last_version, commit_version}, transaction_summaries, metadata_per_tx,
+           metadata_ack},
           timeout
         )
         |> case do
-          {:ok, aborted, metadata_updates} ->
-            {{:ok, aborted, metadata_updates}, %{aborted: aborted}}
+          {:ok, aborted, metadata_window} ->
+            {{:ok, aborted, metadata_window}, %{aborted: aborted}}
 
           {:error, reason} ->
             {{:error, reason}, %{}}

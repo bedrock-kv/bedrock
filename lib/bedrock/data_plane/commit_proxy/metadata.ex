@@ -14,7 +14,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Metadata do
   - `version` - highest commit version applied so far (nil until first update)
   - `shards` - `shard_key(end_key) -> tag` ceiling-search shard map
   - `shard_metadata` - `shard(tag) -> encoded ShardMetadata` (kept encoded;
-    FlatBuffer, not `term_to_binary`)
+    FlatBuffer)
   - `materializers` - `materializer_key(end_key) -> encoded value` (kept encoded)
   - `logs` - `layout_log(log_id) -> decoded log descriptor`
   - `services` - decoded `layout_services` map
@@ -38,11 +38,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Metadata do
   - `{:clear_range, start_key, end_key}` - removes every known entry whose full
     system key falls within `[start_key, end_key)`
   - Unknown or unparseable system keys are ignored (forward compatibility) and
-    counted in the returned stats; the same goes for `{:atomic, ...}` mutations,
+    counted in the returned stats; the same goes for values that fail to
+    decode (see `Bedrock.SystemKeys.Values`) and `{:atomic, ...}` mutations,
     which are not supported for structured metadata.
   """
 
   alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   @type family ::
           :shard_key
@@ -124,9 +126,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Metadata do
   # ============================================================================
 
   defp apply_mutation({:set, key, value}, {metadata, stats}) do
-    case SystemKeys.parse_key(key) do
-      parsed when parsed in [:unknown, :error] -> skip(key, {metadata, stats})
-      parsed -> applied(family_of(parsed), {put_entry(metadata, parsed, value), stats})
+    with parsed when parsed not in [:unknown, :error] <- SystemKeys.parse_key(key),
+         {:ok, decoded} <- Values.decode_for(parsed, value) do
+      applied(family_of(parsed), {put_entry(metadata, parsed, decoded), stats})
+    else
+      _ -> skip(key, {metadata, stats})
     end
   end
 
@@ -167,11 +171,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Metadata do
   # Entry storage (parsed key -> struct slot)
   # ============================================================================
 
-  # Values written by PersistencePhase are term_to_binary encoded, except
+  # Values arrive decoded per family by Bedrock.SystemKeys.Values, except
   # shard/1 (FlatBuffer ShardMetadata) and materializer_key/1, which are kept
-  # encoded. Encoding will change under bedrock-ri40; decode stays centralized here.
-  defp put_entry(metadata, {:shard_key, end_key}, value),
-    do: %{metadata | shards: Map.put(metadata.shards, end_key, decode(value))}
+  # encoded. A shard_key value decodes to {tag, start_key}; only the tag is
+  # kept, since the shards slot is the ceiling-search routing view.
+  defp put_entry(metadata, {:shard_key, end_key}, {tag, _start_key}),
+    do: %{metadata | shards: Map.put(metadata.shards, end_key, tag)}
 
   defp put_entry(metadata, {:shard, tag}, value),
     do: %{metadata | shard_metadata: Map.put(metadata.shard_metadata, tag, value)}
@@ -179,26 +184,24 @@ defmodule Bedrock.DataPlane.CommitProxy.Metadata do
   defp put_entry(metadata, {:materializer_key, end_key}, value),
     do: %{metadata | materializers: Map.put(metadata.materializers, end_key, value)}
 
-  defp put_entry(metadata, {:layout_log, log_id}, value),
-    do: %{metadata | logs: Map.put(metadata.logs, log_id, decode(value))}
+  defp put_entry(metadata, {:layout_log, log_id}, value), do: %{metadata | logs: Map.put(metadata.logs, log_id, value)}
 
-  defp put_entry(metadata, :layout_services, value), do: %{metadata | services: decode(value)}
-  defp put_entry(metadata, :layout_id, value), do: %{metadata | layout_id: decode(value)}
+  defp put_entry(metadata, :layout_services, value), do: %{metadata | services: value}
+  defp put_entry(metadata, :layout_id, value), do: %{metadata | layout_id: value}
 
-  defp put_entry(metadata, {:cluster, name}, value),
-    do: %{metadata | cluster: Map.put(metadata.cluster, name, decode(value))}
+  defp put_entry(metadata, {:cluster, name}, value), do: %{metadata | cluster: Map.put(metadata.cluster, name, value)}
 
   defp put_entry(metadata, {:cluster_policy, name}, value),
-    do: %{metadata | policies: Map.put(metadata.policies, name, decode(value))}
+    do: %{metadata | policies: Map.put(metadata.policies, name, value)}
 
   defp put_entry(metadata, {:cluster_parameter, name}, value),
-    do: %{metadata | parameters: Map.put(metadata.parameters, name, decode(value))}
+    do: %{metadata | parameters: Map.put(metadata.parameters, name, value)}
 
   defp put_entry(metadata, {:recovery, name}, value),
-    do: %{metadata | recovery: Map.put(metadata.recovery, name, decode(value))}
+    do: %{metadata | recovery: Map.put(metadata.recovery, name, value)}
 
   defp put_entry(metadata, legacy, value) when legacy in [:config_monolithic, :epoch_legacy, :last_recovery_legacy],
-    do: %{metadata | legacy: Map.put(metadata.legacy, legacy, decode(value))}
+    do: %{metadata | legacy: Map.put(metadata.legacy, legacy, value)}
 
   defp delete_entry(metadata, {:shard_key, end_key}), do: %{metadata | shards: Map.delete(metadata.shards, end_key)}
 
@@ -220,8 +223,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Metadata do
 
   defp delete_entry(metadata, legacy) when legacy in [:config_monolithic, :epoch_legacy, :last_recovery_legacy],
     do: %{metadata | legacy: Map.delete(metadata.legacy, legacy)}
-
-  defp decode(value), do: :erlang.binary_to_term(value)
 
   # ============================================================================
   # clear_range support: enumerate every stored entry with its full system key

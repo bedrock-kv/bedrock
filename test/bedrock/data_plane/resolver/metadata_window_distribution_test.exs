@@ -34,6 +34,7 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
   alias Bedrock.DataPlane.Resolver.Server, as: ResolverServer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.SystemKeys.Values
 
   defp start_resolver(opts \\ []) do
     start_supervised!(
@@ -78,9 +79,9 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
   setup do
     %{
       proxy: spawn_link(fn -> Process.sleep(:infinity) end),
-      m1: {:set, <<0xFF, "/system/shard_keys/a">>, :erlang.term_to_binary(1)},
-      m2: {:set, <<0xFF, "/system/shard_keys/b">>, :erlang.term_to_binary(2)},
-      m3: {:set, <<0xFF, "/system/shard_keys/c">>, :erlang.term_to_binary(3)}
+      m1: {:set, <<0xFF, "/system/shard_keys/a">>, Values.encode_shard_key_entry(1, "")},
+      m2: {:set, <<0xFF, "/system/shard_keys/b">>, Values.encode_shard_key_entry(2, "")},
+      m3: {:set, <<0xFF, "/system/shard_keys/c">>, Values.encode_shard_key_entry(3, "")}
     }
   end
 

@@ -37,6 +37,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
+  alias Bedrock.SystemKeys.Values
 
   require Logger
 
@@ -417,16 +418,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
     case Materializer.get_range(materializer_pid, prefix, end_key, read_version, limit: 1000) do
       {:ok, {entries, _more}} ->
-        shard_layout =
-          Map.new(entries, fn {key, value} ->
-            # Key format: \xff/system/shard_keys/<end_key>
-            # Value format: {tag, start_key}
-            end_key = extract_end_key_from_shard_key(key)
-            {tag, start_key} = decode_shard_value(value)
-            {end_key, {tag, start_key}}
-          end)
-
-        {:ok, shard_layout}
+        build_shard_layout(entries)
 
       {:error, reason} ->
         {:error, {:shard_layout_query_failed, reason}}
@@ -436,13 +428,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
+  # Key format: \xff/system/shard_keys/<end_key>
+  # Value format: {tag, start_key} (see Bedrock.SystemKeys.Values)
+  defp build_shard_layout(entries) do
+    Enum.reduce_while(entries, {:ok, %{}}, fn {key, value}, {:ok, shard_layout} ->
+      end_key = extract_end_key_from_shard_key(key)
+
+      case Values.decode_shard_key_entry(value) do
+        {:ok, {tag, start_key}} ->
+          {:cont, {:ok, Map.put(shard_layout, end_key, {tag, start_key})}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:invalid_shard_value, key, reason}}}
+      end
+    end)
+  end
+
   defp extract_end_key_from_shard_key(key) do
     prefix = Bedrock.SystemKeys.shard_keys_prefix()
     prefix_len = byte_size(prefix)
     binary_part(key, prefix_len, byte_size(key) - prefix_len)
-  end
-
-  defp decode_shard_value(value) when is_binary(value) do
-    :erlang.binary_to_term(value)
   end
 end

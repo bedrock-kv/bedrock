@@ -22,6 +22,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Version
   alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   defp v(n), do: Version.from_integer(n)
 
@@ -36,7 +37,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     }
   end
 
-  defp shard_set(key, tag), do: {:set, SystemKeys.shard_key(key), :erlang.term_to_binary(tag)}
+  defp shard_set(key, tag), do: {:set, SystemKeys.shard_key(key), Values.encode_shard_key_entry(tag, "")}
 
   defp apply_window(state, window) do
     {:noreply, updated, _timeout} = Server.handle_info({:metadata_updates, window}, state)

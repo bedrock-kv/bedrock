@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
   alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   describe "new_empty/0" do
     test "creates empty routing data with all fields initialized" do
@@ -294,7 +295,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
     test "handles shard_key set mutation" do
       routing_data = RoutingData.new_empty()
       key = SystemKeys.shard_key("m")
-      value = :erlang.term_to_binary(42)
+      value = Values.encode_shard_key_entry(42, "")
       updates = [{100, [{:set, key, value}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
@@ -310,9 +311,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updates = [
         {100,
          [
-           {:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(1)},
-           {:set, SystemKeys.shard_key("m"), :erlang.term_to_binary(2)},
-           {:set, SystemKeys.shard_key("z"), :erlang.term_to_binary(3)}
+           {:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(1, "")},
+           {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(2, "")},
+           {:set, SystemKeys.shard_key("z"), Values.encode_shard_key_entry(3, "")}
          ]}
       ]
 
@@ -330,7 +331,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       key = SystemKeys.layout_log("log-123")
       # layout_log stores log descriptor (tags) as erlang term
       log_descriptor = [0, 1]
-      value = :erlang.term_to_binary(log_descriptor)
+      value = Values.encode_tag_list(log_descriptor)
       updates = [{100, [{:set, key, value}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
@@ -349,8 +350,8 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updates = [
         {100,
          [
-           {:set, SystemKeys.layout_log("log-1"), :erlang.term_to_binary([0])},
-           {:set, SystemKeys.layout_log("log-2"), :erlang.term_to_binary([1])}
+           {:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])},
+           {:set, SystemKeys.layout_log("log-2"), Values.encode_tag_list([1])}
          ]}
       ]
 
@@ -400,9 +401,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.new_empty()
 
       updates = [
-        {100, [{:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(1)}]},
-        {101, [{:set, SystemKeys.shard_key("b"), :erlang.term_to_binary(2)}]},
-        {102, [{:set, SystemKeys.shard_key("a"), :erlang.term_to_binary(99)}]}
+        {100, [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(1, "")}]},
+        {101, [{:set, SystemKeys.shard_key("b"), Values.encode_shard_key_entry(2, "")}]},
+        {102, [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(99, "")}]}
       ]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
@@ -462,10 +463,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updates = [
         {100,
          [
-           {:set, SystemKeys.shard_key("m"), :erlang.term_to_binary(1)},
-           {:set, SystemKeys.layout_log("log-1"), :erlang.term_to_binary([0])},
-           {:set, SystemKeys.shard_key("z"), :erlang.term_to_binary(2)},
-           {:set, SystemKeys.layout_log("log-2"), :erlang.term_to_binary([1])}
+           {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "")},
+           {:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])},
+           {:set, SystemKeys.shard_key("z"), Values.encode_shard_key_entry(2, "")},
+           {:set, SystemKeys.layout_log("log-2"), Values.encode_tag_list([1])}
          ]}
       ]
 

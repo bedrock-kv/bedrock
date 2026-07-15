@@ -18,6 +18,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     only: [
       emit_distributor_started: 3,
       emit_distributor_stopped: 3,
+      emit_coverage_sweep: 3,
       emit_coverage_demand: 2,
       emit_recruitment_started: 3,
       emit_recruitment_succeeded: 5,
@@ -26,6 +27,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   import Bedrock.Internal.GenServer.Replies
 
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
   alias Bedrock.ControlPlane.Distributor.Placeholder
@@ -79,7 +81,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   end
 
   @impl true
-  @spec init(State.t()) :: {:ok, State.t()}
+  @spec init(State.t()) :: {:ok, State.t(), {:continue, :coverage_sweep}}
   def init(%State{} = state) do
     # Monitor the Director - if it dies, this distributor should terminate
     # and let the next director recruit a fresh one. Trap exits so the
@@ -89,7 +91,23 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
     emit_distributor_started(state.cluster, state.epoch, state.director)
 
-    {:ok, start_placeholder(state)}
+    {:ok, start_placeholder(state), {:continue, :coverage_sweep}}
+  end
+
+  # The distributor's first act: diff the shard layout against the
+  # shard_materializers snapshot recovery produced and publish the
+  # placeholder pid into every uncovered slot (one batched TSL delta), so
+  # clients route to the placeholder instead of hitting the LayoutIndex
+  # loud-failure backstop. Recruitment stays demand-driven: it is triggered
+  # by a real read arriving at the placeholder, never by the sweep.
+  @impl true
+  def handle_continue(:coverage_sweep, %State{} = t) do
+    uncovered = uncovered_tags(t)
+    emit_coverage_sweep(t.cluster, t.epoch, MapSet.size(uncovered))
+
+    %{t | placeholder_tags: MapSet.union(t.placeholder_tags, uncovered)}
+    |> publish_placeholder(uncovered)
+    |> noreply()
   end
 
   @impl true
@@ -147,7 +165,13 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     emit_recruitment_succeeded(t.cluster, t.epoch, tag, node, duration_us)
     if t.placeholder, do: Placeholder.notify_covered(t.placeholder, tag, materializer)
 
-    noreply(%{t | pending_demands: MapSet.delete(t.pending_demands, tag)})
+    # The recruited materializer now occupies the TSL slot, so a placeholder
+    # restart must no longer republish the placeholder into it.
+    noreply(%{
+      t
+      | pending_demands: MapSet.delete(t.pending_demands, tag),
+        placeholder_tags: MapSet.delete(t.placeholder_tags, tag)
+    })
   end
 
   def handle_cast({:recruitment_complete, tag, {:error, :newer_epoch_exists}, _duration_us}, %State{} = t) do
@@ -162,6 +186,28 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     t
     |> recruitment_failed(tag, reason, duration_us)
     |> noreply()
+  end
+
+  # Completion of an asynchronous coverage-sweep publication. A rejection
+  # on epoch grounds means this distributor has been superseded, mirroring
+  # check_epoch semantics: stop and cede to the new epoch's distributor.
+  def handle_cast({:sweep_complete, _tags, :ok}, %State{} = t), do: noreply(t)
+
+  def handle_cast({:sweep_complete, _tags, {:error, :newer_epoch_exists}}, %State{} = t) do
+    Logger.info("Distributor for epoch #{t.epoch} superseded (coverage sweep delta rejected); stopping")
+
+    stop(t, :normal)
+  end
+
+  def handle_cast({:sweep_complete, tags, {:error, reason}}, %State{} = t) do
+    # The LayoutIndex loud-failure backstop still covers these slots, and a
+    # placeholder restart republishes them, so degrade with a warning only.
+    Logger.warning(
+      "Distributor for epoch #{t.epoch} failed to publish placeholder coverage for shard tags " <>
+        "#{inspect(tags)}: #{inspect(reason)}"
+    )
+
+    noreply(t)
   end
 
   # Internal/test seam: relay a coverage result to the placeholder.
@@ -187,7 +233,13 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   def handle_info({:EXIT, placeholder, reason}, %State{placeholder: placeholder} = t) do
     Logger.warning("Distributor for epoch #{t.epoch} restarting placeholder (exited: #{inspect(reason)})")
 
-    noreply(start_placeholder(t))
+    # The old pid is stale in every TSL slot it occupied: republish the new
+    # placeholder pid into those slots so clients keep routing somewhere live.
+    restarted = start_placeholder(t)
+
+    restarted
+    |> publish_placeholder(restarted.placeholder_tags)
+    |> noreply()
   end
 
   def handle_info(message, %State{} = t) do
@@ -203,6 +255,71 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
     emit_distributor_stopped(t.cluster, t.epoch, reason)
     :ok
+  end
+
+  # Coverage sweep
+
+  # Shard tags in the layout with no materializer in the TSL snapshot the
+  # director handed us at recruitment time.
+  @spec uncovered_tags(State.t()) :: MapSet.t(Bedrock.range_tag())
+  defp uncovered_tags(%State{} = t) do
+    covered = covered_tags(t.transaction_system_layout)
+
+    t.shard_layout
+    |> Map.values()
+    |> MapSet.new(fn {tag, _start_key} -> tag end)
+    |> MapSet.difference(covered)
+  end
+
+  # Mirrors the client's LayoutIndex routing: data shards are covered by a
+  # shard_materializers entry; the system shard is covered by the metadata
+  # materializer.
+  @spec covered_tags(TransactionSystemLayout.t() | %{}) :: MapSet.t(Bedrock.range_tag())
+  defp covered_tags(transaction_system_layout) do
+    covered =
+      transaction_system_layout
+      |> Map.get(:shard_materializers)
+      |> Kernel.||(%{})
+      |> Map.keys()
+      |> MapSet.new()
+
+    case Map.get(transaction_system_layout, :metadata_materializer) do
+      pid when is_pid(pid) -> MapSet.put(covered, RecoveryAttempt.system_shard_id())
+      _ -> covered
+    end
+  end
+
+  # Publishes the current placeholder pid into the given tags' TSL slots as
+  # a single batched delta. Runs off the message loop (an in-line call from
+  # init/handle_continue would deadlock against the director, which blocks
+  # on check_epoch right after starting us); the outcome is cast back as
+  # {:sweep_complete, tags, result}.
+  @spec publish_placeholder(State.t(), MapSet.t(Bedrock.range_tag())) :: State.t()
+  defp publish_placeholder(%State{} = t, tags) do
+    if MapSet.size(tags) == 0 do
+      t
+    else
+      delta = Map.new(tags, &{&1, t.placeholder})
+      distributor = self()
+      director = t.director
+      epoch = t.epoch
+
+      {:ok, _pid} =
+        Task.start(fn ->
+          result =
+            try do
+              Director.apply_tsl_delta(director, delta, epoch)
+            rescue
+              exception -> {:error, {:sweep_crashed, Exception.message(exception)}}
+            catch
+              :exit, reason -> {:error, {:sweep_exited, reason}}
+            end
+
+          GenServer.cast(distributor, {:sweep_complete, MapSet.to_list(tags), result})
+        end)
+
+      t
+    end
   end
 
   # Recruitment

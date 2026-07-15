@@ -31,12 +31,28 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
     on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 
-  defp start_director_stub do
-    spawn(fn ->
-      receive do
-        :stop -> :ok
-      end
-    end)
+  defmodule StubDirector do
+    @moduledoc false
+    use GenServer
+
+    def start(opts \\ []), do: GenServer.start(__MODULE__, {opts[:test_pid], opts[:tsl_delta_reply] || :ok})
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:apply_tsl_delta, delta, epoch}, _from, {test_pid, reply} = state) do
+      if test_pid, do: send(test_pid, {:apply_tsl_delta, delta, epoch})
+      {:reply, reply, state}
+    end
+
+    @impl true
+    def handle_info(:stop, state), do: {:stop, :normal, state}
+  end
+
+  defp start_director_stub(opts \\ []) do
+    {:ok, director} = StubDirector.start(opts)
+    director
   end
 
   defp start_distributor(opts \\ []) do
@@ -49,6 +65,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           epoch: Keyword.get(opts, :epoch, 42),
           director: director,
           shard_layout: Keyword.get(opts, :shard_layout, %{}),
+          transaction_system_layout: Keyword.get(opts, :transaction_system_layout, %{}),
           otp_name: unique_otp_name()
         )
       )
@@ -169,6 +186,107 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
     end
   end
 
+  describe "coverage sweep" do
+    defp attach_sweep_telemetry(test_pid) do
+      handler_id = "distributor-sweep-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        handler_id,
+        [:bedrock, :distributor, :coverage_sweep],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+    end
+
+    # Three shards: system (tag 0), and data shards 1 and 2.
+    defp three_shard_layout do
+      %{
+        <<0x10>> => {1, <<>>},
+        <<0x20>> => {2, <<0x10>>},
+        <<0xFF, 0xFF>> => {0, <<0x20>>}
+      }
+    end
+
+    test "publishes one batched delta with the placeholder pid for each uncovered tag" do
+      attach_sweep_telemetry(self())
+      metadata_materializer = spawn(fn -> Process.sleep(:infinity) end)
+      covered_materializer = spawn(fn -> Process.sleep(:infinity) end)
+      director = start_director_stub(test_pid: self())
+
+      # Tag 0 is covered by the metadata materializer, tag 2 by a real
+      # materializer; only tag 1 is uncovered.
+      tsl = %{
+        metadata_materializer: metadata_materializer,
+        shard_materializers: %{2 => covered_materializer}
+      }
+
+      {pid, _director} =
+        start_distributor(director: director, shard_layout: three_shard_layout(), transaction_system_layout: tsl)
+
+      %State{placeholder: placeholder} = :sys.get_state(pid)
+
+      assert_receive {:apply_tsl_delta, %{1 => ^placeholder} = delta, 42}, 2_000
+      assert map_size(delta) == 1
+
+      assert_receive {:telemetry, [:bedrock, :distributor, :coverage_sweep], %{uncovered: 1},
+                      %{cluster: TestCluster, epoch: 42}}
+    end
+
+    test "publishes no delta when every shard is covered" do
+      attach_sweep_telemetry(self())
+      metadata_materializer = spawn(fn -> Process.sleep(:infinity) end)
+      covered_1 = spawn(fn -> Process.sleep(:infinity) end)
+      covered_2 = spawn(fn -> Process.sleep(:infinity) end)
+      director = start_director_stub(test_pid: self())
+
+      tsl = %{
+        metadata_materializer: metadata_materializer,
+        shard_materializers: %{1 => covered_1, 2 => covered_2}
+      }
+
+      {_pid, _director} =
+        start_distributor(director: director, shard_layout: three_shard_layout(), transaction_system_layout: tsl)
+
+      assert_receive {:telemetry, [:bedrock, :distributor, :coverage_sweep], %{uncovered: 0}, %{epoch: 42}}
+      refute_receive {:apply_tsl_delta, _delta, _epoch}, 200
+    end
+
+    test "a sweep delta rejected on a stale epoch stops the distributor" do
+      attach_telemetry(self())
+      director = start_director_stub(test_pid: self(), tsl_delta_reply: {:error, :newer_epoch_exists})
+
+      {pid, _director} = start_distributor(director: director, shard_layout: three_shard_layout())
+      ref = Process.monitor(pid)
+
+      assert_receive {:apply_tsl_delta, _delta, 42}, 2_000
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+      assert_receive {:telemetry, [:bedrock, :distributor, :stopped], %{}, %{epoch: 42, reason: :normal}}
+    end
+
+    test "placeholder restart republishes the new pid into the swept slots" do
+      shard_layout = %{<<0xFF, 0xFF>> => {1, <<>>}}
+      director = start_director_stub(test_pid: self())
+
+      {pid, _director} = start_distributor(director: director, shard_layout: shard_layout)
+      %State{placeholder: placeholder} = :sys.get_state(pid)
+
+      assert_receive {:apply_tsl_delta, %{1 => ^placeholder}, 42}, 2_000
+
+      Process.exit(placeholder, :kill)
+
+      # The new placeholder pid replaces the old one in the slots it occupied.
+      assert_receive {:apply_tsl_delta, %{1 => new_placeholder} = delta, 42}, 2_000
+      assert map_size(delta) == 1
+      assert new_placeholder != placeholder
+
+      assert %State{placeholder: ^new_placeholder} = :sys.get_state(pid)
+    end
+  end
+
   describe "coverage demand and delivery" do
     defp attach_demand_telemetry(test_pid) do
       handler_id = "distributor-demand-#{System.unique_integer([:positive])}"
@@ -248,7 +366,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           Materializer.get(placeholder, "apple", version, timeout: 5_000)
         end)
 
-      assert_receive {:telemetry, [:bedrock, :distributor, :coverage_demand], %{}, %{tag: 1}}
+      assert_receive {:telemetry, [:bedrock, :distributor, :coverage_demand], %{}, %{tag: 1}}, 2_000
 
       :ok = Distributor.fail_coverage(pid, 1, :no_capacity)
 

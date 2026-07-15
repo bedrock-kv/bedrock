@@ -271,7 +271,12 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
     test "a rejected TSL delta (newer epoch exists) stops the distributor" do
       test_pid = self()
       stub = start_stub(%{})
-      director = start_supervised!({CaptureDirector, [test_pid, {:error, :newer_epoch_exists}]}, id: :stale_director)
+
+      director =
+        start_supervised!(%{
+          id: :stale_director,
+          start: {CaptureDirector, :start_link, [test_pid, {:error, :newer_epoch_exists}]}
+        })
 
       recruitment = %{
         create_worker_fn: fn _foreman, _worker_id, _kind, _opts -> {:ok, :stub_worker_ref} end,
@@ -279,7 +284,15 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         unlock_materializer_fn: fn _pid, _durable_version, _tsl -> :ok end
       }
 
-      {distributor, _director} = start_distributor(recruitment: recruitment, director: director)
+      # The shard starts covered so the startup coverage sweep publishes
+      # nothing; the rejected delta under test is recruitment's own.
+      {distributor, _director} =
+        start_distributor(
+          recruitment: recruitment,
+          director: director,
+          transaction_system_layout: %{shard_materializers: %{1 => stub}}
+        )
+
       ref = Process.monitor(distributor)
 
       GenServer.cast(distributor, {:coverage_demand, 1})

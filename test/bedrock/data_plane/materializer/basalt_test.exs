@@ -28,7 +28,7 @@ defmodule Bedrock.DataPlane.Materializer.BasaltTest do
                  :start_link,
                  [
                    Basalt.Server,
-                   {:test_storage_engine, pid, ^expected_id, ^tmp_dir},
+                   {:test_storage_engine, pid, ^expected_id, ^tmp_dir, nil},
                    [name: :test_storage_engine]
                  ]
                }

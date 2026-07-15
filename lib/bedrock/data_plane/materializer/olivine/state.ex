@@ -15,7 +15,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
           path: Path.t(),
           foreman: Foreman.ref(),
           id: Worker.id(),
-          shard_id: String.t(),
+          shard_id: Bedrock.range_tag() | nil,
           database: Database.t(),
           index_manager: IndexManager.t(),
           pull_task: Task.t() | nil,

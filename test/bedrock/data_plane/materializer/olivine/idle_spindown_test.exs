@@ -152,6 +152,27 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     end
   end
 
+  describe "re-adoption identity coexists with idle spin-down" do
+    # Reconciliation regression (bedrock-q67.13 x re-adoption): shard_id
+    # must ALWAYS be threaded from the manifest params into the worker's
+    # state - never gated on cluster presence - so a recruit remains
+    # identifiable by re-adoption right up until it spins down. A
+    # mechanical merge toward the cluster-gated startup_opts silently
+    # dropped the :shard_id fact for cluster-less workers.
+    test "a worker with shard_id, no cluster, and idle_timeout exposes :shard_id and still honors idle_check",
+         %{tmp_dir: tmp_dir} do
+      {_worker_id, pid} = start_worker(tmp_dir, %{"shard_id" => 42, "idle_timeout" => @idle_timeout})
+      ref = Process.monitor(pid)
+
+      # Identifiable pre-spin-down: re-adoption reads this fact.
+      assert {:ok, %{shard_id: 42}} = Materializer.info(pid, [:shard_id])
+
+      rewind_last_read(pid, @idle_timeout + 1)
+      send(pid, :idle_check)
+      assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle}}, 5_000
+    end
+  end
+
   describe "exemption" do
     test "a worker without an explicit idle_timeout never spins down", %{tmp_dir: tmp_dir} do
       {_worker_id, pid} = start_worker(tmp_dir, %{})

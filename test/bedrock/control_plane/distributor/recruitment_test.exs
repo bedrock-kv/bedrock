@@ -486,22 +486,24 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
       )
     end
 
-    test "context worker_params are passed to worker creation (idle spin-down opt-in for data shards)" do
+    test "recruits carry BOTH the shard assignment and idle policy when worker_params has idle_timeout" do
       context = params_context(self(), %{worker_params: %{"idle_timeout" => 300_000}})
 
       assert {:ok, _pid, _node, _worker_id} = Recruitment.recruit(1, context)
 
+      # Both halves must survive together: "shard_id" identifies the worker
+      # for re-adoption; "idle_timeout" opts it into idle spin-down.
       assert_receive {:create_worker_opts, opts}
-      assert opts[:params] == %{"idle_timeout" => 300_000}
+      assert opts[:params] == %{"idle_timeout" => 300_000, "shard_id" => 1}
     end
 
-    test "without worker_params in the context, worker creation gets empty params" do
+    test "without worker_params in the context, worker creation still records the shard assignment" do
       context = params_context(self(), %{})
 
       assert {:ok, _pid, _node, _worker_id} = Recruitment.recruit(1, context)
 
       assert_receive {:create_worker_opts, opts}
-      assert opts[:params] == %{}
+      assert opts[:params] == %{"shard_id" => 1}
     end
   end
 

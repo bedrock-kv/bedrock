@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Distributor.State do
   """
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.Service.Worker
 
   @type t :: %__MODULE__{
           cluster: module(),
@@ -13,6 +14,8 @@ defmodule Bedrock.ControlPlane.Distributor.State do
           transaction_system_layout: TransactionSystemLayout.t() | %{},
           durable_version: Bedrock.version(),
           node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
+          services: %{Worker.id() => {atom(), {Worker.ref(), node()}}},
+          readoption_attempted: boolean(),
           materializer_monitors: %{reference() => {Bedrock.range_tag(), pid()}},
           placeholder: pid() | nil,
           placeholder_tags: MapSet.t(Bedrock.range_tag()),
@@ -29,6 +32,8 @@ defmodule Bedrock.ControlPlane.Distributor.State do
             transaction_system_layout: %{},
             durable_version: nil,
             node_capabilities: %{},
+            services: %{},
+            readoption_attempted: false,
             materializer_monitors: %{},
             placeholder: nil,
             placeholder_tags: MapSet.new(),

@@ -103,7 +103,7 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.ServerTest do
       assert {GenServer, :start_link,
               [
                 Server,
-                {:test_server, _, "test_storage_1", "/tmp/test_storage"},
+                {:test_server, _, "test_storage_1", "/tmp/test_storage", nil},
                 [name: :test_server]
               ]} = spec.start
     end
@@ -157,7 +157,7 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.ServerTest do
     end
 
     test "init/1 returns continuation for startup" do
-      args = {:test_server, self(), "test_id", "/tmp/test"}
+      args = {:test_server, self(), "test_id", "/tmp/test", nil}
 
       assert {:ok, ^args, {:continue, :finish_startup}} = Server.init(args)
     end
@@ -194,7 +194,7 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.ServerTest do
     #         end
 
     test "handle_continue :finish_startup calls Logic.startup" do
-      args = {:test_server, self(), "test_id", "/tmp/test"}
+      args = {:test_server, self(), "test_id", "/tmp/test", nil}
 
       # This will attempt to call Logic.startup which will likely fail in test
       # But it exercises the callback path

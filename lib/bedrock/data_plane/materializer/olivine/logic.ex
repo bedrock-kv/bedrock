@@ -53,7 +53,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     end
   end
 
-  @spec build_snapshot_handle(cluster :: module() | nil, shard_id :: String.t() | nil) :: Snapshot.t() | nil
+  @spec build_snapshot_handle(cluster :: module() | nil, shard_id :: Bedrock.range_tag() | nil) :: Snapshot.t() | nil
   defp build_snapshot_handle(nil, _shard_id), do: nil
   defp build_snapshot_handle(_cluster, nil), do: nil
 
@@ -193,6 +193,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
       kind
       n_keys
       otp_name
+      shard_id
       size_in_bytes
       supported_info
       utilization
@@ -207,6 +208,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   defp gather_info(:otp_name, t), do: t.otp_name
   defp gather_info(:path, t), do: t.path
   defp gather_info(:pid, _t), do: self()
+  defp gather_info(:shard_id, t), do: t.shard_id
   defp gather_info(:size_in_bytes, t), do: IndexManager.info(t.index_manager, :size_in_bytes)
   defp gather_info(:supported_info, _t), do: supported_info()
   defp gather_info(:utilization, t), do: IndexManager.info(t.index_manager, :utilization)

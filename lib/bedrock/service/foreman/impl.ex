@@ -35,8 +35,7 @@ defmodule Bedrock.Service.Foreman.Impl do
     |> Enum.map(fn {_id, worker_info} -> compact_service_info_from_worker_info(worker_info) end)
   end
 
-  @spec do_new_worker(State.t(), Worker.id(), :log | :materializer, params :: map()) ::
-          {State.t(), Worker.ref()}
+  @spec do_new_worker(State.t(), Worker.id(), :log | :materializer, params :: map()) :: {State.t(), Worker.ref()}
   def do_new_worker(t, id, kind, params \\ %{}) do
     worker_info =
       id

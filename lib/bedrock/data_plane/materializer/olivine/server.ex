@@ -47,15 +47,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   end
 
   # Builds the opts handed to Logic.startup/5 from the worker's manifest
-  # params. Cluster and shard_id travel together (they build the snapshot
-  # handle). Idle spin-down is opt-in per worker (bedrock-q67.13): without
-  # an explicit positive idle_timeout the worker never spins down, which is
-  # what exempts the system shard (its bootstrap never sets the param).
+  # params. shard_id is ALWAYS threaded through (it identifies the worker's
+  # shard assignment for info facts and re-adoption, and must never be gated
+  # on cluster presence); the ObjectStorage snapshot handle additionally
+  # requires a cluster, which Logic guards on. Idle spin-down is opt-in per
+  # worker (bedrock-q67.13): without an explicit positive idle_timeout the
+  # worker never spins down, which is what exempts the system shard (its
+  # bootstrap never sets the param).
   @spec startup_opts(cluster :: module() | nil, params :: map()) :: keyword()
   defp startup_opts(cluster, params) do
-    shard_id = params["shard_id"]
-
-    base = if cluster && shard_id, do: [cluster: cluster, shard_id: shard_id], else: []
+    base = [cluster: cluster, shard_id: params["shard_id"]]
 
     case params["idle_timeout"] do
       idle_timeout when is_integer(idle_timeout) and idle_timeout > 0 ->

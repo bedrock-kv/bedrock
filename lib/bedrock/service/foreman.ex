@@ -26,7 +26,9 @@ defmodule Bedrock.Service.Foreman do
   `:params` are persisted in the worker's manifest and handed back to the
   worker's `child_spec/1` on every start (keys are strings, matching the
   manifest's JSON round-trip) - e.g. `%{"idle_timeout" => ms}` opts a
-  materializer into idle spin-down.
+  materializer into idle spin-down, and `%{"shard_id" => tag}` records a
+  materializer's shard assignment so it can later be identified and
+  re-adopted.
   """
   @spec new_worker(
           foreman :: ref(),

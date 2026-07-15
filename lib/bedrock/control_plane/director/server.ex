@@ -313,6 +313,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
         transaction_system_layout: transaction_system_layout,
         durable_version: recovered_durable_version(t),
         node_capabilities: t.node_capabilities,
+        services: t.services,
         otp_name: t.cluster.otp_name(:distributor)
       )
 

@@ -9,9 +9,15 @@
   "id": "bedrock-q67.15",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Implemented on feature/q67-metadata-pipeline (61c06cc5), draft PR #105 into feature/q67-phase-a. Audit verification: extraction + resolver MetadataAccumulator + RoutingData application of shard_key/layout_log were already wired post-audit; missing pieces were structured proxy metadata state (State had no metadata field), the metadata_merge_fn seam (non-routing updates silently dropped), full parse_key coverage (4 of ~20 families), and application telemetry. All delivered; encoding untouched per bedrock-ri40. Not closing per instructions - gating audit pending.",
+      "timestamp": "2026-07-15T20:10:28Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Verify and complete metadata distribution end-to-end (Phase B prerequisite)",
   "type": "task",
-  "updated_at": "2026-07-15T19:55:59Z"
+  "updated_at": "2026-07-15T20:10:28Z"
 }

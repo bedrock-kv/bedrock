@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "System-shard (tag 0) materializer death is unhandled: no monitor, no healing, no recovery trigger",
   "type": "task",
-  "updated_at": "2026-07-15T13:22:07Z"
+  "updated_at": "2026-07-15T19:55:59Z"
 }

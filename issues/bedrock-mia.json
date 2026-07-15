@@ -6,9 +6,15 @@
   "description": "From PR #99 gating audit: apply_tsl_delta has no expected-old-value semantics. Narrow race: demand-raced recruit's delta and death-healing swap delta reach the director concurrently; if recruit lands first, swap leaves slot pointing at placeholder (permanent extra forward hop); combined with placeholder restart can strand a dead placeholder pid. Needs CAS-style expected-old-value or single-flight-per-tag serialization at the distributor. NOTE: interacts with Phase B (bedrock-q67.9) which retires this channel entirely — transactional system-key writes get versionstamp ordering for free; consider whether to fix interim or accept-and-document until Phase B.",
   "id": "bedrock-mia",
   "labels": [],
+  "comments": [
+    {
+      "text": "Also from PR #98 audit: two rapid placeholder restarts can land republish deltas out of order (dead placeholder pid briefly in slots, heals on next restart); and a failed non-epoch sweep publication is warn-only with no retry (backstop covers until placeholder restart). All same root cause — unordered last-writer-wins delta channel. Accepted as-is pending Phase B channel deletion; retry worth adding only if Phase B slips.",
+      "timestamp": "2026-07-15T13:33:17Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "TSL delta channel is last-writer-wins: concurrent delta tasks can strand placeholder/dead pids in slots",
   "type": "task",
-  "updated_at": "2026-07-15T13:32:32Z"
+  "updated_at": "2026-07-15T13:33:17Z"
 }

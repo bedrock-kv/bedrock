@@ -27,7 +27,8 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       emit_recruitment_failed: 5,
       emit_materializer_down: 4,
       emit_healing_started: 3,
-      emit_healing_completed: 3
+      emit_healing_completed: 3,
+      emit_idle_spindown: 3
     ]
 
   import Bedrock.Internal.GenServer.Replies
@@ -272,6 +273,31 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     |> noreply()
   end
 
+  # Outcome of the placeholder swap after an idle spin-down. Unlike the
+  # death-healing swap above, no re-recruitment is chained: revival is
+  # demand-driven. A non-epoch failure degrades with a warning only - the
+  # tag stays in placeholder_tags, so a placeholder restart (or a failed
+  # later recruitment) re-asserts the slot, and the LayoutIndex loud
+  # failure remains the backstop.
+  def handle_cast({:idle_swap_complete, _tag, :ok}, %State{} = t), do: noreply(t)
+
+  def handle_cast({:idle_swap_complete, tag, {:error, :newer_epoch_exists}}, %State{} = t) do
+    Logger.info(
+      "Distributor for epoch #{t.epoch} superseded (idle swap for shard tag #{inspect(tag)} rejected); stopping"
+    )
+
+    stop(t, :normal)
+  end
+
+  def handle_cast({:idle_swap_complete, tag, error}, %State{} = t) do
+    Logger.warning(
+      "Distributor for epoch #{t.epoch} failed to swap the placeholder into idle-spun-down shard tag " <>
+        "#{inspect(tag)}: #{inspect(error)}"
+    )
+
+    noreply(t)
+  end
+
   @impl true
   def handle_info({:DOWN, _ref, :process, director, reason}, %State{director: director} = t) do
     Logger.info("Distributor for epoch #{t.epoch} stopping: director exited (#{inspect(reason)})")
@@ -279,31 +305,48 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     stop(t, :normal)
   end
 
-  # A monitored materializer died: heal the shard. The placeholder is told
+  # A monitored materializer exited. A voluntary idle spin-down
+  # (bedrock-q67.13, reason {:shutdown, :idle}) swaps the placeholder into
+  # the slot WITHOUT eager re-recruitment: the shard proved cold, so
+  # revival is demand-driven - the next read parks at the placeholder and
+  # re-demands coverage. Any other exit is a death: heal the shard by
+  # swapping the placeholder into the TSL slot and - once the swap
+  # completes - eagerly re-recruiting. Either way the placeholder is told
   # the tag is uncovered (so requests park and re-demand instead of being
-  # forwarded to the corpse), the placeholder pid is swapped into the TSL
-  # slot, and - once the swap completes - the tag is eagerly re-recruited.
+  # forwarded to the corpse) and the tag becomes placeholder-covered, so a
+  # placeholder restart republishes the new pid into its slot.
   def handle_info({:DOWN, ref, :process, _pid, reason}, %State{} = t) when is_map_key(t.materializer_monitors, ref) do
     {{tag, _pid}, monitors} = Map.pop(t.materializer_monitors, ref)
 
-    Logger.warning(
-      "Distributor for epoch #{t.epoch} healing shard tag #{inspect(tag)}: materializer exited (#{inspect(reason)})"
-    )
-
     if t.placeholder, do: Placeholder.notify_uncovered(t.placeholder, tag)
     emit_materializer_down(t.cluster, t.epoch, tag, reason)
-    emit_healing_started(t.cluster, t.epoch, tag)
 
-    # A healed tag is placeholder-covered: track it in placeholder_tags so a
-    # placeholder restart republishes the new pid into its slot.
-    %{
-      t
-      | materializer_monitors: monitors,
-        healing: MapSet.put(t.healing, tag),
-        placeholder_tags: MapSet.put(t.placeholder_tags, tag)
-    }
-    |> swap_placeholder_into_slot(tag)
-    |> noreply()
+    t = %{t | materializer_monitors: monitors, placeholder_tags: MapSet.put(t.placeholder_tags, tag)}
+
+    case reason do
+      {:shutdown, :idle} ->
+        Logger.info(
+          "Distributor for epoch #{t.epoch} noting idle spin-down of shard tag #{inspect(tag)}: " <>
+            "placeholder coverage, revival on demand"
+        )
+
+        emit_idle_spindown(t.cluster, t.epoch, tag)
+
+        t
+        |> publish_placeholder(MapSet.new([tag]), &{:idle_swap_complete, tag, &1})
+        |> noreply()
+
+      _other ->
+        Logger.warning(
+          "Distributor for epoch #{t.epoch} healing shard tag #{inspect(tag)}: materializer exited (#{inspect(reason)})"
+        )
+
+        emit_healing_started(t.cluster, t.epoch, tag)
+
+        %{t | healing: MapSet.put(t.healing, tag)}
+        |> swap_placeholder_into_slot(tag)
+        |> noreply()
+    end
   end
 
   def handle_info({:EXIT, placeholder, reason}, %State{placeholder: placeholder} = t) do

@@ -87,6 +87,15 @@ defmodule Bedrock.ControlPlane.Distributor.Telemetry do
     )
   end
 
+  @spec emit_idle_spindown(module(), Bedrock.epoch(), Bedrock.range_tag()) :: :ok
+  def emit_idle_spindown(cluster, epoch, tag) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :idle_spindown],
+      %{},
+      %{cluster: cluster, epoch: epoch, tag: tag}
+    )
+  end
+
   @spec emit_healing_started(module(), Bedrock.epoch(), Bedrock.range_tag()) :: :ok
   def emit_healing_started(cluster, epoch, tag) do
     :telemetry.execute(

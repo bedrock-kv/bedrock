@@ -44,6 +44,7 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
           required(:durable_version) => Bedrock.version(),
           required(:transaction_system_layout) => TransactionSystemLayout.t() | %{},
           required(:node_capabilities) => %{Bedrock.Cluster.capability() => [node()]},
+          optional(:worker_params) => %{String.t() => term()},
           optional(:create_worker_fn) => create_worker_fn(),
           optional(:lock_materializer_fn) => lock_materializer_fn(),
           optional(:unlock_materializer_fn) => unlock_materializer_fn(),
@@ -112,12 +113,17 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
     end
   end
 
+  # Worker params (persisted in the worker's manifest) opt recruited
+  # data-shard materializers into per-worker behavior the system shard's
+  # bootstrap never enables - e.g. %{"idle_timeout" => ms} for idle
+  # spin-down (bedrock-q67.13).
   defp create_materializer_worker(node, tag, context) do
     foreman_ref = {context.cluster.otp_name(:foreman), node}
     worker_id = Worker.random_id()
     create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
+    worker_params = Map.get(context, :worker_params, %{})
 
-    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000) do
+    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000, params: worker_params) do
       {:ok, worker_ref} -> {:ok, worker_ref, worker_id}
       {:error, reason} -> {:error, {:worker_creation_failed, reason, tag, node}}
     end

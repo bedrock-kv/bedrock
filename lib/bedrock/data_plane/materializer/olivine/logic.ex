@@ -30,6 +30,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   def startup(otp_name, foreman, id, path, opts \\ []) do
     cluster = Keyword.get(opts, :cluster)
     shard_id = Keyword.get(opts, :shard_id)
+    idle_timeout = Keyword.get(opts, :idle_timeout, :infinity)
     snapshot = build_snapshot_handle(cluster, shard_id)
 
     with :ok <- ensure_directory_exists(path),
@@ -45,7 +46,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
          foreman: foreman,
          database: database,
          index_manager: index_manager,
-         snapshot: snapshot
+         snapshot: snapshot,
+         idle_timeout: idle_timeout,
+         last_read_at: System.monotonic_time(:millisecond)
        }}
     end
   end
@@ -157,9 +160,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
         fn -> Database.load_current_durable_version(database) end
       )
 
+    # Grant a fresh idle window after recovery: lock/unlock are not client
+    # reads, but a materializer should never expire mid-recovery epoch
+    # because it spent its window locked.
     t
     |> update_mode(:running)
     |> put_puller(puller)
+    |> Map.put(:last_read_at, System.monotonic_time(:millisecond))
     |> then(&{:ok, &1})
   end
 
@@ -397,6 +404,37 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
           Logger.warning("Snapshot upload failed", version: version_int, reason: inspect(reason))
       end
     end)
+
+    :ok
+  end
+
+  @doc """
+  Best-effort synchronous snapshot upload before an idle spin-down.
+
+  Unlike `maybe_upload_snapshot/4` this runs in the caller: the worker's
+  removal reclaims its working directory right after it exits, so a
+  fire-and-forget task would race the deletion of the very files it reads.
+  A no-op when no snapshot is configured; failures are logged and swallowed
+  (the shard remains rebuildable from earlier snapshots and the logs).
+  """
+  @spec upload_snapshot_before_spindown(State.t()) :: :ok
+  def upload_snapshot_before_spindown(%State{snapshot: nil}), do: :ok
+
+  def upload_snapshot_before_spindown(%State{snapshot: snapshot} = t) do
+    {data_db, index_db} = t.database
+    version_int = t.database |> Database.durable_version() |> Version.to_integer()
+
+    with {:ok, data} <- File.read(to_string(data_db.file_name)),
+         {:ok, idx} <- File.read(to_string(index_db.file_name)),
+         :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
+      Logger.info("Snapshot uploaded to ObjectStorage before idle spin-down", version: version_int)
+    else
+      {:error, reason} ->
+        Logger.warning("Snapshot upload before idle spin-down failed",
+          version: version_int,
+          reason: inspect(reason)
+        )
+    end
 
     :ok
   end

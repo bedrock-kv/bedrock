@@ -464,6 +464,47 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
     end
   end
 
+  describe "worker params" do
+    defp params_context(test_pid, overrides) do
+      stub = start_stub(%{})
+
+      Map.merge(
+        %{
+          cluster: TestCluster,
+          epoch: 42,
+          durable_version: Version.zero(),
+          transaction_system_layout: %{},
+          node_capabilities: %{materializer: [node()]},
+          create_worker_fn: fn _foreman, _worker_id, :materializer, opts ->
+            send(test_pid, {:create_worker_opts, opts})
+            {:ok, :stub_worker_ref}
+          end,
+          lock_materializer_fn: fn _worker, _epoch -> {:ok, stub, %{}} end,
+          unlock_materializer_fn: fn _pid, _durable_version, _tsl -> :ok end
+        },
+        overrides
+      )
+    end
+
+    test "context worker_params are passed to worker creation (idle spin-down opt-in for data shards)" do
+      context = params_context(self(), %{worker_params: %{"idle_timeout" => 300_000}})
+
+      assert {:ok, _pid, _node, _worker_id} = Recruitment.recruit(1, context)
+
+      assert_receive {:create_worker_opts, opts}
+      assert opts[:params] == %{"idle_timeout" => 300_000}
+    end
+
+    test "without worker_params in the context, worker creation gets empty params" do
+      context = params_context(self(), %{})
+
+      assert {:ok, _pid, _node, _worker_id} = Recruitment.recruit(1, context)
+
+      assert_receive {:create_worker_opts, opts}
+      assert opts[:params] == %{}
+    end
+  end
+
   describe "epoch change notifications" do
     test "an older-epoch notification is logged as suspicious and ignored" do
       {distributor, _director} = start_distributor([])

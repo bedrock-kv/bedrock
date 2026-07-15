@@ -11,8 +11,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Recovery relaxation: stall only for system shard, placeholder coverage for data shards",
   "type": "task",
-  "updated_at": "2026-07-14T21:56:01Z"
+  "updated_at": "2026-07-15T12:55:20Z"
 }

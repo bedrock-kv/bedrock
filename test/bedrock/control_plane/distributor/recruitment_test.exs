@@ -505,6 +505,17 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
       assert_receive {:create_worker_opts, opts}
       assert opts[:params] == %{"shard_id" => 1}
     end
+
+    test "a caller-supplied shard_id in worker_params can never misroute the recruit" do
+      # The recruited-for tag is authoritative: a buggy or hostile
+      # worker_params carrying its own "shard_id" is deliberately clobbered.
+      context = params_context(self(), %{worker_params: %{"shard_id" => 999, "idle_timeout" => 300_000}})
+
+      assert {:ok, _pid, _node, _worker_id} = Recruitment.recruit(1, context)
+
+      assert_receive {:create_worker_opts, opts}
+      assert opts[:params] == %{"idle_timeout" => 300_000, "shard_id" => 1}
+    end
   end
 
   describe "epoch change notifications" do

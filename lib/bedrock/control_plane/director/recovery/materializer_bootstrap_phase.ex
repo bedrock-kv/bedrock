@@ -151,13 +151,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
-  # Create worker via Foreman for a specific shard
+  # Create worker via Foreman for a specific shard. The shard assignment is
+  # persisted in the worker's manifest (mirroring the distributor's
+  # recruitment path) so the worker exposes its `:shard_id` info fact and
+  # can be identified and re-adopted after an epoch change.
   defp create_materializer_worker(node, shard_tag, recovery_attempt, context) do
     foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
     worker_id = Worker.random_id()
     create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
 
-    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000) do
+    case create_worker_fn.(foreman_ref, worker_id, :materializer,
+           timeout: 30_000,
+           params: %{"shard_id" => shard_tag}
+         ) do
       {:ok, worker_ref} -> {:ok, {worker_ref, node}}
       {:error, reason} -> {:error, {:failed_to_create_materializer, reason, shard_tag}}
     end
@@ -288,7 +294,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
 
     # Pass shard_id in params so materializer knows its assignment
-    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000) do
+    case create_worker_fn.(foreman_ref, worker_id, :materializer,
+           timeout: 30_000,
+           params: %{"shard_id" => system_shard}
+         ) do
       {:ok, worker_ref} -> {:ok, {worker_ref, node}}
       {:error, reason} -> {:error, {:failed_to_create_materializer, reason, system_shard}}
     end

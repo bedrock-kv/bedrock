@@ -75,6 +75,56 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       :ets.delete(created_shards)
     end
 
+    # Warm re-adoption regression (bedrock-cbj): bootstrap-created
+    # materializers must carry their shard assignment in the worker manifest
+    # params - exactly like distributor-recruited workers - or they can never
+    # answer the `:shard_id` identification query and the next epoch's
+    # re-adoption sweep silently skips its primary population (the fresh
+    # cluster's own materializers). Note: no "idle_timeout" is ever passed
+    # here, which is what keeps bootstrap workers (incl. the system shard)
+    # exempt from idle spin-down.
+    test "for fresh cluster, each created worker's params record its shard assignment (and nothing else)" do
+      system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      user_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      created_params = :ets.new(:created_params, [:bag, :public])
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:metadata_materializer, nil)
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0, 1]})
+
+      context =
+        [
+          old_transaction_system_layout: %{logs: %{}},
+          node_capabilities: %{
+            log: [Node.self()],
+            materializer: [Node.self()]
+          }
+        ]
+        |> create_test_context()
+        |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, opts ->
+          :ets.insert(created_params, {:params, opts[:params]})
+          {:ok, :new_materializer_ref}
+        end)
+        |> Map.put(:lock_materializer_fn, fn {:materializer, _ref, shard_tag}, _epoch ->
+          pid = if shard_tag == 0, do: system_materializer_pid, else: user_materializer_pid
+          {:ok, pid}
+        end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+
+      capture_log(fn ->
+        assert {_updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+      end)
+
+      params = created_params |> :ets.lookup(:params) |> Enum.map(fn {:params, p} -> p end)
+      assert Enum.sort(params) == [%{"shard_id" => 0}, %{"shard_id" => 1}]
+
+      :ets.delete(created_params)
+    end
+
     test "for fresh cluster, unlocks shard materializers with empty log descriptors" do
       system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
       user_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)

@@ -265,8 +265,8 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       ref = Process.monitor(pid)
 
       assert_receive {:apply_tsl_delta, _delta, 42}, 2_000
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
-      assert_receive {:telemetry, [:bedrock, :distributor, :stopped], %{}, %{epoch: 42, reason: :normal}}
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+      assert_receive {:telemetry, [:bedrock, :distributor, :stopped], %{}, %{epoch: 42, reason: :normal}}, 2_000
     end
 
     test "placeholder restart republishes the new pid into the swept slots" do

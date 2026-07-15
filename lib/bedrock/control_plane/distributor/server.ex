@@ -289,6 +289,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   @spec maybe_recruit(State.t(), Bedrock.range_tag()) :: State.t()
   defp maybe_recruit(%State{} = t, tag) do
     cond do
+      match?({:ok, _}, covered_materializer(t, tag)) ->
+        # Already covered by a live monitored materializer: a demand-raced
+        # recruitment completed while a placeholder swap was in flight.
+        # Recruiting again would orphan the live recruit.
+        t
+
       MapSet.member?(t.pending_demands, tag) ->
         # A recruitment for this tag is already in flight.
         t

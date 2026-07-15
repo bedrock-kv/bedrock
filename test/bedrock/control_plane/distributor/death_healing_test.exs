@@ -302,6 +302,25 @@ defmodule Bedrock.ControlPlane.Distributor.DeathHealingTest do
       assert {:error, :unavailable} = Task.await(task, 5_000)
     end
 
+    test "a stale swap-complete for a tag already re-covered does not recruit a duplicate" do
+      stub = start_stub(%{"apple" => "red"})
+      {distributor, _director} = start_distributor(recruitment: queued_recruitment(self(), [stub]))
+
+      recruit_initial(distributor, stub)
+      assert_receive :create_worker_called
+
+      # Simulate the race: a demand issued between the DOWN and the swap's
+      # completion recruited coverage before {:placeholder_swap_complete, ...}
+      # was processed. The stale swap-complete must not start a second
+      # recruitment (which would orphan the live recruit).
+      GenServer.cast(distributor, {:placeholder_swap_complete, 1, :ok})
+
+      refute_receive :create_worker_called, 100
+
+      %State{materializer_monitors: monitors} = :sys.get_state(distributor)
+      assert Map.values(monitors) == [{1, stub}]
+    end
+
     test "placeholder restart during healing re-points healed slots at the new placeholder" do
       dying = start_stub(%{})
       test_pid = self()

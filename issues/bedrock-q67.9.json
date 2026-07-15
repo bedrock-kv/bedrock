@@ -9,6 +9,12 @@
   "id": "bedrock-q67.9",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Rescoped 2026-07-15 per epic: materializer locations leave the TSL for the \\xFF keyspace (FDB keyServers/serverKeys model). Prereq: verify metadata distribution end-to-end (original scope of this ticket). Exit criterion: apply_tsl_delta + steady-state tsl_updated broadcast deleted; clients read map from metadata shard or proxy MetadataAccumulator (design choice open); Distributor publishes coverage transactionally. Related: bedrock-ri40 (system-key encoding), bedrock-0u3 (delta validation — moot once channel retired), bedrock-v65 (broadcast liveness — moot for routing).",
+      "timestamp": "2026-07-15T12:54:24Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "Phase B headline: shard map out of TSL into system keys; retire TSL-delta channel",

@@ -2,14 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-15T20:17:31Z",
   "created": "2026-07-15T13:22:07Z",
   "description": "Director.Recovery.MonitoringPhase deliberately excludes kind == :materializer from component monitoring, and bedrock-q67.7's distributor death-healing excludes the system shard because clients route tag 0 via the TSL's metadata_materializer field, which a shard_materializers delta cannot update (LayoutIndex.get_materializer_for_shard/3 prefers metadata_materializer for tag 0). Net effect: if the metadata materializer dies, nobody notices - reads of the system shard fail until some unrelated event forces a recovery. Decide the owner: (a) director monitors the metadata materializer specifically and treats its death as a component failure (recovery restart, consistent with the recovery relaxation stalling only for tag 0), or (b) extend the TSL delta channel to update metadata_materializer so the distributor can heal it like any shard (interacts badly with Phase B's plan to delete the delta channel - (a) looks right).",
   "id": "bedrock-q67.12",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "System-shard (tag 0) materializer death is unhandled: no monitor, no healing, no recovery trigger",
   "type": "task",
-  "updated_at": "2026-07-15T19:55:59Z"
+  "updated_at": "2026-07-15T20:17:31Z"
 }

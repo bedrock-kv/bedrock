@@ -132,21 +132,110 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
     m2: m2,
     m3: m3
   } do
-    resolver = start_resolver()
+    # 1ms retention = 1000 versions; pruning is capped at the retention
+    # horizon, so drive the version stream past it.
+    resolver = start_resolver(version_retention_ms: 1)
 
     assert {:ok, [], _} = resolve_from_fresh_task(resolver, v(0), v(1), "k1", [m1], {proxy, nil})
     assert {:ok, [], _} = resolve_from_fresh_task(resolver, v(1), v(2), "k2", [m2], {proxy, v(1)})
-    assert {:ok, [], _} = resolve_from_fresh_task(resolver, v(2), v(3), "k3", [m3], {proxy, v(2)})
+    assert {:ok, [], _} = resolve_from_fresh_task(resolver, v(2), v(2500), "k3", [m3], {proxy, v(2)})
 
     state = :sys.get_state(resolver)
 
     # One entry per proxy - not one per finalization task pid.
     assert [{^proxy, {acked, last_seen}}] = Map.to_list(state.proxy_progress)
-    assert {acked, last_seen} == {v(2), v(3)}
+    assert {acked, last_seen} == {v(2), v(2500)}
 
-    # Entries at or below the confirmed version are pruned.
+    # Entries at or below the confirmed version (and older than the retention
+    # horizon) are pruned.
     assert [{entry_version, [^m3]}] = MetadataAccumulator.entries(state.metadata_window)
-    assert entry_version == v(3)
+    assert entry_version == v(2500)
+  end
+
+  test "acks are monotone per proxy: a retried call carrying a stale ack neither regresses progress nor re-sends", %{
+    proxy: proxy,
+    m1: m1,
+    m2: m2
+  } do
+    resolver = start_resolver()
+
+    assert {:ok, [], {nil, _, [{_, [^m1]}]}} = resolve_from_fresh_task(resolver, v(0), v(1), "k1", [m1], {proxy, nil})
+    assert {:ok, [], {_, _, [{_, [^m2]}]}} = resolve_from_fresh_task(resolver, v(1), v(2), "k2", [m2], {proxy, v(1)})
+
+    # Proxy confirmed through v(2); window pruned through v(2).
+    assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(2), v(3), "k3", [], {proxy, v(2)})
+
+    # A late retry re-carries the OLD ack v(1) (its reply was lost before the
+    # proxy advanced). Recorded progress must not regress - the proxy already
+    # applied through v(2) - and the resolver serves from the recorded ack,
+    # so nothing is re-sent and no gap is signalled.
+    assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(3), v(4), "k4", [], {proxy, v(1)})
+
+    assert %{^proxy => {acked, _seen}} = :sys.get_state(resolver).proxy_progress
+    assert acked == v(2)
+  end
+
+  test "pruning is capped at the retention horizon: acks alone cannot discard entries a not-yet-seen proxy needs", %{
+    m1: m1
+  } do
+    # 1ms retention = 1000 versions. At epoch start one proxy can commit and
+    # ack metadata before another proxy's FIRST call ever reaches the
+    # resolver; only the retention cap keeps that entry alive for it.
+    resolver = start_resolver(version_retention_ms: 1)
+    proxy_a = spawn_link(fn -> Process.sleep(:infinity) end)
+    proxy_b = spawn_link(fn -> Process.sleep(:infinity) end)
+
+    assert {:ok, [], {nil, _, [{_, [^m1]}]}} =
+             resolve_from_fresh_task(resolver, v(0), v(1000), "k1", [m1], {proxy_a, nil})
+
+    # proxy_a confirms v(1000) while the entry is still inside the horizon
+    # (cutoff v(500)): the ack alone must NOT discard it.
+    assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(1000), v(1500), "k2", [], {proxy_a, v(1000)})
+
+    # proxy_b's first-ever call: full window, not a gap.
+    assert {:ok, [], {nil, to, [{entry_version, [^m1]}]}} =
+             resolve_from_fresh_task(resolver, v(1500), v(1600), "k3", [], {proxy_b, nil})
+
+    assert {to, entry_version} == {v(1600), v(1000)}
+  end
+
+  test "a returning expired proxy whose ack covers every discarded entry gets a differential, not a gap", %{
+    m1: m1
+  } do
+    # 1ms retention = 1000 versions. Only ONE metadata entry ever exists (at
+    # v(1)); proxy_a confirms it via a window whose to_version is far ahead
+    # (windows cover through the resolver's last_version, not the last entry).
+    resolver = start_resolver(version_retention_ms: 1)
+    proxy_a = spawn_link(fn -> Process.sleep(:infinity) end)
+    proxy_b = spawn_link(fn -> Process.sleep(:infinity) end)
+
+    assert {:ok, [], {nil, to_b, [{_, [^m1]}]}} =
+             resolve_from_fresh_task(resolver, v(0), v(1), "k1", [m1], {proxy_b, nil})
+
+    assert to_b == v(1)
+
+    # proxy_b confirms v(1), then goes quiet.
+    assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(1), v(2), "k2", [], {proxy_b, v(1)})
+
+    # proxy_a first calls late: its window covers (nil, v(1500)] with the same
+    # single entry, so it acks v(1500) - far beyond the entry's version.
+    assert {:ok, [], {nil, to_a, [{_, [^m1]}]}} =
+             resolve_from_fresh_task(resolver, v(2), v(1500), "k3", [], {proxy_a, nil})
+
+    assert to_a == v(1500)
+
+    # proxy_b (seen at v(2)) falls out of the horizon; pruning follows
+    # proxy_a's ack v(1500), discarding the entry at v(1).
+    assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(1500), v(3100), "k4", [], {proxy_a, v(1500)})
+
+    state = :sys.get_state(resolver)
+    refute Map.has_key?(state.proxy_progress, proxy_b)
+    assert MetadataAccumulator.entries(state.metadata_window) == []
+
+    # proxy_b returns with ack v(1): it confirmed the only entry ever
+    # discarded, so it missed NOTHING - it must get a plain (empty)
+    # differential, not a gap-marked window that would force a full recovery.
+    assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(3100), v(3200), "k5", [], {proxy_b, v(1)})
   end
 
   test "proxies not seen within version retention expire; a returning laggard gets a gap-marked window", %{

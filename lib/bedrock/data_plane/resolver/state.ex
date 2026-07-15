@@ -17,10 +17,13 @@ defmodule Bedrock.DataPlane.Resolver.State do
     Entries not seen within the version retention horizon are expired,
     bounding the map to ~live proxies and unblocking window pruning.
   - `metadata_window` - Accumulated metadata mutations in version order,
-    pruned through the minimum confirmed ack across known proxies
-  - `metadata_pruned_through` - The version at or below which window entries
-    have been discarded (nil if never pruned). A proxy whose ack falls below
-    this floor can no longer be served a complete differential.
+    pruned through the minimum confirmed ack across known proxies, capped at
+    the retention horizon (no entry younger than the horizon is discarded, so
+    a proxy calling within retention never observes a coverage gap)
+  - `metadata_pruned_through` - The newest entry version ever discarded by
+    pruning (nil if no entry has been discarded). A proxy whose ack falls
+    below this floor can no longer be served a complete differential; a proxy
+    acked at or above it has confirmed every discarded entry.
   """
 
   alias Bedrock.DataPlane.Resolver.Conflicts

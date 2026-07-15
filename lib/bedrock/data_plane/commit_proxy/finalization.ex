@@ -355,9 +355,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   # Sharded multi-resolver path
-  # Note: In sharded mode, metadata is extracted but each resolver only sees
-  # the metadata relevant to its key range. For simplicity, we pass empty
-  # metadata lists to sharded resolvers and don't aggregate metadata updates.
+  # Note: In sharded mode every resolver receives the FULL metadata_per_tx
+  # (metadata is not sharded), so each maintains a duplicate accumulator and
+  # their reply windows are merged conservatively below.
   def resolve_conflicts(
         %FinalizationPlan{stage: :ready_for_resolution} = plan,
         epoch,

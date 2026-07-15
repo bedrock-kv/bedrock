@@ -307,6 +307,13 @@ defmodule Bedrock.DataPlane.Resolver.Server do
       |> expire_stale_proxies()
       |> prune_metadata_window()
 
+    # Serve the differential from the RECORDED (monotone) ack: a retried call
+    # can carry a stale ack, but the proxy's applied version is at least every
+    # ack it has ever sent, so entries at or below the recorded ack are
+    # already applied there. (The requesting proxy was just recorded, so it
+    # cannot have been expired above.)
+    {acked, _last_seen} = Map.fetch!(t.proxy_progress, proxy_id)
+
     floor = t.metadata_pruned_through
     gap? = floor != nil and (acked == nil or acked < floor)
     from = if gap?, do: floor, else: acked
@@ -338,19 +345,38 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   # interval, far inside the horizon.
   @spec expire_stale_proxies(State.t()) :: State.t()
   defp expire_stale_proxies(t) do
+    case retention_cutoff(t) do
+      nil ->
+        t
+
+      cutoff ->
+        %{t | proxy_progress: Map.filter(t.proxy_progress, fn {_pid, {_acked, seen}} -> seen >= cutoff end)}
+    end
+  end
+
+  # The version retention horizon, or nil while the version stream is still
+  # inside the first horizon.
+  @spec retention_cutoff(State.t()) :: Bedrock.version() | nil
+  defp retention_cutoff(t) do
     retention = t.version_retention_ms * 1000
 
     if Version.to_integer(t.last_version) >= retention do
-      cutoff = Version.subtract(t.last_version, retention)
-      %{t | proxy_progress: Map.filter(t.proxy_progress, fn {_pid, {_acked, seen}} -> seen >= cutoff end)}
-    else
-      t
+      Version.subtract(t.last_version, retention)
     end
   end
 
   # Prunes the metadata window through the minimum version confirmed by every
-  # known proxy. A proxy that has confirmed nothing (nil ack) blocks pruning
-  # until it confirms or expires.
+  # known proxy, CAPPED at the retention horizon. A proxy that has confirmed
+  # nothing (nil ack) blocks pruning until it confirms or expires.
+  #
+  # The cap makes gap detection symmetric with proxy expiry: no entry younger
+  # than the retention horizon is ever discarded, so a proxy calling within
+  # retention (any live proxy - the empty-batch cadence is far inside it) can
+  # never observe a gap. Without it, acks alone could prune an entry before a
+  # proxy the resolver has not yet HEARD FROM (epoch start: one proxy commits
+  # and acks metadata before another's first call) ever saw it, gap-exiting a
+  # healthy proxy. Memory stays bounded: at most one retention horizon of
+  # metadata entries is retained beyond what acks allow.
   @spec prune_metadata_window(State.t()) :: State.t()
   defp prune_metadata_window(%{proxy_progress: progress} = t) when map_size(progress) == 0, do: t
 
@@ -359,16 +385,34 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     |> Map.values()
     |> Enum.map(fn {acked, _seen} -> acked end)
     |> Enum.min()
+    |> cap_at_retention_cutoff(t)
     |> case do
       nil ->
         t
 
       min_acked ->
+        # Record the newest ENTRY version being discarded, not min_acked
+        # itself: acks are window to_versions (commit-stream versions, coarser
+        # than entry versions), so min_acked can run far ahead of the last
+        # entry it covers. Using it as the gap floor would fail returning
+        # laggards that confirmed every discarded entry - a spurious full
+        # recovery. A proxy acked >= this floor has everything discarded.
+        discarded = MetadataAccumulator.newest_version_at_or_below(t.metadata_window, min_acked)
+
         %{
           t
           | metadata_window: MetadataAccumulator.prune_through(t.metadata_window, min_acked),
-            metadata_pruned_through: max_ack(t.metadata_pruned_through, min_acked)
+            metadata_pruned_through: max_ack(t.metadata_pruned_through, discarded)
         }
+    end
+  end
+
+  defp cap_at_retention_cutoff(nil, _t), do: nil
+
+  defp cap_at_retention_cutoff(min_acked, t) do
+    case retention_cutoff(t) do
+      nil -> nil
+      cutoff -> min(min_acked, cutoff)
     end
   end
 end

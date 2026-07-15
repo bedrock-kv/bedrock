@@ -11,11 +11,15 @@
     {
       "text": "Design per user 2026-07-15: FAST, non-blocking re-adoption. Recovery stays untouched. The distributor sweep publishes placeholder coverage IMMEDIATELY (unchanged), then asynchronously attempts re-adoption for uncovered tags with known candidate workers: consult the director's services map for kind==:materializer workers, query each candidate's shard identity + health via a single short-timeout info call, epoch lock/unlock (skipping worker creation), then deliver the adopted pid through the same path recruitment_complete uses (upgrading the slot from placeholder to real pid). Failure at any step = stay on placeholder, demand-driven recruitment as fallback. If no worker-\u003eshard mapping exists yet, add shard_id to materializer info facts (small).",
       "timestamp": "2026-07-15T13:53:33Z"
+    },
+    {
+      "text": "Implemented on feature/q67-readoption (9ee26266), draft PR #102 into feature/q67-phase-a. Sweep fast path unchanged; re-adoption fires once after sweep_complete :ok (ordering placeholder-\u003ereal guaranteed). Distributor now receives director's services map via child_spec; candidates queried for new :shard_id info fact (olivine + basalt) concurrently under 2s hard deadline; Recruitment.readopt reuses lock/unlock seams, unlocks at worker-reported durable_version, delivers via recruitment_complete path (monitor, placeholder_tags removal). Failures leave placeholder, no retry/backoff; pending_demands reservation closes the double-coverage race both directions. Foreman.new_worker gained params: so recruitment records shard_id in worker manifests. 7 unit + 1 integration test (refute create_worker, real olivine); full suite green x2; credo --strict + dialyzer clean. Awaiting gating audit.",
+      "timestamp": "2026-07-15T14:38:48Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Warm-cluster recovery re-covers all data shards via placeholder instead of re-adopting running materializers",
   "type": "task",
-  "updated_at": "2026-07-15T14:06:05Z"
+  "updated_at": "2026-07-15T14:38:48Z"
 }

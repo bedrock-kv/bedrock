@@ -4,6 +4,7 @@
   "blocks": [
     "bedrock-q67.9"
   ],
+  "closed_at": "2026-07-15T21:12:50Z",
   "created": "2026-07-15T20:19:26Z",
   "description": "Found by the bedrock-q67.15 gating audit. Resolver.Server keys proxy_progress by elem(from, 0) - but resolve_transactions is called from a FRESH commit-proxy finalization task pid per batch, so last_seen is always nil. Consequences (verified empirically): (1) every resolve reply carries the FULL retained metadata window, not a differential - O(metadata history) copied per batch once any metadata has committed; (2) proxy_progress gains one dead-pid entry per batch (incl. empty-transaction batches ~1/s) - unbounded; (3) prune_before is stuck at the first-ever task's version, so metadata_window retains all metadata entries forever. Paradoxically this masks a data-loss race: proxy-side Metadata.apply_updates drops late-arriving earlier-versioned windows whole, which is only lossless because windows are supersets. Fix must be coupled: real proxy identity (explicit proxy id in the resolve call, not from-pid) AND in-order/gap-safe window application at the commit proxy server (tasks race to the server mailbox), AND timeout-retry safety (a reply lost to a call timeout currently advances progress, permanently skipping a window under true differential semantics). Pinned by test/bedrock/data_plane/resolver/metadata_window_distribution_test.exs - it fails loudly if windows become differential without the proxy-side ordering fix. Must land before shard-map churn rides this pipe.",
   "id": "bedrock-q67.16",
@@ -22,8 +23,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Resolver metadata window protocol: per-task proxy identity breaks differential design (leak + O(history) per batch)",
   "type": "task",
-  "updated_at": "2026-07-15T20:44:55Z"
+  "updated_at": "2026-07-15T21:12:50Z"
 }

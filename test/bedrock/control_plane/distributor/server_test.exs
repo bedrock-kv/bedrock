@@ -66,6 +66,8 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           director: director,
           shard_layout: Keyword.get(opts, :shard_layout, %{}),
           transaction_system_layout: Keyword.get(opts, :transaction_system_layout, %{}),
+          node_capabilities: Keyword.get(opts, :node_capabilities, %{}),
+          recruitment: Keyword.get(opts, :recruitment, %{}),
           otp_name: unique_otp_name()
         )
       )
@@ -318,10 +320,35 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       assert Map.has_key?(backoff, 7)
     end
 
+    # The parked read's coverage demand triggers a real recruitment attempt.
+    # With the default empty node_capabilities it fails fast, and its
+    # notify_coverage_failed can race the test's deliver_coverage cast and
+    # shed the parked read first (flaked under full-suite load at seed 77).
+    # Hold the recruitment in flight until this test process exits so the
+    # internal seam alone decides the parked read's fate.
+    defp held_recruitment(test_pid) do
+      %{
+        create_worker_fn: fn _foreman, _worker_id, :materializer, _opts ->
+          ref = Process.monitor(test_pid)
+
+          receive do
+            {:DOWN, ^ref, :process, ^test_pid, _reason} -> {:error, :test_finished}
+          end
+        end
+      }
+    end
+
     test "deliver_coverage relays to the placeholder and clears the pending demand" do
       attach_demand_telemetry(self())
       shard_layout = %{<<0xFF, 0xFF>> => {1, <<>>}}
-      {pid, _director} = start_distributor(shard_layout: shard_layout)
+
+      {pid, _director} =
+        start_distributor(
+          shard_layout: shard_layout,
+          node_capabilities: %{materializer: [node()]},
+          recruitment: held_recruitment(self())
+        )
+
       %State{placeholder: placeholder} = :sys.get_state(pid)
 
       stub =

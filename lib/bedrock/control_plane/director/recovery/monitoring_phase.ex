@@ -2,9 +2,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
   @moduledoc """
   Sets up monitoring of all transaction system components and marks recovery as complete.
 
-  Establishes process monitoring for sequencer, commit proxies, resolvers, logs,
-  and storage servers. Any failure of these critical components will trigger
-  immediate director shutdown and recovery restart.
+  Establishes process monitoring for the sequencer, commit proxies, resolvers,
+  logs, and the metadata materializer. Any failure of these critical components
+  will trigger immediate director shutdown and recovery restart.
+
+  Data-shard materializers are deliberately excluded: their death-healing is
+  owned by the distributor (placeholder swap + re-recruitment). The metadata
+  materializer (system shard, tag 0) is transaction-core: clients route tag 0
+  through the TSL's `metadata_materializer` field, which the distributor's
+  `shard_materializers` delta cannot update, so its death must trigger a full
+  recovery instead.
 
   This monitoring implements Bedrock's fail-fast philosophy - rather than
   attempting complex error recovery, component failures cause the director
@@ -46,8 +53,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
       [layout.sequencer],
       layout.proxies,
       resolver_pids,
-      service_pids
+      service_pids,
+      metadata_materializer_pid(layout)
     ])
+  end
+
+  # The metadata materializer is monitored via the TSL's dedicated field.
+  # shard_materializers is deliberately never a monitoring source here (the
+  # distributor owns data-shard death-healing), which also means the tag-0
+  # entry — the same pid on a fresh cluster — cannot introduce a second
+  # monitor. If shard_materializers ever becomes a monitoring source, dedupe
+  # against this pid.
+  @spec metadata_materializer_pid(map()) :: [pid()]
+  defp metadata_materializer_pid(layout) do
+    case Map.get(layout, :metadata_materializer) do
+      pid when is_pid(pid) -> [pid]
+      _ -> []
+    end
   end
 
   @spec monitor_all_pids([pid()], (pid() -> reference())) :: [pid()]

@@ -1,7 +1,8 @@
 {
   "assignee": "",
   "blocked_by": [
-    "bedrock-q67.15"
+    "bedrock-q67.15",
+    "bedrock-ri40"
   ],
   "blocks": [
     "bedrock-q67.10"

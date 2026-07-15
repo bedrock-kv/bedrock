@@ -68,7 +68,12 @@ defmodule Bedrock.ControlPlane.Distributor.ReadoptionTest do
         [:bedrock, :distributor, :readoption, :failed]
       ],
       fn event, measurements, metadata, _config ->
-        send(test_pid, {:telemetry, event, measurements, metadata})
+        # Telemetry is global and these tests run async: only this module's
+        # own distributors (identified by cluster) may reach the test inbox,
+        # or a concurrently running test's re-adoption trips refute_receive.
+        if metadata.cluster == TestCluster do
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end
       end,
       nil
     )
@@ -209,6 +214,53 @@ defmodule Bedrock.ControlPlane.Distributor.ReadoptionTest do
     assert Process.alive?(distributor)
     assert %State{placeholder_tags: tags} = :sys.get_state(distributor)
     assert MapSet.member?(tags, 1)
+  end
+
+  defmodule WedgedLockMaterializer do
+    @moduledoc """
+    A candidate that answers its identity query but never answers the epoch
+    lock: it wedged between identification and re-adoption.
+    """
+    use GenServer
+
+    def start_link(opts), do: GenServer.start_link(__MODULE__, :ok, opts)
+
+    @impl true
+    def init(:ok), do: {:ok, :ok}
+
+    @impl true
+    def handle_call({:info, fact_names}, _from, state),
+      do: {:reply, {:ok, Map.new(fact_names, &{&1, if(&1 == :shard_id, do: 1)})}, state}
+
+    def handle_call({:lock_for_recovery, _epoch}, _from, state), do: {:noreply, state}
+  end
+
+  test "a candidate that wedges during the epoch lock is abandoned at the lock timeout, freeing the tag" do
+    attach_readoption_telemetry(self())
+
+    name = :"wedged_lock_candidate_#{System.unique_integer([:positive])}"
+    start_supervised!(%{id: name, start: {WedgedLockMaterializer, :start_link, [[name: name]]}})
+
+    {distributor, _director} =
+      start_distributor(
+        services: %{"m1" => {:materializer, {name, node()}}},
+        recruitment: %{readoption_lock_timeout_ms: 100}
+      )
+
+    %State{placeholder: placeholder} = :sys.get_state(distributor)
+    assert_receive {:apply_tsl_delta, %{1 => ^placeholder}, @epoch}, 5_000
+
+    # The bounded lock turns the hang into an ordinary failed re-adoption...
+    assert_receive {:telemetry, [:bedrock, :distributor, :readoption, :failed], %{duration_us: _},
+                    %{tag: 1, reason: {:materializer_lock_failed, :timeout, _node}}},
+                   5_000
+
+    # ...so the reservation is released and the placeholder still covers the
+    # tag: demand-driven recruitment remains available as the fallback.
+    wait_until(fn ->
+      %State{} = state = :sys.get_state(distributor)
+      MapSet.member?(state.placeholder_tags, 1) and not MapSet.member?(state.pending_demands, 1)
+    end)
   end
 
   test "a tag whose demand-driven recruitment is in flight is skipped (no double coverage)" do

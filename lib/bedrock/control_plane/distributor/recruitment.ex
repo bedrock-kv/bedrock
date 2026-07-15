@@ -52,13 +52,24 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
           optional(:unlock_materializer_fn) => unlock_materializer_fn(),
           optional(:remove_worker_fn) => remove_worker_fn(),
           optional(:info_fn) => info_fn(),
-          optional(:readoption_deadline_ms) => pos_integer()
+          optional(:readoption_deadline_ms) => pos_integer(),
+          optional(:readoption_lock_timeout_ms) => pos_integer()
         }
 
   # A candidate must answer its identity query well inside the point where
   # anyone could be waiting on the answer; placeholder coverage is already
   # live, so this is a pure-upgrade budget, not a liveness one.
   @readoption_deadline_ms 2_000
+
+  # Bounds the re-adoption epoch lock (matching the unlock and worker
+  # creation budgets). A re-adoption candidate is a previous epoch's worker
+  # whose liveness we can vouch for only as far as its identity reply; the
+  # default recovery lock call is unbounded, and a candidate that wedges
+  # after identifying would otherwise pin the tag's pending-demand
+  # reservation - and with it the demand-driven recruitment fallback -
+  # indefinitely. Bounding the lock turns that hang into an ordinary failed
+  # re-adoption: the tag stays on the placeholder.
+  @readoption_lock_timeout_ms 30_000
 
   @doc """
   Recruits a materializer for the given shard tag: node selection, worker
@@ -103,10 +114,22 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   @spec readopt(Bedrock.range_tag(), worker :: {Worker.ref(), node()}, context()) ::
           {:ok, pid(), node()} | {:error, term()}
   def readopt(tag, {_worker_ref, node} = worker, context) do
+    context = with_bounded_lock(context)
+
     with {:ok, pid, recovery_info} <- lock_materializer(worker, node, context),
          :ok <- unlock_and_start_pulling(pid, tag, node, recovery_info, context) do
       {:ok, pid, node}
     end
+  end
+
+  # See @readoption_lock_timeout_ms: an explicit :lock_materializer_fn
+  # override (tests) still wins.
+  defp with_bounded_lock(context) do
+    timeout_ms = Map.get(context, :readoption_lock_timeout_ms, @readoption_lock_timeout_ms)
+
+    Map.put_new(context, :lock_materializer_fn, fn worker, epoch ->
+      Worker.lock_for_recovery(worker, epoch, timeout_in_ms: timeout_ms)
+    end)
   end
 
   @doc """

@@ -239,6 +239,61 @@ defmodule Bedrock.SystemKeysTest do
         assert SystemKeys.parse_key(key) == {:materializer_key, end_key}
       end
     end
+
+    test "every fixed key family written by PersistencePhase round-trips" do
+      fixed_keys = [
+        {SystemKeys.layout_services(), :layout_services},
+        {SystemKeys.layout_id(), :layout_id},
+        {SystemKeys.cluster_coordinators(), {:cluster, :coordinators}},
+        {SystemKeys.cluster_epoch(), {:cluster, :epoch}},
+        {SystemKeys.cluster_policies_volunteer_nodes(), {:cluster_policy, :volunteer_nodes}},
+        {SystemKeys.cluster_parameters_desired_logs(), {:cluster_parameter, :desired_logs}},
+        {SystemKeys.cluster_parameters_desired_replication(), {:cluster_parameter, :desired_replication}},
+        {SystemKeys.cluster_parameters_desired_commit_proxies(), {:cluster_parameter, :desired_commit_proxies}},
+        {SystemKeys.cluster_parameters_desired_coordinators(), {:cluster_parameter, :desired_coordinators}},
+        {SystemKeys.cluster_parameters_desired_read_version_proxies(),
+         {:cluster_parameter, :desired_read_version_proxies}},
+        {SystemKeys.cluster_parameters_empty_transaction_timeout_ms(),
+         {:cluster_parameter, :empty_transaction_timeout_ms}},
+        {SystemKeys.cluster_parameters_ping_rate_in_hz(), {:cluster_parameter, :ping_rate_in_hz}},
+        {SystemKeys.cluster_parameters_retransmission_rate_in_hz(), {:cluster_parameter, :retransmission_rate_in_hz}},
+        {SystemKeys.cluster_parameters_transaction_window_in_ms(), {:cluster_parameter, :transaction_window_in_ms}},
+        {SystemKeys.recovery_attempt(), {:recovery, :attempt}},
+        {SystemKeys.recovery_state(), {:recovery, :state}},
+        {SystemKeys.recovery_last_completed(), {:recovery, :last_completed}},
+        {SystemKeys.config_monolithic(), :config_monolithic},
+        {SystemKeys.epoch_legacy(), :epoch_legacy},
+        {SystemKeys.last_recovery_legacy(), :last_recovery_legacy}
+      ]
+
+      for {key, expected} <- fixed_keys do
+        assert SystemKeys.parse_key(key) == expected,
+               "Expected #{inspect(key)} to parse as #{inspect(expected)}"
+      end
+    end
+
+    test "parse → generate inverse holds for parametrized families" do
+      # parse result carries everything needed to regenerate the exact key
+      key = SystemKeys.layout_log("log-xyz")
+      {:layout_log, id} = SystemKeys.parse_key(key)
+      assert SystemKeys.layout_log(id) == key
+
+      key = SystemKeys.shard_key("some-end-key")
+      {:shard_key, end_key} = SystemKeys.parse_key(key)
+      assert SystemKeys.shard_key(end_key) == key
+
+      key = SystemKeys.shard(42)
+      {:shard, tag} = SystemKeys.parse_key(key)
+      assert SystemKeys.shards_prefix() <> tag == key
+
+      key = SystemKeys.materializer_key("mat-end")
+      {:materializer_key, end_key} = SystemKeys.parse_key(key)
+      assert SystemKeys.materializer_key(end_key) == key
+    end
+
+    test "unknown cluster parameters parse as :unknown" do
+      assert SystemKeys.parse_key(SystemKeys.system_prefix() <> "/cluster/parameters/future_knob") == :unknown
+    end
   end
 
   describe "key consistency" do

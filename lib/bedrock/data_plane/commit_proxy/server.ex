@@ -47,12 +47,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 2]
 
   import Bedrock.DataPlane.CommitProxy.Telemetry,
-    only: [trace_metadata: 0, trace_metadata: 1]
+    only: [trace_metadata: 0, trace_metadata: 1, trace_metadata_applied: 2, trace_unknown_key_skipped: 1]
 
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.Cluster
   alias Bedrock.DataPlane.CommitProxy.Batch
+  alias Bedrock.DataPlane.CommitProxy.Metadata
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.CommitProxy.State
@@ -196,7 +197,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
   @impl true
-  @spec handle_info(:timeout | {:routing_data_update, RoutingData.t()}, State.t()) ::
+  @spec handle_info(:timeout | {:routing_data_update, RoutingData.t()} | {:metadata_updates, [term()]}, State.t()) ::
           {:noreply, State.t(), timeout()}
   def handle_info(:timeout, %{batch: nil, mode: :running} = t) do
     empty_transaction = Transaction.empty_transaction()
@@ -232,6 +233,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     noreply(%{t | routing_data: updated_routing_data})
   end
 
+  def handle_info({:metadata_updates, updates}, %{mode: :running} = t) do
+    noreply(apply_metadata_updates(t, updates), timeout: t.empty_transaction_timeout_ms)
+  end
+
+  def handle_info({:metadata_updates, updates}, t) do
+    noreply(apply_metadata_updates(t, updates))
+  end
+
   def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
     # Director has died - this commit proxy should terminate gracefully
     {:stop, :normal, t}
@@ -259,7 +268,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
              epoch: epoch,
              sequencer: sequencer,
              resolver_layout: resolver_layout,
-             routing_data: routing_data
+             routing_data: routing_data,
+             metadata_merge_fn: fn updates -> send(server_pid, {:metadata_updates, updates}) end
            ) do
         {:ok, _n_aborts, _n_oks, updated_routing_data} ->
           send(server_pid, {:routing_data_update, updated_routing_data})
@@ -268,6 +278,20 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           exit(reason)
       end
     end)
+  end
+
+  # Folds version-ordered metadata updates from the resolver into the proxy's
+  # structured metadata. Applied in the server process so updates from
+  # concurrent finalization tasks are serialized; the version guard inside
+  # Metadata.apply_updates makes redelivered windows idempotent.
+  @spec apply_metadata_updates(State.t(), [term()]) :: State.t()
+  defp apply_metadata_updates(t, updates) do
+    {metadata, stats} = Metadata.apply_updates(t.metadata, updates)
+
+    if stats.applied > 0, do: trace_metadata_applied(stats.applied, stats.families)
+    if stats.skipped_keys != [], do: trace_unknown_key_skipped(stats.skipped_keys)
+
+    %{t | metadata: metadata}
   end
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()

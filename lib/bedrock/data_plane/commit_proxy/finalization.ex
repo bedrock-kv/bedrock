@@ -180,14 +180,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   During conflict resolution, metadata mutations (keys with \\xFF prefix) are extracted
   from each transaction and sent to the resolver. The resolver returns differential
-  metadata updates that should be merged into the caller's metadata state.
+  metadata updates which are applied to the routing data and handed to the caller's
+  `metadata_merge_fn` (defaults to a no-op) for merging into structured metadata state.
 
   ## Parameters
 
     - `batch`: Transaction batch with commit version details from the sequencer
-    - `transaction_system_layout`: System configuration including resolvers and log servers
-    - `metadata`: Current metadata state (list of accumulated metadata entries)
-    - `opts`: Optional functions for testing and configuration overrides
+    - `opts`: Required configuration (epoch, sequencer, resolver_layout, routing_data)
+      plus optional functions for testing and configuration overrides
 
   ## Returns
 
@@ -207,6 +207,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             resolver_layout: ResolverLayout.t(),
             routing_data: RoutingData.t(),
             resolver_fn: resolver_fn(),
+            metadata_merge_fn: ([MetadataAccumulator.entry()] -> :ok),
             batch_log_push_fn: log_push_batch_fn(),
             abort_reply_fn: abort_reply_fn(),
             success_reply_fn: success_reply_fn(),
@@ -409,8 +410,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec apply_metadata_updates(FinalizationPlan.t(), [MetadataAccumulator.entry()], keyword()) ::
           FinalizationPlan.t()
-  defp apply_metadata_updates(plan, metadata_updates, _opts) do
+  defp apply_metadata_updates(plan, metadata_updates, opts) do
     trace_metadata_updates_received(plan.commit_version, metadata_updates)
+
+    # Hand the version-ordered updates to the caller's merge function so the
+    # commit proxy can fold them into its structured metadata state. Applied at
+    # resolution time (like the routing data below): the resolver has already
+    # accumulated these mutations, regardless of how the rest of the batch fares.
+    metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, fn _updates -> :ok end)
+    if metadata_updates != [], do: metadata_merge_fn.(metadata_updates)
 
     routing_data = %RoutingData{
       shard_table: plan.shard_table,

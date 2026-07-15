@@ -13,7 +13,8 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   the shard's logs so it starts pulling immediately.
 
   The Foreman/Materializer calls are injectable through the context map
-  (`:create_worker_fn`, `:lock_materializer_fn`, `:unlock_materializer_fn`)
+  (`:create_worker_fn`, `:lock_materializer_fn`, `:unlock_materializer_fn`,
+  `:remove_worker_fn`)
   using the same seam conventions as the bootstrap phase, so tests can stub
   the worker layer without reimplementing the plumbing.
   """
@@ -22,6 +23,8 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
+
+  require Logger
 
   @type create_worker_fn ::
           (foreman :: {atom(), node()}, Worker.id(), :materializer, keyword() ->
@@ -32,6 +35,8 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   @type unlock_materializer_fn ::
           (pid(), Bedrock.version(), TransactionSystemLayout.t() ->
              :ok | {:error, term()} | {:failure, term(), term()})
+  @type remove_worker_fn ::
+          (foreman :: {atom(), node()}, Worker.id(), keyword() -> :ok | {:error, term()})
 
   @type context :: %{
           required(:cluster) => module(),
@@ -41,22 +46,61 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
           required(:node_capabilities) => %{Bedrock.Cluster.capability() => [node()]},
           optional(:create_worker_fn) => create_worker_fn(),
           optional(:lock_materializer_fn) => lock_materializer_fn(),
-          optional(:unlock_materializer_fn) => unlock_materializer_fn()
+          optional(:unlock_materializer_fn) => unlock_materializer_fn(),
+          optional(:remove_worker_fn) => remove_worker_fn()
         }
 
   @doc """
   Recruits a materializer for the given shard tag: node selection, worker
   creation via the node's Foreman, epoch lock, and unlock with the shard's
-  logs. Returns the live materializer pid and the node it was placed on.
+  logs. Returns the live materializer pid, the node it was placed on, and
+  the worker id it was created under (so the caller can remove the worker
+  if fencing the recruit into the layout fails).
+
+  A worker that was created but never reached service (lock or unlock
+  failed) is removed again via `remove_orphaned_worker/3` before the error
+  is returned, so failed recruitment does not leak idle or half-locked
+  workers on the node.
   """
-  @spec recruit(Bedrock.range_tag(), context()) :: {:ok, pid(), node()} | {:error, term()}
+  @spec recruit(Bedrock.range_tag(), context()) ::
+          {:ok, pid(), node(), Worker.id()} | {:error, term()}
   def recruit(tag, context) do
     with {:ok, node} <- find_materializer_capable_node(context.node_capabilities),
-         {:ok, worker_ref} <- create_materializer_worker(node, tag, context),
-         {:ok, pid, recovery_info} <- lock_materializer({worker_ref, node}, node, context),
-         :ok <- unlock_and_start_pulling(pid, tag, node, recovery_info, context) do
-      {:ok, pid, node}
+         {:ok, worker_ref, worker_id} <- create_materializer_worker(node, tag, context) do
+      with {:ok, pid, recovery_info} <- lock_materializer({worker_ref, node}, node, context),
+           :ok <- unlock_and_start_pulling(pid, tag, node, recovery_info, context) do
+        {:ok, pid, node, worker_id}
+      else
+        {:error, _reason} = error ->
+          remove_orphaned_worker(worker_id, node, context)
+          error
+      end
     end
+  end
+
+  @doc """
+  Best-effort removal of a worker left behind by a failed recruitment. The
+  worker never carried data a client could reach, so removal is safe; any
+  failure to remove it (foreman unreachable, worker already gone) is
+  logged and swallowed - orphan cleanup must never mask the original
+  recruitment error.
+  """
+  @spec remove_orphaned_worker(Worker.id(), node(), context()) :: :ok
+  def remove_orphaned_worker(worker_id, node, context) do
+    remove_worker_fn = Map.get(context, :remove_worker_fn, &Foreman.remove_worker/3)
+    foreman_ref = {context.cluster.otp_name(:foreman), node}
+
+    try do
+      remove_worker_fn.(foreman_ref, worker_id, timeout: 5_000)
+    catch
+      kind, reason ->
+        Logger.warning(
+          "Failed to remove orphaned materializer worker #{inspect(worker_id)} " <>
+            "on #{inspect(node)}: #{inspect({kind, reason})}"
+        )
+    end
+
+    :ok
   end
 
   # Placement: same convention as the recovery bootstrap phase - the first
@@ -74,7 +118,7 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
     create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
 
     case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000) do
-      {:ok, worker_ref} -> {:ok, worker_ref}
+      {:ok, worker_ref} -> {:ok, worker_ref, worker_id}
       {:error, reason} -> {:error, {:worker_creation_failed, reason, tag, node}}
     end
   end

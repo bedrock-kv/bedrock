@@ -109,6 +109,9 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder.Server do
     t |> reschedule_expiry() |> noreply()
   end
 
+  def handle_cast({:uncovered, tag}, %State{} = t),
+    do: noreply(%{t | covered: Map.delete(t.covered, tag), demanded: MapSet.delete(t.demanded, tag)})
+
   def handle_cast({:coverage_failed, tag, reason}, %State{} = t) do
     {waiting, entries} = WaitingList.remove_all(t.waiting, tag)
     WaitingList.reply_to_expired(entries, {:error, :unavailable})

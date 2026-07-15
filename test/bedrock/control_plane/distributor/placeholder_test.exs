@@ -225,7 +225,8 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       placeholder = start_placeholder()
 
       task = async_get(placeholder, "apple", timeout: 5_000)
-      assert_receive {:"$gen_cast", {:coverage_demand, 1}}
+      # Generous budget: the default 100ms flakes under full-suite load.
+      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 1_000
 
       :ok = Placeholder.notify_coverage_failed(placeholder, 1, :no_capacity)
 

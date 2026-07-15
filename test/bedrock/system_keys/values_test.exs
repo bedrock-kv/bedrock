@@ -39,6 +39,13 @@ defmodule Bedrock.SystemKeys.ValuesTest do
         assert {:ok, ^a} = a |> Values.encode_atom() |> Values.decode_atom()
       end
     end
+
+    test "decoding a string that names no existing atom errors and creates no atom" do
+      string = "bedrock_values_test_never_an_atom_#{System.unique_integer([:positive])}"
+
+      assert {:error, :unknown_atom} = Values.decode_atom(Values.encode_id(string))
+      assert_raise ArgumentError, fn -> String.to_existing_atom(string) end
+    end
   end
 
   describe "id round-trip" do
@@ -64,6 +71,14 @@ defmodule Bedrock.SystemKeys.ValuesTest do
 
     test "decoding a non-list returns an error" do
       assert {:error, _} = Values.decode_node_list(Values.encode_integer(1))
+    end
+
+    test "a node name that is not an existing atom errors and creates no atom" do
+      string = "unknown_node_#{System.unique_integer([:positive])}@nowhere"
+      encoded = Bedrock.Encoding.Tuple.pack([string])
+
+      assert {:error, :unknown_atom} = Values.decode_node_list(encoded)
+      assert_raise ArgumentError, fn -> String.to_existing_atom(string) end
     end
   end
 
@@ -131,6 +146,15 @@ defmodule Bedrock.SystemKeys.ValuesTest do
       encoded = Values.encode_structured({1, %{a: [1, 2, 3]}})
       truncated = binary_part(encoded, 0, byte_size(encoded) - 2)
       assert {:error, _} = Values.decode_structured(truncated)
+    end
+
+    test "an atom payload naming no existing atom errors and creates no atom" do
+      string = "bedrock_structured_never_an_atom_#{System.unique_integer([:positive])}"
+      # v1 wire format: version byte 0x01, atom tag 0x03, 16-bit length, bytes
+      payload = <<0x01, 0x03, byte_size(string)::16, string::binary>>
+
+      assert {:error, :invalid_encoding} = Values.decode_structured(payload)
+      assert_raise ArgumentError, fn -> String.to_existing_atom(string) end
     end
   end
 

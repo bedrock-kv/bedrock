@@ -34,10 +34,12 @@ defmodule Bedrock.SystemKeys.Values do
   `materializer_key/1` -> `Bedrock.SystemKeys.MaterializerList`) are already
   explicitly encoded and are passed through opaque here.
 
-  Atoms are re-created with `String.to_atom/1` on decode. The `\\xFF`
-  keyspace is only writable by privileged control-plane components, and the
-  atom population (config field names, service kinds, node names) is bounded
-  by cluster configuration.
+  Atoms are re-created with `String.to_existing_atom/1` on decode; a string
+  that does not name an existing atom is a decode error (`{:error,
+  :unknown_atom}`), never a new atom -- durable bytes must not be able to
+  grow the atom table. The legitimate atom population (config field names,
+  service kinds, node names) already exists on any node that consumes these
+  values.
   """
 
   import Bitwise, only: [<<<: 2]
@@ -62,7 +64,8 @@ defmodule Bedrock.SystemKeys.Values do
           | :epoch_legacy
           | :last_recovery_legacy
 
-  @type decode_error :: {:error, :invalid_encoding | :invalid_type | :unsupported_version | :unknown_family}
+  @type decode_error ::
+          {:error, :invalid_encoding | :invalid_type | :unknown_atom | :unsupported_version | :unknown_family}
 
   # ============================================================================
   # Encoders (trusted writers; raise on invalid input)
@@ -143,7 +146,7 @@ defmodule Bedrock.SystemKeys.Values do
   @spec decode_atom(binary()) :: {:ok, atom()} | decode_error()
   def decode_atom(binary) do
     with {:ok, string} <- safe_unpack(binary, &is_binary/1) do
-      {:ok, String.to_atom(string)}
+      existing_atom(string)
     end
   end
 
@@ -155,7 +158,17 @@ defmodule Bedrock.SystemKeys.Values do
   @spec decode_node_list(binary()) :: {:ok, [node()]} | decode_error()
   def decode_node_list(binary) do
     with {:ok, strings} <- safe_unpack(binary, &(is_list(&1) and Enum.all?(&1, fn s -> is_binary(s) end))) do
-      {:ok, Enum.map(strings, &String.to_atom/1)}
+      strings
+      |> Enum.reduce_while({:ok, []}, fn string, {:ok, acc} ->
+        case existing_atom(string) do
+          {:ok, node} -> {:cont, {:ok, [node | acc]}}
+          error -> {:halt, error}
+        end
+      end)
+      |> case do
+        {:ok, nodes} -> {:ok, Enum.reverse(nodes)}
+        error -> error
+      end
     end
   end
 
@@ -227,6 +240,15 @@ defmodule Bedrock.SystemKeys.Values do
 
   defp safe_unpack(_not_binary, _valid?), do: {:error, :invalid_encoding}
 
+  # Decoding durable bytes must never create atoms: only strings naming
+  # atoms that already exist on this node are accepted.
+  @spec existing_atom(String.t()) :: {:ok, atom()} | {:error, :unknown_atom}
+  defp existing_atom(string) do
+    {:ok, String.to_existing_atom(string)}
+  rescue
+    ArgumentError -> {:error, :unknown_atom}
+  end
+
   # ============================================================================
   # Versioned structured term codec (v1)
   # ============================================================================
@@ -282,8 +304,12 @@ defmodule Bedrock.SystemKeys.Values do
   defp decode_term(<<@t_true, rest::binary>>), do: {:ok, true, rest}
   defp decode_term(<<@t_false, rest::binary>>), do: {:ok, false, rest}
 
-  defp decode_term(<<@t_atom, size::16, string::binary-size(size), rest::binary>>),
-    do: {:ok, String.to_atom(string), rest}
+  defp decode_term(<<@t_atom, size::16, string::binary-size(size), rest::binary>>) do
+    case existing_atom(string) do
+      {:ok, atom} -> {:ok, atom, rest}
+      {:error, _} -> :error
+    end
+  end
 
   defp decode_term(<<@t_binary, size::32, binary::binary-size(size), rest::binary>>), do: {:ok, binary, rest}
   defp decode_term(<<@t_int, int::signed-64, rest::binary>>), do: {:ok, int, rest}

@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-15T21:16:34Z",
+  "description": "From PR #107 gating audit (pre-existing): PersistencePhase rewrites shard_keys/ entries each recovery but never clear-ranges the prefix first — a shrinking shard layout leaves stale entries that a later bootstrap read would treat as live shards. Harmless while layouts only grow; must be fixed in/before q67.9 when this becomes the durable shard map (add clear_range over the shard_keys/ prefix in the system transaction, which also exercises Metadata's clear_range path — note RoutingData currently ignores clear_range entirely, same audit).",
+  "id": "bedrock-q67.18",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "PersistencePhase never clears stale shard_key entries before rewrite",
+  "type": "bug",
+  "updated_at": "2026-07-15T21:16:34Z"
+}

@@ -54,6 +54,24 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
     )
   end
 
+  @spec trace_metadata_applied(count :: non_neg_integer(), families :: [atom()]) :: :ok
+  def trace_metadata_applied(count, families) do
+    Telemetry.execute(
+      [:bedrock, :data_plane, :commit_proxy, :metadata_applied],
+      %{count: count},
+      Map.put(trace_metadata(), :families, families)
+    )
+  end
+
+  @spec trace_unknown_key_skipped(keys :: [Bedrock.key()]) :: :ok
+  def trace_unknown_key_skipped(keys) do
+    Telemetry.execute(
+      [:bedrock, :data_plane, :commit_proxy, :unknown_key_skipped],
+      %{count: length(keys)},
+      Map.put(trace_metadata(), :keys, keys)
+    )
+  end
+
   @spec trace_metadata_updates_received(
           commit_version :: Bedrock.version(),
           metadata_updates :: [term()]

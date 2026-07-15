@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-15T19:21:17Z",
   "created": "2026-07-15T13:53:33Z",
   "description": "Per user 2026-07-15: materializers hold significant disk/memory; after a configurable period with NO client reads they should shut down gracefully. One mechanism, three wins: reaps recruitment orphans without a GC (no reads -\u003e dies; subsumes most of bedrock-q67.11), implements the epic's deferred 'zero materializers for cold shards', reclaims resources. Design: track last-read activity in the materializer server (reads only, not transaction application); configurable idle_timeout (startup opt/cluster config; propose a sane default and flag it in the PR); on expiry exit with reason {:shutdown, :idle} after best-effort snapshot upload; SYSTEM SHARD EXEMPT. Distributor healing must distinguish {:shutdown, :idle} from crashes: idle death -\u003e placeholder swap only, NO eager re-recruitment (demand-driven revival), else the system fights its own spin-down. Foreman worker-entry cleanup on idle exit.",
   "id": "bedrock-q67.13",
@@ -14,8 +15,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Materializer idle spin-down: configurable inactivity timeout reclaims disk/memory",
   "type": "task",
-  "updated_at": "2026-07-15T14:28:58Z"
+  "updated_at": "2026-07-15T19:21:17Z"
 }

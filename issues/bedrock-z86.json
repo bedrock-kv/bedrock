@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-07-15T12:54:52Z",
   "created": "2026-07-15T12:54:24Z",
   "description": "Add feature/q67-phase-a to elixir_ci.yaml pull_request branches ON the integration branch, so sub-PRs targeting it get full CI (base branch's workflow governs PR triggers). Do not change develop's workflow.",
   "id": "bedrock-z86",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "CI: accept pull_request runs targeting the q67 integration branch",
   "type": "task",
-  "updated_at": "2026-07-15T12:54:24Z"
+  "updated_at": "2026-07-15T12:54:52Z"
 }

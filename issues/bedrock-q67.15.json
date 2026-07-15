@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "bedrock-q67.9"
+  ],
   "created": "2026-07-15T19:55:58Z",
   "description": "Front half of q67.9, split out. The 2026-01 audit found commit_proxy/server.ex passed no metadata_merge_fn to finalize_batch (default no-op discarded all resolver metadata updates). finalization.ex now threads apply_metadata_updates, but the proxy-side wiring and system-key parse/merge are unverified. Deliver: (1) real metadata_merge_fn in commit proxy server — parse system keys from mutations, build structured metadata in State (type the field properly); (2) SystemKeys parse helpers (reverse of key generation); (3) the epic's integration test: a system-key change committed through the full pipeline -\u003e resolver MetadataAccumulator accumulates -\u003e commit proxy applies -\u003e structured metadata readable in proxy state; (4) telemetry for metadata update application. Do NOT change key encoding (bedrock-ri40 follows this). TDD.",
   "id": "bedrock-q67.15",

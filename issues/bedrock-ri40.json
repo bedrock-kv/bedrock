@@ -4,6 +4,7 @@
   "blocks": [
     "bedrock-q67.9"
   ],
+  "closed_at": "2026-07-15T21:16:34Z",
   "created": "2026-01-19T19:56:47.935966-05:00",
   "description": "",
   "id": "bedrock-ri40",
@@ -16,8 +17,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Replace term_to_binary with proper encoding for system keys",
   "type": "task",
-  "updated_at": "2026-07-15T20:20:58Z"
+  "updated_at": "2026-07-15T21:16:34Z"
 }

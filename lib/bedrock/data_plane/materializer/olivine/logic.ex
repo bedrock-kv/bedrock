@@ -17,6 +17,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
+  alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.ObjectStorage.SnapshotBundle
   alias Bedrock.Service.Worker
@@ -53,9 +54,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     end
   end
 
-  @spec build_snapshot_handle(cluster :: module() | nil, shard_id :: Bedrock.range_tag() | nil) :: Snapshot.t() | nil
+  @spec build_snapshot_handle(cluster :: module() | nil, shard_id :: Bedrock.range_tag() | String.t() | nil) ::
+          Snapshot.t() | nil
   defp build_snapshot_handle(nil, _shard_id), do: nil
   defp build_snapshot_handle(_cluster, nil), do: nil
+
+  defp build_snapshot_handle(_cluster, shard_id) when is_integer(shard_id) do
+    backend = ObjectStorageConfig.backend()
+    Snapshot.new(backend, Keys.shard_tag(shard_id))
+  end
 
   defp build_snapshot_handle(_cluster, shard_id) do
     backend = ObjectStorageConfig.backend()

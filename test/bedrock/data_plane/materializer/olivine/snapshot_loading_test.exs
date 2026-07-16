@@ -17,6 +17,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
 
@@ -209,6 +210,40 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
 
       assert {:ok, %State{shard_id: ^shard_id} = state} = result
       assert logs =~ "No snapshot discovered in ObjectStorage, starting fresh"
+
+      Logic.shutdown(state)
+    end
+
+    test "cold start converts numeric shard ids to snapshot tags", %{
+      test_dir: test_dir,
+      backend: backend
+    } do
+      shard_id = 35
+      snapshot = Snapshot.new(backend, Keys.shard_tag(shard_id))
+
+      data_content = ""
+      version = <<0, 0, 0, 0, 0, 0, 0, 100>>
+      pages_map = %{}
+
+      index_record = IndexDatabase.build_snapshot_record(version, pages_map)
+      bundle_content = data_content <> IO.iodata_to_binary(index_record)
+      :ok = Snapshot.write(snapshot, 100, bundle_content)
+
+      {result, logs} =
+        with_log(fn ->
+          Logic.startup(
+            :test_numeric_shard_snapshot_loading,
+            self(),
+            "test-id",
+            test_dir,
+            cluster: TestCluster,
+            shard_id: shard_id,
+            pool_size: 1
+          )
+        end)
+
+      assert {:ok, %State{shard_id: ^shard_id, snapshot: %Snapshot{}} = state} = result
+      assert logs =~ "Discovered and loaded snapshot from ObjectStorage"
 
       Logic.shutdown(state)
     end

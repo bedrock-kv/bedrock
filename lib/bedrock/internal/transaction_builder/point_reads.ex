@@ -74,6 +74,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
   end
 
   defp wrap_storage_get_result({:ok, raw_value}, key), do: {:ok, {key, raw_value}}
+  defp wrap_storage_get_result({:error, :not_found}, key), do: {:ok, {key, nil}}
   defp wrap_storage_get_result({:error, reason}, _key), do: {:error, reason}
   defp wrap_storage_get_result({:failure, reason, storage_id}, _key), do: {:failure, reason, storage_id}
 

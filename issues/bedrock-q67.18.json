@@ -9,9 +9,15 @@
   "id": "bedrock-q67.18",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Fix landed on feature/q67-shard-key-clearing (df2d3239), draft PR #110 into feature/q67-phase-a. PersistencePhase clear_ranges shard_keys/, shards/, and layout/logs/ prefixes (KeyRange.from_prefix) before rewriting; RoutingData now applies clear_range mirroring Metadata #105 semantics. Survey: layout_services/layout_id single-key (no staleness); materializer_keys/ has no writer yet. Not closing per instructions.",
+      "timestamp": "2026-07-17T01:51:11Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "PersistencePhase never clears stale shard_key entries before rewrite",
   "type": "bug",
-  "updated_at": "2026-07-17T01:40:30Z"
+  "updated_at": "2026-07-17T01:51:11Z"
 }

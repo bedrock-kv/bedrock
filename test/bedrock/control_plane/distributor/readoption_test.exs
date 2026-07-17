@@ -325,13 +325,13 @@ defmodule Bedrock.ControlPlane.Distributor.ReadoptionTest do
 
     ref = Process.monitor(distributor)
 
-    %State{placeholder: placeholder} = :sys.get_state(distributor)
-    assert_receive {:apply_tsl_delta, %{1 => ^placeholder}, @epoch}, 5_000
+    assert_receive {:apply_tsl_delta, %{1 => _placeholder}, @epoch}, 5_000
     assert_receive {:apply_tsl_delta, %{1 => _adopted}, @epoch}, 5_000
 
     # The re-adoption delta was rejected as superseded: this distributor
-    # cedes to the newer epoch's distributor.
-    assert_receive {:DOWN, ^ref, :process, ^distributor, :normal}, 5_000
+    # cedes to the newer epoch's distributor. :noproc if it exited before
+    # the monitor attached.
+    assert_receive {:DOWN, ^ref, :process, ^distributor, reason} when reason in [:normal, :noproc], 5_000
   end
 
   test "re-adoption failure leaves the placeholder covering the tag and demand recruitment as the fallback" do

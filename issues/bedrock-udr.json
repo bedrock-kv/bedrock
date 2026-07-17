@@ -6,9 +6,15 @@
   "description": "Point reads that miss storage ({:error, :not_found}) never enter the read conflict set: wrap_storage_get_result falls through the generic error clause and skips Tx.merge_storage_read, so two concurrent txns can read-miss the same key, both write it, and both commit (see PR #108 for the result-normalization approach). Fix aligned with FoundationDB NativeAPI Transaction::get: register the single-key read conflict at read-issue time in get_key_from_storage (unless snapshot), via Tx.add_read_conflict_key, making conflict correctness independent of the storage result shape.",
   "id": "bedrock-udr",
   "labels": [],
+  "comments": [
+    {
+      "text": "Fix delivered in PR #109 (branch fix/read-intent-conflicts-bedrock-udr, worktree /Users/j5n/Workspace/bedrock-udr-worktree). Red/green verified: 3 of 5 tests fail without the lib change. Close on merge.",
+      "timestamp": "2026-07-17T01:44:40Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Register point-read conflicts on read intent (FDB-aligned)",
   "type": "task",
-  "updated_at": "2026-07-17T01:39:57Z"
+  "updated_at": "2026-07-17T01:44:40Z"
 }

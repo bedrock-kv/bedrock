@@ -61,6 +61,8 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
 
     case ensure_read_version(t, opts) do
       {:ok, t} ->
+        t = record_read_intent(t, key, opts)
+
         execute_get_query(
           t,
           key,
@@ -70,6 +72,18 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
 
       {:failure, failures_by_reason} ->
         {t, {:failure, failures_by_reason}}
+    end
+  end
+
+  # The conflict is registered when the read is issued, not when the result
+  # returns: a read that comes back empty still constrains the transaction's
+  # outcome, so the resolver must see it regardless of the result's shape.
+  @spec record_read_intent(State.t(), Bedrock.key(), keyword()) :: State.t()
+  defp record_read_intent(t, key, opts) do
+    if Keyword.get(opts, :snapshot, false) do
+      t
+    else
+      %{t | tx: Tx.add_read_conflict_key(t.tx, key)}
     end
   end
 

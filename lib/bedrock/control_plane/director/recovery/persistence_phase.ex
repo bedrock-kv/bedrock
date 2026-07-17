@@ -28,6 +28,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.Id
   alias Bedrock.Internal.TransactionBuilder.Tx
+  alias Bedrock.KeyRange
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.SystemKeys
@@ -280,6 +281,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       |> Tx.set(SystemKeys.layout_services(), Values.encode_structured(encoded_services))
       |> Tx.set(SystemKeys.layout_id(), Values.encode_id(transaction_system_layout.id))
 
+    tx = clear_prefix(tx, SystemKeys.layout_logs_prefix())
+
     tx =
       Enum.reduce(transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
         Tx.set(tx, SystemKeys.layout_log(log_id), Values.encode_tag_list(log_descriptor))
@@ -308,13 +311,31 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end)
   end
 
+  # Rewritten-every-recovery keyed families are cleared before their entries
+  # are written so a shrinking layout leaves no stale entries behind. The clear
+  # and the rewrite land in the same system transaction, so readers never
+  # observe a gap.
+  @spec clear_prefix(Tx.t(), Bedrock.key()) :: Tx.t()
+  defp clear_prefix(tx, prefix) do
+    {start_key, end_key} = KeyRange.from_prefix(prefix)
+    Tx.clear_range(tx, start_key, end_key)
+  end
+
   # Creates shard_key(end_key) -> tag and shard(tag) -> ShardMetadata entries
   # shard_layout format: %{end_key => {tag, start_key}}
+  #
+  # A nil or empty layout means shard management is not active for this
+  # recovery, so existing entries are left untouched rather than cleared.
   @spec build_shard_keys(Tx.t(), TransactionSystemLayout.shard_layout() | nil) :: Tx.t()
   defp build_shard_keys(tx, nil), do: tx
   defp build_shard_keys(tx, shard_layout) when map_size(shard_layout) == 0, do: tx
 
   defp build_shard_keys(tx, shard_layout) when is_map(shard_layout) do
+    tx =
+      tx
+      |> clear_prefix(SystemKeys.shard_keys_prefix())
+      |> clear_prefix(SystemKeys.shards_prefix())
+
     Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
       # Write shard_key(end_key) -> {tag, start_key} (for ceiling search)
       tx = Tx.set(tx, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key))

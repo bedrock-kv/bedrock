@@ -4,6 +4,7 @@
   "blocks": [
     "bedrock-q67.9"
   ],
+  "closed_at": "2026-07-17T02:46:29Z",
   "created": "2026-07-15T21:12:50Z",
   "description": "From PR #106 gating audit (pre-existing): in sharded-resolver mode, abort sets are per-resolver at accumulation time — a transaction aborted by only ONE shard's resolver still has its metadata accumulated by the OTHER resolvers, so metadata from globally-aborted transactions can be distributed to proxies. Harmless for today's recovery-time-only metadata (single system transaction), but MUST be resolved before sharded resolvers carry shard-map traffic (q67.9): either post-merge abort reconciliation before accumulation, or accumulate tentatively and confirm on the global abort-set merge. Marked blocking q67.9; descope only if q67.9 explicitly documents single-resolver-only shard-map support.",
   "id": "bedrock-q67.17",
@@ -16,8 +17,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Sharded resolvers accumulate metadata from globally-aborted transactions",
   "type": "bug",
-  "updated_at": "2026-07-17T02:36:25Z"
+  "updated_at": "2026-07-17T02:46:29Z"
 }

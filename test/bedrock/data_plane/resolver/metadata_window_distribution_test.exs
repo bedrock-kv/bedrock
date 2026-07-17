@@ -60,12 +60,20 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
 
   # Resolve from a fresh pid, exactly like a commit proxy finalization task
   # does - the metadata_ack carries the stable proxy identity, not this pid.
-  defp resolve_from_fresh_task(resolver, last_v, next_v, key, metadata, ack) do
+  defp resolve_from_fresh_task(resolver, last_v, next_v, key, metadata, ack, extra_opts \\ []) do
     parent = self()
 
     spawn_link(fn ->
       result =
-        Resolver.resolve_transactions(resolver, 1, last_v, next_v, [encode_tx(key)], [metadata], metadata_ack: ack)
+        Resolver.resolve_transactions(
+          resolver,
+          1,
+          last_v,
+          next_v,
+          [encode_tx(key)],
+          [metadata],
+          [metadata_ack: ack] ++ extra_opts
+        )
 
       send(parent, {:resolved, result})
     end)
@@ -237,6 +245,131 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
     # discarded, so it missed NOTHING - it must get a plain (empty)
     # differential, not a gap-marked window that would force a full recovery.
     assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(3100), v(3200), "k5", [], {proxy_b, v(1)})
+  end
+
+  describe "deferred metadata (sharded mode, bedrock-q67.17)" do
+    test "a held batch caps the window; the confirmation releases it at the original commit version", %{
+      proxy: proxy,
+      m1: m1
+    } do
+      resolver = start_resolver()
+
+      # Sharded batch carrying metadata: no metadata_per_tx, hold the version.
+      # While a hold is outstanding the window is returned (never nil) so the
+      # settled cap reaches the proxy's merge, but it never extends to (or
+      # past) the held version.
+      assert {:ok, [], {nil, to0, []}} =
+               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy, nil}, metadata_hold: true)
+
+      assert to0 == v(0)
+
+      assert {:ok, [], {nil, to0b, []}} = resolve_from_fresh_task(resolver, v(1), v(2), "k2", [], {proxy, nil})
+      assert to0b == v(0)
+
+      # The confirmation (already filtered by the proxy's merged global abort
+      # set) folds in at the ORIGINAL commit version and rides the reply.
+      assert {:ok, [], {nil, to, [{entry_version, [^m1]}]}} =
+               resolve_from_fresh_task(resolver, v(2), v(3), "k3", [], {proxy, nil}, metadata_confirms: [{v(1), [m1]}])
+
+      assert {to, entry_version} == {v(3), v(1)}
+      assert :sys.get_state(resolver).held_metadata_versions == MapSet.new()
+    end
+
+    test "a confirmation of an all-aborted batch clears the hold and advances the window with no entries", %{
+      proxy: proxy
+    } do
+      resolver = start_resolver()
+
+      assert {:ok, [], {nil, _, []}} =
+               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy, nil}, metadata_hold: true)
+
+      # Every metadata-carrying transaction in the batch was globally aborted:
+      # the confirmation carries no mutations, but the reply still carries a
+      # window so the proxy's ack advances and it stops re-sending.
+      assert {:ok, [], {nil, to, []}} =
+               resolve_from_fresh_task(resolver, v(1), v(2), "k2", [], {proxy, nil}, metadata_confirms: [{v(1), []}])
+
+      assert to == v(2)
+      assert MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window) == []
+    end
+
+    test "re-sent confirmations are idempotent", %{proxy: proxy, m1: m1} do
+      resolver = start_resolver()
+
+      assert {:ok, [], {nil, _, []}} =
+               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy, nil}, metadata_hold: true)
+
+      assert {:ok, [], {nil, _, [{_, [^m1]}]}} =
+               resolve_from_fresh_task(resolver, v(1), v(2), "k2", [], {proxy, nil}, metadata_confirms: [{v(1), [m1]}])
+
+      # The proxy re-sends until its ack covers v(1); no duplicate entry.
+      assert {:ok, [], _} =
+               resolve_from_fresh_task(resolver, v(2), v(3), "k3", [], {proxy, nil}, metadata_confirms: [{v(1), [m1]}])
+
+      assert [{entry_version, [^m1]}] = MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window)
+      assert entry_version == v(1)
+    end
+
+    test "out-of-order confirmations from different proxies keep entries in version order and withheld until settled",
+         %{m1: m1, m2: m2} do
+      resolver = start_resolver()
+      proxy_a = spawn_link(fn -> Process.sleep(:infinity) end)
+      proxy_b = spawn_link(fn -> Process.sleep(:infinity) end)
+
+      # proxy_a holds v(1); proxy_b holds v(2).
+      assert {:ok, [], {nil, _, []}} =
+               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy_a, nil}, metadata_hold: true)
+
+      assert {:ok, [], {nil, _, []}} =
+               resolve_from_fresh_task(resolver, v(1), v(2), "k2", [], {proxy_b, nil}, metadata_hold: true)
+
+      # proxy_b confirms v(2) FIRST - but v(1) is still held, so the entry at
+      # v(2) is withheld (no proxy may apply or ack past unsettled metadata).
+      assert {:ok, [], {nil, to_b, []}} =
+               resolve_from_fresh_task(resolver, v(2), v(3), "k3", [], {proxy_b, nil},
+                 metadata_confirms: [{v(2), [m2]}]
+               )
+
+      assert to_b == v(0)
+
+      # proxy_a confirms v(1): everything settles and both entries are served
+      # in ORIGINAL version order.
+      assert {:ok, [], {nil, to, [{e1, [^m1]}, {e2, [^m2]}]}} =
+               resolve_from_fresh_task(resolver, v(3), v(4), "k4", [], {proxy_a, nil},
+                 metadata_confirms: [{v(1), [m1]}]
+               )
+
+      assert {to, e1, e2} == {v(4), v(1), v(2)}
+    end
+
+    test "held versions never confirmed (dead proxy) expire into a coverage gap, not silent loss", %{
+      proxy: proxy,
+      m1: m1
+    } do
+      # 1ms retention = 1000 versions.
+      resolver = start_resolver(version_retention_ms: 1)
+
+      assert {:ok, [], {nil, _, []}} =
+               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy, nil}, metadata_hold: true)
+
+      # The submitting proxy never confirms v(1) (it died mid-batch, or
+      # stalled beyond any healthy cadence). Once the held version falls out
+      # of the retention horizon it expires - but the metadata MAY have
+      # committed, so the expired version poisons the pruned floor: proxies
+      # acked below it (necessarily all of them - holds cap acks) receive a
+      # gap-marked window (from_version above their applied version) and take
+      # the fail-fast exit into recovery rather than silently missing it.
+      assert {:ok, [], {from, to, []}} = resolve_from_fresh_task(resolver, v(1), v(2500), "k2", [], {proxy, nil})
+      assert {from, to} == {v(1), v(2500)}
+      assert :sys.get_state(resolver).held_metadata_versions == MapSet.new()
+
+      # A proxy acked at or above the poisoned floor is served normally
+      # (single-mode accumulation here just proves the cap is gone).
+      assert {:ok, [], {_, to, [{entry_version, [^m1]}]}} =
+               resolve_from_fresh_task(resolver, v(2500), v(2600), "k3", [m1], {proxy, v(2500)})
+
+      assert {to, entry_version} == {v(2600), v(2600)}
+    end
   end
 
   test "proxies not seen within version retention expire; a returning laggard gets a gap-marked window", %{

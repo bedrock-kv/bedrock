@@ -66,6 +66,51 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
   end
 
   @doc """
+  Flattens per-transaction metadata mutations, keeping only transactions that
+  survived the abort set (indices are batch positions), in transaction order.
+
+  Shared by immediate accumulation (resolver, local abort set) and deferred
+  confirmation (commit proxy, merged global abort set) so both sides agree on
+  which mutations a batch committed.
+
+  ## Examples
+
+      iex> committed_mutations([[{:set, <<0xFF, "a">>, "1"}], [{:set, <<0xFF, "b">>, "2"}]], MapSet.new([1]))
+      [{:set, <<0xFF, "a">>, "1"}]
+  """
+  @spec committed_mutations([[mutation()]], MapSet.t(non_neg_integer())) :: [mutation()]
+  def committed_mutations(metadata_per_tx, aborted_set) do
+    metadata_per_tx
+    |> Enum.with_index()
+    |> Enum.reject(fn {_mutations, idx} -> MapSet.member?(aborted_set, idx) end)
+    |> Enum.flat_map(fn {mutations, _idx} -> mutations end)
+  end
+
+  @doc """
+  Inserts mutations at a given version, maintaining version order even when
+  the version is older than existing entries.
+
+  Used for deferred (confirmed-later) metadata in sharded-resolver mode, where
+  confirmations for different versions can arrive out of order. If mutations
+  is empty, this is a no-op.
+
+  ## Examples
+
+      iex> acc = new()
+      iex>   |> append(v(2), [{:set, <<0xFF, "b">>, "2"}])
+      iex>   |> insert_sorted(v(1), [{:set, <<0xFF, "a">>, "1"}])
+      iex> Enum.map(entries(acc), &elem(&1, 0))
+      [<<0, 0, 0, 0, 0, 0, 0, 1>>, <<0, 0, 0, 0, 0, 0, 0, 2>>]
+  """
+  @spec insert_sorted(t(), Bedrock.version(), [mutation()]) :: t()
+  def insert_sorted(accumulator, _version, []), do: accumulator
+
+  def insert_sorted(%__MODULE__{reversed_entries: reversed} = accumulator, version, mutations) do
+    {newer, older} = Enum.split_while(reversed, fn {v, _} -> v > version end)
+    %{accumulator | reversed_entries: newer ++ [{version, mutations} | older]}
+  end
+
+  @doc """
   Returns all mutations since (but not including) the given version.
 
   Returns mutations in version order (oldest first). If `since_version` is nil,

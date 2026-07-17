@@ -160,6 +160,23 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
 
         {state, {:error, :not_found}}
 
+      {state, {:ok, {{resolved_key, nil}, _shard_range}}} ->
+        state =
+          if snapshot do
+            state
+          else
+            {span_start, span_end} = selector_scan_span(key_selector.key, resolved_key)
+
+            tx =
+              state.tx
+              |> Tx.merge_storage_read(resolved_key, :not_found)
+              |> Tx.add_read_conflict_range(span_start, span_end)
+
+            %{state | tx: tx}
+          end
+
+        {state, {:error, :not_found}}
+
       {state, {:ok, {{resolved_key, value}, _shard_range}}} ->
         state =
           if snapshot do

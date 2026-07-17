@@ -113,6 +113,35 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReadsTest do
       assert {"kangaroo", Key.key_after("m")} in tx.range_reads
     end
 
+    test "selector resolving exactly to its anchor records the single-key span" do
+      selector = KeySelector.first_greater_or_equal("m")
+      state = build_state()
+
+      storage_fn = fn _pid, ^selector, _version, _opts ->
+        {:ok, {"m", "exact"}}
+      end
+
+      assert {%State{tx: tx}, {:ok, {"m", "exact"}}} =
+               PointReads.get_key_selector(state, selector, storage_get_key_selector_fn: storage_fn)
+
+      assert {"m", Key.key_after("m")} in tx.range_reads
+    end
+
+    test "selector resolving to a key with nil value records the span and misses" do
+      selector = KeySelector.first_greater_or_equal("m")
+      state = build_state()
+
+      storage_fn = fn _pid, ^selector, _version, _opts ->
+        {:ok, {"moose", nil}}
+      end
+
+      assert {%State{tx: tx}, {:error, :not_found}} =
+               PointReads.get_key_selector(state, selector, storage_get_key_selector_fn: storage_fn)
+
+      assert {"m", Key.key_after("moose")} in tx.range_reads
+      assert %{"moose" => :clear} = tx.reads
+    end
+
     test "selector that resolves to nothing records the scanned shard range" do
       selector = KeySelector.first_greater_or_equal("zzz")
       state = build_state()

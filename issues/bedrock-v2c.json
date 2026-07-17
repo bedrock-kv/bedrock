@@ -7,8 +7,8 @@
   "id": "bedrock-v2c",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Spike: key-selector reads must record scanned-span read conflicts (FDB extraConflictRanges)",
   "type": "task",
-  "updated_at": "2026-07-17T02:08:57Z"
+  "updated_at": "2026-07-17T02:10:56Z"
 }

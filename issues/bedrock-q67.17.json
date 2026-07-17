@@ -9,9 +9,15 @@
   "id": "bedrock-q67.17",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Implemented on branch feature/q67-sharded-abort-metadata; draft PR #112 into feature/q67-phase-a (commit 13f25e72). Design: deferred accumulation via next-call piggyback — sharded proxies withhold metadata_per_tx, send metadata_hold + globally-filtered metadata_confirms; resolver windows capped at oldest held version; unconfirmed holds expire into a coverage gap (recovery) instead of silent loss. Single-resolver path unchanged. Full suite green at 2 seeds; credo/dialyzer clean. Leaving ticket open pending PR review/merge.",
+      "timestamp": "2026-07-17T02:36:25Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Sharded resolvers accumulate metadata from globally-aborted transactions",
   "type": "bug",
-  "updated_at": "2026-07-17T01:40:30Z"
+  "updated_at": "2026-07-17T02:36:25Z"
 }

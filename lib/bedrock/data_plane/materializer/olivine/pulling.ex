@@ -63,10 +63,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Pulling do
       {:ok, {log_id, %{status: {:up, worker_pid}}}} ->
         trace_log_pull_start(state.start_after, state.start_after)
 
+        # Note: materializers deliberately do not report `durable_up_to` here.
+        # The log keeps a single trim point (one Demux consumer per log);
+        # reporting from multiple materializers could trim history that a
+        # slower materializer still needs. Materializers move off the Log to
+        # the Demux in bedrock-q67.10.
         case Log.pull(worker_pid, state.start_after,
                limit: 100,
-               willing_to_wait_in_ms: call_timeout(),
-               subscriber: {state.worker_id, state.get_durable_version_fn.()}
+               willing_to_wait_in_ms: call_timeout()
              ) do
           {:ok, transactions} ->
             trace_log_pull_succeeded(state.start_after, length(transactions))

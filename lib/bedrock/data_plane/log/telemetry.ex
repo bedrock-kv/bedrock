@@ -63,6 +63,15 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
     )
   end
 
+  @spec trace_segments_trimmed(segments_trimmed :: pos_integer(), trim_point :: Bedrock.version()) :: :ok
+  def trace_segments_trimmed(segments_trimmed, trim_point) do
+    Telemetry.execute(
+      [:bedrock, :log, :segments_trimmed],
+      %{segments_trimmed: segments_trimmed},
+      Map.put(trace_metadata(), :trim_point, trim_point)
+    )
+  end
+
   @spec trace_pull_transactions(from_version :: Bedrock.version(), opts :: Keyword.t()) :: :ok
   def trace_pull_transactions(from_version, opts) do
     Telemetry.execute(

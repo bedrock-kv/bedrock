@@ -68,8 +68,8 @@ defmodule Bedrock.DataPlane.Log do
   @doc """
   Pull transactions from the log starting from a given version. Options allow
   specifying the maximum number of transactions to return, the last version
-  considered valid, whether the operation is recovery-related, subscriber
-  details to maintain state, and a timeout for the operation.
+  considered valid, whether the operation is recovery-related, an inline
+  durability report, and a timeout for the operation.
 
   Returns a list of transactions or an error indicating why the pull failed.
 
@@ -83,7 +83,18 @@ defmodule Bedrock.DataPlane.Log do
       - `last_version`: The last valid version for pulling transactions
         (inclusive).
       - `recovery`: Indicates if this pull is part of a recovery operation.
-      - `subscriber`: A tuple containing an ID and the last durable version.
+      - `durable_up_to`: Inline durability report: every transaction at or
+        below this version is durable downstream, so the log may trim history
+        strictly below it. The log keeps a single trim point (the monotonic
+        maximum of all reported values — reports that would regress it are
+        ignored); there is no per-consumer tracking, since each log has a
+        single durability-reporting consumer (its Demux). After reporting
+        `durable_up_to: v`, a puller must not ask for versions older than `v`.
+        `v` must be the commit version of a transaction the log holds (or a
+        version at/past its tail): the log retains the segment containing the
+        trim point, but a report falling in the gap between two commit
+        versions may trim the preceding segment and make a subsequent pull
+        from exactly `v` fail with `:version_too_old`.
       - `timeout_in_ms`: Timeout for the operation in milliseconds.
 
   ## Return Values:
@@ -105,7 +116,7 @@ defmodule Bedrock.DataPlane.Log do
             limit: pos_integer(),
             last_version: Bedrock.version(),
             recovery: boolean(),
-            subscriber: {subscriber_id :: String.t(), last_durable_version :: Bedrock.version()},
+            durable_up_to: Bedrock.version(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
         ) ::

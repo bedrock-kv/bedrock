@@ -235,6 +235,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:pull, from_version, opts}, from, t) do
     trace_pull_transactions(from_version, opts)
 
+    t = maybe_advance_min_durable_version(t, opts[:durable_up_to])
+
     case pull(t, from_version, opts) do
       {:ok, t, transactions} ->
         reply(t, {:ok, transactions})
@@ -376,6 +378,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
+  # Inline durability report from `Log.pull/3`'s `:durable_up_to` option. A
+  # single trim point is kept per log (the monotonic maximum of all reports);
+  # there is no per-consumer tracking.
+  defp maybe_advance_min_durable_version(t, nil), do: t
+
+  defp maybe_advance_min_durable_version(t, durable_up_to) when is_binary(durable_up_to),
+    do: advance_min_durable_version(t, durable_up_to)
+
   defp advance_min_durable_version(t, incoming_version) do
     min_durable_version =
       case t.min_durable_version do
@@ -401,25 +411,37 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     segments_oldest_first = Enum.reverse(t.segments)
 
     {segments_to_trim_oldest_first, remaining_segments_oldest_first} =
-      Enum.split_while(segments_oldest_first, &segment_fully_durable?(&1, t.min_durable_version))
+      Enum.split_while(segments_oldest_first, &segment_fully_below_trim_point?(&1, t.min_durable_version))
 
-    Enum.each(segments_to_trim_oldest_first, fn segment ->
-      :ok = Segment.return_to_recycler(segment, t.segment_recycler)
-    end)
+    case segments_to_trim_oldest_first do
+      [] ->
+        t
 
-    remaining_segments = Enum.reverse(remaining_segments_oldest_first)
+      segments_to_trim ->
+        Enum.each(segments_to_trim, fn segment ->
+          :ok = Segment.return_to_recycler(segment, t.segment_recycler)
+        end)
 
-    t
-    |> Map.put(:segments, remaining_segments)
-    |> Map.put(:oldest_version, determine_oldest_version(t.active_segment, remaining_segments))
+        remaining_segments = Enum.reverse(remaining_segments_oldest_first)
+        trace_segments_trimmed(length(segments_to_trim), t.min_durable_version)
+
+        t
+        |> Map.put(:segments, remaining_segments)
+        |> Map.put(:oldest_version, determine_oldest_version(t.active_segment, remaining_segments))
+    end
   end
 
-  defp segment_fully_durable?(segment, min_durable_version) do
+  # A segment may be recycled only when every transaction it holds is strictly
+  # below the trim point. The segment containing the trim point itself is
+  # retained so that a pull for `start_after: trim_point` remains servable
+  # (the active write segment is structurally exempt: only `t.segments` are
+  # ever considered for trimming).
+  defp segment_fully_below_trim_point?(segment, min_durable_version) do
     loaded_segment = Segment.ensure_transactions_are_loaded(segment)
 
     case Segment.last_version(loaded_segment) do
       nil -> true
-      last_version -> last_version <= min_durable_version
+      last_version -> last_version < min_durable_version
     end
   end
 

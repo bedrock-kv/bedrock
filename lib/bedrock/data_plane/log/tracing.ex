@@ -18,7 +18,8 @@ defmodule Bedrock.DataPlane.Log.Tracing do
         [:bedrock, :log, :recover_from],
         [:bedrock, :log, :push],
         [:bedrock, :log, :push_out_of_order],
-        [:bedrock, :log, :pull]
+        [:bedrock, :log, :pull],
+        [:bedrock, :log, :segments_trimmed]
       ],
       &__MODULE__.handler/4,
       nil
@@ -68,6 +69,10 @@ defmodule Bedrock.DataPlane.Log.Tracing do
 
   def log_event(:pull, _, %{from_version: from_version, opts: opts}),
     do: info("Pull transactions from version #{Version.to_string(from_version)} with options #{inspect(opts)}")
+
+  def log_event(:segments_trimmed, %{segments_trimmed: segments_trimmed}, %{trim_point: trim_point}) do
+    info("Trimmed #{segments_trimmed} durable segment(s) below version #{Version.to_string(trim_point)}")
+  end
 
   defp info(message) do
     metadata = Logger.metadata()

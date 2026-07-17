@@ -185,6 +185,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   the window itself is handed to the caller's `metadata_merge_fn` (defaults to a no-op)
   for in-order merging into structured metadata state.
 
+  With SHARDED resolvers accumulation is deferred: no resolver knows the merged global
+  abort set at resolution time, so metadata-carrying batch versions are held
+  (`metadata_hold`), the batch's globally-committed metadata is reported through
+  `metadata_deferred_fn`, and the caller re-sends it as `metadata_confirms` on
+  subsequent calls until resolver windows confirm it was folded in (see
+  `Bedrock.DataPlane.Resolver`).
+
   ## Parameters
 
     - `batch`: Transaction batch with commit version details from the sequencer
@@ -211,6 +218,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             resolver_fn: resolver_fn(),
             metadata_ack: Resolver.metadata_ack(),
             metadata_merge_fn: (Resolver.metadata_window() -> :ok),
+            metadata_confirms: [{Bedrock.version(), metadata_mutations()}],
+            metadata_deferred_fn: (Bedrock.version(), metadata_mutations() -> :ok),
             batch_log_push_fn: log_push_batch_fn(),
             abort_reply_fn: abort_reply_fn(),
             success_reply_fn: success_reply_fn(),
@@ -309,7 +318,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            opts
          ) do
       {:ok, _aborted, metadata_window} ->
-        plan = apply_metadata_window(plan, metadata_window, opts)
+        plan = apply_metadata_window(plan, metadata_window, [], opts)
         split_and_notify_aborts_with_set(plan, MapSet.new(), opts)
 
       {:error, reason} ->
@@ -346,7 +355,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
          ) do
       {:ok, aborted, metadata_window} ->
         aborted_set = MapSet.new(aborted)
-        plan = apply_metadata_window(plan, metadata_window, opts)
+        plan = apply_metadata_window(plan, metadata_window, [], opts)
         split_and_notify_aborts_with_set(plan, aborted_set, opts)
 
       {:error, reason} ->
@@ -355,9 +364,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   # Sharded multi-resolver path
-  # Note: In sharded mode every resolver receives the FULL metadata_per_tx
-  # (metadata is not sharded), so each maintains a duplicate accumulator and
-  # their reply windows are merged conservatively below.
+  #
+  # Each resolver only sees its own shard's conflicts, so no resolver can know
+  # the GLOBAL abort set at resolution time - metadata accumulation is
+  # deferred (bedrock-q67.17). No metadata_per_tx is sent; instead the call
+  # carries `metadata_hold: true` when this batch has metadata (each resolver
+  # marks the version as held, capping its windows below it) plus
+  # `metadata_confirms` - committed metadata from earlier batches, filtered by
+  # the merged global abort set, which the proxy re-sends on every call until
+  # the resolvers' windows confirm it was folded in. The batch's own committed
+  # metadata is reported to the proxy server via `metadata_deferred_fn` for
+  # confirmation on subsequent calls, and applied to THIS batch's routing data
+  # locally (same-batch visibility, as in single-resolver mode).
   def resolve_conflicts(
         %FinalizationPlan{stage: :ready_for_resolution} = plan,
         epoch,
@@ -393,9 +411,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         {txn_map, metadata_list}
       end
 
+    has_metadata? = Enum.any?(metadata_per_tx, &(&1 != []))
+    opts = Keyword.put(opts, :metadata_hold, has_metadata?)
+
     case call_all_resolvers_with_map(
            resolver_transaction_map,
-           metadata_per_tx,
            epoch,
            plan.last_commit_version,
            plan.commit_version,
@@ -403,7 +423,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            opts
          ) do
       {:ok, aborted_set, metadata_window} ->
-        plan = apply_metadata_window(plan, metadata_window, opts)
+        local_entries = deferred_metadata_entries(plan, metadata_per_tx, aborted_set, has_metadata?, opts)
+        plan = apply_metadata_window(plan, metadata_window, local_entries, opts)
         split_and_notify_aborts_with_set(plan, aborted_set, opts)
 
       {:error, reason} ->
@@ -411,9 +432,40 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @spec apply_metadata_window(FinalizationPlan.t(), Resolver.metadata_window(), keyword()) ::
-          FinalizationPlan.t()
-  defp apply_metadata_window(plan, metadata_window, opts) do
+  # Filters this batch's metadata by the merged GLOBAL abort set, reports it
+  # through metadata_deferred_fn (so the proxy server re-sends it as a
+  # confirmation on subsequent calls - even when empty, so resolvers release
+  # the hold), and returns it as entries for same-batch routing application.
+  @spec deferred_metadata_entries(
+          FinalizationPlan.t(),
+          [metadata_mutations()],
+          MapSet.t(non_neg_integer()),
+          boolean(),
+          keyword()
+        ) :: [MetadataAccumulator.entry()]
+  defp deferred_metadata_entries(_plan, _metadata_per_tx, _aborted_set, false, _opts), do: []
+
+  defp deferred_metadata_entries(plan, metadata_per_tx, aborted_set, true, opts) do
+    committed_metadata = MetadataAccumulator.committed_mutations(metadata_per_tx, aborted_set)
+
+    metadata_deferred_fn = Keyword.get(opts, :metadata_deferred_fn, fn _version, _mutations -> :ok end)
+    metadata_deferred_fn.(plan.commit_version, committed_metadata)
+
+    if committed_metadata == [], do: [], else: [{plan.commit_version, committed_metadata}]
+  end
+
+  # `local_entries` are this batch's own committed metadata (sharded mode) -
+  # applied to the batch's routing data for same-batch visibility, but NOT to
+  # the structured metadata state, which is fed strictly by resolver windows
+  # (keeping ack semantics intact). Single-resolver callers pass [] - their
+  # batch's metadata arrives inside the window itself.
+  @spec apply_metadata_window(
+          FinalizationPlan.t(),
+          Resolver.metadata_window(),
+          [MetadataAccumulator.entry()],
+          keyword()
+        ) :: FinalizationPlan.t()
+  defp apply_metadata_window(plan, metadata_window, local_entries, opts) do
     entries =
       case metadata_window do
         nil -> []
@@ -437,7 +489,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       replication_factor: plan.replication_factor
     }
 
-    updated_routing_data = RoutingData.apply_mutations(routing_data, entries)
+    # Window entries precede this batch's own (higher-version) local entries.
+    updated_routing_data = RoutingData.apply_mutations(routing_data, entries ++ local_entries)
 
     %{
       plan
@@ -448,24 +501,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     }
   end
 
+  # Sharded calls carry no metadata_per_tx (accumulation is deferred; see
+  # resolve_conflicts above), so resolvers are called with [].
   @spec call_all_resolvers_with_map(
           %{Resolver.ref() => [Transaction.encoded()]},
-          [metadata_mutations()],
           Bedrock.epoch(),
           Bedrock.version(),
           Bedrock.version(),
           [{start_key :: Bedrock.key(), Resolver.ref()}],
           keyword()
         ) :: {:ok, MapSet.t(non_neg_integer()), Resolver.metadata_window()} | {:error, term()}
-  defp call_all_resolvers_with_map(
-         resolver_transaction_map,
-         metadata_per_tx,
-         epoch,
-         last_version,
-         commit_version,
-         resolvers,
-         opts
-       ) do
+  defp call_all_resolvers_with_map(resolver_transaction_map, epoch, last_version, commit_version, resolvers, opts) do
     async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
     timeout = Keyword.get(opts, :timeout, 5_000)
 
@@ -474,7 +520,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       fn {_start_key, ref} ->
         # Every resolver must have transactions after task processing
         filtered_transactions = Map.fetch!(resolver_transaction_map, ref)
-        call_resolver_with_retry(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx, opts)
+        call_resolver_with_retry(ref, epoch, last_version, commit_version, filtered_transactions, [], opts)
       end,
       timeout: timeout
     )
@@ -490,18 +536,33 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end)
   end
 
-  # Sharded resolvers each see the full metadata_per_tx and maintain
-  # independent accumulators, so their windows largely duplicate one another.
-  # Merge conservatively: entries sorted by version (the proxy's per-entry
-  # version guard makes duplicates no-ops) and the WEAKEST coverage claim
-  # (max from_version) so that a gap at any resolver is still detected.
+  # Sharded resolvers each maintain independent (largely duplicate) metadata
+  # accumulators, so their windows are merged conservatively: the WEAKEST
+  # coverage claims on both ends - max from_version (a gap at any resolver is
+  # still detected) and MIN to_version (the ack derived from the merged window
+  # must not exceed what every resolver has actually served; their settled
+  # floors can differ transiently under deferred confirmation). Entries at the
+  # same version are identical by construction (one entry per batch version,
+  # broadcast to all resolvers), so they are deduplicated by version, and
+  # entries beyond the merged to_version are truncated - they will be
+  # re-served once every resolver has settled past them. A resolver returns
+  # nil only when its settled floor has reached its last_version, so nil
+  # replies never mask a lower settled floor here.
   @spec merge_metadata_windows(Resolver.metadata_window(), Resolver.metadata_window()) :: Resolver.metadata_window()
   defp merge_metadata_windows(nil, window), do: window
   defp merge_metadata_windows(window, nil), do: window
 
   defp merge_metadata_windows({from_a, to_a, entries_a}, {from_b, to_b, entries_b}) do
     from = if from_a == nil, do: from_b, else: if(from_b == nil, do: from_a, else: max(from_a, from_b))
-    {from, max(to_a, to_b), Enum.sort_by(entries_a ++ entries_b, &elem(&1, 0))}
+    to = min(to_a, to_b)
+
+    entries =
+      (entries_a ++ entries_b)
+      |> Enum.sort_by(&elem(&1, 0))
+      |> Enum.dedup_by(&elem(&1, 0))
+      |> Enum.take_while(fn {version, _} -> version <= to end)
+
+    {from, to, entries}
   end
 
   @spec call_resolver_with_retry(
@@ -533,11 +594,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     # to a timeout is simply re-sent by the resolver - no window is ever skipped.
     metadata_ack = Keyword.get(opts, :metadata_ack, {self(), nil})
 
+    # Deferred-metadata directives (sharded mode; see resolve_conflicts).
+    # Retried calls re-carry them: holds and confirms are idempotent.
+    metadata_hold = Keyword.get(opts, :metadata_hold, false)
+    metadata_confirms = Keyword.get(opts, :metadata_confirms, [])
+
     timeout_in_ms = timeout_fn.(attempts_used)
 
     case resolver_fn.(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx,
            timeout: timeout_in_ms,
-           metadata_ack: metadata_ack
+           metadata_ack: metadata_ack,
+           metadata_hold: metadata_hold,
+           metadata_confirms: metadata_confirms
          ) do
       {:ok, _, _} = success ->
         success

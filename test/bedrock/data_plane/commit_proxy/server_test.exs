@@ -31,7 +31,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
     def handle_call(
           {:resolve_transactions, _epoch, {_last_version, _next_version}, _transactions, _metadata_per_tx,
-           {_proxy_id, _acked_version}},
+           {_proxy_id, _acked_version}, {_metadata_hold?, _metadata_confirms}},
           _from,
           state
         ) do

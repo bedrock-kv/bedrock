@@ -6,9 +6,15 @@
   "description": "Selector resolution depends on every key between the selector anchor and the resolved key: an insert anywhere in that span changes what the selector resolves to, but Bedrock records only the resolved key (hit) or nothing (miss). FDB's getKeyAndConflictRange registers [resolved, anchor) for offset\u003c=0 and [anchor, keyAfter(resolved)) for offset\u003e0, post-resolution. Spike on temp worktree off PR #109 branch; fresh-agent audit before folding into #109. Parent context: bedrock-udr.",
   "id": "bedrock-v2c",
   "labels": [],
+  "comments": [
+    {
+      "text": "Spike complete: selector scan-span conflicts implemented TDD on spike worktree, fresh-agent audit returned no confirmed defects (fold as-is + defensive keyed-nil clause, applied). Folded into PR #109 as 534af21f + 4933cf0-style hardening commit; audit's storage-side finding filed as bedrock-mi1.",
+      "timestamp": "2026-07-17T02:24:03Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Spike: key-selector reads must record scanned-span read conflicts (FDB extraConflictRanges)",
   "type": "task",
-  "updated_at": "2026-07-17T02:10:56Z"
+  "updated_at": "2026-07-17T02:24:03Z"
 }

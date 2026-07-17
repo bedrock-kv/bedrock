@@ -251,6 +251,39 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       RoutingData.cleanup(routing_data)
     end
 
+    test "cleared prefix ranges do not cover any other system-key family" do
+      # shard_keys/ and shards/ are byte-prefix siblings (common prefix
+      # "shard"); layout/logs/ neighbors layout/id and layout/services. The
+      # strinc bound must keep each cleared range strictly within its own
+      # family: '_' (0x5F) < 's' (0x73) puts strinc("...shard_keys/") =
+      # "...shard_keys0" below every "...shards/" key.
+      cleared_prefixes = [
+        SystemKeys.shard_keys_prefix(),
+        SystemKeys.shards_prefix(),
+        SystemKeys.layout_logs_prefix()
+      ]
+
+      other_family_keys = [
+        SystemKeys.shard_key(<<>>),
+        SystemKeys.shard_key(<<0xFF, 0xFF>>),
+        SystemKeys.shard("0"),
+        SystemKeys.layout_log("log_1"),
+        SystemKeys.layout_services(),
+        SystemKeys.layout_id(),
+        SystemKeys.materializer_key(<<>>),
+        SystemKeys.materializer_key(<<0xFF, 0xFF>>)
+      ]
+
+      for prefix <- cleared_prefixes,
+          key <- other_family_keys,
+          not String.starts_with?(key, prefix) do
+        range = KeyRange.from_prefix(prefix)
+
+        refute KeyRange.contains?(range, key),
+               "clear_range over #{inspect(prefix)} would clear foreign family key #{inspect(key)}"
+      end
+    end
+
     test "prefix range end is exact: a key at strinc(prefix) is not cleared" do
       prefix = SystemKeys.shard_keys_prefix()
       boundary_key = Key.strinc(prefix)

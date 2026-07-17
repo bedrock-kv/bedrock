@@ -6,6 +6,12 @@
   "description": "Three distinct test-code races, each failed one recent develop run (product behavior correct in all logs):\n\n1. test/bedrock/control_plane/distributor/server_test.exs:260 — Process.monitor/1 is attached after start_distributor; when the sweep delta is rejected quickly the distributor exits before the monitor attaches, so the DOWN arrives with :noproc instead of :normal (run 29548302754). Telemetry in the mailbox confirms the distributor stopped with reason :normal.\n\n2. test/bedrock/control_plane/distributor/readoption_test.exs:314 — :sys.get_state(distributor) at line 328 races with the distributor stopping normally (the test's expected outcome); get_state exits with :normal (run 29447945622).\n\n3. test/bedrock/data_plane/materializer/olivine/genserver_integration_test.exs:654 — GenServer.call(pid, {:info, :kind}, 1) with a 1ms timeout; comment says 'should either succeed or timeout gracefully' but the call is not wrapped in catch_exit, so a timeout on a slow runner crashes the test (run 29548013855).\n\nAll three only ever fail on the OTP 27.2 / Elixir 1.17.3 matrix job, likely the slowest. Fixes: (1) capture state/monitor before the race window or accept the noproc/normal pair via a monitor-first helper; (2) drop or guard the get_state on a process expected to die; (3) wrap the 1ms call in catch_exit.",
   "id": "bedrock-yp2",
   "labels": [],
+  "comments": [
+    {
+      "text": "Fix pushed as PR #111 (branch fix/bedrock-yp2-flaky-tests): guard DOWN assertions for :noproc monitor-attach races in server_test/readoption_test, drop the racy :sys.get_state in readoption_test, catch the 1ms call timeout in olivine genserver_integration_test. All 44 affected tests pass locally; format+credo clean.",
+      "timestamp": "2026-07-17T02:07:51Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Fix three flaky test races failing develop CI on OTP 27.2/Elixir 1.17.3",

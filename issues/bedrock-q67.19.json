@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-07-17T02:02:14Z",
+  "description": "From PR #110 gating audit (pre-existing): IndexUpdate.extract_keys_in_range uses key \u003c= end_key (inclusive) and page_entirely_after_range? has the matching \u003e vs \u003e=, though clear_range is exclusive-end in Tx, Metadata, and RoutingData. A key exactly at end_key is wrongly cleared. No system key sits at a strinc boundary today, but user-data clear_ranges hit this. Align olivine to exclusive-end with boundary tests. Also (same audit, minor): bootstrap read range end uses prefix\u003c\u003e0xFFFFFFFF instead of strinc (over-wide, safe); RoutingData insert_log lacks dedupe on repeated sets (theoretical).",
+  "id": "bedrock-q67.19",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Olivine clear_range uses inclusive end-key; everywhere else is exclusive",
+  "type": "bug",
+  "updated_at": "2026-07-17T02:02:14Z"
+}

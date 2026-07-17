@@ -265,7 +265,9 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       ref = Process.monitor(pid)
 
       assert_receive {:apply_tsl_delta, _delta, 42}, 2_000
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+      # :noproc if the distributor exited before the monitor attached; the
+      # stopped telemetry below still confirms a normal exit.
+      assert_receive {:DOWN, ^ref, :process, ^pid, reason} when reason in [:normal, :noproc], 2_000
       assert_receive {:telemetry, [:bedrock, :distributor, :stopped], %{}, %{epoch: 42, reason: :normal}}, 2_000
     end
 

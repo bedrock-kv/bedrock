@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-12T20:33:20Z",
+  "description": "",
+  "id": "bedrock-qep",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Remove obsolete .beads entry from .gitignore (bd→bw migration cleanup)",
+  "type": "task",
+  "updated_at": "2026-08-12T20:33:20Z"
+}

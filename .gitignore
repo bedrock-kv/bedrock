@@ -41,7 +41,6 @@ bedrock-*.tar
 .claude/
 CLAUDE.md
 AGENTS.md
-.beads
 .gitattributes
 
 # Local env/tooling

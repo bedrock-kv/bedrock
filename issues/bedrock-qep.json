@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-12T20:33:57Z",
+  "close_reason": "Fixed in PR #113 (branch chore/bedrock-qep-remove-beads-gitignore)",
   "created": "2026-08-12T20:33:20Z",
   "description": "",
   "id": "bedrock-qep",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Remove obsolete .beads entry from .gitignore (bd→bw migration cleanup)",
   "type": "task",
-  "updated_at": "2026-08-12T20:33:20Z"
+  "updated_at": "2026-08-12T20:33:57Z"
 }

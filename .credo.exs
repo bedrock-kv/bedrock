@@ -18,21 +18,26 @@
       strict: false,
       parse_timeout: 5000,
       color: true,
-      checks: %{
+      # List form: merges with credo's default check set.
+      # `{check, false}` disables a check; `{check, opts}` enables/configures one.
+      checks: [
+        # Disable the Logger metadata warning globally
+        {Credo.Check.Warning.MissedMetadataKeyInLoggerConfig, false},
 
-        disabled: [
-          # Disable the Logger metadata warning globally
-          {Credo.Check.Warning.MissedMetadataKeyInLoggerConfig, []},
+        # Disable checks incompatible with Elixir 1.18.3
+        {Credo.Check.Refactor.MapInto, false},
+        {Credo.Check.Warning.LazyLogging, false},
 
-          # Disable checks incompatible with Elixir 1.18.3
-          {Credo.Check.Refactor.MapInto, []},
-          {Credo.Check.Warning.LazyLogging, []},
+        # Disable some checks that may be too strict for this project
+        {Credo.Check.Readability.MultiAlias, false},
 
-          # Disable some checks that may be too strict for this project
-          {Credo.Check.Readability.MultiAlias, []},
-          {Credo.Check.Readability.Specs, []}
-        ]
-      }
+        # Specs required for lib code only; test helpers are exempt (bedrock-qjp)
+        {Credo.Check.Readability.Specs, files: %{excluded: [~r"(^|/)test/"]}},
+
+        # Disabled pending cleanup of existing findings (bedrock-jsu)
+        {Credo.Check.Refactor.Nesting, false},
+        {Credo.Check.Warning.ExpensiveEmptyEnumCheck, false}
+      ]
     }
   ]
 }

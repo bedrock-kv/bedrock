@@ -32,6 +32,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   @spec stop() :: :ok | {:error, :not_found}
   def stop, do: :telemetry.detach(handler_id())
 
+  @spec to_hh_mm_ss_ms(non_neg_integer()) :: String.t()
   def to_hh_mm_ss_ms(0), do: "0:00.000"
 
   def to_hh_mm_ss_ms(milliseconds) do

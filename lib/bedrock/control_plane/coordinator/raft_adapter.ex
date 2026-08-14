@@ -2,8 +2,6 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
   @moduledoc false
   @behaviour Bedrock.Raft.Interface
 
-  require Logger
-
   @spec determine_timeout(pos_integer(), pos_integer()) :: pos_integer()
   defp determine_timeout(min_ms, max_ms) when min_ms == max_ms, do: min_ms
   defp determine_timeout(min_ms, max_ms) when min_ms > max_ms, do: raise("invalid_timeout")

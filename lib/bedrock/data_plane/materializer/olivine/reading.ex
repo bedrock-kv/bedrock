@@ -57,14 +57,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
       }
     end
 
+    @spec mark_waitlisted(%__MODULE__{}) :: %__MODULE__{}
     def mark_waitlisted(%__MODULE__{} = timing),
       do: %{timing | was_waitlisted: true, wait_start_time: System.monotonic_time(:microsecond)}
 
+    @spec mark_async(%__MODULE__{}) :: %__MODULE__{}
     def mark_async(%__MODULE__{} = timing),
       do: %{timing | was_async: true, task_start_time: System.monotonic_time(:microsecond)}
 
+    @spec mark_result(%__MODULE__{}, term()) :: %__MODULE__{}
     def mark_result(%__MODULE__{} = timing, result), do: %{timing | result: classify_result(result)}
 
+    @spec emit_telemetry(%__MODULE__{}) :: :ok
     def emit_telemetry(%__MODULE__{} = timing) do
       now = System.monotonic_time(:microsecond)
       total_duration = now - timing.start_time
@@ -310,7 +314,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
 
   defp handle_successful_resolution(manager, fetch_task, timing, opts) do
     case do_now_or_async_with_reply(opts[:reply_fn], fetch_task) do
-      {:ok, pid} ->
+      {:ok, pid} when is_pid(pid) ->
         timing = ReadRequest.mark_async(timing)
         # Store timing in process dictionary for task completion
         Process.put({:read_timing, pid}, timing)
@@ -326,13 +330,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
   end
 
   defp handle_version_too_new(manager, error, request_args, timing, opts) do
+    reply_fn = opts[:reply_fn]
+
     case opts[:wait_ms] do
-      wait_ms when is_integer(wait_ms) and wait_ms > 0 ->
+      # A waitlisted request can only be delivered through its reply_fn, so
+      # waitlisting without one is meaningless: the caller could never be
+      # notified, and a nil reply_fn would crash notify_waiting_fetches and
+      # shutdown when they invoke it. Return the error immediately instead.
+      wait_ms when is_integer(wait_ms) and wait_ms > 0 and is_function(reply_fn, 1) ->
         timing = ReadRequest.mark_waitlisted(timing)
         fetch_request = build_waitlist_request(timing.operation, request_args)
 
         updated_manager =
-          add_to_waitlist(manager, fetch_request, extract_version(request_args), opts[:reply_fn], wait_ms)
+          add_to_waitlist(manager, fetch_request, extract_version(request_args), reply_fn, wait_ms)
 
         {updated_manager, :ok}
 

@@ -110,8 +110,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
     |> Map.get(:transactions, [])
   end
 
+  @spec oldest_version(t()) :: Bedrock.version()
   def oldest_version(%{min_version: min_version}), do: min_version
 
+  @spec last_version(t()) :: Bedrock.version() | nil
   def last_version(%{transactions: []}), do: nil
   def last_version(%{transactions: [transaction | _]}), do: Transaction.commit_version!(transaction)
 end

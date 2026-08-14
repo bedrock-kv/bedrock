@@ -108,10 +108,10 @@ defmodule Bedrock.Directory.VersionManagementTest do
       |> expect_directory_exists(["new"], nil)
       # Source fetch for move operation (gets called again)
       |> expect_directory_exists(["old"], source_data)
-      # Range scan to get source + all children - now using keyspace get_range/2
-      |> expect(:get_range, fn start_key, end_key ->
-        assert is_binary(start_key)
-        assert is_binary(end_key)
+      # Range scan to get source + all children - range tuple over the source subtree
+      |> expect(:get_range, fn {start_key, end_key} ->
+        assert start_key == build_directory_key(["old"])
+        assert is_binary(end_key) and start_key < end_key
         # Return packed data since this is a raw key scan
         old_key = build_directory_key(["old"])
         packed_source_data = Bedrock.Encoding.Tuple.pack(source_data)
@@ -122,10 +122,10 @@ defmodule Bedrock.Directory.VersionManagementTest do
         assert {<<0, 42>>, ""} == value
         :ok
       end)
-      # Clear source range - now using clear_range/3 with binary keys
-      |> expect(:clear_range, fn start_key, end_key ->
-        assert is_binary(start_key)
-        assert is_binary(end_key)
+      # Clear source range - range tuple over the source subtree
+      |> expect(:clear_range, fn {start_key, end_key} ->
+        assert start_key == build_directory_key(["old"])
+        assert is_binary(end_key) and start_key < end_key
         :ok
       end)
 

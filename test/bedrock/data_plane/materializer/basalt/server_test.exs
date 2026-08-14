@@ -5,6 +5,87 @@ defmodule Bedrock.DataPlane.Materializer.Basalt.ServerTest do
 
   alias Bedrock.DataPlane.Materializer.Basalt.Server
   alias Bedrock.DataPlane.Materializer.Basalt.State
+  alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
+
+  defmodule FakeLog do
+    @moduledoc false
+    # Minimal log server: replies to `Log.pull/3` calls with the pre-loaded
+    # batches (one batch per pull), then keeps replying with empty batches.
+    use GenServer
+
+    def start_link(batches), do: GenServer.start_link(__MODULE__, batches)
+
+    @impl true
+    def init(batches), do: {:ok, batches}
+
+    @impl true
+    def handle_call({:pull, _start_after, _opts}, _from, [batch | rest]), do: {:reply, {:ok, batch}, rest}
+    def handle_call({:pull, _start_after, _opts}, _from, []), do: {:reply, {:ok, []}, []}
+  end
+
+  defp wait_until(fun, deadline_ms \\ 5_000) do
+    deadline = System.monotonic_time(:millisecond) + deadline_ms
+
+    fun
+    |> Stream.repeatedly()
+    |> Enum.reduce_while(:ok, fn
+      true, _acc ->
+        {:halt, :ok}
+
+      false, _acc ->
+        if System.monotonic_time(:millisecond) < deadline do
+          Process.sleep(10)
+          {:cont, :ok}
+        else
+          {:halt, :timeout}
+        end
+    end)
+  end
+
+  describe "puller notification round-trip" do
+    @tag :tmp_dir
+    test "waitlisted fetch is replied to once the puller applies the awaited version", %{tmp_dir: tmp_dir} do
+      version_1 = Version.from_integer(1)
+      transaction = TransactionTestSupport.new_log_transaction(version_1, %{"foo" => "bar"})
+      {:ok, fake_log} = FakeLog.start_link([[transaction]])
+
+      otp_name = :"basalt_server_#{System.unique_integer([:positive])}"
+
+      {:ok, server} =
+        start_supervised(
+          Server.child_spec(otp_name: otp_name, foreman: self(), id: "basalt_server_test", path: tmp_dir)
+        )
+
+      # The server reports health to the foreman (us) once startup completes.
+      assert_cast_received({:worker_health, "basalt_server_test", {:ok, ^server}}, 5_000)
+
+      assert {:ok, ^server, _info} = GenServer.call(server, {:lock_for_recovery, 1})
+
+      # Waitlist a fetch for a version that hasn't been applied yet. Use an
+      # unlinked process so a call timeout shows up as a missing message
+      # instead of crashing the test process.
+      test_pid = self()
+
+      spawn(fn ->
+        send(test_pid, {:get_result, GenServer.call(server, {:get, "foo", version_1, []}, 30_000)})
+      end)
+
+      assert :ok = wait_until(fn -> map_size(:sys.get_state(server).waiting_fetches) == 1 end)
+
+      layout = %{
+        logs: %{"log_1" => []},
+        services: %{"log_1" => %{kind: :log, status: {:up, fake_log}, last_seen: nil}}
+      }
+
+      assert :ok = GenServer.call(server, {:unlock_after_recovery, Version.zero(), layout})
+
+      # Once the puller applies version 1, the server must notify the
+      # waitlisted fetch with the value pulled from the log.
+      assert_receive {:get_result, {:ok, "bar"}}, 5_000
+      assert map_size(:sys.get_state(server).waiting_fetches) == 0
+    end
+  end
 
   describe "child_spec/1" do
     test "creates proper child spec with all required options" do

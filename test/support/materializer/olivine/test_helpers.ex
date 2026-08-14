@@ -33,7 +33,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.TestHelpers do
          record_offset = current_offset - record_size,
          true <- record_offset >= 0,
          {:ok,
-          <<@magic_number::32, version::binary-size(8), ^payload_size::32, payload::binary-size(payload_size),
+          <<@magic_number::32, version::binary-size(8), ^payload_size::32, payload::binary-size(^payload_size),
             ^payload_size::32>>} <- :file.pread(file, record_offset, record_size) do
       {previous_version, _pages_map} = :erlang.binary_to_term(payload)
       scan_all_version_metadata(file, record_offset, [{version, previous_version} | acc])

@@ -33,6 +33,7 @@ defmodule Bedrock.Key do
   @spec key_after(Bedrock.key()) :: binary()
   def key_after(key) when is_binary(key), do: key <> <<0>>
 
+  @spec to_range(Bedrock.key()) :: {Bedrock.key(), Bedrock.key()}
   def to_range(key) when is_binary(key), do: {key, key_after(key)}
 
   @doc """

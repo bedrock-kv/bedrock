@@ -153,19 +153,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Durability do
   defp notify_director_of_resource_changes(:unavailable, _services, _node_capabilities, _capabilities_changed), do: :ok
 
   defp notify_director_of_resource_changes(director, new_or_changed_services, node_capabilities, capabilities_changed) do
-    case director do
-      :unavailable ->
-        :ok
+    if !Enum.empty?(new_or_changed_services) do
+      Director.notify_services_registered(director, new_or_changed_services)
+    end
 
-      director ->
-        if !Enum.empty?(new_or_changed_services) do
-          Director.notify_services_registered(director, new_or_changed_services)
-        end
-
-        if capabilities_changed do
-          capability_map = convert_to_capability_map(node_capabilities)
-          Director.notify_capabilities_updated(director, capability_map)
-        end
+    if capabilities_changed do
+      capability_map = convert_to_capability_map(node_capabilities)
+      Director.notify_capabilities_updated(director, capability_map)
     end
   end
 end

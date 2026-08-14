@@ -16,8 +16,6 @@ defmodule Bedrock.Cluster.Link.Server do
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.Cluster.Link.State
 
-  require Logger
-
   @spec child_spec(
           opts :: [
             cluster: module(),

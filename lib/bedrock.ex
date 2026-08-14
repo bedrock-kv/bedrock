@@ -67,6 +67,7 @@ defmodule Bedrock do
   accepted in the public API and is automatically converted to this sentinel.
   """
   @end_of_keyspace <<0xFF, 0xFF>>
+  @spec end_of_keyspace() :: key()
   def end_of_keyspace, do: @end_of_keyspace
 
   @doc """

@@ -58,6 +58,7 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
   # Constructor Functions
   # =============================================================================
 
+  @spec new() :: t()
   def new, do: %__MODULE__{}
 
   # =============================================================================
@@ -74,6 +75,7 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
     end
   end
 
+  @spec set(t(), key(), value(), opts :: keyword()) :: t()
   def set(t, k, v, opts \\ []) when is_binary(k) and is_binary(v) do
     no_write_conflict = Keyword.get(opts, :no_write_conflict, false)
 
@@ -84,6 +86,7 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
     |> record_mutation({:set, k, v})
   end
 
+  @spec clear(t(), key(), opts :: keyword()) :: t()
   def clear(t, k, opts \\ []) when is_binary(k) do
     no_write_conflict = Keyword.get(opts, :no_write_conflict, false)
 
@@ -94,6 +97,7 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
     |> record_mutation({:clear, k})
   end
 
+  @spec clear_range(t(), start :: key(), end_ex :: key(), opts :: keyword()) :: t()
   def clear_range(t, s, e, opts \\ [])
 
   # Empty range - just record the mutation without doing anything else
@@ -329,9 +333,11 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
   @spec add_write_conflict_key(t(), key()) :: t()
   def add_write_conflict_key(t, key) when is_binary(key), do: add_write_conflict_range(t, key, Key.key_after(key))
 
+  @spec add_write_conflict_key_unless(t(), key(), no_write_conflict :: boolean()) :: t()
   def add_write_conflict_key_unless(t, key, false), do: add_write_conflict_key(t, key)
   def add_write_conflict_key_unless(t, _key, true), do: t
 
+  @spec add_write_conflict_range_unless(t(), key(), key(), no_write_conflict :: boolean()) :: t()
   def add_write_conflict_range_unless(t, min_key, max_key_ex, false),
     do: add_write_conflict_range(t, min_key, max_key_ex)
 
@@ -495,6 +501,10 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
   # Apply atomic operation to storage value for range queries
   # storage_value is the value from storage servers (nil if not found)
   @doc false
+  @spec apply_atomic_to_storage_value(
+          {atom(), binary()} | value() | :clear,
+          storage_value :: value() | nil
+        ) :: value() | :clear
   def apply_atomic_to_storage_value({op, operand}, storage_value),
     do: Atomics.apply_operation(op, storage_value || <<>>, operand) || <<>>
 
@@ -667,6 +677,7 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
   # Private Helper Functions - Utility
   # =============================================================================
 
+  @spec add_or_merge([range()], start :: key(), end_ex :: key()) :: [range()]
   def add_or_merge([], s, e), do: [{s, e}]
   def add_or_merge([{hs, he} | rest], s, e) when e < hs, do: [{s, e}, {hs, he} | rest]
   def add_or_merge([{hs, he} | rest], s, e) when he < s, do: [{hs, he} | add_or_merge(rest, s, e)]

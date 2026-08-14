@@ -67,6 +67,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   - `:persistence_retry_backoff_ms` - Optional. Base retry backoff for flush retries (default: 25).
   - `:persistence_retry_tick_ms` - Optional. Retry polling tick for flush retries (default: 25).
   """
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     shard_id = Keyword.fetch!(opts, :shard_id)
     GenServer.start_link(__MODULE__, opts, name: via_tuple(shard_id, opts[:registry]))
@@ -75,6 +76,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   @doc """
   Returns the via tuple for a ShardServer.
   """
+  @spec via_tuple(shard_id(), atom() | nil) :: GenServer.name()
   def via_tuple(shard_id, registry \\ nil) do
     if registry do
       {:via, Registry, {registry, {:shard_server, shard_id}}}
@@ -326,7 +328,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     end
   end
 
-  defp should_flush?([], _latest, _gap), do: false
   defp should_flush?(_buffer, nil, _gap), do: false
 
   defp should_flush?(buffer, latest, gap) do
@@ -409,8 +410,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   end
 
   # Flush the entire buffer to object storage
-  defp flush_all(%{buffer: []} = state), do: state
-
   defp flush_all(state) do
     enqueue_flush_batch(state, state.buffer)
   end

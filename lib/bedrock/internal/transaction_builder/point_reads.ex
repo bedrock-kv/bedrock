@@ -13,6 +13,7 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
   alias Bedrock.Internal.TransactionBuilder.State
   alias Bedrock.Internal.TransactionBuilder.StorageRacing
   alias Bedrock.Internal.TransactionBuilder.Tx
+  alias Bedrock.Key
   alias Bedrock.KeySelector
 
   @type storage_get_key_fn() :: (pid(), binary(), Bedrock.version(), keyword() ->
@@ -61,6 +62,8 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
 
     case ensure_read_version(t, opts) do
       {:ok, t} ->
+        t = record_read_intent(t, key, opts)
+
         execute_get_query(
           t,
           key,
@@ -70,6 +73,18 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
 
       {:failure, failures_by_reason} ->
         {t, {:failure, failures_by_reason}}
+    end
+  end
+
+  # The conflict is registered when the read is issued, not when the result
+  # returns: a read that comes back empty still constrains the transaction's
+  # outcome, so the resolver must see it regardless of the result's shape.
+  @spec record_read_intent(State.t(), Bedrock.key(), keyword()) :: State.t()
+  defp record_read_intent(t, key, opts) do
+    if Keyword.get(opts, :snapshot, false) do
+      t
+    else
+      %{t | tx: Tx.add_read_conflict_key(t.tx, key)}
     end
   end
 
@@ -102,9 +117,9 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
 
     case ensure_read_version(t, opts) do
       {:ok, t} ->
-        execute_get_query(
+        execute_selector_query(
           t,
-          key_selector.key,
+          key_selector,
           &case storage_get_key_selector_fn.(&1, key_selector, &2, timeout: &3) do
             {:ok, nil} -> {:ok, nil}
             {:ok, {resolved_key, value}} -> {:ok, {resolved_key, value}}
@@ -120,6 +135,70 @@ defmodule Bedrock.Internal.TransactionBuilder.PointReads do
   end
 
   # Private helper functions
+
+  # A selector's conflict range can only be computed after resolution: any
+  # mutation between the anchor key and the resolved key would change what the
+  # selector resolves to, so the whole scanned span must reach the resolver.
+  # When nothing resolves, the scanned shard range was read as empty and is
+  # recorded whole.
+  defp execute_selector_query(state, key_selector, operation_fn, opts) do
+    snapshot = Keyword.get(opts, :snapshot, false)
+
+    state
+    |> StorageRacing.race_storage_servers(key_selector.key, operation_fn)
+    |> case do
+      {state, {:failure, failures_by_reason}} ->
+        {state, {:failure, failures_by_reason}}
+
+      {state, {:ok, {nil, {shard_start, shard_end}}}} ->
+        state =
+          if snapshot do
+            state
+          else
+            %{state | tx: Tx.add_read_conflict_range(state.tx, shard_start, shard_end)}
+          end
+
+        {state, {:error, :not_found}}
+
+      {state, {:ok, {{resolved_key, nil}, _shard_range}}} ->
+        state =
+          if snapshot do
+            state
+          else
+            {span_start, span_end} = selector_scan_span(key_selector.key, resolved_key)
+
+            tx =
+              state.tx
+              |> Tx.merge_storage_read(resolved_key, :not_found)
+              |> Tx.add_read_conflict_range(span_start, span_end)
+
+            %{state | tx: tx}
+          end
+
+        {state, {:error, :not_found}}
+
+      {state, {:ok, {{resolved_key, value}, _shard_range}}} ->
+        state =
+          if snapshot do
+            state
+          else
+            {span_start, span_end} = selector_scan_span(key_selector.key, resolved_key)
+
+            tx =
+              state.tx
+              |> Tx.merge_storage_read(resolved_key, value)
+              |> Tx.add_read_conflict_range(span_start, span_end)
+
+            %{state | tx: tx}
+          end
+
+        {state, {:ok, {resolved_key, value}}}
+    end
+  end
+
+  defp selector_scan_span(anchor, resolved_key) when anchor <= resolved_key, do: {anchor, Key.key_after(resolved_key)}
+
+  defp selector_scan_span(anchor, resolved_key), do: {resolved_key, Key.key_after(anchor)}
 
   defp execute_get_query(state, racing_key, operation_fn, opts) do
     snapshot = Keyword.get(opts, :snapshot, false)

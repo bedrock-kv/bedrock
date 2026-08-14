@@ -12,7 +12,6 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   """
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.DataPlane.Version
 
   @doc """
   Validates TSL type safety defensively, returning error tuples.
@@ -119,19 +118,9 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
 
   defp validate_log_ranges([start_range, end_range])
        when is_integer(start_range) and is_integer(end_range) and start_range <= end_range do
-    # Critical check: ensure these are integers, NOT Version.t() binaries
-    cond do
-      Version.valid?(start_range) ->
-        {:error,
-         {:version_in_log_range, "log range start is Version.t() binary, should be integer: #{inspect(start_range)}"}}
-
-      Version.valid?(end_range) ->
-        {:error,
-         {:version_in_log_range, "log range end is Version.t() binary, should be integer: #{inspect(end_range)}"}}
-
-      true ->
-        :ok
-    end
+    # Version.t() binaries can't match the is_integer guards; a
+    # [version, version] range hits the catch-all error below.
+    :ok
   end
 
   defp validate_log_ranges(ranges) do

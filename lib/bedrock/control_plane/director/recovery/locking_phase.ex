@@ -24,8 +24,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.Service.Worker
 
-  require Logger
-
   @impl true
   def execute(recovery_attempt, context) do
     old_system_services =

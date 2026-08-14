@@ -689,7 +689,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       wait_for_health_report(worker_id, pid)
 
       # Test timeout scenarios - should either succeed or timeout gracefully
-      result = GenServer.call(pid, {:info, :kind}, 1)
+      result =
+        try do
+          GenServer.call(pid, {:info, :kind}, 1)
+        catch
+          :exit, {:timeout, _} -> :timeout
+        end
 
       case result do
         {:ok, :materializer} -> :ok

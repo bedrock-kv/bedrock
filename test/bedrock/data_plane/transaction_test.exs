@@ -457,6 +457,18 @@ defmodule Bedrock.DataPlane.TransactionTest do
       assert {:ok, nil} = Transaction.shard_index(binary)
     end
 
+    test "shard_index! returns the index directly on success" do
+      transaction = %{
+        mutations: [{:set, "key", "value"}],
+        read_conflicts: {nil, []},
+        write_conflicts: [],
+        shard_index: [{0, 1}]
+      }
+
+      binary = Transaction.encode(transaction)
+      assert Transaction.shard_index!(binary) == [{0, 1}]
+    end
+
     test "shard_index! raises on invalid transaction" do
       assert_raise RuntimeError, ~r/Failed to extract shard index/, fn ->
         Transaction.shard_index!(<<1, 2, 3>>)
@@ -498,6 +510,337 @@ defmodule Bedrock.DataPlane.TransactionTest do
 
       # Shard index should also be available
       assert {:ok, [{0, 2}, {1, 1}]} = Transaction.shard_index(binary)
+    end
+  end
+
+  describe "encode/1 read_conflicts validation" do
+    test "raises when read_conflicts are present without a read_version" do
+      transaction = %{
+        mutations: [{:set, "key", "value"}],
+        read_conflicts: {nil, [{"start", "end"}]},
+        write_conflicts: []
+      }
+
+      assert_raise ArgumentError, "read_version is nil but read_conflicts is non-empty", fn ->
+        Transaction.encode(transaction)
+      end
+    end
+
+    test "raises when a read_version is present without read_conflicts" do
+      transaction = %{
+        mutations: [{:set, "key", "value"}],
+        read_conflicts: {Version.from_integer(12_345), []},
+        write_conflicts: []
+      }
+
+      assert_raise ArgumentError, "read_version is non-nil but read_conflicts is empty", fn ->
+        Transaction.encode(transaction)
+      end
+    end
+  end
+
+  describe "encode/decode with omitted mutations key" do
+    test "map without a mutations key encodes no MUTATIONS section and decodes to empty mutations" do
+      transaction = %{write_conflicts: [{"write1", "write2"}]}
+
+      binary = Transaction.encode(transaction)
+
+      # No MUTATIONS section is present in the binary
+      assert {:error, :section_not_found} = Transaction.extract_section(binary, 0x01)
+
+      # Decoding defaults mutations to []
+      assert {:ok, decoded} = Transaction.decode(binary)
+      assert decoded.mutations == []
+      assert decoded.write_conflicts == [{"write1", "write2"}]
+      assert decoded.read_conflicts == {nil, []}
+    end
+  end
+
+  describe "encode/1 with integer read_version" do
+    test "integer read_version round-trips as an 8-byte version binary" do
+      transaction = %{
+        mutations: [{:set, "key", "value"}],
+        read_conflicts: {12_345, [{"read1", "read2"}]},
+        write_conflicts: []
+      }
+
+      binary = Transaction.encode(transaction)
+      expected_version = Version.from_integer(12_345)
+
+      assert {:ok, {^expected_version, [{"read1", "read2"}]}} = Transaction.read_conflicts(binary)
+    end
+  end
+
+  describe "truncated section data" do
+    # Truncation strategy: encode a valid single-section transaction, then cut
+    # bytes off the end. The header still claims one section, but the section
+    # payload is shorter than its declared size, so section iteration fails.
+    defp truncated_transaction do
+      binary = Transaction.encode(%{mutations: [{:set, "key", "value"}]})
+      binary_part(binary, 0, byte_size(binary) - 3)
+    end
+
+    test "validate/1 detects a section payload shorter than its declared size" do
+      assert {:error, :truncated_sections} = Transaction.validate(truncated_transaction())
+    end
+
+    test "decode/1 detects a section payload shorter than its declared size" do
+      assert {:error, :truncated_sections} = Transaction.decode(truncated_transaction())
+    end
+
+    test "extract_section/2 detects truncation while iterating sections" do
+      assert {:error, :truncated_sections} = Transaction.extract_section(truncated_transaction(), 0x01)
+    end
+
+    test "extract_sections/2 detects truncation while parsing section offsets" do
+      assert {:error, :truncated_sections} = Transaction.extract_sections(truncated_transaction(), [:mutations])
+    end
+
+    test "add_section/3 propagates truncation errors instead of appending" do
+      assert {:error, :truncated_sections} =
+               Transaction.add_section(truncated_transaction(), 0x04, Version.from_integer(1))
+    end
+
+    test "header claiming more sections than are present is reported as truncated" do
+      # Patch the section count from 1 to 2 without adding a second section
+      <<prefix::binary-size(6), 1::unsigned-big-16, sections::binary>> =
+        Transaction.encode(%{mutations: [{:set, "key", "value"}]})
+
+      overcounted = <<prefix::binary, 2::unsigned-big-16, sections::binary>>
+
+      assert {:error, :truncated_sections} = Transaction.validate(overcounted)
+      # Search for an absent tag so iteration continues past the last real section
+      assert {:error, :truncated_sections} = Transaction.extract_section(overcounted, 0x04)
+      assert {:error, :truncated_sections} = Transaction.extract_sections(overcounted, [:mutations])
+    end
+  end
+
+  describe "corrupted conflict payloads" do
+    # Corruption strategy: append a conflict section whose header claims more
+    # conflict ranges than the payload actually contains.
+    defp with_bogus_read_conflicts do
+      binary = Transaction.encode(%{mutations: [{:set, "key", "value"}]})
+      # read_version (8 bytes) + count of 5 ranges, but zero range data follows
+      {:ok, corrupted} = Transaction.add_section(binary, 0x02, <<12_345::signed-big-64, 5::unsigned-big-32>>)
+      corrupted
+    end
+
+    defp with_bogus_write_conflicts do
+      binary = Transaction.encode(%{mutations: [{:set, "key", "value"}]})
+      # count of 3 ranges, but zero range data follows
+      {:ok, corrupted} = Transaction.add_section(binary, 0x03, <<3::unsigned-big-32>>)
+      corrupted
+    end
+
+    test "read_conflicts/1 reports truncated conflict range data" do
+      assert {:error, :truncated_conflict_data} = Transaction.read_conflicts(with_bogus_read_conflicts())
+    end
+
+    test "write_conflicts/1 reports truncated conflict range data" do
+      assert {:error, :truncated_conflict_data} = Transaction.write_conflicts(with_bogus_write_conflicts())
+    end
+
+    test "decode/1 reports truncated read conflict data" do
+      assert {:error, :truncated_conflict_data} = Transaction.decode(with_bogus_read_conflicts())
+    end
+
+    test "decode/1 reports truncated write conflict data" do
+      assert {:error, :truncated_conflict_data} = Transaction.decode(with_bogus_write_conflicts())
+    end
+
+    test "read_write_conflicts/1 reports truncated read conflict data" do
+      assert {:error, :truncated_conflict_data} = Transaction.read_write_conflicts(with_bogus_read_conflicts())
+    end
+
+    test "read_write_conflicts/1 reports truncated write conflict data" do
+      assert {:error, :truncated_conflict_data} = Transaction.read_write_conflicts(with_bogus_write_conflicts())
+    end
+  end
+
+  describe "invalid commit version payload" do
+    defp with_bad_commit_version do
+      binary = Transaction.encode(%{mutations: [{:set, "key", "value"}]})
+      # COMMIT_VERSION payload must be exactly 8 bytes; use 3 bytes instead
+      {:ok, corrupted} = Transaction.add_section(binary, 0x04, <<1, 2, 3>>)
+      corrupted
+    end
+
+    test "commit_version/1 rejects a payload that is not 8 bytes" do
+      assert {:error, :invalid_commit_version_format} = Transaction.commit_version(with_bad_commit_version())
+    end
+
+    test "commit_version!/1 raises with the error reason in the message" do
+      assert_raise RuntimeError, ~r/Failed to extract commit version: :invalid_commit_version_format/, fn ->
+        Transaction.commit_version!(with_bad_commit_version())
+      end
+    end
+
+    test "decode/1 rejects a commit version payload that is not 8 bytes" do
+      assert {:error, :invalid_commit_version_format} = Transaction.decode(with_bad_commit_version())
+    end
+  end
+
+  describe "raising wrappers" do
+    test "extract_sections!/2 raises with the section names and reason on invalid input" do
+      assert_raise RuntimeError, ~r/Failed to extract sections \[:mutations\]: :invalid_format/, fn ->
+        Transaction.extract_sections!(<<1, 2, 3>>, [:mutations])
+      end
+    end
+
+    test "extract_sections!/2 returns the reassembled binary on success" do
+      binary = Transaction.encode(%{mutations: [{:set, "key", "value"}]})
+      extracted = Transaction.extract_sections!(binary, [:mutations])
+
+      assert {:ok, %{mutations: [{:set, "key", "value"}]}} = Transaction.decode(extracted)
+    end
+
+    test "mutations!/1 raises when the transaction binary is invalid" do
+      assert_raise RuntimeError, ~r/Failed to stream mutations: :invalid_format/, fn ->
+        Transaction.mutations!(<<1, 2, 3>>)
+      end
+    end
+
+    test "mutations!/1 raises when no MUTATIONS section exists" do
+      binary = Transaction.encode(%{write_conflicts: [{"a", "b"}]})
+
+      assert_raise RuntimeError, ~r/Failed to stream mutations: :section_not_found/, fn ->
+        Transaction.mutations!(binary)
+      end
+    end
+  end
+
+  describe "reassemble_sections/3" do
+    test "keeps selected sections and adds new ones in a decodable transaction" do
+      transaction = %{
+        mutations: [{:set, "key1", "value1"}, {:clear, "key2"}],
+        read_conflicts: {Version.from_integer(1), [{"read1", "read2"}]},
+        write_conflicts: [{"write1", "write2"}],
+        shard_index: [{0, 2}]
+      }
+
+      binary = Transaction.encode(transaction)
+      commit_version = Version.from_integer(42)
+
+      assert {:ok, reassembled} =
+               Transaction.reassemble_sections(binary, [:mutations, :shard_index], %{commit_version: commit_version})
+
+      # Kept sections survive intact; dropped sections revert to defaults
+      assert {:ok, decoded} = Transaction.decode(reassembled)
+      assert decoded.mutations == transaction.mutations
+      assert decoded.commit_version == commit_version
+      assert decoded.read_conflicts == {nil, []}
+      assert decoded.write_conflicts == []
+      assert Transaction.shard_index!(reassembled) == [{0, 2}]
+    end
+
+    test "keeping no sections and adding none yields the header-only empty transaction" do
+      binary = Transaction.encode(full_transaction())
+
+      assert {:ok, reassembled} = Transaction.reassemble_sections(binary, [], %{})
+      assert reassembled == Transaction.empty_transaction()
+
+      assert {:ok, decoded} = Transaction.decode(reassembled)
+      assert decoded == %{mutations: [], read_conflicts: {nil, []}, write_conflicts: []}
+    end
+
+    test "adding only new sections to a kept-empty selection produces just those sections" do
+      binary = Transaction.encode(full_transaction())
+      commit_version = Version.from_integer(7)
+
+      assert {:ok, reassembled} = Transaction.reassemble_sections(binary, [], %{commit_version: commit_version})
+      assert {:ok, ^commit_version} = Transaction.commit_version(reassembled)
+      assert {:error, :section_not_found} = Transaction.extract_section(reassembled, 0x01)
+    end
+
+    test "propagates invalid format errors from the source transaction" do
+      assert {:error, :invalid_format} = Transaction.reassemble_sections(<<1, 2, 3>>, [:mutations], %{})
+    end
+
+    test "two-argument form defaults to adding no new sections" do
+      binary = Transaction.encode(full_transaction())
+
+      assert {:ok, reassembled} = Transaction.reassemble_sections(binary, [:mutations])
+      assert {:ok, decoded} = Transaction.decode(reassembled)
+      assert decoded.mutations == full_transaction().mutations
+      assert decoded.write_conflicts == []
+    end
+  end
+
+  describe "corrupted mutations payload" do
+    # Corruption strategy: attach a hand-built MUTATIONS section (valid CRC via
+    # add_section/3) whose payload contains malformed mutation instructions.
+    defp with_mutations_payload(payload) do
+      binary = Transaction.encode(%{write_conflicts: [{"a", "b"}]})
+      {:ok, corrupted} = Transaction.add_section(binary, 0x01, payload)
+      corrupted
+    end
+
+    test "decode/1 wraps an unsupported opcode in a decode_exception error" do
+      # Opcode 31 (0b11111) is not a defined mutation operation
+      corrupted = with_mutations_payload(<<31::5, 0::3, 0::8>>)
+
+      assert {:error, {:decode_exception, message}} = Transaction.decode(corrupted)
+      assert message =~ "Unsupported 16-bit opcode: 31"
+    end
+
+    test "streaming mutations raises on an unsupported opcode" do
+      corrupted = with_mutations_payload(<<31::5, 0::3, 0::8>>)
+      stream = Transaction.mutations!(corrupted)
+
+      assert_raise RuntimeError, "Unsupported 16-bit opcode: 31", fn ->
+        Enum.to_list(stream)
+      end
+    end
+
+    test "decode/1 wraps a truncated extended-length parameter in a decode_exception error" do
+      # SET mutation declaring 1-byte extended length (format 12) for its key,
+      # but the payload ends before the length byte
+      corrupted = with_mutations_payload(<<0::5, 0::3, 0b1100::4, 0::4>>)
+
+      assert {:error, {:decode_exception, message}} = Transaction.decode(corrupted)
+      assert message =~ "Invalid varbinary format: 12"
+    end
+  end
+
+  describe "compare_and_clear mutation" do
+    test "round-trips through encode and decode" do
+      transaction = %{
+        mutations: [{:atomic, :compare_and_clear, "counter", <<0, 0, 0, 0, 0, 0, 0, 5>>}],
+        read_conflicts: {nil, []},
+        write_conflicts: []
+      }
+
+      binary = Transaction.encode(transaction)
+      assert {:ok, ^transaction} = Transaction.decode(binary)
+    end
+
+    test "round-trips with an empty expected value" do
+      transaction = %{
+        mutations: [{:atomic, :compare_and_clear, "key", <<>>}],
+        read_conflicts: {nil, []},
+        write_conflicts: []
+      }
+
+      binary = Transaction.encode(transaction)
+      assert {:ok, ^transaction} = Transaction.decode(binary)
+    end
+
+    test "streams alongside other mutations in a full transaction" do
+      mutations = [
+        {:set, "key1", "value1"},
+        {:atomic, :compare_and_clear, "guard", <<1, 2, 3, 4>>},
+        {:clear_range, "start", "end"}
+      ]
+
+      transaction = %{
+        mutations: mutations,
+        read_conflicts: {Version.from_integer(9), [{"read1", "read2"}]},
+        write_conflicts: [{"write1", "write2"}]
+      }
+
+      binary = Transaction.encode(transaction)
+      assert {:ok, stream} = Transaction.mutations(binary)
+      assert Enum.to_list(stream) == mutations
     end
   end
 end

@@ -31,10 +31,10 @@ defmodule Bedrock.Directory.MoveTest do
     |> expect_directory_exists(dest_path, nil)
     # Source fetch for move operation (gets called again)
     |> expect_directory_exists(source_path, source_data)
-    # Range scan to get source + all children - now using keyspace get_range/2
-    |> expect(:get_range, fn start_key, end_key ->
-      assert is_binary(start_key)
-      assert is_binary(end_key)
+    # Range scan to get source + all children - range tuple over the source subtree
+    |> expect(:get_range, fn {start_key, end_key} ->
+      assert start_key == build_directory_key(["users"])
+      assert is_binary(end_key) and start_key < end_key
 
       [
         {build_directory_key(["users"]), packed_source_data},
@@ -51,10 +51,10 @@ defmodule Bedrock.Directory.MoveTest do
       assert {<<0, 3>>, "profile"} == value
       :ok
     end)
-    # Clear source range - now using clear_range/3 with binary keys
-    |> expect(:clear_range, fn start_key, end_key ->
-      assert is_binary(start_key)
-      assert is_binary(end_key)
+    # Clear source range - range tuple over the source subtree
+    |> expect(:clear_range, fn {start_key, end_key} ->
+      assert start_key == build_directory_key(["users"])
+      assert is_binary(end_key) and start_key < end_key
       :ok
     end)
 

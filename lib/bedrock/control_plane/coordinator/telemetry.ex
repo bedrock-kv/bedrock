@@ -34,7 +34,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
       if old_transaction_system_layout do
         %{
           epoch: old_transaction_system_layout[:epoch],
-          has_transaction_system_layout: not is_nil(old_transaction_system_layout),
+          has_transaction_system_layout: true,
           logs_count: map_size(old_transaction_system_layout[:logs] || %{})
         }
       end

@@ -3,8 +3,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DataDatabase do
   Low-level data storage for Olivine, handling file I/O and buffering.
   """
 
-  require Logger
-
   @type locator :: <<_::64>>
 
   @type t :: %__MODULE__{

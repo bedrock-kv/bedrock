@@ -87,6 +87,7 @@ defmodule Bedrock.Internal.Repo do
             snapshot: boolean()
           ]
         ) :: Enumerable.t({any(), any()})
+  @spec get_range(module(), start_key :: key(), end_key :: key()) :: Enumerable.t({any(), any()})
   def get_range(repo_module, start_key, end_key), do: get_range(repo_module, start_key, end_key, [])
 
   def get_range(repo_module, start_key, end_key, opts) do
@@ -272,8 +273,8 @@ defmodule Bedrock.Internal.Repo do
       wait_befor_retry(retry_count)
       run_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn)
 
-    {__MODULE__, failed_txn, :rollback, reason} ->
-      try_to_rollback(failed_txn)
+    {__MODULE__, :rollback, reason} ->
+      try_to_rollback(txn(repo))
       {:error, reason}
 
     {__MODULE__, failed_txn, :transaction_error, reason, operation, key} ->

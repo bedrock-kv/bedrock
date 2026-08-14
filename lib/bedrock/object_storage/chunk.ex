@@ -228,7 +228,7 @@ defmodule Bedrock.ObjectStorage.Chunk do
     with {:ok, header} <- decode_header(header_binary),
          dir_size = header.directory_size,
          true <- byte_size(rest) >= dir_size,
-         <<dir_binary::binary-size(dir_size), data::binary>> = rest,
+         <<dir_binary::binary-size(^dir_size), data::binary>> = rest,
          {:ok, directory} <- decode_directory(dir_binary, header.txn_count) do
       {:ok, %{header: header, directory: directory, data: data}}
     else

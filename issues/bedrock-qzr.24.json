@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T21:34:23Z",
+  "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nguides/async-persistence-queue.md still describes PersistenceQueue and PersistenceWorker as future, intentionally additive infrastructure that does not change Demux or external APIs. The same guide later documents the already-integrated push/4, deterministic cuts, KCV gating, failure propagation, and WAL trimming. The opening claims are now internally contradictory.\n\nAcceptance criteria:\n- Rewrite the guide as current-state documentation for the integrated persistence protocol.\n- Remove claims that the work is future-only, additive, or API-preserving where no longer true.\n- Keep push arities, cut ownership, KCV gating, retry failure behavior, and durability reporting aligned with production code.\n- Check cross-links and terminology against durability-foundation.md, the Shale guide, and the Olivine guide.\n- A docs accuracy review confirms there are no remaining Basalt or Log.pull-as-materializer-source claims in the qzr guide set.",
+  "id": "bedrock-qzr.24",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 3,
+  "status": "open",
+  "title": "Reconcile async persistence documentation with the integrated protocol",
+  "type": "chore",
+  "updated_at": "2026-08-15T21:34:23Z"
+}

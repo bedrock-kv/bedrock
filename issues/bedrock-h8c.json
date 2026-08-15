@@ -8,7 +8,7 @@
   "labels": [],
   "priority": 3,
   "status": "open",
-  "title": "StorageRacing/placeholder hardening: narrow rescue, restart backoff, invariant check",
+  "title": "Narrow StorageRacing blanket rescue: operation_fn RuntimeErrors mislabeled as layout_lookup_failed",
   "type": "task",
-  "updated_at": "2026-08-15T20:38:04Z"
+  "updated_at": "2026-08-15T20:46:37Z"
 }

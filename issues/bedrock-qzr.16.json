@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T21:34:22Z",
+  "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nProduction ShardServers are globally registered by shard_id alone. When multiple replicated logs host Demuxes for the same shard, only the first Demux can create its ShardServer. Later Demuxes drop the route after already_started, retain an empty shard map, and can report a cut durable immediately. Their Shale WALs may then trim even though those replicas never wrote the shard chunk.\n\nImpact:\nDirect data-loss risk. If the sole owning Demux or its asynchronous object write fails after other replicas trim on the false floor, no surviving WAL or confirmed chunk need contain the transaction.\n\nAcceptance criteria:\n- ShardServer identity is scoped by the owning log or Demux, not shard_id alone.\n- Two production-configured Demuxes for the same cluster and shard each own an independent ShardServer.\n- Failure to create or route a required shard cannot be converted into an empty-Demux durability confirmation.\n- A multi-log integration test proves each replica receives identical slices, independently confirms persistence, and cannot trim before its own confirmation.\n- Tests cover owner failure while another replica is awaiting durability.",
+  "id": "bedrock-qzr.16",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 0,
+  "status": "open",
+  "title": "Give every replicated log an independent ShardServer per shard",
+  "type": "bug",
+  "updated_at": "2026-08-15T21:34:22Z"
+}

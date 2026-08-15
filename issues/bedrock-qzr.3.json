@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T15:05:02Z",
+  "close_reason": "Landed as commits R1-R3 on PR #117 (branch worktree-qzr2-wal-trim). R1 reverts the chunk-cleanup pass and subscriber floors, fixes olivine catch-up to resume from the puller's applied position, deletes dead deactivate_shard and the unreachable queue-full path, adds :wal_backpressure to Log.push's spec. R2 implements the known-committed gate end to end (sequencer 4-tuple -\u003e batch -\u003e push envelope -\u003e Demux candidate cuts fired only at KCV). R3 quiesces the demux tree at lock_for_recovery, escalates all teardown to kill-and-await, makes :normal shard exits fatal, and unifies demux startup in DemuxControl. Full suite 2557 tests green across seeds; credo strict + dialyzer clean.",
   "created": "2026-08-15T14:43:29Z",
   "description": "Reworks PR #117 per the adversarial review and two design decisions banked in the epic.\n\nINVARIANT (new): nothing becomes durable anywhere unless it is known-committed (FDB parity). The commit proxy piggybacks the known-committed version (KCV) on every Log.push; the Demux gates cut broadcasts on KCV \u003e= cut_version. Chunks can then never contain a discarded version: deterministic replay re-produces byte-identical files, :already_exists never lies, and the recovery chunk-cleanup pass is DELETED rather than fixed (kills review findings 1, 2, and the correctness half of 3).\n\nREVERT (superseded by materializer-\u003edemux streaming, see sibling ticket): Shale subscriber-floor tracking (TTL, note_subscriber, effective_trim_floor, State.subscribers) — materializers no longer hold the WAL back at all. Keep {:version_too_old, floor} error shape (still right for recovery pulls and future chunk GC). Keep olivine chunk catch-up as the interim escape hatch, FIXED to resume from the puller's in-memory start_after (carried in the floor message) instead of DB-durable, eliminating the double-apply (finding 4).\n\nHARDENING (from review): quiesce the demux tree at lock_for_recovery (old-epoch flush pipelines must not run while locked — hygiene now, not load-bearing); teardown kills-and-awaits on stop timeout instead of proceed-and-hope; Demux treats :normal EXIT of a tracked shard server as fatal instead of silently ignoring (frozen-floor trap, finding 6); delete the unreachable queue-full retry path (@cut_retry_ms, :process_cuts handler — pending_cuts is the real queue, finding 7); delete dead Durability.deactivate_shard; add :wal_backpressure to Log.push spec (finding 8); thread cut_interval_us through both demux start sites so bucket width cannot drift across recovery (finding 10).\n\nTESTS: uncommitted tail is never flushed (cut deferred until KCV passes it, fires on the next KCV advance); locked log cannot flush; backpressure clears when the floor catches up; catch-up from applied version (no double-apply).",
   "id": "bedrock-qzr.3",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Known-committed durability gate; revert superseded floor machinery (review remediation)",
   "type": "task",
-  "updated_at": "2026-08-15T14:44:03Z"
+  "updated_at": "2026-08-15T15:05:02Z"
 }

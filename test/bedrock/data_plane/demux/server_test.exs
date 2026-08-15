@@ -347,6 +347,24 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
     end
   end
 
+  describe "lifecycle" do
+    test "a shard server exiting normally is fatal to the demux", %{backend: backend, shard_base: shard_base} do
+      Process.flag(:trap_exit, true)
+
+      {:ok, server} =
+        Server.start_link(cluster: "test-cluster", object_storage: backend, log: self())
+
+      shard_id = shard_base + 50
+      {:ok, shard_server} = Server.get_shard_server(server, shard_id)
+
+      # A dead-but-tracked shard would silently freeze the floor forever;
+      # the demux must die loudly instead.
+      GenServer.stop(shard_server, :normal)
+
+      assert_receive {:EXIT, ^server, {:linked_process_exited_normally, ^shard_server}}, 2_000
+    end
+  end
+
   describe "durability tracking" do
     test "tracks minimum durable version", %{server: server, shard_base: shard_base} do
       shard_id = shard_base + 20

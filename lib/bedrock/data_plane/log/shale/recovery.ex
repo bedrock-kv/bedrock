@@ -16,6 +16,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Shale.DemuxControl
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
@@ -75,21 +76,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   def reset_demux(%{object_storage: nil} = t), do: t
 
   def reset_demux(t) do
-    if t.demux do
-      Process.unlink(t.demux)
-      stop_demux(t.demux)
-    end
+    DemuxControl.teardown(t.demux)
 
-    case Demux.Server.start_link(cluster: t.cluster, object_storage: t.object_storage, log: self()) do
+    case DemuxControl.start(t) do
       {:ok, demux} -> %{t | demux: demux, min_durable_version: nil}
       {:error, reason} -> raise "Failed to start demux for recovery: #{inspect(reason)}"
     end
-  end
-
-  defp stop_demux(demux) do
-    GenServer.stop(demux, :shutdown, 10_000)
-  catch
-    :exit, _ -> :ok
   end
 
   # No chunk cleanup pass: cut broadcasts are gated on the known-committed

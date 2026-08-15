@@ -23,6 +23,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   alias Bedrock.Cluster
   alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Shale.DemuxControl
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
@@ -238,8 +239,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
          {:ok, transaction} <- Transaction.validate(transaction_bytes),
          :ok <- validate_has_shard_index(transaction),
          {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
-      # Push to Demux for distribution to ShardServers (async)
-      Demux.Server.push(t.demux, expected_version, transaction, known_committed_version)
+      # Push to Demux for distribution to ShardServers (async). A locked
+      # log has no demux (its flush pipeline is quiesced); the WAL still
+      # appends, and recovery replays through a fresh demux.
+      if t.demux, do: Demux.Server.push(t.demux, expected_version, transaction, known_committed_version)
       noreply(t, continue: {:notify_waiting_pullers, expected_version, transaction})
     else
       {:wait, t} -> noreply(t, continue: :check_for_expired_pullers)
@@ -387,16 +390,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  defp start_demux(t) do
-    case Demux.Server.start_link(
-           cluster: t.cluster,
-           object_storage: t.object_storage,
-           log: self()
-         ) do
-      {:ok, demux} -> {:ok, demux}
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  defp start_demux(t), do: DemuxControl.start(t)
 
   defp advance_min_durable_version(t, incoming_version) do
     # The floor can never pass the WAL tip, whatever a confirmation claims.

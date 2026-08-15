@@ -284,7 +284,17 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     Process.unlink(pid)
     GenServer.stop(pid, :shutdown, 5_000)
   catch
-    :exit, _ -> :ok
+    :exit, _ ->
+      # Kill-and-await: a worker wedged inside a storage call must not be
+      # left free to complete a write after this server is gone.
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+      after
+        5_000 -> :ok
+      end
   end
 
   # Private implementation

@@ -195,11 +195,12 @@ defmodule Bedrock.DataPlane.Demux.Server do
     {:noreply, state}
   end
 
+  # A linked process died — a ShardServer or the owning log. Propagate:
+  # fail-fast. A :normal shard exit would otherwise leave a dead pid in the
+  # tracking maps and silently freeze the floor forever, so it is fatal
+  # too (wrapped, since a :normal stop reason would not propagate).
   @impl true
-  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
-
-  # A ShardServer (or the owning log) died: propagate — fail-fast. Our
-  # terminate/2 will stop the remaining ShardServers synchronously.
+  def handle_info({:EXIT, pid, :normal}, state), do: {:stop, {:linked_process_exited_normally, pid}, state}
   def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
 
   @impl true
@@ -208,10 +209,20 @@ defmodule Bedrock.DataPlane.Demux.Server do
     :ok
   end
 
+  # Kill-and-await on timeout: proceeding while a shard's flush pipeline
+  # might still be alive is never acceptable during a teardown.
   defp stop_shard_server(pid) do
     GenServer.stop(pid, :shutdown, 5_000)
   catch
-    :exit, _ -> :ok
+    :exit, _ ->
+      ref = Process.monitor(pid)
+      Process.exit(pid, :kill)
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+      after
+        5_000 -> :ok
+      end
   end
 
   # Private implementation

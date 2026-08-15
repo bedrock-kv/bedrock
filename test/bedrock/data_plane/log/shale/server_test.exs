@@ -174,6 +174,29 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       assert is_tuple(result)
     end
+
+    test "locking quiesces the flush pipeline: the demux tree dies and the floor resets", %{server: pid} do
+      %{demux: demux} = :sys.get_state(pid)
+      assert is_pid(demux)
+
+      # Materialize a shard server in the tree so the teardown has children
+      {:ok, shard_server} = GenServer.call(pid, {:get_shard_server, 777})
+
+      assert {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, 1})
+
+      state = :sys.get_state(pid)
+      assert state.demux == nil
+      assert state.min_durable_version == nil
+      refute Process.alive?(demux)
+      refute Process.alive?(shard_server)
+
+      # A push while locked still appends to the WAL without crashing on
+      # the missing demux
+      encoded_bytes = TransactionTestSupport.new_log_transaction(1, %{"k" => "v"})
+      result = GenServer.call(pid, {:push, encoded_bytes, Version.from_integer(1)}, 1000)
+      assert result == :ok or match?({:error, _}, result)
+      assert Process.alive?(pid)
+    end
   end
 
   describe "handle_call/3 - push operations" do

@@ -78,7 +78,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       assert %{{:log, 2} => _, {:log, 3} => _} = logs
     end
 
-    test "an unlockable candidate (ghost registration) is replaced, not a stall" do
+    test "a candidate that fails to lock (ghost registration) is replaced, not a stall" do
       # The directory can carry registrations from dead nodes — nothing on
       # a dead node can deregister itself. Recruitment must treat a failed
       # lock as 'this candidate is gone' and create a fresh worker instead
@@ -133,7 +133,34 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
           assert %{"good_log" => %{status: {:up, ^good_pid}}} = services
         end)
 
-      assert log =~ "replacing unlockable log candidates"
+      assert log =~ "replacing log candidates that failed to lock"
+    end
+
+    test "replacing a lock-failed candidate with no log-capable nodes stalls, never crashes" do
+      # The capability view on a booting node can be momentarily empty
+      # (registration timing). Replacement must stall honestly with
+      # :insufficient_nodes — the next registration retriggers the attempt
+      # — not divide by zero in round-robin assignment.
+      recovery_attempt = %{
+        cluster: TestCluster,
+        epoch: 3,
+        logs: %{{:vacancy, 1} => %{}},
+        transaction_services: %{},
+        service_pids: %{}
+      }
+
+      context =
+        create_recovery_context(
+          %{{:log, :old} => %{}},
+          %{"ghost_log" => {:log, {:ghost_worker, :dead@nowhere}}},
+          node_capabilities: %{log: []},
+          lock_service_fn: fn {:log, {:ghost_worker, _}}, _epoch -> {:error, :unavailable} end
+        )
+
+      capture_log(fn ->
+        assert {_attempt, {:stalled, {:insufficient_nodes, 1, 0}}} =
+                 LogRecruitmentPhase.execute(recovery_attempt, context)
+      end)
     end
 
     test "workers created this attempt complete recruitment in the SAME attempt" do

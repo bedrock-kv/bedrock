@@ -51,7 +51,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
          # directory yet (advertisement is async) — lock them via the refs
          # we already hold rather than stalling until they rediscover
          # themselves. This is what lets recruitment finish in one attempt.
-         {:ok, existing_log_services, unlockable_ids} <-
+         {:ok, existing_log_services, lock_failed_ids} <-
            extract_and_lock_existing_log_services(
              logs,
              Map.merge(context.available_services, service_refs(updated_services)),
@@ -65,9 +65,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
          # its place — the attempt acts on its view, and the failed lock
          # is the view.
          {:ok, logs, replacement_services} <-
-           replace_unlockable_candidates(
+           replace_lock_failed_candidates(
              logs,
-             unlockable_ids,
+             lock_failed_ids,
              available_log_nodes,
              recovery_attempt,
              context
@@ -189,6 +189,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
           {:ok, %{String.t() => map()}} | {:error, term()}
   defp create_new_log_workers([], _available_nodes, _recovery_attempt, _context), do: {:ok, %{}}
 
+  # A booting node's capability view can be momentarily empty; stall
+  # honestly (the next registration retriggers the attempt) rather than
+  # dividing by zero in round-robin assignment.
+  defp create_new_log_workers(new_worker_ids, [], _recovery_attempt, _context),
+    do: {:error, {:insufficient_nodes, length(new_worker_ids), 0}}
+
   defp create_new_log_workers(new_worker_ids, available_nodes, recovery_attempt, context) do
     new_worker_ids
     |> assign_workers_to_nodes(available_nodes)
@@ -277,7 +283,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
           map(),
           map()
         ) ::
-          {:ok, %{String.t() => map()}, unlockable :: [Log.id()]} | {:error, term()}
+          {:ok, %{String.t() => map()}, lock_failed :: [Log.id()]} | {:error, term()}
   # Lock every non-vacancy candidate. A candidate that cannot be found or
   # locked is collected rather than halting the attempt — the caller
   # replaces it with a fresh worker. Only a newer epoch halts: that means
@@ -288,41 +294,41 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
       |> Map.keys()
       |> Enum.reject(&match?({:vacancy, _}, &1))
 
-    Enum.reduce_while(existing_log_ids, {:ok, %{}, []}, fn log_id, {:ok, locked_services, unlockable} ->
+    Enum.reduce_while(existing_log_ids, {:ok, %{}, []}, fn log_id, {:ok, locked_services, lock_failed} ->
       case Map.get(available_services, log_id) do
         {_kind, last_seen} = service ->
           case lock_recruited_service(service, recovery_attempt.epoch, context) do
             {:ok, pid, info} ->
               locked_service = %{status: {:up, pid}, kind: info.kind, last_seen: last_seen}
-              {:cont, {:ok, Map.put(locked_services, log_id, locked_service), unlockable}}
+              {:cont, {:ok, Map.put(locked_services, log_id, locked_service), lock_failed}}
 
             {:error, :newer_epoch_exists} = error ->
               {:halt, error}
 
             {:error, _reason} ->
-              {:cont, {:ok, locked_services, [log_id | unlockable]}}
+              {:cont, {:ok, locked_services, [log_id | lock_failed]}}
           end
 
         _ ->
-          {:cont, {:ok, locked_services, [log_id | unlockable]}}
+          {:cont, {:ok, locked_services, [log_id | lock_failed]}}
       end
     end)
   end
 
-  @spec replace_unlockable_candidates(
+  @spec replace_lock_failed_candidates(
           %{Log.id() => any()},
           [Log.id()],
           [node()],
           map(),
           RecoveryPhase.context()
         ) :: {:ok, %{Log.id() => any()}, %{String.t() => map()}} | {:error, term()}
-  defp replace_unlockable_candidates(logs, [], _nodes, _recovery_attempt, _context), do: {:ok, logs, %{}}
+  defp replace_lock_failed_candidates(logs, [], _nodes, _recovery_attempt, _context), do: {:ok, logs, %{}}
 
-  defp replace_unlockable_candidates(logs, unlockable_ids, available_nodes, recovery_attempt, context) do
-    replacement_ids = Enum.map(unlockable_ids, fn _ -> Worker.random_id() end)
+  defp replace_lock_failed_candidates(logs, lock_failed_ids, available_nodes, recovery_attempt, context) do
+    replacement_ids = Enum.map(lock_failed_ids, fn _ -> Worker.random_id() end)
 
     Logger.info(
-      "Bedrock recruitment: replacing unlockable log candidates #{inspect(unlockable_ids)} " <>
+      "Bedrock recruitment: replacing log candidates that failed to lock #{inspect(lock_failed_ids)} " <>
         "with fresh workers #{inspect(replacement_ids)}"
     )
 
@@ -336,7 +342,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
              context
            ) do
       swapped_logs =
-        unlockable_ids
+        lock_failed_ids
         |> Enum.zip(replacement_ids)
         |> Enum.reduce(logs, fn {ghost_id, new_id}, acc ->
           {descriptor, acc} = Map.pop(acc, ghost_id)
@@ -345,10 +351,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
       {:ok, swapped_logs, Map.merge(replacement_services, locked_replacements)}
     else
-      {:ok, _locked, still_unlockable} when is_list(still_unlockable) ->
+      {:ok, _locked, still_failing} when is_list(still_failing) ->
         # A freshly created worker failing to lock is a real infrastructure
         # problem, not a ghost — stall honestly.
-        {:error, {:failed_to_lock_recruited_service, still_unlockable}}
+        {:error, {:failed_to_lock_recruited_service, still_failing}}
 
       error ->
         error

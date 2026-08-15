@@ -29,7 +29,7 @@ bedrock-*.tar
 /tmp/
 
 # Dialyzer PLT files.
-/priv/plts
+/plts
 
 # MacOS cruft
 .DS_Store

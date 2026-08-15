@@ -4,7 +4,7 @@ defmodule Bedrock.MixProject do
   def project do
     [
       app: :bedrock,
-      version: "0.5.2",
+      version: "0.5.3",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -36,6 +36,7 @@ defmodule Bedrock.MixProject do
   defp package do
     [
       name: "bedrock",
+      files: ~w(lib priv/schemas mix.exs README.md CHANGELOG.md LICENSE .formatter.exs),
       licenses: ["MIT"],
       links: %{
         "GitHub" => "https://github.com/bedrock-kv/bedrock",
@@ -50,8 +51,8 @@ defmodule Bedrock.MixProject do
 
   defp dialyzer do
     [
-      plt_core_path: "priv/plts",
-      plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
+      plt_core_path: "plts",
+      plt_file: {:no_warn, "plts/dialyzer.plt"},
       plt_add_apps: [:ex_unit, :mix],
       # Disable opaque type checks due to OTP 28 issues with structs containing
       # MapSet/queue. See: https://github.com/elixir-lang/elixir/issues/14576

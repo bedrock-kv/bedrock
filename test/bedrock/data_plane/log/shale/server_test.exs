@@ -225,6 +225,24 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       assert result == :ok or match?({:error, _}, result)
     end
+
+    test "forwards the transaction's own commit version to the demux, not the gap-check version", %{server: pid} do
+      # The push protocol's second element is the LAST version (gap
+      # detection). The demux's high-water must be the pushed transaction's
+      # own commit version — anything else leaves every downstream currency
+      # signal one commit behind reality.
+      make_running(pid, Version.zero())
+
+      v1 = Version.from_integer(100)
+      tx = TransactionTestSupport.new_log_transaction(v1, %{"k" => "v"})
+
+      :ok = GenServer.call(pid, {:push, tx, Version.zero(), v1}, 1000)
+
+      demux = demux_of(pid)
+      send(demux, {:currency_request, self(), nil})
+
+      assert_receive {:currency, ^v1, ^v1}, 1_000
+    end
   end
 
   describe "handle_call/3 - pull operations" do

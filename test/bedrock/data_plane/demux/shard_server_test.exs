@@ -690,7 +690,10 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert_receive {:pull_result, {:ok, [], %{high_water: ^hw, kcv: ^kcv}}}, 1_000
     end
 
-    test "the currency tick runs only while pullers are waiting", %{test_dir: test_dir, registry: registry} do
+    test "parking a puller requests currency from the demux immediately — no timers", %{
+      test_dir: test_dir,
+      registry: registry
+    } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 950
       test_pid = self()
@@ -701,36 +704,66 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
-          registry: registry,
-          currency_tick_ms: 10
+          registry: registry
         )
-
-      # Idle: no waiters, no requests
-      refute_receive {:currency_request, _}, 60
 
       spawn(fn ->
         result = ShardServer.pull(server, Version.from_integer(2000), timeout: 5_000, limit: 10)
         send(test_pid, {:pull_result, result})
       end)
 
-      # While a puller waits, the ShardServer polls us (its demux) for currency
-      assert_receive {:currency_request, from_pid}, 1_000
+      # The park itself triggers the request, carrying what this shard has
+      # already seen so the demux can hold the reply until it knows more.
+      assert_receive {:currency_request, from_pid, nil}, 1_000
+
       hw = Version.from_integer(2500)
       send(from_pid, {:currency, hw, hw})
 
       assert_receive {:pull_result, {:ok, [], %{high_water: ^hw}}}, 1_000
-
-      # Waiter satisfied: the tick stops
-      drain_currency_requests()
-      refute_receive {:currency_request, _}, 60
     end
-  end
 
-  defp drain_currency_requests do
-    receive do
-      {:currency_request, _} -> drain_currency_requests()
-    after
-      30 -> :ok
+    test "a shard server with still-parked pullers re-registers after each advance", %{
+      test_dir: test_dir,
+      registry: registry
+    } do
+      backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
+      shard_id = :erlang.unique_integer([:positive]) + 960
+      test_pid = self()
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          registry: registry
+        )
+
+      # Two pullers at different positions
+      spawn(fn ->
+        result = ShardServer.pull(server, Version.from_integer(2000), timeout: 5_000, limit: 10)
+        send(test_pid, {:pull_result, :near, result})
+      end)
+
+      spawn(fn ->
+        result = ShardServer.pull(server, Version.from_integer(5000), timeout: 5_000, limit: 10)
+        send(test_pid, {:pull_result, :far, result})
+      end)
+
+      assert_receive {:currency_request, from_pid, _seen}, 1_000
+
+      # An advance to 3000 satisfies only the near puller...
+      hw = Version.from_integer(3000)
+      send(from_pid, {:currency, hw, hw})
+      assert_receive {:pull_result, :near, {:ok, [], %{high_water: ^hw}}}, 1_000
+
+      # ...so the shard server re-registers for the next advance, telling
+      # the demux what it has now seen.
+      assert_receive {:currency_request, ^from_pid, ^hw}, 1_000
+
+      hw2 = Version.from_integer(6000)
+      send(from_pid, {:currency, hw2, hw2})
+      assert_receive {:pull_result, :far, {:ok, [], %{high_water: ^hw2}}}, 1_000
     end
   end
 

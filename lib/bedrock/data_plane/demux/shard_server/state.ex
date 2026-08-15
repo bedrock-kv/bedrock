@@ -20,9 +20,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer.State do
           durable_version: Bedrock.version() | nil,
           latest_version: Bedrock.version() | nil,
           high_water: Bedrock.version() | nil,
-          kcv: Bedrock.version() | nil,
-          currency_tick_ms: pos_integer(),
-          tick_scheduled: boolean()
+          kcv: Bedrock.version() | nil
         }
 
   defstruct [
@@ -40,8 +38,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer.State do
     durable_version: nil,
     latest_version: nil,
     high_water: nil,
-    kcv: nil,
-    currency_tick_ms: 100,
-    tick_scheduled: false
+    kcv: nil
   ]
 end

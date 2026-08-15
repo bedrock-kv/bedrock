@@ -341,8 +341,27 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       :ok = Server.push(server, version, txn, kcv)
       :timer.sleep(20)
 
-      send(server, {:currency_request, self()})
+      send(server, {:currency_request, self(), nil})
       assert_receive {:currency, ^version, ^kcv}, 1_000
+    end
+
+    test "holds a currency request until the next push advances past what the asker has seen", %{server: server} do
+      v1 = Version.from_integer(7_000)
+      v2 = Version.from_integer(8_000)
+      txn1 = make_transaction([], nil, v1)
+      txn2 = make_transaction([], nil, v2)
+
+      :ok = Server.push(server, v1, txn1, v1)
+      :timer.sleep(20)
+
+      # The asker has already seen v1: nothing new to say — the demux must
+      # remember the interest instead of replying with stale currency.
+      send(server, {:currency_request, self(), v1})
+      refute_receive {:currency, _, _}, 50
+
+      # The next push is the event that answers it. No polling, no timers.
+      :ok = Server.push(server, v2, txn2, v1)
+      assert_receive {:currency, ^v2, ^v1}, 1_000
     end
 
     test "slice pushes carry the known-committed version through to pull replies", %{

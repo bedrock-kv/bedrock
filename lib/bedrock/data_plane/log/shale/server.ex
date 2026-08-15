@@ -242,7 +242,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       # Push to Demux for distribution to ShardServers (async). A locked
       # log has no demux (its flush pipeline is quiesced); the WAL still
       # appends, and recovery replays through a fresh demux.
-      if t.demux, do: Demux.Server.push(t.demux, expected_version, transaction, known_committed_version)
+      #
+      # The demux gets the transaction's OWN commit version — never
+      # `expected_version`, which is the push protocol's gap-check argument
+      # (the PREVIOUS version). Forwarding the previous version would leave
+      # the demux's high-water — and every currency signal, cut boundary,
+      # and chunk name derived from it — one commit behind reality.
+      if t.demux do
+        Demux.Server.push(t.demux, Transaction.commit_version!(transaction), transaction, known_committed_version)
+      end
+
       noreply(t, continue: {:notify_waiting_pullers, expected_version, transaction})
     else
       {:wait, t} -> noreply(t, continue: :check_for_expired_pullers)

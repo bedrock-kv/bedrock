@@ -84,7 +84,8 @@ defmodule Bedrock.DataPlane.Demux.Server do
     last_cut_version: nil,
     known_committed_version: nil,
     pending_cut_version: nil,
-    high_water: nil
+    high_water: nil,
+    currency_waiters: MapSet.new()
   ]
 
   @doc """
@@ -196,15 +197,26 @@ defmodule Bedrock.DataPlane.Demux.Server do
     {:noreply, state}
   end
 
-  # A ShardServer with parked pullers asks for currency: the high-water is
-  # simply the last version pushed to us — we see every version, heartbeats
-  # included, at commit granularity. Nothing to say until the first push.
+  # A ShardServer with parked pullers subscribes for currency, telling us
+  # what it has already seen. The high-water is simply the last version
+  # pushed to us — we see every version, heartbeats included, at commit
+  # granularity. If we know more than the asker, answer now; otherwise hold
+  # the interest and answer on the next push. One-shot, event-driven — no
+  # polling, no timers, and the cost scales with parked pullers, never with
+  # the commit rate.
   @impl true
-  def handle_info({:currency_request, _from}, %{high_water: nil} = state), do: {:noreply, state}
+  def handle_info({:currency_request, from, seen_high_water}, state) do
+    cond do
+      state.high_water == nil ->
+        {:noreply, park_currency_interest(state, from)}
 
-  def handle_info({:currency_request, from}, state) do
-    send(from, {:currency, state.high_water, state.known_committed_version})
-    {:noreply, state}
+      seen_high_water == nil or state.high_water > seen_high_water ->
+        send(from, {:currency, state.high_water, state.known_committed_version})
+        {:noreply, state}
+
+      true ->
+        {:noreply, park_currency_interest(state, from)}
+    end
   end
 
   # A linked process died — a ShardServer or the owning log. Propagate:
@@ -250,22 +262,39 @@ defmodule Bedrock.DataPlane.Demux.Server do
     commit_version = Transaction.commit_version!(transaction)
 
     # Slice transaction by shard
-    case MutationSlicer.slice(transaction, commit_version) do
-      {:ok, []} ->
-        # Empty transaction (heartbeat) - nothing to route
-        state
+    case_result =
+      case MutationSlicer.slice(transaction, commit_version) do
+        {:ok, []} ->
+          # Empty transaction (heartbeat) - nothing to route
+          state
 
-      {:ok, slices} ->
-        # Route each slice to its ShardServer
-        Enum.reduce(slices, state, fn {shard_id, slice}, acc ->
-          route_to_shard(acc, shard_id, version, slice)
-        end)
+        {:ok, slices} ->
+          # Route each slice to its ShardServer
+          Enum.reduce(slices, state, fn {shard_id, slice}, acc ->
+            route_to_shard(acc, shard_id, version, slice)
+          end)
 
-      {:error, reason} ->
-        Logger.error("Failed to slice transaction: #{inspect(reason)}")
-        state
+        {:error, reason} ->
+          Logger.error("Failed to slice transaction: #{inspect(reason)}")
+          state
+      end
+
+    notify_currency_waiters(case_result)
+    # Currency notifications go out AFTER the slices: message ordering per
+    # receiver then guarantees a shard server never hears "current through
+    # v" before it holds its own data at v.
+  end
+
+  defp notify_currency_waiters(%{currency_waiters: waiters} = state) do
+    if MapSet.size(waiters) == 0 do
+      state
+    else
+      Enum.each(waiters, &send(&1, {:currency, state.high_water, state.known_committed_version}))
+      %{state | currency_waiters: MapSet.new()}
     end
   end
+
+  defp park_currency_interest(state, from), do: %{state | currency_waiters: MapSet.put(state.currency_waiters, from)}
 
   defp note_known_committed(state, nil), do: state
 

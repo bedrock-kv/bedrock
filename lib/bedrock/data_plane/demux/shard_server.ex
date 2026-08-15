@@ -40,8 +40,12 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   Every reply carries currency — `%{high_water: v, kcv: k}` — so an empty
   reply still means something: "nothing for you, but you are current through
   v" (FoundationDB's empty tag peek shape). Busy shards learn currency from
-  slice pushes; idle shards learn it from the currency tick, which polls the
-  Demux only while pullers are parked, so the cost follows the demand.
+  slice pushes. Idle shards learn it by subscription, never by timer:
+  parking a puller sends the Demux a one-shot currency request carrying what
+  this shard has already seen; the Demux replies immediately if it knows
+  more, and otherwise holds the interest and answers on its next push. The
+  whole chain is event-driven — a reader is never waiting on a clock, only
+  on messages that are already in flight.
   """
 
   use GenServer
@@ -181,7 +185,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     persistence_max_retries = Keyword.get(opts, :persistence_max_retries, 5)
     persistence_retry_backoff_ms = Keyword.get(opts, :persistence_retry_backoff_ms, 25)
     persistence_retry_tick_ms = Keyword.get(opts, :persistence_retry_tick_ms, 25)
-    currency_tick_ms = Keyword.get(opts, :currency_tick_ms, 100)
 
     shard_tag = Keys.shard_tag(shard_id)
     chunk_reader = ChunkReader.new(object_storage, shard_tag)
@@ -210,8 +213,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
       pending_cuts: [],
       pending_flush_cut: nil,
       durable_version: nil,
-      latest_version: nil,
-      currency_tick_ms: currency_tick_ms
+      latest_version: nil
     }
 
     {:ok, state}
@@ -243,13 +245,15 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
           {:reply, {:ok, [], currency(state)}, state}
         else
           # Nothing known at or after the requested position yet: park, and
-          # make sure the currency tick is running while anyone waits.
+          # subscribe to the demux's next currency advance. Event-driven —
+          # the reply arrives when the next push does, not when a timer
+          # fires.
           reply_fn = fn response -> GenServer.reply(from, response) end
 
           {waiting_list, _timeout} =
             WaitingList.insert(state.waiting_list, from_version, {from_version, limit}, reply_fn, timeout)
 
-          state = ensure_currency_tick(%{state | waiting_list: waiting_list})
+          state = request_currency(%{state | waiting_list: waiting_list})
           {:noreply, state, next_timeout(state)}
         end
 
@@ -281,19 +285,11 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   def handle_info({:currency, high_water, kcv}, state) do
     state = %{state | high_water: max_version(state.high_water, high_water), kcv: max_version(state.kcv, kcv)}
     state = wake_current_waiters(state)
-    {:noreply, state, next_timeout(state)}
-  end
 
-  @impl true
-  def handle_info(:currency_tick, %{waiting_list: waiting_list} = state) when map_size(waiting_list) == 0 do
-    # No one is waiting: the tick stops until the next parked puller.
-    {:noreply, %{state | tick_scheduled: false}, next_timeout(state)}
-  end
+    # Anyone still parked is waiting for a further advance: re-register so
+    # the demux answers us again on its next push.
+    state = if map_size(state.waiting_list) > 0, do: request_currency(state), else: state
 
-  @impl true
-  def handle_info(:currency_tick, state) do
-    send(state.demux, {:currency_request, self()})
-    Process.send_after(self(), :currency_tick, state.currency_tick_ms)
     {:noreply, state, next_timeout(state)}
   end
 
@@ -365,11 +361,13 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   defp known_current_past?(%{high_water: nil}, _from_version), do: false
   defp known_current_past?(state, from_version), do: not Version.newer?(from_version, state.high_water)
 
-  defp ensure_currency_tick(%{tick_scheduled: true} = state), do: state
-
-  defp ensure_currency_tick(state) do
-    Process.send_after(self(), :currency_tick, state.currency_tick_ms)
-    %{state | tick_scheduled: true}
+  # One-shot currency subscription: tell the demux what we've seen; it
+  # replies now if it knows more, otherwise on its next push. Duplicate
+  # registrations are harmless (the demux tracks interest as a set, and
+  # currency advances are monotonic).
+  defp request_currency(state) do
+    send(state.demux, {:currency_request, self(), state.high_water})
+    state
   end
 
   # A currency advance satisfies every waiter whose start position the

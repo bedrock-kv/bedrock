@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T16:05:47Z",
+  "close_reason": "Implemented on worktree-qzr2-wal-trim (PR #117), S1-S4: (S1) ShardServer honest pull — durable-version routing fixes the buffer-first gap bug and the waiting-list from-zero bug; replies carry %{high_water, kcv}; pushes carry KCV; only-while-waiting currency tick against the Demux. (S2) Olivine Streaming puller — discovery via sorted-log-ids + ShardRouter.get_log_indices (mirrors topology_phase routing), replica failover with circuit breakers, backpressured {:ingest, txns, kcv} call with parked reply over 1000-txn high-water, empty-current replies rematerialized as heartbeats through the normal apply path; Foreman new_worker params plumbing so bootstrap actually delivers shard_id. (S3) KCV clamp on window eviction + IndexManager.rollback_to (pointer discard; disk \u003c= KCV \u003c= RV always); unlock rolls back to RV and resumes from own applied position. (S4) Deleted olivine Log.pull path, floor-exceeded/chunk catch-up, subscriber: opt, and basalt entirely. 2456 tests green, credo strict + dialyzer clean.",
   "created": "2026-08-15T14:43:39Z",
   "description": "Design decision (2026-08-15): materializers do not hold the WAL back and do not talk to the log in the data plane. A materializer's life: load latest snapshot at S -\u003e ShardServer.pull from S+1 (chunks for old ranges, buffer for recent — continuous by construction since buffered entries stay pullable until their chunk write confirms) -\u003e stay live. No catch-up mode vs live mode distinction; the floor-exceeded special case dissolves into the normal path. The WAL trim floor becomes purely object-storage confirmation.\n\nRequired plumbing:\n1. Version currency: shard-server pull replies / long-poll wakeups carry a high-water version ('no data for you, but you are current through v') — FDB's empty-tag peek shape. Demux sees every version at commit granularity; pull-driven, no per-commit fan-out.\n2. The stream also carries the known-committed version (KCV, from the epic's durability invariant); olivine applies everything immediately for read currency but gates window eviction/persistence at KCV, so recovery rollback to RV (always \u003e= KCV-at-crash, since every log receives every version) is pure in-memory pointer discard — never disk surgery.\n3. Discovery: materializer finds its ShardServer via director/TSL (or the existing log get_shard_server introduction); no other log contact. Recovery coordination stays director-mediated.\n4. Multi-shard materializers merge N shard streams by version (aligns materializer scope with the shard, as the per-shard snapshot handle already assumes).\n5. Retire: olivine's Log.pull path, the interim chunk catch-up special case, and basalt's subscriber usage (decide basalt's fate: port to demux streaming or deprecate — review finding 5).\n6. Fix in passing: interim catch-up runs synchronously in the olivine server and floods its own mailbox (review finding 9) — the streaming rewrite replaces it with a backpressured task like normal pulling.\n\nPre-quorum exposure note: streaming from the buffer has the same exposure as Log.pull today (demux receives pushes at WAL-append time, before quorum ack); the KCV eviction gate plus rollback-at-unlock is the answer in both worlds, and no client ever observes the uncommitted suffix because read versions are KCV by construction.",
   "id": "bedrock-qzr.4",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Materializers stream from the Demux; the log's only consumer is its Demux",
   "type": "feature",
-  "updated_at": "2026-08-15T14:43:39Z"
+  "updated_at": "2026-08-15T16:05:47Z"
 }

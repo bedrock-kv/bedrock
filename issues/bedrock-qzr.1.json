@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T12:30:32Z",
+  "close_reason": "Fixed in PR #116 (branch worktree-qzr1-resolver-floor): Conflicts gains an oldest_version floor seeded at recovery last_version and advanced by the sweep; check_conflicts aborts read versions below it. Follow-up bedrock-b28 filed for the vacuous read-conflict test shapes.",
   "created": "2026-08-15T11:44:56Z",
   "description": "The resolver sweeps conflict history older than version_retention_ms (default 6s) via remove_old_conflicts (server.ex:237, conflicts.ex:121). But check_conflicts (conflicts.ex:53) has no floor check: it walks version entries \u003e read_version and returns :ok if none overlap. If a transaction arrives with a read_version older than the pruned horizon, writes that occurred in the pruned range are invisible and the transaction COMMITS instead of aborting — a serializability violation, silent.\n\nstate.oldest_version is set at init (server.ex:86) and never advanced by the sweep nor consulted during resolution.\n\nFix shape (FDB parity): sweep advances oldest_version; resolve aborts any transaction whose read_version \u003c oldest_version (transaction_too_old), same as storage's version_too_old contract. A transaction older than the MVCC window must be impossible to commit, not silently unchecked.\n\nRepro sketch: commit T1 writing key K at version V; wait \u003e 6s (or shrink version_retention_ms); submit T2 with read_version \u003c V reading K (read conflict on K) — T2 commits despite the conflicting write, because the V entry was swept.\n\nRelated: this floor is one enforcement point of the MVCC-window/read-version-lease contract being designed under bedrock-q67 (see the sibling WAL-trim ticket in this epic), but the fix is independent and needed regardless.",
   "id": "bedrock-qzr.1",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Resolver silently skips conflict detection for read versions older than pruned history",
   "type": "bug",
-  "updated_at": "2026-08-15T12:26:08Z"
+  "updated_at": "2026-08-15T12:30:32Z"
 }

@@ -79,6 +79,35 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
       assert :ok = GenServer.call(pid, {:ingest, transactions, Version.from_integer(2_100)}, 30_000)
     end
 
+    test "unlock rolls the uncommitted suffix back to the recovery version", %{tmp_dir: tmp_dir} do
+      pid = start_worker(tmp_dir)
+      unlock(pid)
+
+      v1 = Version.from_integer(1_000)
+      v2 = Version.from_integer(2_000)
+      v3 = Version.from_integer(3_000)
+
+      transactions = [
+        Transaction.encode(%{mutations: [{:set, "key", "a"}], commit_version: v1}),
+        Transaction.encode(%{mutations: [{:set, "key", "b"}], commit_version: v2}),
+        Transaction.encode(%{mutations: [{:set, "key", "c"}], commit_version: v3})
+      ]
+
+      assert :ok = GenServer.call(pid, {:ingest, transactions, v3})
+      assert {:ok, "c"} = GenServer.call(pid, {:get, "key", v3, []})
+
+      # Recovery rolls the cluster back to v2: the v3 suffix must vanish.
+      {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, 2})
+      layout = %{logs: %{}, services: %{}}
+      :ok = GenServer.call(pid, {:unlock_after_recovery, v2, layout})
+
+      assert {:ok, "b"} = GenServer.call(pid, {:get, "key", v2, []})
+
+      # Not merely MVCC at an older version: the v3 entry itself is gone,
+      # so a read there is honestly too new rather than answered with "c".
+      assert {:error, :version_too_new} = GenServer.call(pid, {:get, "key", v3, [wait_ms: 0]})
+    end
+
     test "ingest while locked acknowledges and discards", %{tmp_dir: tmp_dir} do
       pid = start_worker(tmp_dir)
 

@@ -191,7 +191,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       state = create_test_state(test_dir)
       locked_state = %{state | mode: :locked, epoch: 1}
       layout = %{logs: %{}, services: %{}}
-      durable_version = 100
+      durable_version = Version.from_integer(100)
 
       assert {:ok, %State{mode: :running} = unlocked_state} =
                Logic.unlock_after_recovery(locked_state, durable_version, layout)

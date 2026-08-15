@@ -10,6 +10,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Materializer.Olivine.CompactionWriter.SplitFile, as: SplitFileWriter
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
+  alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Materializer.Olivine.Pulling
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Materializer.Olivine.Streaming
@@ -172,13 +173,39 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     t =
       t
       |> stop_pulling()
+      |> rollback_uncommitted(durable_version)
       |> Map.put(:pull_sources, {logs, services})
-      |> start_pulling_from(durable_version)
 
     t
+    |> start_pulling_from(resume_position(t, durable_version))
     |> update_mode(:running)
     |> then(&{:ok, &1})
   end
+
+  # The recovery version is the cluster's rollback point: everything this
+  # materializer applied above it was an uncommitted suffix, and it lives
+  # only in memory (eviction is clamped to the known-committed version,
+  # which the recovery version can never undercut). Discarding it is pure
+  # pointer manipulation. Queued-but-unapplied transactions are dropped
+  # too: the resumed stream re-delivers everything after the rollback point.
+  defp rollback_uncommitted(t, recovery_version) do
+    %{
+      t
+      | index_manager: IndexManager.rollback_to(t.index_manager, recovery_version),
+        intake_queue: IntakeQueue.new(),
+        known_committed_version: nil
+    }
+  end
+
+  # A streaming materializer resumes from its own applied position — the
+  # stream serves any starting point (chunks reach arbitrarily far back),
+  # so a materializer restored from an old snapshot simply has more stream
+  # to drink. The legacy log puller keeps its historical contract of
+  # starting at the recovery durable version.
+  defp resume_position(%{shard_num: shard_num} = t, _durable_version) when is_integer(shard_num),
+    do: t.index_manager.current_version
+
+  defp resume_position(_t, durable_version), do: durable_version
 
   @spec start_pulling_from(State.t(), Bedrock.version()) :: State.t()
   defp start_pulling_from(%{shard_num: shard_num, pull_sources: {logs, services}} = t, start_after)
@@ -320,7 +347,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   def advance_window(%State{} = state) do
     start_time = System.monotonic_time(:microsecond)
 
-    case IndexManager.advance_window(state.index_manager, max_eviction_size()) do
+    # The eviction cap is the known-committed version: nothing above it may
+    # become durable, so a recovery rollback never has to touch disk.
+    case IndexManager.advance_window(state.index_manager, max_eviction_size(), state.known_committed_version) do
       {:no_eviction, updated_index_manager} ->
         updated_state = %{state | index_manager: updated_index_manager}
         {:ok, updated_state}

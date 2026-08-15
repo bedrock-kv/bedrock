@@ -123,6 +123,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :transaction_count,
       :commit_version,
       :last_commit_version,
+      :known_committed_version,
       :shard_table,
       :log_map,
       :replication_factor,
@@ -142,6 +143,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             transaction_count: non_neg_integer(),
             commit_version: Bedrock.version(),
             last_commit_version: Bedrock.version(),
+            known_committed_version: Bedrock.version() | nil,
             shard_table: :ets.table(),
             log_map: %{non_neg_integer() => Log.id()},
             log_services: %{Log.id() => {atom(), node()} | pid()},
@@ -268,6 +270,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       transaction_count: Batch.transaction_count(batch),
       commit_version: batch.commit_version,
       last_commit_version: batch.last_commit_version,
+      known_committed_version: batch.known_committed_version,
       shard_table: shard_table,
       log_map: log_map,
       log_services: log_services,
@@ -835,7 +838,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   def push_to_logs(%FinalizationPlan{stage: :ready_for_logging} = plan, opts) do
     batch_log_push_fn = Keyword.get(opts, :batch_log_push_fn, &push_transaction_to_logs_direct/4)
-    opts_with_log_services = Keyword.put(opts, :log_services, plan.log_services)
+
+    opts_with_log_services =
+      opts
+      |> Keyword.put(:log_services, plan.log_services)
+      |> Keyword.put(:known_committed_version, plan.known_committed_version)
 
     case batch_log_push_fn.(
            plan.last_commit_version,
@@ -862,13 +869,20 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     |> Map.new()
   end
 
-  @spec try_to_push_transaction_to_log(ServiceDescriptor.t(), binary(), Bedrock.version()) ::
+  @spec try_to_push_transaction_to_log(ServiceDescriptor.t(), binary(), Bedrock.version(), Bedrock.version() | nil) ::
           :ok | {:error, :unavailable}
-  def try_to_push_transaction_to_log(%{kind: :log, status: {:up, log_server}}, transaction, last_commit_version) do
-    Log.push(log_server, transaction, last_commit_version)
+  def try_to_push_transaction_to_log(descriptor, transaction, last_commit_version, known_committed_version \\ nil)
+
+  def try_to_push_transaction_to_log(
+        %{kind: :log, status: {:up, log_server}},
+        transaction,
+        last_commit_version,
+        known_committed_version
+      ) do
+    Log.push(log_server, transaction, last_commit_version, known_committed_version: known_committed_version)
   end
 
-  def try_to_push_transaction_to_log(_, _, _), do: {:error, :unavailable}
+  def try_to_push_transaction_to_log(_, _, _, _), do: {:error, :unavailable}
 
   @doc """
   Pushes transactions directly to logs and waits for acknowledgement from ALL log servers.
@@ -911,7 +925,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def push_transaction_to_logs_direct(last_commit_version, transactions_by_log, _commit_version, opts) do
     log_services = Keyword.fetch!(opts, :log_services)
     async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
-    log_push_fn = Keyword.get(opts, :log_push_fn, &try_to_push_transaction_to_log_direct/3)
+    known_committed_version = Keyword.get(opts, :known_committed_version)
+
+    log_push_fn =
+      Keyword.get(opts, :log_push_fn, fn service_ref, transaction, last_version ->
+        try_to_push_transaction_to_log_direct(service_ref, transaction, last_version, known_committed_version)
+      end)
+
     timeout = Keyword.get(opts, :timeout, 5_000)
 
     required_acknowledgments = map_size(log_services)
@@ -969,14 +989,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @spec try_to_push_transaction_to_log_direct(pid() | {atom(), node()}, binary(), Bedrock.version()) ::
+  @spec try_to_push_transaction_to_log_direct(
+          pid() | {atom(), node()},
+          binary(),
+          Bedrock.version(),
+          Bedrock.version() | nil
+        ) ::
           :ok | {:error, term()}
-  def try_to_push_transaction_to_log_direct(service_ref, transaction, last_commit_version) when is_pid(service_ref) do
-    Log.push(service_ref, transaction, last_commit_version)
-  end
-
-  def try_to_push_transaction_to_log_direct({name, node}, transaction, last_commit_version) do
-    Log.push({name, node}, transaction, last_commit_version)
+  def try_to_push_transaction_to_log_direct(service_ref, transaction, last_commit_version, known_committed_version) do
+    Log.push(service_ref, transaction, last_commit_version, known_committed_version: known_committed_version)
   end
 
   # ============================================================================

@@ -201,6 +201,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
           | {:lock_for_recovery, Bedrock.epoch()}
           | {:recover_from, [pid()], Bedrock.version(), Bedrock.version()}
           | {:push, binary(), Bedrock.version()}
+          | {:push, binary(), Bedrock.version(), Bedrock.version() | nil}
           | {:pull, Bedrock.version(), keyword()}
           | :ping,
           GenServer.from(),
@@ -232,19 +233,25 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t) do
+  def handle_call({:push, transaction_bytes, expected_version, known_committed_version}, from, %State{} = t) do
     with :ok <- check_wal_backpressure(t),
          {:ok, transaction} <- Transaction.validate(transaction_bytes),
          :ok <- validate_has_shard_index(transaction),
          {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
       # Push to Demux for distribution to ShardServers (async)
-      Demux.Server.push(t.demux, expected_version, transaction)
+      Demux.Server.push(t.demux, expected_version, transaction, known_committed_version)
       noreply(t, continue: {:notify_waiting_pullers, expected_version, transaction})
     else
       {:wait, t} -> noreply(t, continue: :check_for_expired_pullers)
       {:error, _reason} = error -> reply(t, error, continue: :check_for_expired_pullers)
     end
   end
+
+  # Pushes without a known-committed watermark (older callers, tests): the
+  # WAL still appends, but cuts stay gated until a watermark arrives.
+  @impl true
+  def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t),
+    do: handle_call({:push, transaction_bytes, expected_version, nil}, from, t)
 
   @impl true
   def handle_call({:pull, from_version, opts}, from, t) do

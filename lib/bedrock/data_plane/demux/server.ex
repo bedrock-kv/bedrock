@@ -24,6 +24,14 @@ defmodule Bedrock.DataPlane.Demux.Server do
   replica and every replay, which makes chunks byte-identical and lets
   `put_if_not_exists`/`:already_exists` count as confirmation.
 
+  ## Known-committed gating
+
+  A cut fires only once the known-committed version — piggybacked by commit
+  proxies on every push — has reached it. Nothing not known-committed ever
+  becomes durable, so chunks can never contain versions a recovery would
+  discard, and recovery needs no chunk cleanup: the uncommitted tail lives
+  only in ShardServer buffers, which die with the Demux tree.
+
   ## Durability Tracking
 
   A ShardServer confirms a cut by sending `{:durable, shard_id, cut_version}`
@@ -73,7 +81,9 @@ defmodule Bedrock.DataPlane.Demux.Server do
     shard_server_opts: [],
     durability: nil,
     current_bucket: nil,
-    last_cut_version: nil
+    last_cut_version: nil,
+    known_committed_version: nil,
+    pending_cut_version: nil
   ]
 
   @doc """
@@ -103,9 +113,9 @@ defmodule Bedrock.DataPlane.Demux.Server do
   - `version` - Commit version (8-byte binary)
   - `transaction` - Encoded transaction binary with SHARD_INDEX
   """
-  @spec push(GenServer.server(), version(), binary()) :: :ok
-  def push(server, version, transaction) do
-    GenServer.cast(server, {:push, version, transaction})
+  @spec push(GenServer.server(), version(), binary(), known_committed_version :: version() | nil) :: :ok
+  def push(server, version, transaction, known_committed_version \\ nil) do
+    GenServer.cast(server, {:push, version, transaction, known_committed_version})
   end
 
   @doc """
@@ -161,8 +171,8 @@ defmodule Bedrock.DataPlane.Demux.Server do
   end
 
   @impl true
-  def handle_cast({:push, version, transaction}, state) do
-    state = do_push(state, version, transaction)
+  def handle_cast({:push, version, transaction, known_committed_version}, state) do
+    state = do_push(state, version, transaction, known_committed_version)
     {:noreply, state}
   end
 
@@ -206,8 +216,12 @@ defmodule Bedrock.DataPlane.Demux.Server do
 
   # Private implementation
 
-  defp do_push(state, version, transaction) do
-    state = maybe_cut(state, version)
+  defp do_push(state, version, transaction, known_committed_version) do
+    state =
+      state
+      |> note_known_committed(known_committed_version)
+      |> maybe_cut(version)
+      |> maybe_fire_pending_cut()
 
     # Get commit version from transaction
     commit_version = Transaction.commit_version!(transaction)
@@ -230,6 +244,16 @@ defmodule Bedrock.DataPlane.Demux.Server do
     end
   end
 
+  defp note_known_committed(state, nil), do: state
+
+  defp note_known_committed(%{known_committed_version: nil} = state, version),
+    do: %{state | known_committed_version: version}
+
+  defp note_known_committed(state, version) when version > state.known_committed_version,
+    do: %{state | known_committed_version: version}
+
+  defp note_known_committed(state, _version), do: state
+
   # The first version seen just establishes the current bucket.
   defp maybe_cut(%{current_bucket: nil} = state, version), do: %{state | current_bucket: bucket_of(state, version)}
 
@@ -238,22 +262,37 @@ defmodule Bedrock.DataPlane.Demux.Server do
 
     if bucket > state.current_bucket do
       # The cut closes every bucket before the one just entered, so a quiet
-      # stretch spanning several buckets is closed by a single cut.
+      # stretch spanning several buckets is closed by a single cut. It is
+      # only a CANDIDATE until the known-committed version reaches it.
       cut_version = Version.from_integer(bucket * state.cut_interval_us - 1)
-
-      Enum.each(state.shard_servers, fn {_shard_id, pid} -> ShardServer.flush(pid, cut_version) end)
-
-      # With no shards there is nothing to persist: the cut itself is the
-      # floor, so heartbeat-only logs still trim.
-      if map_size(state.shard_servers) == 0 do
-        notify_log_durability(state.log, cut_version)
-      end
-
-      %{state | current_bucket: bucket, last_cut_version: cut_version}
+      %{state | current_bucket: bucket, pending_cut_version: cut_version}
     else
       state
     end
   end
+
+  # THE durability invariant: nothing not known-committed ever becomes
+  # durable. A cut fires only once the known-committed version has reached
+  # it, so chunks can never contain versions a recovery would discard —
+  # which is what makes deterministic re-flushes byte-identical and
+  # `:already_exists` a truthful confirmation.
+  defp maybe_fire_pending_cut(%{pending_cut_version: nil} = state), do: state
+  defp maybe_fire_pending_cut(%{known_committed_version: nil} = state), do: state
+
+  defp maybe_fire_pending_cut(%{pending_cut_version: cut_version} = state)
+       when state.known_committed_version >= cut_version do
+    Enum.each(state.shard_servers, fn {_shard_id, pid} -> ShardServer.flush(pid, cut_version) end)
+
+    # With no shards there is nothing to persist: the cut itself is the
+    # floor, so heartbeat-only logs still trim.
+    if map_size(state.shard_servers) == 0 do
+      notify_log_durability(state.log, cut_version)
+    end
+
+    %{state | last_cut_version: cut_version, pending_cut_version: nil}
+  end
+
+  defp maybe_fire_pending_cut(state), do: state
 
   defp bucket_of(state, version), do: version |> Version.to_integer() |> div(state.cut_interval_us)
 

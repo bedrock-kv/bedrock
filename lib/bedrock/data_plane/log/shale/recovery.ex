@@ -232,7 +232,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   end
 
   defp push_to_demux(%{demux: nil}, _version, _bytes), do: :ok
-  defp push_to_demux(t, version, bytes), do: Demux.Server.push(t.demux, version, bytes)
+
+  # Everything replayed is committed by definition (recovery only replays
+  # the committed range, in order), so each replayed version doubles as its
+  # own known-committed watermark — cuts fire during replay.
+  defp push_to_demux(t, version, bytes), do: Demux.Server.push(t.demux, version, bytes, version)
 
   @spec abort_all_waiting_pullers(State.t()) :: State.t()
   def abort_all_waiting_pullers(%{waiting_pullers: waiting_pullers} = t) do

@@ -47,7 +47,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       txn = make_transaction(mutations, [{shard_id, 2}])
       version = <<0, 0, 0, 0, 0, 0, 10, 0>>
 
-      :ok = Server.push(server, version, txn)
+      :ok = Server.push(server, version, txn, version)
       :timer.sleep(50)
 
       # Verify ShardServer was created and received data
@@ -67,7 +67,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       txn = make_transaction(mutations, [{shard_a, 1}, {shard_b, 1}])
       version = <<0, 0, 0, 0, 0, 0, 20, 0>>
 
-      :ok = Server.push(server, version, txn)
+      :ok = Server.push(server, version, txn, version)
       :timer.sleep(50)
 
       # Both ShardServers should exist and have data
@@ -106,7 +106,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       txn = make_transaction([{:set, "k", "v"}], [{shard_id, 1}])
       version = <<0, 0, 0, 0, 0, 0, 3, 232>>
 
-      :ok = Server.push(tuned_server, version, txn)
+      :ok = Server.push(tuned_server, version, txn, version)
 
       {:ok, shard_server} = Server.get_shard_server(tuned_server, shard_id)
       assert %{persistence_worker: persistence_worker} = :sys.get_state(shard_server)
@@ -160,10 +160,55 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       v_crossing = version_in_bucket(6, 0, interval)
       cut = cut_of_bucket(5, interval)
 
-      :ok = Server.push(server, v_in_bucket, txn.(v_in_bucket))
-      :ok = Server.push(server, v_crossing, txn.(v_crossing))
+      :ok = Server.push(server, v_in_bucket, txn.(v_in_bucket), v_in_bucket)
+      :ok = Server.push(server, v_crossing, txn.(v_crossing), v_crossing)
 
       assert_receive {:min_durable_version, _, ^cut}, 1_500
+    end
+
+    test "a cut is deferred until the known-committed version reaches it", %{
+      backend: backend,
+      shard_base: shard_base
+    } do
+      interval = 1_000
+      server = start_cut_server(backend, self(), interval)
+      shard_id = shard_base + 45
+
+      txn = fn v -> make_transaction([{:set, "k", "v"}], [{shard_id, 1}], v) end
+
+      v_in_bucket = version_in_bucket(5, 100, interval)
+      v_crossing = version_in_bucket(6, 0, interval)
+      v_later = version_in_bucket(6, 10, interval)
+      cut = cut_of_bucket(5, interval)
+
+      # The bucket closes, but the known-committed watermark still trails
+      # behind the cut: nothing may become durable yet.
+      :ok = Server.push(server, v_in_bucket, txn.(v_in_bucket), v_in_bucket)
+      :ok = Server.push(server, v_crossing, txn.(v_crossing), v_in_bucket)
+
+      refute_receive {:min_durable_version, _, _}, 200
+
+      # The watermark catches up on a later push: the deferred cut fires.
+      :ok = Server.push(server, v_later, txn.(v_later), v_crossing)
+
+      assert_receive {:min_durable_version, _, ^cut}, 1_500
+    end
+
+    test "an uncommitted tail is never flushed (no shards)", %{backend: backend} do
+      interval = 1_000
+      server = start_cut_server(backend, self(), interval)
+
+      heartbeat = fn v -> make_transaction([], [], v) end
+
+      v1 = version_in_bucket(3, 10, interval)
+      v2 = version_in_bucket(4, 10, interval)
+
+      # The watermark never reaches the cut: the floor must not advance.
+      :ok = Server.push(server, v1, heartbeat.(v1), v1)
+      :ok = Server.push(server, v2, heartbeat.(v2), v1)
+
+      refute_receive {:min_durable_version, _, _}, 200
+      assert Server.min_durable_version(server) == nil
     end
 
     test "heartbeat-only stream (no shards) still advances the floor", %{backend: backend} do
@@ -176,8 +221,8 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       v2 = version_in_bucket(4, 10, interval)
       cut = cut_of_bucket(3, interval)
 
-      :ok = Server.push(server, v1, heartbeat.(v1))
-      :ok = Server.push(server, v2, heartbeat.(v2))
+      :ok = Server.push(server, v1, heartbeat.(v1), v1)
+      :ok = Server.push(server, v2, heartbeat.(v2), v2)
 
       assert_receive {:min_durable_version, _, ^cut}, 1_500
       assert Server.min_durable_version(server) == cut
@@ -193,8 +238,8 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       v9 = version_in_bucket(9, 0, interval)
       cut = cut_of_bucket(8, interval)
 
-      :ok = Server.push(server, v1, heartbeat.(v1))
-      :ok = Server.push(server, v9, heartbeat.(v9))
+      :ok = Server.push(server, v1, heartbeat.(v1), v1)
+      :ok = Server.push(server, v9, heartbeat.(v9), v9)
 
       assert_receive {:min_durable_version, _, ^cut}, 1_500
     end
@@ -215,14 +260,14 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       v2 = version_in_bucket(2, 0, interval)
       cut1 = cut_of_bucket(1, interval)
 
-      :ok = Server.push(server, v1, heartbeat.(v1))
-      :ok = Server.push(server, v2, heartbeat.(v2))
+      :ok = Server.push(server, v1, heartbeat.(v1), v1)
+      :ok = Server.push(server, v2, heartbeat.(v2), v2)
       assert_receive {:min_durable_version, _, ^cut1}, 1_500
 
       # First slice for the shard arrives mid-bucket: its data is only
       # buffered, so the min must stay at the last completed cut.
       v_mid = version_in_bucket(2, 500, interval)
-      :ok = Server.push(server, v_mid, txn.(v_mid))
+      :ok = Server.push(server, v_mid, txn.(v_mid), v_mid)
       :timer.sleep(50)
 
       assert Server.min_durable_version(server) == cut1
@@ -252,8 +297,8 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       v_crossing = version_in_bucket(6, 0, interval)
       cut = cut_of_bucket(5, interval)
 
-      :ok = Server.push(server, v_in_bucket, txn.(v_in_bucket))
-      :ok = Server.push(server, v_crossing, txn.(v_crossing))
+      :ok = Server.push(server, v_in_bucket, txn.(v_in_bucket), v_in_bucket)
+      :ok = Server.push(server, v_crossing, txn.(v_crossing), v_crossing)
 
       assert_receive {:telemetry, [:bedrock, :demux, :durability, :floor_advanced], measurements, metadata}, 1_500
       assert metadata.min_durable_version == cut
@@ -271,12 +316,12 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
 
       # The idle shard receives data once, in bucket 1
       v_idle = version_in_bucket(1, 100, interval)
-      :ok = Server.push(server, v_idle, txn.(idle_shard, v_idle))
+      :ok = Server.push(server, v_idle, txn.(idle_shard, v_idle), v_idle)
 
       # The busy shard keeps receiving data through buckets 2..4
       for bucket <- 2..4 do
         v = version_in_bucket(bucket, 100, interval)
-        :ok = Server.push(server, v, txn.(busy_shard, v))
+        :ok = Server.push(server, v, txn.(busy_shard, v), v)
       end
 
       # The idle shard confirmed every cut without new data: the floor is the
@@ -310,7 +355,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
 
       # Create some shards by pushing data
       txn = make_transaction([{:set, "key", "value"}], [{shard_id, 1}])
-      Server.push(server, <<0, 0, 0, 0, 0, 0, 10, 0>>, txn)
+      Server.push(server, <<0, 0, 0, 0, 0, 0, 10, 0>>, txn, <<0, 0, 0, 0, 0, 0, 10, 0>>)
       :timer.sleep(50)
 
       # Should have a min durable version now

@@ -49,7 +49,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
     def init(state), do: {:ok, state}
 
-    def handle_call({:push, _transaction, _last_commit_version}, _from, state) do
+    def handle_call({:push, _transaction, _last_commit_version, _kcv}, _from, state) do
       {:reply, :ok, state}
     end
   end
@@ -345,7 +345,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         def init(state), do: {:ok, state}
 
         # This log immediately fails all push attempts to simulate log failure
-        def handle_call({:push, _transaction, _last_commit_version}, _from, state) do
+        def handle_call({:push, _transaction, _last_commit_version, _kcv}, _from, state) do
           # Immediately return an error to simulate log failure
           {:reply, {:error, :log_unavailable}, state}
         end
@@ -492,7 +492,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         def handle_call({:next_commit_version, _epoch}, _from, counter) do
           last_version = Bedrock.DataPlane.Version.from_integer(counter)
           next_version = Bedrock.DataPlane.Version.from_integer(counter + 1)
-          {:reply, {:ok, last_version, next_version}, counter + 1}
+          {:reply, {:ok, last_version, next_version, last_version}, counter + 1}
         end
 
         def handle_call({:report_successful_commit, _epoch, _commit_version}, _from, counter) do

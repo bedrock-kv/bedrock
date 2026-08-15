@@ -12,6 +12,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
           finalized_at: Bedrock.timestamp_in_ms() | nil,
           last_commit_version: Bedrock.version(),
           commit_version: Bedrock.version(),
+          known_committed_version: Bedrock.version() | nil,
           n_transactions: non_neg_integer(),
           buffer: [{index :: non_neg_integer(), reply_fn(), Transaction.encoded(), Task.t() | nil}]
         }
@@ -19,19 +20,22 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
             finalized_at: nil,
             last_commit_version: nil,
             commit_version: nil,
+            known_committed_version: nil,
             n_transactions: 0,
             buffer: []
 
   @spec new_batch(
           Bedrock.timestamp_in_ms(),
           last_commit_version :: Bedrock.version(),
-          commit_version :: Bedrock.version()
+          commit_version :: Bedrock.version(),
+          known_committed_version :: Bedrock.version() | nil
         ) :: t()
-  def new_batch(started_at, last_commit_version, commit_version) do
+  def new_batch(started_at, last_commit_version, commit_version, known_committed_version \\ nil) do
     %__MODULE__{
       started_at: started_at,
       last_commit_version: last_commit_version,
       commit_version: commit_version,
+      known_committed_version: known_committed_version,
       n_transactions: 0,
       buffer: []
     }

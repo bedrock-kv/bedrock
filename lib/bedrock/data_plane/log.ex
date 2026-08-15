@@ -56,14 +56,24 @@ defmodule Bedrock.DataPlane.Log do
 
   This call will not return until the transaction has been made durable on the
   log, ensuring that the transactions that precede it are also durable.
+
+  ## Options
+
+    - `known_committed_version`: The highest version known to be committed
+      (fully replicated) at the time this push was prepared, piggybacked from
+      the sequencer. Downstream durability sinks (chunk flushes) gate on it
+      so that nothing not known-committed ever becomes durable.
   """
   @spec push(
           log_ref :: ref(),
           transaction :: Transaction.encoded(),
-          last_commit_version :: Bedrock.version()
+          last_commit_version :: Bedrock.version(),
+          opts :: [known_committed_version: Bedrock.version() | nil]
         ) ::
           :ok | {:error, :tx_out_of_order | :locked | :unavailable | :wal_backpressure}
-  def push(log, transaction, last_commit_version), do: call(log, {:push, transaction, last_commit_version}, :infinity)
+  def push(log, transaction, last_commit_version, opts \\ []) do
+    call(log, {:push, transaction, last_commit_version, opts[:known_committed_version]}, :infinity)
+  end
 
   @doc """
   Pull transactions from the log starting from a given version. Options allow

@@ -36,7 +36,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
     server =
       spawn(fn ->
         receive do
-          {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+          {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
             GenServer.reply(from, {:error, error_reason})
         end
       end)

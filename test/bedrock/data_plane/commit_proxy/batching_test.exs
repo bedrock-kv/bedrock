@@ -34,7 +34,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
     def handle_call({:next_commit_version, epoch}, _from, {counter, epoch}) do
       last_version = Version.from_integer(counter)
       next_version = Version.from_integer(counter + 1)
-      {:reply, {:ok, last_version, next_version}, {counter + 1, epoch}}
+      {:reply, {:ok, last_version, next_version, last_version}, {counter + 1, epoch}}
     end
 
     # Reject calls with wrong epoch

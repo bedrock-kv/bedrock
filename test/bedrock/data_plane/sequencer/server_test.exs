@@ -46,7 +46,7 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
           epoch_baseline_version_int: 90
         )
 
-      {:reply, {:ok, last_commit, commit_version}, new_state} =
+      {:reply, {:ok, last_commit, commit_version, _kcv}, new_state} =
         Server.handle_call({:next_commit_version, 1}, self(), initial_state)
 
       # Lamport clock chain: returns previous last_commit_version and new version
@@ -177,7 +177,7 @@ defmodule Bedrock.DataPlane.Sequencer.ServerTest do
     test "accepts matching epoch" do
       state = create_state(epoch: 42)
 
-      {:reply, {:ok, _last_commit, _commit_version}, _new_state} =
+      {:reply, {:ok, _last_commit, _commit_version, _kcv}, _new_state} =
         Server.handle_call({:next_commit_version, 42}, self(), state)
     end
 

@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T17:18:36Z",
+  "description": "glossary.md has malformed duplicate headings — '### **Minimum Read Version**' immediately followed by a bare '## Minimum Read Version (MRV)...' (lines ~189-213; same for MVCC and OCC) — which breaks the anchor scheme every other entry uses. Separately, verify entries that may describe retired designs: 'Tag Coverage' (mapping of which logs store which range tags — current routing is golden-ratio ShardRouter over sorted log ids with replication spanning all logs), 'Storage Team', 'Version Gap', and 'Manifest' (currently described as 'a configuration file... for service discovery'; the code's Manifest is the worker manifest carrying cluster/id/worker/params).",
+  "id": "bedrock-5tq.5",
+  "labels": [],
+  "parent": "bedrock-5tq",
+  "priority": 2,
+  "status": "open",
+  "title": "Glossary hygiene: malformed headings and unverified entries",
+  "type": "bug",
+  "updated_at": "2026-08-15T17:18:36Z"
+}

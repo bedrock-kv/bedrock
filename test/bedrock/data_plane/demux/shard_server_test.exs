@@ -168,7 +168,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       # Give time to process
       :timer.sleep(50)
 
-      {:ok, transactions} = ShardServer.pull(server, v1000, timeout: 100, limit: 10)
+      {:ok, transactions, %{high_water: ^v2000}} = ShardServer.pull(server, v1000, timeout: 100, limit: 10)
 
       assert length(transactions) == 2
       assert {^v1000, ^slice1} = Enum.find(transactions, fn {v, _} -> v == v1000 end)
@@ -186,7 +186,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       ShardServer.push(server, v2000, slice2)
       :timer.sleep(50)
 
-      {:ok, transactions} = ShardServer.pull(server, v1500, timeout: 100, limit: 10)
+      {:ok, transactions, _} = ShardServer.pull(server, v1500, timeout: 100, limit: 10)
 
       assert length(transactions) == 1
       assert {^v2000, _} = hd(transactions)
@@ -202,7 +202,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       # Give more time for all to process
       :timer.sleep(100)
 
-      {:ok, transactions} = ShardServer.pull(server, Version.zero(), timeout: 100, limit: 3)
+      {:ok, transactions, _} = ShardServer.pull(server, Version.zero(), timeout: 100, limit: 3)
 
       assert length(transactions) == 3
     end
@@ -259,7 +259,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
         if Process.alive?(replay_server), do: GenServer.stop(replay_server)
       end)
 
-      assert {:ok, txns} = ShardServer.pull(replay_server, Version.from_integer(900), timeout: 500, limit: 10)
+      assert {:ok, txns, _} = ShardServer.pull(replay_server, Version.from_integer(900), timeout: 500, limit: 10)
 
       versions =
         txns
@@ -357,7 +357,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert_receive {:durable, ^shard_id, ^cut}, 1000
 
       # v1200 is above the cut: still buffered, still pullable
-      {:ok, transactions} = ShardServer.pull(server, v1200, timeout: 100, limit: 10)
+      {:ok, transactions, _} = ShardServer.pull(server, v1200, timeout: 100, limit: 10)
       assert [{^v1200, _}] = transactions
     end
 
@@ -613,6 +613,127 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
   end
 
+  describe "stream continuity" do
+    test "a pull from an old position serves the chunk range before the buffer", %{
+      test_dir: test_dir,
+      registry: registry
+    } do
+      backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
+      shard_id = :erlang.unique_integer([:positive]) + 900
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          registry: registry
+        )
+
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      v1200 = Version.from_integer(1200)
+      v1400 = Version.from_integer(1400)
+      cut = Version.from_integer(1300)
+
+      ShardServer.push(server, v1000, slice)
+      ShardServer.push(server, v1200, slice)
+      ShardServer.flush(server, cut)
+      assert_receive {:durable, ^shard_id, ^cut}, 1_500
+
+      # Recent data lands in the buffer after the cut confirmed
+      ShardServer.push(server, v1400, slice)
+
+      # From an old position the stream must begin with the chunk range —
+      # never skip ahead to the buffer.
+      {:ok, transactions, _} = ShardServer.pull(server, Version.from_integer(900), timeout: 100, limit: 10)
+      assert [{^v1000, _}, {^v1200, _}] = transactions
+
+      # And the next pull picks up seamlessly in the buffer.
+      {:ok, transactions, _} = ShardServer.pull(server, Version.from_integer(1201), timeout: 100, limit: 10)
+      assert [{^v1400, _}] = transactions
+    end
+  end
+
+  describe "version currency" do
+    test "pull replies carry the high-water and known-committed versions", %{server: server} do
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      kcv = Version.from_integer(950)
+
+      ShardServer.push(server, v1000, slice, kcv)
+
+      assert {:ok, [{^v1000, _}], %{high_water: ^v1000, kcv: ^kcv}} =
+               ShardServer.pull(server, v1000, timeout: 100, limit: 10)
+    end
+
+    test "a currency advance wakes waiters with an empty reply through the high-water", %{server: server} do
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      hw = Version.from_integer(3000)
+      kcv = Version.from_integer(2900)
+      test_pid = self()
+
+      ShardServer.push(server, v1000, slice)
+
+      spawn(fn ->
+        result = ShardServer.pull(server, Version.from_integer(2000), timeout: 5_000, limit: 10)
+        send(test_pid, {:pull_result, result})
+      end)
+
+      :timer.sleep(50)
+
+      # The demux answers a currency request: no data for this shard, but the
+      # cluster is current through 3000.
+      send(server, {:currency, hw, kcv})
+
+      assert_receive {:pull_result, {:ok, [], %{high_water: ^hw, kcv: ^kcv}}}, 1_000
+    end
+
+    test "the currency tick runs only while pullers are waiting", %{test_dir: test_dir, registry: registry} do
+      backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
+      shard_id = :erlang.unique_integer([:positive]) + 950
+      test_pid = self()
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          registry: registry,
+          currency_tick_ms: 10
+        )
+
+      # Idle: no waiters, no requests
+      refute_receive {:currency_request, _}, 60
+
+      spawn(fn ->
+        result = ShardServer.pull(server, Version.from_integer(2000), timeout: 5_000, limit: 10)
+        send(test_pid, {:pull_result, result})
+      end)
+
+      # While a puller waits, the ShardServer polls us (its demux) for currency
+      assert_receive {:currency_request, from_pid}, 1_000
+      hw = Version.from_integer(2500)
+      send(from_pid, {:currency, hw, hw})
+
+      assert_receive {:pull_result, {:ok, [], %{high_water: ^hw}}}, 1_000
+
+      # Waiter satisfied: the tick stops
+      drain_currency_requests()
+      refute_receive {:currency_request, _}, 60
+    end
+  end
+
+  defp drain_currency_requests do
+    receive do
+      {:currency_request, _} -> drain_currency_requests()
+    after
+      30 -> :ok
+    end
+  end
+
   describe "waiting/notification" do
     test "notifies waiting pullers when data arrives", %{test_dir: test_dir, registry: registry} do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
@@ -643,8 +764,44 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       ShardServer.push(server, v1000, slice)
 
       # Should receive the data
-      assert_receive {:pull_result, {:ok, transactions}}, 1_000
+      assert_receive {:pull_result, {:ok, transactions, _}}, 1_000
       assert length(transactions) >= 1
+    end
+
+    test "a woken waiter receives data from its own start position, not from zero", %{
+      test_dir: test_dir,
+      registry: registry
+    } do
+      backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
+      shard_id = :erlang.unique_integer([:positive]) + 970
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test",
+          object_storage: backend,
+          registry: registry
+        )
+
+      test_pid = self()
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      v2500 = Version.from_integer(2500)
+
+      # Older data already sits in the buffer
+      ShardServer.push(server, v1000, slice)
+
+      spawn(fn ->
+        result = ShardServer.pull(server, Version.from_integer(2000), timeout: 5_000, limit: 10)
+        send(test_pid, {:pull_result, result})
+      end)
+
+      :timer.sleep(50)
+      ShardServer.push(server, v2500, slice)
+
+      # The waiter asked for 2000 onward: v1000 must not be replayed to it.
+      assert_receive {:pull_result, {:ok, [{^v2500, _}], _}}, 1_000
     end
   end
 

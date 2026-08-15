@@ -18,7 +18,11 @@ defmodule Bedrock.DataPlane.Demux.ShardServer.State do
           pending_cuts: [Bedrock.version()],
           pending_flush_cut: Bedrock.version() | nil,
           durable_version: Bedrock.version() | nil,
-          latest_version: Bedrock.version() | nil
+          latest_version: Bedrock.version() | nil,
+          high_water: Bedrock.version() | nil,
+          kcv: Bedrock.version() | nil,
+          currency_tick_ms: pos_integer(),
+          tick_scheduled: boolean()
         }
 
   defstruct [
@@ -34,6 +38,10 @@ defmodule Bedrock.DataPlane.Demux.ShardServer.State do
     pending_cuts: [],
     pending_flush_cut: nil,
     durable_version: nil,
-    latest_version: nil
+    latest_version: nil,
+    high_water: nil,
+    kcv: nil,
+    currency_tick_ms: 100,
+    tick_scheduled: false
   ]
 end

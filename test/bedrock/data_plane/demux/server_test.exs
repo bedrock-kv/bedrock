@@ -331,6 +331,39 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
     end
   end
 
+  describe "version currency" do
+    test "answers currency requests with the high-water and known-committed versions", %{server: server} do
+      version = Version.from_integer(7_000)
+      kcv = Version.from_integer(6_500)
+      txn = make_transaction([], nil, version)
+
+      # A heartbeat: touches no shards, but advances the demux's high-water
+      :ok = Server.push(server, version, txn, kcv)
+      :timer.sleep(20)
+
+      send(server, {:currency_request, self()})
+      assert_receive {:currency, ^version, ^kcv}, 1_000
+    end
+
+    test "slice pushes carry the known-committed version through to pull replies", %{
+      server: server,
+      shard_base: shard_base
+    } do
+      shard_id = shard_base + 40
+      version = Version.from_integer(8_000)
+      kcv = Version.from_integer(7_900)
+      txn = make_transaction([{:set, "key", "value"}], [{shard_id, 1}], version)
+
+      :ok = Server.push(server, version, txn, kcv)
+      :timer.sleep(50)
+
+      {:ok, shard_server} = Server.get_shard_server(server, shard_id)
+
+      assert {:ok, [{^version, _}], %{high_water: ^version, kcv: ^kcv}} =
+               ShardServer.pull(shard_server, version, timeout: 100, limit: 10)
+    end
+  end
+
   describe "get_shard_server/2" do
     test "creates ShardServer on demand", %{server: server, shard_base: shard_base} do
       shard_id = shard_base + 10

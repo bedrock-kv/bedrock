@@ -30,9 +30,18 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   ## Pull API
 
-  Materializers call `pull/3` to get transactions from a given version.
-  If data is available, it's returned immediately. Otherwise, the materializer
-  is added to a WaitingList and notified when new data arrives.
+  Materializers call `pull/3` to get transactions from a given version. Where
+  the reply comes from is decided by one comparison against the durable
+  version (the last confirmed cut): at or below it, the chunk range in object
+  storage; above it, the buffer. The two regions always meet — buffered
+  entries are only evicted once their chunk write confirms — so the stream is
+  continuous from any starting position.
+
+  Every reply carries currency — `%{high_water: v, kcv: k}` — so an empty
+  reply still means something: "nothing for you, but you are current through
+  v" (FoundationDB's empty tag peek shape). Busy shards learn currency from
+  slice pushes; idle shards learn it from the currency tick, which polls the
+  Demux only while pullers are parked, so the cost follows the demand.
   """
 
   use GenServer
@@ -50,6 +59,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   @type shard_id :: non_neg_integer()
   @type version :: Bedrock.version()
   @type slice :: binary()
+  @type currency :: %{high_water: version() | nil, kcv: version() | nil}
 
   # Default pull timeout (30 seconds)
   @default_pull_timeout 30_000
@@ -90,14 +100,15 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   end
 
   @doc """
-  Pushes a transaction slice to the ShardServer.
+  Pushes a transaction slice to the ShardServer, along with the
+  known-committed version piggybacked from the commit proxies.
 
   Called by Demux when a transaction touches this shard.
   This is a cast (async, non-blocking).
   """
-  @spec push(GenServer.server(), version(), slice()) :: :ok
-  def push(server, version, slice) do
-    GenServer.cast(server, {:push, version, slice})
+  @spec push(GenServer.server(), version(), slice(), kcv :: version() | nil) :: :ok
+  def push(server, version, slice, kcv \\ nil) do
+    GenServer.cast(server, {:push, version, slice, kcv})
   end
 
   @doc """
@@ -128,11 +139,13 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   ## Returns
 
-  - `{:ok, [{version, slice}]}` - Available transactions
-  - `{:error, :timeout}` - No data arrived within timeout
+  - `{:ok, [{version, slice}], currency}` - Available transactions (possibly
+    `[]` when the shard is known current past `from_version` with nothing to
+    deliver), with `currency = %{high_water: v, kcv: k}`
+  - `{:error, :timeout}` - Nothing learned within timeout
   """
   @spec pull(GenServer.server(), version(), keyword()) ::
-          {:ok, [{version(), slice()}]} | {:error, :timeout}
+          {:ok, [{version(), slice()}], currency()} | {:error, :timeout | term()}
   def pull(server, from_version, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, @default_pull_timeout)
     limit = Keyword.get(opts, :limit, @default_pull_limit)
@@ -168,6 +181,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     persistence_max_retries = Keyword.get(opts, :persistence_max_retries, 5)
     persistence_retry_backoff_ms = Keyword.get(opts, :persistence_retry_backoff_ms, 25)
     persistence_retry_tick_ms = Keyword.get(opts, :persistence_retry_tick_ms, 25)
+    currency_tick_ms = Keyword.get(opts, :currency_tick_ms, 100)
 
     shard_tag = Keys.shard_tag(shard_id)
     chunk_reader = ChunkReader.new(object_storage, shard_tag)
@@ -196,15 +210,16 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
       pending_cuts: [],
       pending_flush_cut: nil,
       durable_version: nil,
-      latest_version: nil
+      latest_version: nil,
+      currency_tick_ms: currency_tick_ms
     }
 
     {:ok, state}
   end
 
   @impl true
-  def handle_cast({:push, version, slice}, state) do
-    state = do_push(state, version, slice)
+  def handle_cast({:push, version, slice, kcv}, state) do
+    state = do_push(state, version, slice, kcv)
     {:noreply, state}
   end
 
@@ -219,14 +234,24 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   def handle_call({:pull, from_version, limit, timeout}, from, state) do
     case do_pull(state, from_version, limit) do
       {:ok, transactions, state} when transactions != [] ->
-        {:reply, {:ok, transactions}, state}
+        {:reply, {:ok, transactions, currency(state)}, state}
 
       {:ok, [], state} ->
-        # No data available, add to waiting list
-        reply_fn = fn response -> GenServer.reply(from, response) end
-        {waiting_list, _timeout} = WaitingList.insert(state.waiting_list, from_version, {limit}, reply_fn, timeout)
-        state = %{state | waiting_list: waiting_list}
-        {:noreply, state, next_timeout(state)}
+        if known_current_past?(state, from_version) do
+          # Nothing to deliver, but the stream is known current past the
+          # requested position: say so, and let the puller advance.
+          {:reply, {:ok, [], currency(state)}, state}
+        else
+          # Nothing known at or after the requested position yet: park, and
+          # make sure the currency tick is running while anyone waits.
+          reply_fn = fn response -> GenServer.reply(from, response) end
+
+          {waiting_list, _timeout} =
+            WaitingList.insert(state.waiting_list, from_version, {from_version, limit}, reply_fn, timeout)
+
+          state = ensure_currency_tick(%{state | waiting_list: waiting_list})
+          {:noreply, state, next_timeout(state)}
+        end
 
       {:error, _reason} = error ->
         {:reply, error, state}
@@ -249,6 +274,26 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     {waiting_list, expired} = WaitingList.expire(state.waiting_list)
     WaitingList.reply_to_expired(expired, {:error, :timeout})
     state = %{state | waiting_list: waiting_list}
+    {:noreply, state, next_timeout(state)}
+  end
+
+  @impl true
+  def handle_info({:currency, high_water, kcv}, state) do
+    state = %{state | high_water: max_version(state.high_water, high_water), kcv: max_version(state.kcv, kcv)}
+    state = wake_current_waiters(state)
+    {:noreply, state, next_timeout(state)}
+  end
+
+  @impl true
+  def handle_info(:currency_tick, %{waiting_list: waiting_list} = state) when map_size(waiting_list) == 0 do
+    # No one is waiting: the tick stops until the next parked puller.
+    {:noreply, %{state | tick_scheduled: false}, next_timeout(state)}
+  end
+
+  @impl true
+  def handle_info(:currency_tick, state) do
+    send(state.demux, {:currency_request, self()})
+    Process.send_after(self(), :currency_tick, state.currency_tick_ms)
     {:noreply, state, next_timeout(state)}
   end
 
@@ -299,14 +344,50 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   # Private implementation
 
-  defp do_push(state, version, slice) do
+  defp do_push(state, version, slice, kcv) do
     # Add to buffer (newest at head)
     buffer = [{version, slice} | state.buffer]
 
-    state = %{state | buffer: buffer, latest_version: version}
+    state = %{
+      state
+      | buffer: buffer,
+        latest_version: version,
+        high_water: max_version(state.high_water, version),
+        kcv: max_version(state.kcv, kcv)
+    }
 
     # Notify waiting materializers
     notify_waiters(state, version)
+  end
+
+  defp currency(state), do: %{high_water: state.high_water, kcv: state.kcv}
+
+  defp known_current_past?(%{high_water: nil}, _from_version), do: false
+  defp known_current_past?(state, from_version), do: not Version.newer?(from_version, state.high_water)
+
+  defp ensure_currency_tick(%{tick_scheduled: true} = state), do: state
+
+  defp ensure_currency_tick(state) do
+    Process.send_after(self(), :currency_tick, state.currency_tick_ms)
+    %{state | tick_scheduled: true}
+  end
+
+  # A currency advance satisfies every waiter whose start position the
+  # high-water has passed — with data if the buffer has any, otherwise with
+  # an honest "empty through the high-water".
+  defp wake_current_waiters(%{high_water: nil} = state), do: state
+
+  defp wake_current_waiters(state) do
+    threshold = Version.increment(state.high_water)
+    {waiting_list, entries} = WaitingList.remove_all_less_than(state.waiting_list, threshold)
+    state = %{state | waiting_list: waiting_list}
+
+    Enum.each(entries, fn {_deadline, reply_fn, {from_version, limit}} ->
+      transactions = get_from_buffer(state.buffer, from_version, limit)
+      reply_fn.({:ok, transactions, currency(state)})
+    end)
+
+    state
   end
 
   defp process_cuts(%{flush_in_progress: true} = state), do: state
@@ -372,18 +453,21 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     )
   end
 
+  # Where the stream reads from is decided against the durable version (the
+  # last confirmed cut): above it, the buffer; at or below it, the chunk
+  # range — falling through to the buffer only when the chunks are exhausted
+  # (which proves nothing exists for this shard between there and the
+  # buffer). Checking the buffer first would silently skip the entire chunk
+  # range when pulling from an old position.
   defp do_pull(state, from_version, limit) do
-    # First check buffer for matching transactions
-    buffer_txns = get_from_buffer(state.buffer, from_version, limit)
-
-    if buffer_txns == [] do
-      # Check ObjectStorage via ChunkReader
+    if state.durable_version != nil and Version.newer?(from_version, state.durable_version) do
+      {:ok, get_from_buffer(state.buffer, from_version, limit), state}
+    else
       case get_from_storage(state, from_version, limit) do
+        {:ok, []} -> {:ok, get_from_buffer(state.buffer, from_version, limit), state}
         {:ok, storage_txns} -> {:ok, storage_txns, state}
         {:error, reason} -> {:error, reason}
       end
-    else
-      {:ok, buffer_txns, state}
     end
   end
 
@@ -478,10 +562,10 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     threshold = Version.increment(new_version)
     {waiting_list, entries} = WaitingList.remove_all_less_than(state.waiting_list, threshold)
 
-    Enum.each(entries, fn {_deadline, reply_fn, {limit}} ->
-      # Get data for this waiter
-      transactions = get_from_buffer(state.buffer, Version.zero(), limit)
-      reply_fn.({:ok, transactions})
+    Enum.each(entries, fn {_deadline, reply_fn, {from_version, limit}} ->
+      # Each waiter gets data from its own start position — never from zero.
+      transactions = get_from_buffer(state.buffer, from_version, limit)
+      reply_fn.({:ok, transactions, currency(state)})
     end)
 
     %{state | waiting_list: waiting_list}

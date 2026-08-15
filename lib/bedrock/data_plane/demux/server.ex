@@ -83,7 +83,8 @@ defmodule Bedrock.DataPlane.Demux.Server do
     current_bucket: nil,
     last_cut_version: nil,
     known_committed_version: nil,
-    pending_cut_version: nil
+    pending_cut_version: nil,
+    high_water: nil
   ]
 
   @doc """
@@ -195,6 +196,17 @@ defmodule Bedrock.DataPlane.Demux.Server do
     {:noreply, state}
   end
 
+  # A ShardServer with parked pullers asks for currency: the high-water is
+  # simply the last version pushed to us — we see every version, heartbeats
+  # included, at commit granularity. Nothing to say until the first push.
+  @impl true
+  def handle_info({:currency_request, _from}, %{high_water: nil} = state), do: {:noreply, state}
+
+  def handle_info({:currency_request, from}, state) do
+    send(from, {:currency, state.high_water, state.known_committed_version})
+    {:noreply, state}
+  end
+
   # A linked process died — a ShardServer or the owning log. Propagate:
   # fail-fast. A :normal shard exit would otherwise leave a dead pid in the
   # tracking maps and silently freeze the floor forever, so it is fatal
@@ -229,7 +241,7 @@ defmodule Bedrock.DataPlane.Demux.Server do
 
   defp do_push(state, version, transaction, known_committed_version) do
     state =
-      state
+      %{state | high_water: version}
       |> note_known_committed(known_committed_version)
       |> maybe_cut(version)
       |> maybe_fire_pending_cut()
@@ -313,8 +325,8 @@ defmodule Bedrock.DataPlane.Demux.Server do
   defp route_to_shard(state, shard_id, version, slice) do
     case get_or_create_shard_server(state, shard_id) do
       {:ok, pid, state} ->
-        # Push to ShardServer (async)
-        ShardServer.push(pid, version, slice)
+        # Push to ShardServer (async), carrying the known-committed version
+        ShardServer.push(pid, version, slice, state.known_committed_version)
         state
 
       {:error, reason} ->

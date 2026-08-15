@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T20:55:49Z",
+  "description": "Chunk names already encode the max contained version (inverted, base36) — the exact predicate a read needs (max \u003e= target). But read_from_version lists ALL chunks and header-GETs each one to learn min/max: 1 LIST + N GETs per cold read, growing with shard lifetime, paid on every ShardServer chunk-path pull. Fix: parse max from the key name; the needed set is the leading run of the ascending listing while name-max \u003e= target (take_while — also stops paged listing early); GET only chunks actually read. seek/find likewise: candidate = smallest name-max \u003e= target, one chunk read to confirm. O(needed) instead of O(lifetime).",
+  "id": "bedrock-qzr.15",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 2,
+  "status": "open",
+  "title": "ChunkReader selects chunks from key names; no per-chunk header reads",
+  "type": "task",
+  "updated_at": "2026-08-15T20:55:49Z"
+}

@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "Known-committed durability gate; revert superseded floor machinery (review remediation)",
   "type": "task",
-  "updated_at": "2026-08-15T14:43:29Z"
+  "updated_at": "2026-08-15T14:44:03Z"
 }

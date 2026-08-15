@@ -3,7 +3,7 @@
   "blocked_by": [],
   "blocks": [],
   "created": "2026-07-15T14:40:53Z",
-  "description": "From PR #101 gating audit: the idle spin-down opt-in knob doesn't exist in production — nothing populates the Distributor's :recruitment worker_params (director/server.ex:308 starts the distributor without overrides). Plumb: cluster config (e.g. materializer_idle_timeout_ms) -\u003e director -\u003e Distributor child_spec -\u003e recruitment context worker_params %{\"idle_timeout\" =\u003e ms}. DECIDE the policy asymmetry at the same time: recruited materializers get the timeout, fresh-bootstrap data-shard materializers don't (bootstrap passes no params) — intended or should bootstrap set it for data shards too (never tag 0)? ALSO from audit: mixed-version note — new 4-tuple {:new_worker,id,kind,params} vs old foreman nodes (FunctionClauseError under rolling upgrade); and consider a task-with-timeout wrapper around the pre-spindown sync snapshot upload (hung-S3 wedge).",
+  "description": "GATED (2026-08-15): targets Distributor recruitment code that exists only on the unmerged feature/q67-phase-a branch, which must first be reconciled with the qzr rework (see bedrock-q67 epic). Deferred until that reconciliation decides what survives.\n\nFrom PR #101 gating audit: the idle spin-down opt-in knob doesn't exist in production — nothing populates the Distributor's :recruitment worker_params (director/server.ex:308 starts the distributor without overrides). Plumb: cluster config (e.g. materializer_idle_timeout_ms) -\u003e director -\u003e Distributor child_spec -\u003e recruitment context worker_params %{\"idle_timeout\" =\u003e ms}. DECIDE the policy asymmetry called out in the epic's latest comment (idle_timeout for recruited vs bootstrap materializers).",
   "id": "bedrock-q67.14",
   "labels": [],
   "parent": "bedrock-q67",
@@ -11,5 +11,5 @@
   "status": "open",
   "title": "Plumb idle_timeout from cluster config to recruitment worker_params",
   "type": "task",
-  "updated_at": "2026-07-15T14:40:53Z"
+  "updated_at": "2026-08-15T20:46:15Z"
 }

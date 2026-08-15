@@ -3,7 +3,7 @@
   "blocked_by": [],
   "blocks": [],
   "created": "2026-07-15T13:22:03Z",
-  "description": "bedrock-q67.7 added best-effort Foreman.remove_worker cleanup on the recruitment failure paths where the worker id is known (lock failed, unlock failed, TSL delta rejected - see Recruitment.remove_orphaned_worker/3). Residual leaks that cheap wins cannot cover: (1) the recruitment task crashes (rescue/catch in Distributor.Server.spawn_recruitment_task) between worker creation and completion - the worker id is lost with the task; (2) the distributor or its node dies mid-recruitment; (3) remove_worker itself fails (foreman unreachable) and is deliberately swallowed. Fix should be reconciliation, not a GC bolted to recruitment: e.g. on distributor start (or periodically) list Foreman.materializer_workers per node and remove materializer workers whose pid is not named in the current TSL shard_materializers and not the metadata materializer. Must be epoch-guarded so a stale distributor cannot reap a newer epoch's recruits.",
+  "description": "GATED (2026-08-15): targets the Distributor recruitment paths that exist only on the unmerged feature/q67-phase-a branch, which must first be reconciled with the qzr rework (see bedrock-q67 epic). Note the qzr work already landed epoch-guarded TSL-driven worker reconciliation on develop (7b57281f) — the reconciliation approach described below may be partly or wholly subsumed; re-check before implementing.\n\nbedrock-q67.7 added best-effort Foreman.remove_worker cleanup on the recruitment failure paths where the worker id is known (lock failed, unlock failed, TSL delta rejected - see Recruitment.remove_orphaned_worker/3). Residual leaks that cheap wins cannot cover: (1) the recruitment task crashes (rescue/catch in Distributor.Server.spawn_recruitment_task) between worker creation and completion - the worker id is lost with the task; (2) the distributor or its node dies mid-recruitment; (3) remove_worker itself fails (foreman unreachable) and is deliberately swallowed. Fix should be reconciliation, not a GC bolted to recruitment: e.g. on distributor start (or periodically) list Foreman.materializer_workers per node and remove materializer workers whose pid is not named in the current TSL shard_materializers and not the metadata materializer. Must be epoch-guarded so a stale distributor cannot reap a newer epoch's recruits.",
   "id": "bedrock-q67.11",
   "labels": [],
   "parent": "bedrock-q67",
@@ -11,5 +11,5 @@
   "status": "open",
   "title": "Recruitment orphan residuals: reconcile workers leaked by task crashes or distributor death",
   "type": "task",
-  "updated_at": "2026-07-15T13:22:03Z"
+  "updated_at": "2026-08-15T20:46:19Z"
 }

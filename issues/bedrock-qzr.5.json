@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T16:43:49Z",
+  "description": "Livebook repro: read-back of a just-written key hung ~1-10s (worse with idle gaps: retry backoff resonating with the 1s empty-transaction cadence). Root cause: Shale forwarded the push protocol's gap-check argument (the PREVIOUS commit version) to the Demux, leaving the demux high-water — and every currency signal, cut boundary, and chunk name derived from it — one commit behind reality; reads at read_version=KCV then raced a fresh KCV every retry and could never win. Fix: (1) Shale forwards Transaction.commit_version!(tx); (2) the ShardServer's 100ms currency tick (wall-clock timer) replaced by event-driven one-shot subscription: park -\u003e {:currency_request, pid, seen_hw}; demux replies now if it knows more, else holds interest and notifies on its next push, after slices (ordering guarantees data-before-currency per receiver). Reads now resolve purely from in-flight messages: 0-3ms regardless of idle.",
+  "id": "bedrock-qzr.5",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 2,
+  "status": "open",
+  "title": "Event-driven currency; demux receives the transaction's own commit version",
+  "type": "bug",
+  "updated_at": "2026-08-15T16:43:49Z"
+}

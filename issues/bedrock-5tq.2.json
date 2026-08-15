@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T17:18:22Z",
+  "description": "The storage-\u003ematerializer rename left dead paths: storage.md's Location is lib/bedrock/data_plane/storage.ex (does not exist; actual: materializer.ex); basalt paths were removed in qzr.6 but other guides still cite lib/bedrock/data_plane/storage/... and line-numbered refs that have drifted (deep-dives/transactions.md: 'Storage fetch: storage.ex:33', 'Local write storage: lib/bedrock/cluster/gateway/transaction_builder/state.ex:16' — the transaction_builder now lives under lib/bedrock/internal/). Sweep every backtick code path and :line reference in guides/ against the tree; prefer module names over line numbers so refs do not rot.",
+  "id": "bedrock-5tq.2",
+  "labels": [],
+  "parent": "bedrock-5tq",
+  "priority": 2,
+  "status": "open",
+  "title": "Dead code paths and stale line-number references across guides",
+  "type": "bug",
+  "updated_at": "2026-08-15T17:18:22Z"
+}

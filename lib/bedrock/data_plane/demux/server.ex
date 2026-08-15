@@ -34,8 +34,10 @@ defmodule Bedrock.DataPlane.Demux.Server do
 
   ## Durability Tracking
 
-  A ShardServer confirms a cut by sending `{:durable, shard_id, cut_version}`
-  — its floor contribution: everything it has ever seen at or below that
+  A ShardServer confirms a cut with its pid, shard id, and cut version. The
+  pid must match this Demux's current shard map, so a confirmation can only
+  advance the replica and child incarnation that produced it. The cut is the
+  shard's floor contribution: everything it has ever seen at or below that
   version is durable (an empty buffer confirms immediately, so idle shards
   never pin the floor). We track the minimum across all active shards using
   gb_sets. With no shards at all, the last completed cut is the floor, so a
@@ -44,14 +46,15 @@ defmodule Bedrock.DataPlane.Demux.Server do
   ## Shard Activation
 
   When the first transaction touches a shard, we:
-  1. Start a ShardServer linked to this process
+  1. Start an anonymous ShardServer linked to this process
   2. Add the shard to durability tracking with the last completed cut as its
      initial floor contribution — never a merely-buffered version
 
   ## Failure Semantics
 
-  ShardServers are linked to this process. If any ShardServer crashes,
-  this process crashes, which should crash the owning Log. Recovery
+  ShardServers are linked to this process. A slicing error, failure to start
+  a required ShardServer, or child crash stops this process before the push
+  can be mistaken for an empty route. That stops the owning Log, and recovery
   replays from WAL with idempotent ObjectStorage writes.
   """
 
@@ -184,15 +187,17 @@ defmodule Bedrock.DataPlane.Demux.Server do
 
   @impl true
   def handle_cast({:push, version, transaction, known_committed_version}, state) do
-    state = do_push(state, version, transaction, known_committed_version)
-    {:noreply, state}
+    case do_push(state, version, transaction, known_committed_version) do
+      {:ok, state} -> {:noreply, state}
+      {:error, reason, state} -> {:stop, {:push_failed, reason}, state}
+    end
   end
 
   @impl true
   def handle_call({:get_shard_server, shard_id}, _from, state) do
     case get_or_create_shard_server(state, shard_id) do
       {:ok, pid, state} -> {:reply, {:ok, pid}, state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
+      {:error, reason} -> {:stop, {:shard_server_start_failed, shard_id, reason}, {:error, reason}, state}
     end
   end
 
@@ -202,9 +207,18 @@ defmodule Bedrock.DataPlane.Demux.Server do
   end
 
   @impl true
-  def handle_info({:durable, shard_id, durable_version}, state) do
-    state = handle_durability_report(state, shard_id, durable_version)
-    {:noreply, state}
+  def handle_info({:durable, shard_server, shard_id, durable_version}, state) do
+    case Map.fetch(state.shard_servers, shard_id) do
+      {:ok, ^shard_server} ->
+        {:noreply, handle_durability_report(state, shard_id, durable_version)}
+
+      _ ->
+        Logger.warning(
+          "Ignoring durability report from unowned ShardServer #{inspect(shard_server)} for shard #{shard_id}"
+        )
+
+        {:noreply, state}
+    end
   end
 
   # A ShardServer with parked pullers subscribes for currency, telling us
@@ -262,37 +276,48 @@ defmodule Bedrock.DataPlane.Demux.Server do
   # Private implementation
 
   defp do_push(state, version, transaction, known_committed_version) do
-    state =
-      %{state | high_water: version}
-      |> note_known_committed(known_committed_version)
-      |> maybe_cut(version)
-      |> maybe_fire_pending_cut()
+    with {:ok, slices} <- slice_transaction(transaction),
+         {:ok, state} <- ensure_shard_servers(state, slices) do
+      state =
+        %{state | high_water: version}
+        |> note_known_committed(known_committed_version)
+        |> maybe_cut(version)
+        |> maybe_fire_pending_cut()
 
-    # Get commit version from transaction
-    commit_version = Transaction.commit_version!(transaction)
+      Enum.each(slices, fn {shard_id, slice} ->
+        shard_server = Map.fetch!(state.shard_servers, shard_id)
+        :ok = ShardServer.push(shard_server, version, slice, state.known_committed_version)
+      end)
 
-    # Slice transaction by shard
-    case_result =
-      case MutationSlicer.slice(transaction, commit_version) do
-        {:ok, []} ->
-          # Empty transaction (heartbeat) - nothing to route
-          state
+      # Currency notifications go out AFTER the slices: message ordering per
+      # receiver then guarantees a shard server never hears "current through
+      # v" before it holds its own data at v.
+      {:ok, notify_currency_waiters(state)}
+    else
+      {:error, reason} -> {:error, reason, state}
+      {:error, reason, partial_state} -> {:error, reason, partial_state}
+    end
+  end
 
-        {:ok, slices} ->
-          # Route each slice to its ShardServer
-          Enum.reduce(slices, state, fn {shard_id, slice}, acc ->
-            route_to_shard(acc, shard_id, version, slice)
-          end)
+  defp slice_transaction(transaction) do
+    with {:ok, commit_version} <- Transaction.commit_version(transaction),
+         {:ok, slices} <- MutationSlicer.slice(transaction, commit_version) do
+      {:ok, slices}
+    else
+      {:error, reason} -> {:error, {:slice_failed, reason}}
+    end
+  end
+
+  defp ensure_shard_servers(state, slices) do
+    Enum.reduce_while(slices, {:ok, state}, fn {shard_id, _slice}, {:ok, state} ->
+      case get_or_create_shard_server(state, shard_id) do
+        {:ok, _pid, state} ->
+          {:cont, {:ok, state}}
 
         {:error, reason} ->
-          Logger.error("Failed to slice transaction: #{inspect(reason)}")
-          state
+          {:halt, {:error, {:shard_server_start_failed, shard_id, reason}, state}}
       end
-
-    notify_currency_waiters(case_result)
-    # Currency notifications go out AFTER the slices: message ordering per
-    # receiver then guarantees a shard server never hears "current through
-    # v" before it holds its own data at v.
+    end)
   end
 
   defp notify_currency_waiters(%{currency_waiters: waiters} = state) do
@@ -361,19 +386,6 @@ defmodule Bedrock.DataPlane.Demux.Server do
   defp current_min_durable_version(state),
     do: Durability.min_durable_version(state.durability) || state.last_cut_version
 
-  defp route_to_shard(state, shard_id, version, slice) do
-    case get_or_create_shard_server(state, shard_id) do
-      {:ok, pid, state} ->
-        # Push to ShardServer (async), carrying the known-committed version
-        ShardServer.push(pid, version, slice, state.known_committed_version)
-        state
-
-      {:error, reason} ->
-        Logger.error("Failed to get ShardServer for shard #{shard_id}: #{inspect(reason)}")
-        state
-    end
-  end
-
   defp get_or_create_shard_server(state, shard_id) do
     case Map.fetch(state.shard_servers, shard_id) do
       {:ok, pid} ->
@@ -388,7 +400,6 @@ defmodule Bedrock.DataPlane.Demux.Server do
     opts =
       [
         shard_id: shard_id,
-        demux: self(),
         cluster: state.cluster,
         object_storage: state.object_storage
       ] ++ state.shard_server_opts

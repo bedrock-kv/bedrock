@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
@@ -242,6 +243,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       send(demux, {:currency_request, self(), nil})
 
       assert_receive {:currency, ^v1, ^v1}, 1_000
+    end
+
+    test "a demux slicing failure takes down the owning log", %{server: pid} do
+      make_running(pid, Version.zero())
+      ref = Process.monitor(pid)
+      version = Version.from_integer(100)
+      unsliceable_transaction = Transaction.encode(%{commit_version: version})
+
+      assert :ok = GenServer.call(pid, {:push, unsliceable_transaction, Version.zero(), version})
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, {:push_failed, {:slice_failed, :section_not_found}}}, 2_000
     end
   end
 

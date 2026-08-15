@@ -86,23 +86,17 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     test_dir = Path.join(System.tmp_dir!(), "shard_server_test_#{:erlang.unique_integer([:positive])}")
     File.mkdir_p!(test_dir)
     backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
-    demux_pid = self()
-
-    registry_name = :"shard_server_test_registry_#{:erlang.unique_integer([:positive])}"
-    {:ok, _} = Registry.start_link(keys: :unique, name: registry_name)
 
     {:ok, pid} =
       ShardServer.start_link(
         shard_id: 0,
-        demux: demux_pid,
         cluster: "test-cluster",
-        object_storage: backend,
-        registry: registry_name
+        object_storage: backend
       )
 
     on_exit(fn -> File.rm_rf!(test_dir) end)
 
-    %{server: pid, backend: backend, demux: demux_pid, test_dir: test_dir, registry: registry_name}
+    %{server: pid, backend: backend, test_dir: test_dir}
   end
 
   defp make_slice(mutations) do
@@ -113,17 +107,19 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
   end
 
   describe "start_link/1" do
-    test "starts successfully with required options", %{backend: backend, registry: registry} do
+    test "starts successfully with required options", %{backend: backend} do
       {:ok, pid} =
         ShardServer.start_link(
           shard_id: 99,
-          demux: self(),
           cluster: "test",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       assert Process.alive?(pid)
+      assert {:registered_name, []} = Process.info(pid, :registered_name)
+      assert :undefined = :global.whereis_name({ShardServer, 99})
+      assert %{demux: demux} = :sys.get_state(pid)
+      assert demux == self()
     end
   end
 
@@ -216,8 +212,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
 
     test "replays persisted chunks from object storage using version binaries", %{
-      test_dir: test_dir,
-      registry: registry
+      test_dir: test_dir
     } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 700
@@ -225,10 +220,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -242,17 +235,15 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       ShardServer.push(server, v1400, slice)
       ShardServer.flush(server, cut)
 
-      assert_receive {:durable, ^shard_id, ^cut}, 1_500
+      assert_receive {:durable, ^server, ^shard_id, ^cut}, 1_500
 
       :ok = GenServer.stop(server)
 
       {:ok, replay_server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       on_exit(fn ->
@@ -273,18 +264,15 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
 
   describe "commanded cuts" do
     test "flushes buffered data at or below the commanded cut and reports the cut", %{
-      test_dir: test_dir,
-      registry: registry
+      test_dir: test_dir
     } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
 
       {:ok, flush_server} =
         ShardServer.start_link(
           shard_id: 99,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -297,12 +285,12 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       :timer.sleep(10)
 
       # No flush without a commanded cut
-      refute_received {:durable, 99, _}
+      refute_received {:durable, ^flush_server, 99, _}
 
       ShardServer.flush(flush_server, cut)
 
       # The contribution is the CUT version, not the max flushed data version
-      assert_receive {:durable, 99, ^cut}, 1000
+      assert_receive {:durable, ^flush_server, 99, ^cut}, 1000
 
       # The chunk on disk is named for the last commit it contains (1050)
       chunk_key = Keys.chunk_path("2r", 1050)
@@ -310,8 +298,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
 
     test "confirms the cut immediately when the buffer is empty (idle shard)", %{
-      test_dir: test_dir,
-      registry: registry
+      test_dir: test_dir
     } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 600
@@ -319,30 +306,26 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       cut = Version.from_integer(5_000)
       ShardServer.flush(server, cut)
 
-      assert_receive {:durable, ^shard_id, ^cut}, 1000
+      assert_receive {:durable, ^server, ^shard_id, ^cut}, 1000
       assert ShardServer.durable_version(server) == cut
     end
 
-    test "retains buffered data above the cut", %{test_dir: test_dir, registry: registry} do
+    test "retains buffered data above the cut", %{test_dir: test_dir} do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 650
 
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -354,24 +337,22 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       ShardServer.push(server, v1200, slice)
       ShardServer.flush(server, cut)
 
-      assert_receive {:durable, ^shard_id, ^cut}, 1000
+      assert_receive {:durable, ^server, ^shard_id, ^cut}, 1000
 
       # v1200 is above the cut: still buffered, still pullable
       {:ok, transactions, _} = ShardServer.pull(server, v1200, timeout: 100, limit: 10)
       assert [{^v1200, _}] = transactions
     end
 
-    test "queues cuts arriving while a flush is in flight", %{test_dir: test_dir, registry: registry} do
+    test "queues cuts arriving while a flush is in flight", %{test_dir: test_dir} do
       backend = ObjectStorage.backend(DelayedLocalFilesystem, root: test_dir, delay_ms: 100)
       shard_id = :erlang.unique_integer([:positive]) + 700
 
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -385,22 +366,20 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       ShardServer.push(server, v1200, slice)
       ShardServer.flush(server, cut2)
 
-      assert_receive {:durable, ^shard_id, ^cut1}, 1_500
-      assert_receive {:durable, ^shard_id, ^cut2}, 1_500
+      assert_receive {:durable, ^server, ^shard_id, ^cut1}, 1_500
+      assert_receive {:durable, ^server, ^shard_id, ^cut2}, 1_500
       assert ShardServer.durable_version(server) == cut2
     end
 
-    test "push path remains responsive while persistence is in-flight", %{test_dir: test_dir, registry: registry} do
+    test "push path remains responsive while persistence is in-flight", %{test_dir: test_dir} do
       backend = ObjectStorage.backend(DelayedLocalFilesystem, root: test_dir, delay_ms: 200)
       shard_id = :erlang.unique_integer([:positive]) + 200
 
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -416,17 +395,15 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert v1200 == GenServer.call(server, :latest_version, 50)
     end
 
-    test "durable watermark advances only after confirmed persistence", %{test_dir: test_dir, registry: registry} do
+    test "durable watermark advances only after confirmed persistence", %{test_dir: test_dir} do
       backend = ObjectStorage.backend(DelayedLocalFilesystem, root: test_dir, delay_ms: 150)
       shard_id = :erlang.unique_integer([:positive]) + 300
 
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -438,15 +415,15 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
 
       Process.sleep(25)
       assert ShardServer.durable_version(server) == nil
-      refute_received {:durable, ^shard_id, _}
+      refute_received {:durable, ^server, ^shard_id, _}
 
-      assert_receive {:durable, ^shard_id, ^cut}, 1_500
+      assert_receive {:durable, ^server, ^shard_id, ^cut}, 1_500
       assert ShardServer.durable_version(server) == cut
     end
   end
 
   describe "persistence telemetry" do
-    test "emits write success and watermark advancement telemetry", %{test_dir: test_dir, registry: registry} do
+    test "emits write success and watermark advancement telemetry", %{test_dir: test_dir} do
       test_pid = self()
       shard_id = :erlang.unique_integer([:positive]) + 400
       handler_id = "shard-persistence-success-#{shard_id}"
@@ -469,10 +446,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -494,7 +469,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert wm_meas.buffered_transactions >= 0
     end
 
-    test "emits retry telemetry for transient object write failures", %{test_dir: test_dir, registry: registry} do
+    test "emits retry telemetry for transient object write failures", %{test_dir: test_dir} do
       test_pid = self()
       shard_id = :erlang.unique_integer([:positive]) + 500
       handler_id = "shard-persistence-retry-#{shard_id}"
@@ -522,10 +497,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
-          registry: registry,
           persistence_retry_backoff_ms: 1,
           persistence_retry_tick_ms: 1
         )
@@ -583,7 +556,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       end
     end
 
-    test "crashes the ShardServer when a flush exhausts its retries", %{test_dir: test_dir, registry: registry} do
+    test "crashes the ShardServer when a flush exhausts its retries", %{test_dir: test_dir} do
       backend = ObjectStorage.backend(BrokenLocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 800
 
@@ -592,10 +565,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
-          registry: registry,
           persistence_max_retries: 1,
           persistence_retry_backoff_ms: 1,
           persistence_retry_tick_ms: 1
@@ -609,14 +580,13 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       # crashes so the linked Demux -> Log chain converts it into recovery.
       assert_receive {:EXIT, ^server, {:flush_permanently_failed, meta}}, 2_000
       assert meta.shard_id == shard_id
-      refute_received {:durable, ^shard_id, _}
+      refute_received {:durable, ^server, ^shard_id, _}
     end
   end
 
   describe "stream continuity" do
     test "a pull from an old position serves the chunk range before the buffer", %{
-      test_dir: test_dir,
-      registry: registry
+      test_dir: test_dir
     } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 900
@@ -624,10 +594,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -639,7 +607,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       ShardServer.push(server, v1000, slice)
       ShardServer.push(server, v1200, slice)
       ShardServer.flush(server, cut)
-      assert_receive {:durable, ^shard_id, ^cut}, 1_500
+      assert_receive {:durable, ^server, ^shard_id, ^cut}, 1_500
 
       # Recent data lands in the buffer after the cut confirmed
       ShardServer.push(server, v1400, slice)
@@ -691,8 +659,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
 
     test "parking a puller requests currency from the demux immediately — no timers", %{
-      test_dir: test_dir,
-      registry: registry
+      test_dir: test_dir
     } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 950
@@ -701,10 +668,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       spawn(fn ->
@@ -723,8 +688,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
 
     test "a shard server with still-parked pullers re-registers after each advance", %{
-      test_dir: test_dir,
-      registry: registry
+      test_dir: test_dir
     } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 960
@@ -733,10 +697,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test-cluster",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       # Two pullers at different positions
@@ -768,16 +730,14 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
   end
 
   describe "waiting/notification" do
-    test "notifies waiting pullers when data arrives", %{test_dir: test_dir, registry: registry} do
+    test "notifies waiting pullers when data arrives", %{test_dir: test_dir} do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
 
       {:ok, server} =
         ShardServer.start_link(
           shard_id: 1,
-          demux: self(),
           cluster: "test",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       test_pid = self()
@@ -802,8 +762,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
 
     test "a woken waiter receives data from its own start position, not from zero", %{
-      test_dir: test_dir,
-      registry: registry
+      test_dir: test_dir
     } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
       shard_id = :erlang.unique_integer([:positive]) + 970
@@ -811,10 +770,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       {:ok, server} =
         ShardServer.start_link(
           shard_id: shard_id,
-          demux: self(),
           cluster: "test",
-          object_storage: backend,
-          registry: registry
+          object_storage: backend
         )
 
       test_pid = self()

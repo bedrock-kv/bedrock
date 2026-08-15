@@ -22,8 +22,11 @@ it lives only in the WALs.
 **The log hands it to its Demux.** Each running log owns a Demux: a small
 process tree that takes every pushed transaction, slices its mutations by
 shard, and passes each slice to that shard's ShardServer, which holds it in
-memory. Heartbeat transactions carry no data and touch no shard; they exist
-to keep the version clock moving.
+memory. Every log replica owns its own anonymous ShardServer for each shard it
+touches; the child is discoverable only through that log's Demux map. Two log
+replicas carrying the same logical shard therefore share neither a process nor
+a durability confirmation. Heartbeat transactions carry no data and touch no
+shard; they exist to keep the version clock moving.
 
 **The Demux cuts, and shards flush.** Versions in Bedrock are microsecond
 timestamps, so "every five seconds" is just integer division: when a pushed
@@ -41,12 +44,15 @@ confirmed, the shard reports the cut itself as durable — a promise that
 everything it has ever seen at or below that version is safe. A shard with
 nothing buffered confirms instantly, so idle shards never hold things up; a
 Demux with no shards at all reports its last completed cut, so even a
-heartbeat-only log makes progress. The Demux takes the minimum across its
-shards and tells the log, and the log recycles every WAL segment that falls
-entirely below that floor. The active segment rolls to a fresh preallocated
-file on the same five-second boundaries the cuts use, so there is always a
-finished segment for the floor to catch — a log's disk footprint stays
-proportional to a few seconds of traffic, not to its lifetime.
+heartbeat-only log makes progress. Each report carries the ShardServer pid,
+and the Demux accepts it only when that pid is the current child for the shard.
+The Demux takes the minimum across its own children and tells only its owning
+log, so one replica cannot trim on another replica's confirmation. The log
+recycles every WAL segment that falls entirely below that floor. The active
+segment rolls to a fresh preallocated file on the same five-second boundaries
+the cuts use, so there is always a finished segment for the floor to catch — a
+log's disk footprint stays proportional to a few seconds of traffic, not to
+its lifetime.
 
 The commit acknowledgment never waits for any of this. Clients are
 acknowledged on WAL fsync; chunk writes and floor advancement happen behind

@@ -20,8 +20,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
 
     on_exit(fn -> File.rm_rf!(test_dir) end)
 
-    # Use unique shard IDs per test to avoid global registration conflicts
-    # ShardServer uses {:global, {ShardServer, shard_id}} by default
+    # Keep shard IDs disjoint so failures name the test's own route.
     shard_base = :erlang.unique_integer([:positive]) * 1000
 
     %{server: server, backend: backend, log: log_pid, test_dir: test_dir, shard_base: shard_base}
@@ -40,6 +39,30 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
   end
 
   describe "push/3" do
+    test "each demux owns an independent server for the same shard", %{
+      server: server,
+      backend: backend,
+      log: log_pid,
+      shard_base: shard_base
+    } do
+      peer =
+        start_supervised!(
+          Supervisor.child_spec(
+            {Server, cluster: "test-cluster", object_storage: backend, log: log_pid},
+            id: {:peer_demux, shard_base}
+          )
+        )
+
+      shard_id = shard_base + 31
+
+      assert {:ok, first_shard_server} = Server.get_shard_server(server, shard_id)
+      assert {:ok, second_shard_server} = Server.get_shard_server(peer, shard_id)
+
+      assert first_shard_server != second_shard_server
+      assert %{demux: ^server} = :sys.get_state(first_shard_server)
+      assert %{demux: ^peer} = :sys.get_state(second_shard_server)
+    end
+
     test "routes transaction to correct ShardServer", %{server: server, shard_base: shard_base} do
       shard_id = shard_base + 1
       # Transaction with mutations for unique shard
@@ -415,9 +438,81 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
 
       assert_receive {:EXIT, ^server, {:linked_process_exited_normally, ^shard_server}}, 2_000
     end
+
+    test "a slicing error is fatal before an empty route can confirm a cut", %{
+      backend: backend,
+      shard_base: shard_base
+    } do
+      Process.flag(:trap_exit, true)
+
+      {:ok, server} =
+        Server.start_link(
+          cluster: "test-cluster",
+          object_storage: backend,
+          log: self(),
+          cut_interval_us: 1_000
+        )
+
+      ref = Process.monitor(server)
+      first_version = Version.from_integer(shard_base + 1_000)
+      crossing_version = Version.from_integer(shard_base + 2_000)
+      invalid_transaction = Transaction.encode(%{commit_version: first_version})
+
+      :ok = Server.push(server, first_version, invalid_transaction, first_version)
+      :ok = Server.push(server, crossing_version, invalid_transaction, crossing_version)
+
+      assert_receive {:DOWN, ^ref, :process, ^server, _reason}, 1_000
+      refute_receive {:min_durable_version, ^server, _version}
+    end
+
+    test "a required shard start failure is fatal before an empty route can confirm a cut", %{
+      backend: backend,
+      shard_base: shard_base
+    } do
+      Process.flag(:trap_exit, true)
+
+      {:ok, server} =
+        Server.start_link(
+          cluster: "test-cluster",
+          object_storage: backend,
+          log: self(),
+          cut_interval_us: 1_000,
+          shard_server_opts: [persistence_queue_capacity: 0]
+        )
+
+      ref = Process.monitor(server)
+      shard_id = shard_base + 51
+      first_version = Version.from_integer(shard_base + 1_000)
+      crossing_version = Version.from_integer(shard_base + 2_000)
+
+      first_transaction = make_transaction([{:set, "key", "value"}], [{shard_id, 1}], first_version)
+      crossing_transaction = make_transaction([], [], crossing_version)
+
+      :ok = Server.push(server, first_version, first_transaction, first_version)
+      :ok = Server.push(server, crossing_version, crossing_transaction, crossing_version)
+
+      assert_receive {:DOWN, ^ref, :process, ^server, _reason}, 1_000
+      refute_receive {:min_durable_version, ^server, _version}
+    end
   end
 
   describe "durability tracking" do
+    test "ignores a durability report not sent by the owned shard incarnation", %{
+      server: server,
+      shard_base: shard_base
+    } do
+      shard_id = shard_base + 19
+      {:ok, _shard_server} = Server.get_shard_server(server, shard_id)
+      ref = Process.monitor(server)
+      forged_version = Version.from_integer(10_000)
+
+      send(server, {:durable, self(), shard_id, forged_version})
+
+      refute_receive {:DOWN, ^ref, :process, ^server, _reason}, 100
+      refute_receive {:min_durable_version, ^server, ^forged_version}
+      assert Server.min_durable_version(server) == Version.zero()
+    end
+
     test "tracks minimum durable version", %{server: server, shard_base: shard_base} do
       shard_id = shard_base + 20
       # Initially nil (no shards)

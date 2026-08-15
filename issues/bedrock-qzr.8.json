@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T17:47:30Z",
+  "description": "Demonstrated via tmux/iex restart cycle in bedrock_ex: write, halt, restart -\u003e recovery wedges in MaterializerBootstrapPhase and reads hang forever. Three defects: (1) find_materializer_service matches {kind, ref, shard_id} 3-tuples but available_services holds {kind, ref} 2-tuples — structurally dead code, so EVERY recovery creates a fresh empty system materializer; on restart the epoch-1 materializers (which restart fine under the foreman, with durable state incl. the shard layout at 19.4M in the repro) are orphaned and the empty stranger can't answer the layout query. (2) wait_for_materializer_catchup polls :durable_version, which the qzr.4 KCV clamp holds ~5s of version-time behind applied — must poll the applied (current) version, and target the layout-query read version (vector last), not the durable floor. (3) unlock passes durable_version (0 after restart — floor deliberately not persisted) where qzr.4 unlock semantics expect the recovery/rollback version; rolling a populated materializer back to 0 empties its version list. Also: handle_existing_cluster never populates shard_materializers — user shards absent from the recovered TSL. Fix: discovery via materializer_recovery_info_by_id (LockingPhase already locks materializers and collects recovery_info — add :shard_id fact), unlock with vector-last, catch up on new :current_version fact, build shard_materializers by reusing existing-by-shard and creating only the missing.",
+  "id": "bedrock-qzr.8",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 2,
+  "status": "open",
+  "title": "Restart recovery reuses existing materializers; bootstrap catch-up polls applied position",
+  "type": "bug",
+  "updated_at": "2026-08-15T17:47:30Z"
+}

@@ -133,7 +133,53 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
           assert %{"good_log" => %{status: {:up, ^good_pid}}} = services
         end)
 
-      assert log =~ "replacing log candidates that failed to lock"
+      assert log =~ "replaced log candidates that failed to lock"
+    end
+
+    test "lock failures are recorded on the attempt so later attempts exclude them" do
+      good_pid = spawn(fn -> Process.sleep(:infinity) end)
+      replacement_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt = %{
+        cluster: TestCluster,
+        epoch: 3,
+        logs: %{{:vacancy, 1} => %{}, {:vacancy, 2} => %{}},
+        transaction_services: %{},
+        service_pids: %{},
+        lock_failed_service_ids: MapSet.new(["earlier_ghost"])
+      }
+
+      context =
+        create_recovery_context(
+          %{{:log, :old} => %{}},
+          %{
+            "ghost_log" => {:log, {:ghost_worker, :dead@nowhere}},
+            "good_log" => {:log, {:good_worker, :node1}}
+          },
+          node_capabilities: %{log: [:node1@host]},
+          create_worker_fn: fn _foreman, _id, :log, _opts -> {:ok, :replacement_ref} end,
+          worker_info_fn: fn {_ref, _node}, _facts, _opts ->
+            {:ok, %{id: "replacement", otp_name: :replacement_otp, kind: :log, pid: replacement_pid}}
+          end,
+          lock_service_fn: fn
+            {:log, {:ghost_worker, _}}, _epoch ->
+              {:error, :unavailable}
+
+            {:log, {:good_worker, _}}, _epoch ->
+              {:ok, good_pid, %{kind: :log, oldest_version: 0, last_version: 1}}
+
+            {:log, {:replacement_otp, _}}, _epoch ->
+              {:ok, replacement_pid, %{kind: :log, oldest_version: 0, last_version: 0}}
+          end
+        )
+
+      capture_log(fn ->
+        assert {%{lock_failed_service_ids: remembered}, LogReplayPhase} =
+                 LogRecruitmentPhase.execute(recovery_attempt, context)
+
+        # The new failure joins what earlier attempts already learned
+        assert MapSet.equal?(remembered, MapSet.new(["earlier_ghost", "ghost_log"]))
+      end)
     end
 
     test "replacing a lock-failed candidate with no log-capable nodes stalls, never crashes" do

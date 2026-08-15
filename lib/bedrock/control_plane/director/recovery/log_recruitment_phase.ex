@@ -86,11 +86,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
         updated_services
       )
 
+      # Remember what failed to lock: this knowledge must survive into
+      # later attempts (the attempt struct does), so a ghost registration
+      # trips at most one attempt instead of being relearned — and
+      # re-replaced — on every retry.
+      lock_failed = MapSet.new(lock_failed_ids)
+
       updated_recovery_attempt =
         recovery_attempt
         |> Map.put(:logs, logs)
         |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_log_services))
         |> Map.update(:service_pids, %{}, &Map.merge(&1, all_log_pids))
+        |> Map.update(:lock_failed_service_ids, lock_failed, &MapSet.union(&1, lock_failed))
 
       {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase}
     else
@@ -327,11 +334,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   defp replace_lock_failed_candidates(logs, lock_failed_ids, available_nodes, recovery_attempt, context) do
     replacement_ids = Enum.map(lock_failed_ids, fn _ -> Worker.random_id() end)
 
-    Logger.info(
-      "Bedrock recruitment: replacing log candidates that failed to lock #{inspect(lock_failed_ids)} " <>
-        "with fresh workers #{inspect(replacement_ids)}"
-    )
-
     with {:ok, replacement_services} <-
            create_new_log_workers(replacement_ids, available_nodes, recovery_attempt, context),
          {:ok, locked_replacements, []} <-
@@ -341,6 +343,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
              recovery_attempt,
              context
            ) do
+      # Logged after the fact: under rapid attempt churn a line printed
+      # before creation would announce workers that never came to exist.
+      Logger.info(
+        "Bedrock recruitment: replaced log candidates that failed to lock #{inspect(lock_failed_ids)} " <>
+          "with fresh workers #{inspect(replacement_ids)}"
+      )
+
       swapped_logs =
         lock_failed_ids
         |> Enum.zip(replacement_ids)

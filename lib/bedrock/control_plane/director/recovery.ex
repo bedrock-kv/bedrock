@@ -180,9 +180,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec refresh_available_services(State.t()) :: %{Worker.id() => {atom(), {atom(), node()}}}
   defp refresh_available_services(t) do
+    # Services that failed to lock in an earlier attempt of this recovery
+    # stay excluded: the failed lock was this director's own observation,
+    # and relearning it every attempt would re-pay the replacement work
+    # each time.
+    remembered_failures =
+      Map.get(t.recovery_attempt || %{}, :lock_failed_service_ids) || MapSet.new()
+
     case Coordinator.fetch_service_directory(t.coordinator, 2_000) do
-      {:ok, directory} -> Map.merge(t.services, directory)
-      _ -> t.services
+      {:ok, directory} -> t.services |> Map.merge(directory) |> Map.drop(MapSet.to_list(remembered_failures))
+      _ -> Map.drop(t.services, MapSet.to_list(remembered_failures))
     end
   catch
     :exit, _ -> t.services

@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T20:37:44Z",
+  "close_reason": "Already done: the dead :unavailable case branch in Durability.notify_director_of_resource_changes is collapsed (durability.ex:153-164 on qzr2-wal-trim).",
   "created": "2026-07-14T19:20:26Z",
   "description": "durability.ex:153 function head already matches :unavailable, so the inner case branch at lines 156-158 is dead. Collapse the case. Also consider covering durable_write_completed/3 (durability.ex:37) — the remaining untested seam. Found in bedrock-wey audit (PR pending).",
   "id": "bedrock-d4e",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Cleanup: unreachable :unavailable case in Durability.notify_director_of_resource_changes",
   "type": "task",
-  "updated_at": "2026-07-14T19:20:26Z"
+  "updated_at": "2026-08-15T20:37:44Z"
 }

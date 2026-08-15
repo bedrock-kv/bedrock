@@ -214,7 +214,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
            ),
          # It must be able to SERVE the layout query: wait on the applied
          # position, which the stream advances (durability trails by design)
-         :ok <- wait_for_materializer_catchup(materializer_pid, recovery_version, context),
+         :ok <-
+           wait_for_materializer_catchup(
+             materializer_pid,
+             {RecoveryAttempt.system_shard_id(), recovery_attempt.attempt},
+             recovery_version,
+             context
+           ),
          {:ok, shard_layout} <- get_shard_layout(materializer_pid, recovery_version, context),
          {:ok, shard_materializers} <-
            ensure_materializers_for_shards(
@@ -404,16 +410,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     Materializer.unlock_after_recovery(pid, durable_version, tsl, timeout_in_ms: 30_000)
   end
 
-  # Poll until materializer reaches target version
-  defp wait_for_materializer_catchup(pid, target_version, context) do
+  # Poll until materializer reaches target version. The label — shard and
+  # recovery attempt — makes repeated lines attributable: recovery retries
+  # re-run this phase, and without identity in the log a burst of
+  # "caught up" lines is indistinguishable from a bug.
+  defp wait_for_materializer_catchup(pid, label, target_version, context) do
     timeout_ms = Map.get(context, :catchup_timeout_ms, @catchup_timeout_ms)
     poll_interval_ms = Map.get(context, :catchup_poll_interval_ms, @catchup_poll_interval_ms)
     deadline = System.monotonic_time(:millisecond) + timeout_ms
 
-    do_wait_for_catchup(pid, target_version, deadline, poll_interval_ms, context)
+    do_wait_for_catchup(pid, label, target_version, deadline, poll_interval_ms, context)
   end
 
-  defp do_wait_for_catchup(pid, target_version, deadline, poll_interval_ms, context) do
+  defp do_wait_for_catchup(pid, {shard_tag, attempt} = label, target_version, deadline, poll_interval_ms, context) do
     if System.monotonic_time(:millisecond) > deadline do
       {:error, :catchup_timeout}
     else
@@ -424,14 +433,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
       # is that the materializer can SERVE the layout query.
       case info_fn.(pid, [:current_version]) do
         {:ok, %{current_version: v}} when is_binary(v) and v >= target_version ->
-          Logger.debug("Materializer caught up to version #{inspect(v)}")
+          Logger.debug(
+            "Materializer caught up to version #{inspect(v)} " <>
+              "(shard #{shard_tag}, #{inspect(pid)}, recovery attempt ##{attempt})"
+          )
+
           :ok
 
         {:ok, %{current_version: v}} ->
-          Logger.debug("Materializer at version #{inspect(v)}, waiting for #{inspect(target_version)}")
+          Logger.debug(
+            "Materializer at version #{inspect(v)}, waiting for #{inspect(target_version)} " <>
+              "(shard #{shard_tag}, #{inspect(pid)}, recovery attempt ##{attempt})"
+          )
 
           Process.sleep(poll_interval_ms)
-          do_wait_for_catchup(pid, target_version, deadline, poll_interval_ms, context)
+          do_wait_for_catchup(pid, label, target_version, deadline, poll_interval_ms, context)
 
         {:error, reason} ->
           {:error, {:catchup_info_failed, reason}}

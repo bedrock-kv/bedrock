@@ -7,9 +7,9 @@
   "id": "bedrock-q67.19",
   "labels": [],
   "parent": "bedrock-q67",
-  "priority": 3,
+  "priority": 2,
   "status": "open",
   "title": "Olivine clear_range uses inclusive end-key; everywhere else is exclusive",
   "type": "bug",
-  "updated_at": "2026-07-17T02:02:14Z"
+  "updated_at": "2026-08-15T20:46:23Z"
 }

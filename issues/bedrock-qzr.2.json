@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "in_progress",
+  "status": "open",
   "title": "WAL tail trimming: consumer-driven floor signalling (FDB pop model adapted to Demux/object storage)",
   "type": "task",
-  "updated_at": "2026-08-15T11:45:03Z"
+  "updated_at": "2026-08-15T11:45:10Z"
 }

@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T12:30:06Z",
+  "description": "test/bedrock/data_plane/resolver/conflict_resolution_test.exs builds transaction maps with flat read_conflicts: [...] plus read_version: ... keys. Transaction.encode only encodes the tuple form read_conflicts: {read_version, ranges}; the flat form falls through add_read_conflicts_section's catch-all and is silently dropped. Result: the property test 'commit/2 commits transactions without conflicts and aborts those with conflicts' never produces a transaction with read conflicts, so failed_indexes is always [] and every read-conflict assertion in its Enum.each body is vacuous. The 'resolves transaction with read_version and read_conflicts' test likewise exercises nothing. Found while implementing bedrock-qzr.1 (the server-level repro initially used the flat shape and the conflict was invisible). Fix: switch the tests to the tuple form and verify the property still holds — aborts should now actually occur; consider having Transaction.encode raise on the flat shape (read_version key present with list read_conflicts) so the mistake can't recur silently.",
+  "id": "bedrock-b28",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Resolver conflict tests encode read conflicts in a shape Transaction.encode ignores, making read-abort assertions vacuous",
+  "type": "bug",
+  "updated_at": "2026-08-15T12:30:06Z"
+}

@@ -78,8 +78,12 @@ defmodule Bedrock.DataPlane.Log do
   @doc """
   Pull transactions from the log starting from a given version. Options allow
   specifying the maximum number of transactions to return, the last version
-  considered valid, whether the operation is recovery-related, subscriber
-  details to maintain state, and a timeout for the operation.
+  considered valid, whether the operation is recovery-related, and a timeout
+  for the operation.
+
+  Recovery is this call's only remaining consumer: materializers stream
+  their shard from the log's Demux (`get_shard_server/2`), not from the
+  log itself.
 
   Returns a list of transactions or an error indicating why the pull failed.
 
@@ -93,7 +97,6 @@ defmodule Bedrock.DataPlane.Log do
       - `last_version`: The last valid version for pulling transactions
         (inclusive).
       - `recovery`: Indicates if this pull is part of a recovery operation.
-      - `subscriber`: A tuple containing an ID and the last durable version.
       - `timeout_in_ms`: Timeout for the operation in milliseconds.
 
   ## Return Values:
@@ -117,7 +120,6 @@ defmodule Bedrock.DataPlane.Log do
             limit: pos_integer(),
             last_version: Bedrock.version(),
             recovery: boolean(),
-            subscriber: {subscriber_id :: String.t(), last_durable_version :: Bedrock.version()},
             willing_to_wait_in_ms: Bedrock.timeout_in_ms(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]

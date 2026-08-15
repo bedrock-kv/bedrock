@@ -2,7 +2,7 @@ defmodule Bedrock.Service.ForemanTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Log.Shale
-  alias Bedrock.DataPlane.Materializer.Basalt
+  alias Bedrock.DataPlane.Materializer.Olivine
   alias Bedrock.Service.Foreman.Impl
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo
@@ -28,7 +28,7 @@ defmodule Bedrock.Service.ForemanTest do
     %Manifest{
       cluster: "test_cluster",
       id: id,
-      worker: Basalt,
+      worker: Olivine,
       params: %{}
     }
   end
@@ -256,7 +256,7 @@ defmodule Bedrock.Service.ForemanTest do
 
   describe "integration with WorkerBehaviour" do
     test "storage worker module returns correct kind" do
-      assert Basalt.kind() == :materializer
+      assert Olivine.kind() == :materializer
     end
 
     test "log worker module returns correct kind" do

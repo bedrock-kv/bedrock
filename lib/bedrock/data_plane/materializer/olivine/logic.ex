@@ -11,14 +11,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
-  alias Bedrock.DataPlane.Materializer.Olivine.Pulling
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Materializer.Olivine.Streaming
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
   alias Bedrock.DataPlane.Materializer.Telemetry
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
-  alias Bedrock.ObjectStorage.ChunkReader
   alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
   alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.Snapshot
@@ -150,7 +147,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   def stop_pulling(%{pull_task: nil} = t), do: release_pending_ingest(t)
 
   def stop_pulling(%{pull_task: puller} = t) do
-    Pulling.stop(puller)
+    Streaming.stop(puller)
 
     t
     |> reset_puller()
@@ -177,7 +174,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
       |> Map.put(:pull_sources, {logs, services})
 
     t
-    |> start_pulling_from(resume_position(t, durable_version))
+    |> start_pulling_from(resume_position(t))
     |> update_mode(:running)
     |> then(&{:ok, &1})
   end
@@ -200,16 +197,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   # A streaming materializer resumes from its own applied position — the
   # stream serves any starting point (chunks reach arbitrarily far back),
   # so a materializer restored from an old snapshot simply has more stream
-  # to drink. The legacy log puller keeps its historical contract of
-  # starting at the recovery durable version.
-  defp resume_position(%{shard_num: shard_num} = t, _durable_version) when is_integer(shard_num),
-    do: t.index_manager.current_version
+  # to drink.
+  defp resume_position(t), do: t.index_manager.current_version
 
-  defp resume_position(_t, durable_version), do: durable_version
-
+  # Without a shard assignment there is no stream to join: the materializer
+  # is static, fed only through direct ingest (unit-test configurations).
+  # Production materializers always receive their shard from the director.
   @spec start_pulling_from(State.t(), Bedrock.version()) :: State.t()
-  defp start_pulling_from(%{shard_num: shard_num, pull_sources: {logs, services}} = t, start_after)
-       when is_integer(shard_num) do
+  defp start_pulling_from(%{shard_num: nil} = t, _start_after), do: t
+
+  defp start_pulling_from(%{shard_num: shard_num, pull_sources: {logs, services}} = t, start_after) do
     # The stream puller: everything — history, recent data, and version
     # currency — comes from this shard's ShardServer. Batches are handed
     # over synchronously; the server withholds the reply for backpressure.
@@ -218,80 +215,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
     puller = Streaming.start_pulling(shard_num, start_after, logs, services, ingest_fn)
     put_puller(t, puller)
-  end
-
-  defp start_pulling_from(%{pull_sources: {logs, services}} = t, start_after) do
-    main_process_pid = self()
-
-    apply_and_notify_fn = fn transactions ->
-      send(main_process_pid, {:apply_transactions, transactions})
-      last_transaction = List.last(transactions)
-      Transaction.commit_version!(last_transaction)
-    end
-
-    database = t.database
-
-    puller =
-      Pulling.start_pulling(
-        start_after,
-        t.id,
-        logs,
-        services,
-        apply_and_notify_fn,
-        fn -> current_durable_version(database) end
-      )
-
-    put_puller(t, puller)
-  end
-
-  # The bare durable version (load_current_durable_version wraps it in :ok).
-  @spec current_durable_version(Database.t()) :: Bedrock.version()
-  defp current_durable_version(database) do
-    {:ok, version} = Database.load_current_durable_version(database)
-    version
-  end
-
-  @doc """
-  Catches up from object storage chunks after the WAL trim floor passed this
-  materializer's position, then resumes pulling from the WAL.
-
-  Catch-up begins at `applied_version` — the puller's in-memory position,
-  carried in the floor message — never at the (older) database-durable
-  version, which would re-apply the in-memory window through non-idempotent
-  mutations. Chunk slices from the configured shard fill the gap up to the
-  floor; the WAL still holds everything above the floor (straddling segments
-  are never trimmed), so the two sources meet with no gap for this shard.
-  Returns `{:error, :no_chunk_source}` when no snapshot handle (cluster +
-  shard) is configured — there is no way home, and the caller should fail
-  loudly rather than retry forever.
-  """
-  @spec catch_up_from_chunks(State.t(), floor :: Bedrock.version(), applied_version :: Bedrock.version()) ::
-          {:ok, State.t()} | {:error, :no_chunk_source}
-  def catch_up_from_chunks(%{snapshot: nil}, _floor, _applied_version), do: {:error, :no_chunk_source}
-  def catch_up_from_chunks(%{pull_sources: nil}, _floor, _applied_version), do: {:error, :no_chunk_source}
-
-  def catch_up_from_chunks(t, floor, applied_version) do
-    t = stop_pulling(t)
-
-    from_int = applied_version |> Version.to_integer() |> Kernel.+(1)
-    reader = ChunkReader.new(t.snapshot.backend, t.snapshot.shard_tag)
-    main_process_pid = self()
-
-    last_applied =
-      reader
-      |> ChunkReader.read_from_version(from_int)
-      |> Stream.map(fn {_version_int, slice} -> slice end)
-      |> Stream.chunk_every(100)
-      |> Enum.reduce(applied_version, fn batch, _acc ->
-        send(main_process_pid, {:apply_transactions, batch})
-        Transaction.commit_version!(List.last(batch))
-      end)
-
-    # Chunks may lag the floor when this shard was idle in the gap: nothing
-    # of ours is missing there, so resume the WAL at whichever is further.
-    resume_after = max(last_applied, floor)
-
-    {:ok, start_pulling_from(t, resume_after)}
   end
 
   @spec info(State.t(), Materializer.fact_name() | [Materializer.fact_name()]) ::

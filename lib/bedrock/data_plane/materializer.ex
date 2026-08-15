@@ -131,7 +131,7 @@ defmodule Bedrock.DataPlane.Materializer do
 
   Range is [start_key, end_key) - includes start_key, excludes end_key.
   Supports both binary keys and KeySelectors for range boundaries.
-  Only supported by Olivine materializer engine; Basalt returns {:error, :unsupported}.
+  Supported by the Olivine materializer engine.
   """
   def get_range(storage, start_key_or_selector, end_key_or_selector, version, opts \\ [])
 

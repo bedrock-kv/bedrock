@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.3 — 2026-08-15
+
+- **Shrink the hex package from 8.2MB to ~300KB.** The published tarball
+  inadvertently included local dialyzer PLT build artifacts, because the PLT
+  cache lived in `priv/plts` and Hex packages the entire `priv/` directory by
+  default. The package now declares an explicit file list (`lib`,
+  `priv/schemas`, and project docs), and the dialyzer PLT cache moved out of
+  `priv/`. No functional changes — 0.5.3 is identical to 0.5.2 in behavior.
+
 ## 0.5.2 — 2026-08-14
 
 - **Fix serializable isolation for read misses and key-selector reads.** Read conflicts are now registered at read-issue time, matching FoundationDB's `Transaction::get` semantics. Previously a point read that missed storage (`{:error, :not_found}`) never entered the transaction's read conflict set — so two concurrent transactions could both read-miss the same key, both write it, and both commit, silently violating serializability. Key-selector reads now also record the full scanned span (FDB's `extraConflictRanges` behavior): selector resolution depends on every key between the anchor and the resolved key, so an insert anywhere in that span now correctly conflicts, for both point selectors and selector-bounded range reads.

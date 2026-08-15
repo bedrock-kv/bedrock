@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T18:58:49Z",
+  "close_reason": "Implemented and demonstrated live: durable-TSL broadcast -\u003e Link forwards to foreman -\u003e workers_to_retire (valid-manifest entries not referenced by tsl.services) -\u003e remove + deregister. Layout now references active materializers; all creation paths record into transaction_services; manifest guard protects shared-path raft/object_storage dirs (caught live: reconciliation deleted raft state before the guard). Three-incarnation demo: constant worker population, exactly the old-generation log retired each restart, all epochs' keys readable.",
   "created": "2026-08-15T18:46:09Z",
   "description": "Rule 2 of the recovery convergence design (Rule 1: attempts are pure functions of the current view, retriggered by view changes). The persisted TSL is the single source of truth for what should exist: when a newly durable TSL is broadcast, each foreman retires any worker it hosts that the layout does not reference. One creation path (recovery attempts), one destruction path (reconciliation), no timers, no stray detection, no age heuristics. Uniformly removes stray materializers from premature attempts, old-generation logs (safe: unreferenced-by-durable-TSL already means replay copied their WAL and the new layout is durable), and accumulated debris. Requires the final TSL services map to reference active materializers (topology extract_service_ids is logs-only today — another 'storage teams are retired' fossil). Accepted trade (approved): a materializer slow to register across a restart is replaced and reconciled away; nothing durable lives only in a materializer.",
   "id": "bedrock-qzr.9",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "TSL-driven worker reconciliation: workers not referenced by the durable layout are retired",
   "type": "feature",
-  "updated_at": "2026-08-15T18:46:09Z"
+  "updated_at": "2026-08-15T18:58:49Z"
 }

@@ -289,7 +289,9 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert :pong = GenServer.call(pid, :ping)
     end
 
-    test "handles min_durable_version message and updates state", %{server: pid} do
+    test "handles min_durable_version message and updates state when running", %{server: pid} do
+      make_running(pid, Version.from_integer(1000))
+
       version = Version.from_integer(42)
       send(pid, {:min_durable_version, version})
 
@@ -300,7 +302,30 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert state.min_durable_version == version
     end
 
+    test "ignores min_durable_version message unless running", %{server: pid} do
+      assert %State{mode: :locked} = :sys.get_state(pid)
+
+      send(pid, {:min_durable_version, Version.from_integer(42)})
+      :pong = GenServer.call(pid, :ping)
+
+      state = :sys.get_state(pid)
+      assert state.min_durable_version == nil
+    end
+
+    test "clamps min_durable_version to last_version", %{server: pid} do
+      last_version = Version.from_integer(50)
+      make_running(pid, last_version)
+
+      send(pid, {:min_durable_version, Version.from_integer(100)})
+      :pong = GenServer.call(pid, :ping)
+
+      state = :sys.get_state(pid)
+      assert state.min_durable_version == last_version
+    end
+
     test "exposes min_durable_version via info after receiving message", %{server: pid} do
+      make_running(pid, Version.from_integer(1000))
+
       # Initially unavailable
       assert {:ok, %{minimum_durable_version: :unavailable}} =
                GenServer.call(pid, {:info, [:minimum_durable_version]})
@@ -316,6 +341,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "does not regress min_durable_version when receiving an older watermark", %{server: pid} do
+      make_running(pid, Version.from_integer(1000))
+
       newer = Version.from_integer(200)
       older = Version.from_integer(100)
 
@@ -350,7 +377,9 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       :sys.replace_state(pid, fn state ->
         %{
           state
-          | active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
+          | mode: :running,
+            last_version: v30,
+            active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
             segments: [
               %Segment{path: seg20_path, min_version: v20, transactions: [tx20]},
               %Segment{path: seg10_path, min_version: v10, transactions: [tx10]}
@@ -369,6 +398,34 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert state.oldest_version == v20
       refute File.exists?(seg10_path)
       assert File.exists?(seg20_path)
+    end
+
+    test "never trims the active segment even when fully durable", %{server: pid, path: path} do
+      v10 = Version.from_integer(10)
+
+      tx10 = TransactionTestSupport.new_log_transaction(10, %{"k10" => "v10"})
+      seg10_path = Path.join(path, Segment.encode_file_name(10))
+      File.write!(seg10_path, <<0>>)
+
+      :sys.replace_state(pid, fn state ->
+        %{
+          state
+          | mode: :running,
+            last_version: v10,
+            active_segment: %Segment{path: seg10_path, min_version: v10, transactions: [tx10]},
+            segments: [],
+            oldest_version: v10,
+            min_durable_version: nil
+        }
+      end)
+
+      send(pid, {:min_durable_version, v10})
+      :pong = GenServer.call(pid, :ping)
+      state = :sys.get_state(pid)
+
+      assert state.min_durable_version == v10
+      assert state.active_segment.path == seg10_path
+      assert File.exists?(seg10_path)
     end
   end
 
@@ -572,6 +629,10 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   defp cleanup_server(pid) do
     if Process.alive?(pid), do: GenServer.stop(pid)
+  end
+
+  defp make_running(pid, last_version) do
+    :sys.replace_state(pid, fn state -> %{state | mode: :running, last_version: last_version} end)
   end
 
   defp eventually(assertion_fn, timeout \\ 1000) do

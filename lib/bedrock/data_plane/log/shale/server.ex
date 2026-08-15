@@ -175,11 +175,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  def handle_info({:min_durable_version, version}, t) do
+  def handle_info({:min_durable_version, version}, %{mode: :running} = t) do
     t
     |> advance_min_durable_version(version)
     |> noreply()
   end
+
+  # Outside :running the WAL may be mid-recovery or locked; confirmations are
+  # re-derived from fresh flushes, so dropping stale ones is always safe.
+  def handle_info({:min_durable_version, _version}, t), do: noreply(t)
 
   @impl true
   @spec handle_call(
@@ -377,6 +381,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   defp advance_min_durable_version(t, incoming_version) do
+    # The floor can never pass the WAL tip, whatever a confirmation claims.
+    incoming_version = min(incoming_version, t.last_version)
+
     min_durable_version =
       case t.min_durable_version do
         nil -> incoming_version

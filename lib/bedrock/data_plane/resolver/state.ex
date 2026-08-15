@@ -22,7 +22,6 @@ defmodule Bedrock.DataPlane.Resolver.State do
 
   @type t :: %__MODULE__{
           conflicts: Conflicts.t(),
-          oldest_version: Bedrock.version(),
           last_version: Bedrock.version(),
           waiting: Bedrock.Internal.WaitingList.t(),
           mode: mode(),
@@ -36,7 +35,6 @@ defmodule Bedrock.DataPlane.Resolver.State do
           metadata_window: MetadataAccumulator.t()
         }
   defstruct conflicts: nil,
-            oldest_version: nil,
             last_version: nil,
             waiting: %{},
             mode: :running,

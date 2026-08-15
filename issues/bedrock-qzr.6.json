@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T17:10:05Z",
+  "description": "Read all guides; corrected everything invalidated by the WAL-trimming + Demux-streaming work: basalt.md deleted and replaced with olivine.md; log/storage/shale deep-dives now describe per-shard Demux streaming, KCV gating, chunk naming, WAL trimming, and recovery-only Log.pull; glossary gained Chunk/Cut/Demux/ShardServer/Materializer/Olivine entries and corrected Storage/KCV; transactions deep-dive diagram and 'Storage Updates' section rewritten; durability-foundation and async-persistence-queue updated for commanded KCV-gated cuts; foreman examples show new_worker/4 with shard params; log-recovery-planning catch-up clause corrected.",
+  "id": "bedrock-qzr.6",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 2,
+  "status": "open",
+  "title": "Guides corrected for the Demux-streaming data plane (qzr.2-.5)",
+  "type": "chore",
+  "updated_at": "2026-08-15T17:10:05Z"
+}

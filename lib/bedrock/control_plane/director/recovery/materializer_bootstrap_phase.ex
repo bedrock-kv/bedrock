@@ -30,6 +30,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   import Bedrock, only: [end_of_keyspace: 0]
+  import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
 
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
@@ -229,6 +230,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         |> Map.put(:metadata_materializer, materializer_pid)
         |> Map.put(:shard_layout, shard_layout)
         |> Map.put(:shard_materializers, shard_materializers)
+        |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
 
       {updated_attempt, CommitProxyStartupPhase}
     else
@@ -237,20 +239,38 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
+  # Resolvers are recreated each epoch, one per shard range in the
+  # recovered layout — the same construction the fresh-cluster path uses,
+  # driven by the recovered layout instead of the default one.
+  defp resolver_descriptors_for_layout(shard_layout) do
+    shard_layout
+    |> Map.values()
+    |> Enum.map(fn {_tag, start_key} -> start_key end)
+    |> Enum.sort()
+    |> Enum.with_index(1)
+    |> Enum.map(fn {start_key, index} -> resolver_descriptor(start_key, {:vacancy, index}) end)
+  end
+
   # The locking phase locked every advertised materializer and collected its
   # recovery info — including its shard assignment. Index the survivors by
-  # shard, with their service refs from the transaction services map.
+  # shard, with their service refs from the transaction services map. When
+  # several claim the same shard (e.g. empty strays created by earlier
+  # failed recovery attempts), the most-advanced durable state wins.
   defp existing_materializers_by_shard(recovery_attempt) do
     recovery_attempt.materializer_recovery_info_by_id
     |> Enum.flat_map(fn {id, info} ->
       with shard_id when is_integer(shard_id) <- Map.get(info, :shard_id),
            %{status: {:up, ref}} <- Map.get(recovery_attempt.transaction_services, id) do
-        [{shard_id, {:materializer, ref}}]
+        [{shard_id, Map.get(info, :durable_version), {:materializer, ref}}]
       else
         _ -> []
       end
     end)
-    |> Map.new()
+    |> Enum.group_by(fn {shard_id, _durable, _service} -> shard_id end)
+    |> Map.new(fn {shard_id, candidates} ->
+      {_shard, _durable, service} = Enum.max_by(candidates, fn {_shard, durable, _service} -> durable end)
+      {shard_id, service}
+    end)
   end
 
   # Reuse the locked system-shard materializer; create one only when none
@@ -459,14 +479,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
     case Materializer.get_range(materializer_pid, prefix, end_key, read_version, limit: 1000) do
       {:ok, {entries, _more}} ->
+        # Key format: \xff/system/shard_keys/<end_key>; value: the tag
+        # (persistence writes `shard_key(end_key) -> tag`). Start keys are
+        # not stored — ranges are contiguous, so each shard starts where
+        # the previous one ends (the first starts at the empty key).
         shard_layout =
-          Map.new(entries, fn {key, value} ->
-            # Key format: \xff/system/shard_keys/<end_key>
-            # Value format: {tag, start_key}
-            end_key = extract_end_key_from_shard_key(key)
-            {tag, start_key} = decode_shard_value(value)
-            {end_key, {tag, start_key}}
+          entries
+          |> Enum.map(fn {key, value} ->
+            {extract_end_key_from_shard_key(key), decode_shard_tag(value)}
           end)
+          |> Enum.sort_by(fn {end_key, _tag} -> end_key end)
+          |> Enum.map_reduce(<<>>, fn {end_key, tag}, start_key ->
+            {{end_key, {tag, start_key}}, end_key}
+          end)
+          |> elem(0)
+          |> Map.new()
 
         {:ok, shard_layout}
 
@@ -484,7 +511,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     binary_part(key, prefix_len, byte_size(key) - prefix_len)
   end
 
-  defp decode_shard_value(value) when is_binary(value) do
-    :erlang.binary_to_term(value)
+  defp decode_shard_tag(value) when is_binary(value) do
+    case :erlang.binary_to_term(value) do
+      tag when is_integer(tag) -> tag
+      {tag, _start_key} when is_integer(tag) -> tag
+    end
   end
 end

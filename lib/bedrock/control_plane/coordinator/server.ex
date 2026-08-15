@@ -135,6 +135,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   def handle_call(:fetch_transaction_system_layout, _from, t), do: reply(t, {:ok, t.transaction_system_layout})
 
+  @impl true
+  def handle_call(:fetch_service_directory, _from, t), do: reply(t, {:ok, t.service_directory})
+
   def handle_call({:register_services, services}, from, t) do
     caller_node = Node.self()
     command = Commands.merge_node_resources(caller_node, services, [])

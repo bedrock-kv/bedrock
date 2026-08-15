@@ -145,8 +145,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
           Worker.id() => {atom(), {atom(), node()}}
         }) ::
           %{Worker.id() => {atom(), {atom(), node()}}}
+  # The services recovery must lock: the old layout's logs, and every
+  # advertised materializer. Materializers carry the durable key-value
+  # state — including the shard layout the bootstrap phase reads — and
+  # locking them both fences old epochs and collects their recovery info
+  # (durable version, shard assignment) for reuse.
   defp extract_old_system_services(old_layout, available_services) do
-    # Only extract log service IDs - storage teams are retired
     old_log_ids =
       old_layout
       |> Map.get(:logs, %{})
@@ -154,8 +158,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
       |> MapSet.new()
 
     available_services
-    |> Enum.filter(fn {service_id, _} ->
-      MapSet.member?(old_log_ids, service_id)
+    |> Enum.filter(fn
+      {service_id, {:log, _location}} -> MapSet.member?(old_log_ids, service_id)
+      {_service_id, {:materializer, _location}} -> true
+      {service_id, _other} -> MapSet.member?(old_log_ids, service_id)
     end)
     |> Map.new()
   end

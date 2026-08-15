@@ -224,6 +224,53 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert log =~ "Materializer caught up to version"
     end
 
+    test "when several materializers claim a shard, the most-advanced durable state wins" do
+      real_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+      recovery_version = Version.from_integer(24_000_000)
+
+      # A stray from an earlier failed recovery attempt: same shard, empty.
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:metadata_materializer, nil)
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0, 1]})
+        |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
+        |> Map.put(:materializer_recovery_info_by_id, %{
+          "mat_real" => %{kind: :materializer, shard_id: 0, durable_version: Version.from_integer(19_000_000)},
+          "mat_stray" => %{kind: :materializer, shard_id: 0, durable_version: Version.zero()}
+        })
+        |> Map.put(:transaction_services, %{
+          "mat_real" => %{kind: :materializer, status: {:up, real_pid}},
+          "mat_stray" => %{kind: :materializer, status: {:up, stray_pid}}
+        })
+
+      context =
+        [
+          old_transaction_system_layout: %{
+            logs: %{"log_1" => [0, 1]}
+          }
+        ]
+        |> create_test_context()
+        |> Map.put(:available_services, %{})
+        |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
+          {:ok, %{current_version: recovery_version}}
+        end)
+        |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
+          {:ok, %{Bedrock.end_of_keyspace() => {0, <<0xFF>>}}}
+        end)
+
+      capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        assert updated_attempt.metadata_materializer == real_pid
+        assert updated_attempt.shard_materializers == %{0 => real_pid}
+      end)
+    end
+
     test "creates new materializer when not found but capable nodes exist" do
       materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
       durable_version = Version.from_integer(100)

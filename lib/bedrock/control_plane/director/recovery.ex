@@ -95,6 +95,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       t.recovery_attempt.started_at
     )
 
+    # Refresh the service view from the coordinator: workers register as
+    # they come up on a booting node, and the snapshot this director was
+    # started with goes stale immediately. Without the refresh, a restart's
+    # materializers are invisible to recovery and their durable state is
+    # orphaned. On any failure, fall back to what we already know.
+    t = %{t | services: refresh_available_services(t)}
+
     context = %{
       cluster_config: t.config,
       old_transaction_system_layout: t.old_transaction_system_layout,
@@ -133,6 +140,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         trace_recovery_failed(Interval.between(t.recovery_attempt.started_at, now()), reason)
         t
     end
+  end
+
+  @spec refresh_available_services(State.t()) :: %{Worker.id() => {atom(), {atom(), node()}}}
+  defp refresh_available_services(t) do
+    case Coordinator.fetch_service_directory(t.coordinator, 2_000) do
+      {:ok, directory} -> Map.merge(t.services, directory)
+      _ -> t.services
+    end
+  catch
+    :exit, _ -> t.services
   end
 
   @spec persist_config(State.t()) :: State.t()

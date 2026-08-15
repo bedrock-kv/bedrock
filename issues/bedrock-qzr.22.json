@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T21:34:23Z",
+  "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nregister_node_resources monitors and adds the Link as a TSL subscriber but does not send the coordinator's current layout. TSL delivery happens only on a future put_transaction_system_layout broadcast. A Link or node that starts after the stable layout was published retains a nil cached TSL, and its Foreman never receives the reconciliation trigger.\n\nImpact:\nClients using Link can remain unavailable until another recovery, while restarted nodes retain obsolete workers indefinitely despite the branch's durable-layout-is-what-exists guarantee.\n\nAcceptance criteria:\n- Successful registration or subscription delivers a valid current TSL snapshot when one exists.\n- Bootstrap or incomplete TSL state is not exposed as a valid runtime layout.\n- Link updates its cache and forwards the snapshot to the local Foreman exactly as it does for later broadcasts.\n- Tests cover a Link and Foreman joining after a layout is already stable, reconciling stale workers without another layout change.\n- Reconnect, leader change, duplicate registration, and no-current-layout cases are idempotent and safe.",
+  "id": "bedrock-qzr.22",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 2,
+  "status": "open",
+  "title": "Replay the current TSL to late Link subscribers and reconcile Foreman",
+  "type": "bug",
+  "updated_at": "2026-08-15T21:34:23Z"
+}

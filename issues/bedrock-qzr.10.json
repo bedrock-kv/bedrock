@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T19:21:37Z",
+  "description": "Investigation finding: the cut/chunk/floor pipeline works (chunks confirmed in object storage), but the WAL never physically trims — segments roll on byte size only (64MB), so small clusters keep their entire history in one trim-immune active segment, oldest_version stays 0, and every recovery's version vector is {0, tip}: recovery copies the cluster's whole lifetime (35 min of heartbeats in the observed run) into each new generation's WAL, growing linearly with age forever. Fix: roll the active segment on cut-bucket boundaries (same version arithmetic as the demux's cuts: bucket = div(version, cut_interval_us)), size threshold retained as the upper bound. Rolling is ~free: checkout = rename of a preallocated (file:allocate'd) file, trim check-in = rename back to the pool; steady state cycles the pool with zero net allocation. Then oldest_version chases the trim floor (lag \u003c= ~2 cut intervals), the vector's first element bounds replay to the untrimmed tail, and replayed history itself lands in per-bucket segments that become trimmable as the fresh demux re-confirms. Noted for later: skipping empty transactions during replay copy is a further (independent) economy.",
+  "id": "bedrock-qzr.10",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 2,
+  "status": "open",
+  "title": "Roll WAL segments on cut boundaries so trim physically bounds recovery replay",
+  "type": "bug",
+  "updated_at": "2026-08-15T19:21:37Z"
+}

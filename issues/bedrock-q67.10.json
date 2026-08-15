@@ -5,6 +5,8 @@
     "bedrock-q67.9"
   ],
   "blocks": [],
+  "closed_at": "2026-08-15T20:37:53Z",
+  "close_reason": "Done on qzr2-wal-trim: olivine streaming.ex pulls from Demux.ShardServer (ShardServer.pull, Log.get_shard_server discovery); olivine/basalt pulling.ex no longer exist.",
   "created": "2026-07-14T21:55:42Z",
   "description": "Phase B. olivine/pulling.ex and basalt/pulling.ex long-pull the Log directly; switch to Demux.pull(shard_id, start_after) which serves buffer (recent) or ObjectStorage chunks (historical). Gated on B1 (shallow logs).",
   "id": "bedrock-q67.10",
@@ -17,8 +19,8 @@
     }
   ],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Materializer pull source: Log -\u003e Demux",
   "type": "task",
-  "updated_at": "2026-07-14T22:19:13Z"
+  "updated_at": "2026-08-15T20:37:53Z"
 }

@@ -3,7 +3,7 @@
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-15T17:18:36Z",
-  "description": "current-initiatives.md contains a single stale initiative ('Adding support for Range Queries') — range queries shipped (Materializer.get_range, olivine KeySelector support). Refresh it from the live epic list or delete the file. README.md line 31 is a truncated sentence ('...Available storage engines and their'). ai-start-here.md asserts token budgets ('Quick Reads \u003c500 tokens', 'Guides 500-2000') that several current files exceed — either enforce or soften the claim.",
+  "description": "current-initiatives.md contains a single stale initiative ('Adding support for Range Queries') — range queries shipped (Materializer.get_range, olivine KeySelector support). Refresh it from the live epic list or delete the file. ai-start-here.md asserts token budgets ('Quick Reads \u003c500 tokens', 'Guides 500-2000 tokens'; lines 12, 19, 42, 44, 50, 59) that several current files exceed — either enforce or soften the claim. (An earlier README.md truncated-sentence item was fixed independently; verified gone 2026-08-15.)",
   "id": "bedrock-5tq.6",
   "labels": [],
   "parent": "bedrock-5tq",
@@ -11,5 +11,5 @@
   "status": "open",
   "title": "Stale status docs: current-initiatives.md and README/ai-start-here claims",
   "type": "chore",
-  "updated_at": "2026-08-15T17:18:36Z"
+  "updated_at": "2026-08-15T20:38:00Z"
 }

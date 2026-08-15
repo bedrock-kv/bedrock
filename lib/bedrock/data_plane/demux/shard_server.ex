@@ -5,17 +5,28 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   Each ShardServer handles a single shard's transaction stream:
   1. Receives transaction slices from Demux
   2. Buffers in memory with newest at head
-  3. Enqueues flush batches for async ObjectStorage persistence
+  3. Obeys `{:flush, cut_version}` commands from Demux, persisting everything
+     at or below the cut as one chunk via the async persistence queue
   4. Notifies waiting materializers via WaitingList
   5. Reports durability to Demux only after persistence confirmation
 
-  ## Buffer Management
+  ## Commanded cuts
 
-  Transactions are stored as `[{version, slice}]` with newest at head.
-  Flushing is triggered when:
-  - `oldest_buffered_version < latest_version - version_gap_threshold`
+  ShardServers never decide when to flush. Demux computes deterministic cut
+  versions (pure version arithmetic — versions are microsecond timestamps)
+  and commands `flush/2`. Because every replica of a shard sees the same
+  slices and the same cuts, the resulting chunks are byte-identical, which is
+  why `put_if_not_exists` returning `{:error, :already_exists}` counts as a
+  successful confirmation.
 
-  The default version gap threshold is 5,000,000 (~5 seconds in microsecond versions).
+  On a cut the server reports its **floor contribution** — the cut version
+  itself, meaning "everything I have ever seen at or below this version is
+  durable" — not the max flushed data version. An empty buffer confirms the
+  cut immediately, so idle shards never pin the WAL trim floor.
+
+  Chunks are named for the last commit they contain
+  (`c/{shard}/{inverted(max_contained)}`), preserving the cheap
+  next-key-after seek contract for readers.
 
   ## Pull API
 
@@ -40,17 +51,14 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   @type version :: Bedrock.version()
   @type slice :: binary()
 
-  # Default version gap threshold (~5 seconds in microseconds)
-  @default_version_gap 5_000_000
-
   # Default pull timeout (30 seconds)
   @default_pull_timeout 30_000
 
   # Default pull limit
   @default_pull_limit 100
 
-  # Periodic flush check interval (5 seconds)
-  @flush_check_interval 5_000
+  # Retry delay when the persistence queue is full and a cut is pending
+  @cut_retry_ms 50
 
   @doc """
   Starts a ShardServer for the given shard.
@@ -61,7 +69,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   - `:demux` - Required. PID of the Demux coordinator for durability reporting.
   - `:cluster` - Required. Cluster name for ObjectStorage paths.
   - `:object_storage` - Required. ObjectStorage backend.
-  - `:version_gap` - Optional. Version gap threshold for flushing (default: 5_000_000).
   - `:persistence_queue_capacity` - Optional. Max queued flush batches (default: 1024).
   - `:persistence_max_retries` - Optional. Retry limit for flush failures (default: 5).
   - `:persistence_retry_backoff_ms` - Optional. Base retry backoff for flush retries (default: 25).
@@ -94,6 +101,20 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   @spec push(GenServer.server(), version(), slice()) :: :ok
   def push(server, version, slice) do
     GenServer.cast(server, {:push, version, slice})
+  end
+
+  @doc """
+  Commands the ShardServer to make everything at or below `cut_version`
+  durable and confirm.
+
+  Called by Demux on deterministic bucket boundaries. This is a cast; the
+  confirmation arrives at the Demux as `{:durable, shard_id, cut_version}`
+  once persistence is confirmed (immediately, when nothing is buffered at or
+  below the cut).
+  """
+  @spec flush(GenServer.server(), version()) :: :ok
+  def flush(server, cut_version) do
+    GenServer.cast(server, {:flush, cut_version})
   end
 
   @doc """
@@ -131,7 +152,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   end
 
   @doc """
-  Returns the current durable version (flushed to ObjectStorage).
+  Returns the current durable version (the highest confirmed cut).
   """
   @spec durable_version(GenServer.server()) :: version() | nil
   def durable_version(server) do
@@ -146,7 +167,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     demux = Keyword.fetch!(opts, :demux)
     cluster = Keyword.fetch!(opts, :cluster)
     object_storage = Keyword.fetch!(opts, :object_storage)
-    version_gap = Keyword.get(opts, :version_gap, @default_version_gap)
     persistence_queue_capacity = Keyword.get(opts, :persistence_queue_capacity, 1_024)
     persistence_max_retries = Keyword.get(opts, :persistence_max_retries, 5)
     persistence_retry_backoff_ms = Keyword.get(opts, :persistence_retry_backoff_ms, 25)
@@ -172,17 +192,14 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
       object_storage: object_storage,
       persistence_worker: persistence_worker,
       chunk_reader: chunk_reader,
-      version_gap: version_gap,
       buffer: [],
       waiting_list: %{},
       flush_in_progress: false,
-      pending_flush_max_version: nil,
+      pending_cuts: [],
+      pending_flush_cut: nil,
       durable_version: nil,
       latest_version: nil
     }
-
-    # Schedule periodic flush check
-    schedule_flush_check()
 
     {:ok, state}
   end
@@ -191,6 +208,13 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   def handle_cast({:push, version, slice}, state) do
     state = do_push(state, version, slice)
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_cast({:flush, cut_version}, state) do
+    state = %{state | pending_cuts: state.pending_cuts ++ [cut_version]}
+    state = process_cuts(state)
+    {:noreply, state, next_timeout(state)}
   end
 
   @impl true
@@ -231,16 +255,14 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   end
 
   @impl true
-  def handle_info({:flush_persisted, max_flushed_version}, state) do
-    state = handle_flush_persisted(state, max_flushed_version)
+  def handle_info({:flush_persisted, cut_version}, state) do
+    state = handle_flush_persisted(state, cut_version)
     {:noreply, state, next_timeout(state)}
   end
 
   @impl true
-  def handle_info(:flush_check, state) do
-    # Time-based flush: if buffer has old data, flush it all
-    state = maybe_time_based_flush(state)
-    schedule_flush_check()
+  def handle_info(:process_cuts, state) do
+    state = process_cuts(state)
     {:noreply, state, next_timeout(state)}
   end
 
@@ -256,17 +278,77 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   defp do_push(state, version, slice) do
     # Add to buffer (newest at head)
     buffer = [{version, slice} | state.buffer]
-    latest_version = version
 
-    state = %{state | buffer: buffer, latest_version: latest_version}
-
-    # Check if we need to flush
-    state = maybe_flush(state)
+    state = %{state | buffer: buffer, latest_version: version}
 
     # Notify waiting materializers
-    state = notify_waiters(state, version)
+    notify_waiters(state, version)
+  end
 
+  defp process_cuts(%{flush_in_progress: true} = state), do: state
+  defp process_cuts(%{pending_cuts: []} = state), do: state
+
+  defp process_cuts(%{pending_cuts: [cut | rest]} = state) do
+    to_flush = Enum.reject(state.buffer, fn {v, _} -> Version.newer?(v, cut) end)
+
+    case to_flush do
+      [] ->
+        # Nothing buffered at or below the cut: confirm immediately. This is
+        # what keeps idle shards from pinning the trim floor.
+        state
+        |> Map.put(:pending_cuts, rest)
+        |> confirm_cut(cut)
+        |> process_cuts()
+
+      to_flush ->
+        payload = %{
+          shard_id: state.shard_id,
+          transactions: to_flush,
+          cut_version: cut
+        }
+
+        case PersistenceWorker.enqueue(state.persistence_worker, payload) do
+          :ok ->
+            # Flushed entries stay in the buffer (still pullable) until the
+            # chunk write is confirmed.
+            %{state | pending_cuts: rest, flush_in_progress: true, pending_flush_cut: cut}
+
+          {:error, :queue_full} ->
+            Process.send_after(self(), :process_cuts, @cut_retry_ms)
+            state
+        end
+    end
+  end
+
+  defp handle_flush_persisted(state, cut_version) when cut_version != state.pending_flush_cut, do: state
+
+  defp handle_flush_persisted(state, cut_version) do
+    buffer = Enum.filter(state.buffer, fn {v, _} -> Version.newer?(v, cut_version) end)
+
+    %{state | buffer: buffer, flush_in_progress: false, pending_flush_cut: nil}
+    |> confirm_cut(cut_version)
+    |> process_cuts()
+  end
+
+  defp confirm_cut(state, cut_version) do
+    previous_durable_version = state.durable_version
+    durable_version = max_version(previous_durable_version, cut_version)
+    state = %{state | durable_version: durable_version}
+    maybe_emit_watermark_advanced(state, previous_durable_version, durable_version)
     state
+  end
+
+  defp maybe_emit_watermark_advanced(_state, previous_durable_version, durable_version)
+       when previous_durable_version == durable_version, do: :ok
+
+  defp maybe_emit_watermark_advanced(state, _previous_durable_version, durable_version) do
+    report_durability(state.demux, state.shard_id, durable_version)
+
+    PersistenceTelemetry.emit_watermark_advanced(
+      state.shard_id,
+      durable_version,
+      length(state.buffer)
+    )
   end
 
   defp do_pull(state, from_version, limit) do
@@ -310,116 +392,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   defp version_to_integer(<<_::unsigned-big-64>> = version), do: Version.to_integer(version)
   defp version_to_integer(version) when is_integer(version) and version >= 0, do: version
 
-  defp maybe_flush(state) do
-    cond do
-      state.flush_in_progress ->
-        state
-
-      state.buffer == [] ->
-        state
-
-      should_flush?(state.buffer, state.latest_version, state.version_gap) ->
-        # Get transactions to flush (oldest entries beyond the gap)
-        {to_flush, _to_keep} = split_buffer_for_flush(state)
-        enqueue_flush_batch(state, to_flush)
-
-      true ->
-        state
-    end
-  end
-
-  defp should_flush?(_buffer, nil, _gap), do: false
-
-  defp should_flush?(buffer, latest, gap) do
-    {oldest_version, _} = List.last(buffer)
-    Version.distance(latest, oldest_version) >= gap
-  end
-
-  defp enqueue_flush_batch(state, []), do: state
-
-  defp enqueue_flush_batch(state, to_flush) do
-    {max_flushed_version, _} = hd(to_flush)
-
-    payload = %{
-      shard_id: state.shard_id,
-      transactions: to_flush,
-      max_version: max_flushed_version
-    }
-
-    case PersistenceWorker.enqueue(state.persistence_worker, payload) do
-      :ok ->
-        %{state | flush_in_progress: true, pending_flush_max_version: max_flushed_version}
-
-      {:error, :queue_full} ->
-        # Retry on the next push/flush check.
-        state
-    end
-  end
-
-  defp handle_flush_persisted(%{pending_flush_max_version: nil} = state, _max_flushed_version), do: state
-
-  defp handle_flush_persisted(state, max_flushed_version) when max_flushed_version != state.pending_flush_max_version,
-    do: state
-
-  defp handle_flush_persisted(state, max_flushed_version) do
-    previous_durable_version = state.durable_version
-    durable_version = max_version(previous_durable_version, max_flushed_version)
-    buffer = drop_persisted_from_buffer(state.buffer, durable_version)
-
-    updated_state = %{
-      state
-      | buffer: buffer,
-        durable_version: durable_version,
-        flush_in_progress: false,
-        pending_flush_max_version: nil
-    }
-
-    maybe_emit_watermark_advanced(updated_state, previous_durable_version, durable_version, buffer)
-    maybe_flush(updated_state)
-  end
-
-  defp maybe_emit_watermark_advanced(_state, previous_durable_version, durable_version, _buffer)
-       when previous_durable_version == durable_version, do: :ok
-
-  defp maybe_emit_watermark_advanced(state, _previous_durable_version, durable_version, buffer) do
-    report_durability(state.demux, state.shard_id, durable_version)
-
-    PersistenceTelemetry.emit_watermark_advanced(
-      state.shard_id,
-      durable_version,
-      length(buffer)
-    )
-  end
-
-  # Time-based flush: if oldest buffered version is older than flush interval, flush all
-  defp maybe_time_based_flush(%{buffer: []} = state), do: state
-  defp maybe_time_based_flush(%{flush_in_progress: true} = state), do: state
-
-  defp maybe_time_based_flush(state) do
-    {oldest_version, _} = List.last(state.buffer)
-    oldest_us = Version.to_integer(oldest_version)
-    now_us = System.os_time(:microsecond)
-    age_us = now_us - oldest_us
-
-    # Flush if data is older than flush check interval (convert ms to μs)
-    if age_us >= @flush_check_interval * 1000 do
-      flush_all(state)
-    else
-      state
-    end
-  end
-
-  # Flush the entire buffer to object storage
-  defp flush_all(state) do
-    enqueue_flush_batch(state, state.buffer)
-  end
-
-  defp drop_persisted_from_buffer(buffer, durable_version) when is_binary(durable_version) do
-    Enum.filter(buffer, fn {version, _slice} ->
-      Version.newer?(version, durable_version)
-    end)
-  end
-
   defp max_version(nil, v), do: v
 
   defp max_version(v1, v2) do
@@ -427,22 +399,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
       :lt -> v2
       :eq -> v1
       :gt -> v1
-    end
-  end
-
-  defp split_buffer_for_flush(%{buffer: buffer, latest_version: latest, version_gap: gap}) do
-    # Buffer is newest-first, we want to flush oldest entries
-    # Split where version < (latest - gap)
-    threshold = Version.subtract(latest, gap)
-
-    buffer
-    # oldest first
-    |> Enum.reverse()
-    |> Enum.split_while(fn {v, _} -> Version.older?(v, threshold) end)
-    |> case do
-      {to_flush, to_keep} ->
-        # Return both in newest-first order for consistency
-        {Enum.reverse(to_flush), Enum.reverse(to_keep)}
     end
   end
 
@@ -454,7 +410,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
       :ok ->
         duration_us = System.monotonic_time(:microsecond) - started_at
         PersistenceTelemetry.emit_write_ok(payload.shard_id, batch_size, duration_us)
-        send(owner_pid, {:flush_persisted, payload.max_version})
+        send(owner_pid, {:flush_persisted, payload.cut_version})
         :ok
 
       {:error, reason} ->
@@ -474,6 +430,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
         {Version.to_integer(version), slice}
       end)
 
+    # The chunk is named for the last commit it contains — the seek contract
+    # readers rely on — never for the cut that triggered the flush.
     with {:ok, chunk_binary} <- Chunk.encode(encoded_transactions),
          {max_version_int, _} <- List.last(encoded_transactions) do
       key = Keys.chunk_path(shard_tag, max_version_int)
@@ -518,9 +476,5 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   defp next_timeout(%{waiting_list: waiting_list}) do
     WaitingList.next_timeout(waiting_list)
-  end
-
-  defp schedule_flush_check do
-    Process.send_after(self(), :flush_check, @flush_check_interval)
   end
 end

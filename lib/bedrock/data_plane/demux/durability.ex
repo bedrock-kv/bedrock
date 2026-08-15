@@ -58,8 +58,8 @@ defmodule Bedrock.DataPlane.Demux.Durability do
   Activates a shard with an initial durable version.
 
   Called when the first transaction touches a shard. The shard starts
-  with `initial_version` as its durable version (typically the last_seen_version
-  at the time of activation).
+  with `initial_version` as its durable version (the last completed cut at
+  the time of activation — never a merely-buffered version).
 
   Returns `{:ok, updated_durability}` or `{:error, :already_active}` if shard
   is already being tracked.

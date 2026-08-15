@@ -97,9 +97,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
         demux: demux_pid,
         cluster: "test-cluster",
         object_storage: backend,
-        registry: registry_name,
-        # Large gap to prevent flushing in most tests
-        version_gap: 1_000_000
+        registry: registry_name
       )
 
     on_exit(fn -> File.rm_rf!(test_dir) end)
@@ -230,20 +228,21 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
-          registry: registry,
-          version_gap: 100
+          registry: registry
         )
 
       slice = make_slice([{:set, "key", "value"}])
       v1000 = Version.from_integer(1_000)
       v1200 = Version.from_integer(1_200)
       v1400 = Version.from_integer(1_400)
+      cut = Version.from_integer(1_300)
 
       ShardServer.push(server, v1000, slice)
       ShardServer.push(server, v1200, slice)
       ShardServer.push(server, v1400, slice)
+      ShardServer.flush(server, cut)
 
-      assert_receive {:durable, ^shard_id, ^v1200}, 1_500
+      assert_receive {:durable, ^shard_id, ^cut}, 1_500
 
       :ok = GenServer.stop(server)
 
@@ -253,8 +252,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
-          registry: registry,
-          version_gap: 100
+          registry: registry
         )
 
       on_exit(fn ->
@@ -273,9 +271,11 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
   end
 
-  describe "flushing" do
-    test "flushes when version gap exceeded", %{test_dir: test_dir, registry: registry} do
-      # Create a server with small version gap for flush testing
+  describe "commanded cuts" do
+    test "flushes buffered data at or below the commanded cut and reports the cut", %{
+      test_dir: test_dir,
+      registry: registry
+    } do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
 
       {:ok, flush_server} =
@@ -284,30 +284,110 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
-          registry: registry,
-          # Small gap for testing flushing
-          version_gap: 100
+          registry: registry
         )
 
       slice = make_slice([{:set, "key", "value"}])
       v1000 = Version.from_integer(1000)
       v1050 = Version.from_integer(1050)
-      v1200 = Version.from_integer(1200)
+      cut = Version.from_integer(1099)
 
-      # Push transactions with gap < threshold
       ShardServer.push(flush_server, v1000, slice)
       ShardServer.push(flush_server, v1050, slice)
       :timer.sleep(10)
 
-      # Should not have received durability report yet
+      # No flush without a commanded cut
       refute_received {:durable, 99, _}
 
-      # Push transaction that exceeds the gap (version_gap: 100)
-      ShardServer.push(flush_server, v1200, slice)
+      ShardServer.flush(flush_server, cut)
 
-      # Should receive durability report (use assert_receive with timeout for reliability)
-      assert_receive {:durable, 99, durable_version}, 1000
-      assert durable_version >= v1000
+      # The contribution is the CUT version, not the max flushed data version
+      assert_receive {:durable, 99, ^cut}, 1000
+
+      # The chunk on disk is named for the last commit it contains (1050)
+      chunk_key = Keys.chunk_path("2r", 1050)
+      assert {:ok, _} = ObjectStorage.get(backend, chunk_key)
+    end
+
+    test "confirms the cut immediately when the buffer is empty (idle shard)", %{
+      test_dir: test_dir,
+      registry: registry
+    } do
+      backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
+      shard_id = :erlang.unique_integer([:positive]) + 600
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          registry: registry
+        )
+
+      cut = Version.from_integer(5_000)
+      ShardServer.flush(server, cut)
+
+      assert_receive {:durable, ^shard_id, ^cut}, 1000
+      assert ShardServer.durable_version(server) == cut
+    end
+
+    test "retains buffered data above the cut", %{test_dir: test_dir, registry: registry} do
+      backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)
+      shard_id = :erlang.unique_integer([:positive]) + 650
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          registry: registry
+        )
+
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      v1200 = Version.from_integer(1200)
+      cut = Version.from_integer(1099)
+
+      ShardServer.push(server, v1000, slice)
+      ShardServer.push(server, v1200, slice)
+      ShardServer.flush(server, cut)
+
+      assert_receive {:durable, ^shard_id, ^cut}, 1000
+
+      # v1200 is above the cut: still buffered, still pullable
+      {:ok, transactions} = ShardServer.pull(server, v1200, timeout: 100, limit: 10)
+      assert [{^v1200, _}] = transactions
+    end
+
+    test "queues cuts arriving while a flush is in flight", %{test_dir: test_dir, registry: registry} do
+      backend = ObjectStorage.backend(DelayedLocalFilesystem, root: test_dir, delay_ms: 100)
+      shard_id = :erlang.unique_integer([:positive]) + 700
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          registry: registry
+        )
+
+      slice = make_slice([{:set, "key", "value"}])
+      v1000 = Version.from_integer(1000)
+      cut1 = Version.from_integer(1099)
+      v1200 = Version.from_integer(1200)
+      cut2 = Version.from_integer(1299)
+
+      ShardServer.push(server, v1000, slice)
+      ShardServer.flush(server, cut1)
+      ShardServer.push(server, v1200, slice)
+      ShardServer.flush(server, cut2)
+
+      assert_receive {:durable, ^shard_id, ^cut1}, 1_500
+      assert_receive {:durable, ^shard_id, ^cut2}, 1_500
+      assert ShardServer.durable_version(server) == cut2
     end
 
     test "push path remains responsive while persistence is in-flight", %{test_dir: test_dir, registry: registry} do
@@ -320,8 +400,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
-          registry: registry,
-          version_gap: 100
+          registry: registry
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -329,6 +408,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       v1200 = Version.from_integer(1200)
 
       ShardServer.push(server, v1000, slice)
+      ShardServer.flush(server, Version.from_integer(1100))
       ShardServer.push(server, v1200, slice)
 
       # With async persistence, latest_version remains callable even while flush
@@ -346,23 +426,22 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
-          registry: registry,
-          version_gap: 100
+          registry: registry
         )
 
       slice = make_slice([{:set, "key", "value"}])
       v1000 = Version.from_integer(1000)
-      v1200 = Version.from_integer(1200)
+      cut = Version.from_integer(1100)
 
       ShardServer.push(server, v1000, slice)
-      ShardServer.push(server, v1200, slice)
+      ShardServer.flush(server, cut)
 
       Process.sleep(25)
       assert ShardServer.durable_version(server) == nil
       refute_received {:durable, ^shard_id, _}
 
-      assert_receive {:durable, ^shard_id, ^v1000}, 1_500
-      assert ShardServer.durable_version(server) == v1000
+      assert_receive {:durable, ^shard_id, ^cut}, 1_500
+      assert ShardServer.durable_version(server) == cut
     end
   end
 
@@ -393,8 +472,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test-cluster",
           object_storage: backend,
-          registry: registry,
-          version_gap: 100
+          registry: registry
         )
 
       slice = make_slice([{:set, "key", "value"}])
@@ -403,6 +481,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
 
       ShardServer.push(server, v1000, slice)
       ShardServer.push(server, v1200, slice)
+      ShardServer.flush(server, Version.from_integer(1300))
 
       assert_receive {:telemetry, [:bedrock, :demux, :persistence, :write, :ok], write_meas, write_meta}, 1_500
       assert write_meta.shard_id == shard_id
@@ -411,7 +490,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
 
       assert_receive {:telemetry, [:bedrock, :demux, :persistence, :watermark, :advanced], wm_meas, wm_meta}, 1_500
       assert wm_meta.shard_id == shard_id
-      assert wm_meta.durable_version == v1000
+      assert wm_meta.durable_version == Version.from_integer(1300)
       assert wm_meas.buffered_transactions >= 0
     end
 
@@ -447,7 +526,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           cluster: "test-cluster",
           object_storage: backend,
           registry: registry,
-          version_gap: 100,
           persistence_retry_backoff_ms: 1,
           persistence_retry_tick_ms: 1
         )
@@ -458,6 +536,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
 
       ShardServer.push(server, v1000, slice)
       ShardServer.push(server, v1200, slice)
+      ShardServer.flush(server, Version.from_integer(1300))
 
       assert_receive {:telemetry, [:bedrock, :demux, :persistence, :write, :error], _meas, error_meta}, 1_500
       assert error_meta.shard_id == shard_id
@@ -485,9 +564,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           demux: self(),
           cluster: "test",
           object_storage: backend,
-          registry: registry,
-          # High gap to prevent flushing
-          version_gap: 1_000_000
+          registry: registry
         )
 
       test_pid = self()

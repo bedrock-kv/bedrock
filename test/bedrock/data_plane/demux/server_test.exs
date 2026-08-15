@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
   alias Bedrock.DataPlane.Demux.Server
   alias Bedrock.DataPlane.Demux.ShardServer
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
 
@@ -27,10 +28,14 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
   end
 
   defp make_transaction(mutations, shard_index) do
+    make_transaction(mutations, shard_index, <<0, 0, 0, 0, 0, 0, 10, 0>>)
+  end
+
+  defp make_transaction(mutations, shard_index, commit_version) do
     Transaction.encode(%{
       mutations: mutations,
       shard_index: shard_index,
-      commit_version: <<0, 0, 0, 0, 0, 0, 10, 0>>
+      commit_version: commit_version
     })
   end
 
@@ -84,7 +89,6 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
           object_storage: backend,
           log: log_pid,
           shard_server_opts: [
-            version_gap: 100,
             persistence_retry_backoff_ms: 1,
             persistence_retry_tick_ms: 1
           ]
@@ -101,12 +105,141 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       :ok = Server.push(tuned_server, version, txn)
 
       {:ok, shard_server} = Server.get_shard_server(tuned_server, shard_id)
-      assert %{version_gap: 100, persistence_worker: persistence_worker} = :sys.get_state(shard_server)
+      assert %{persistence_worker: persistence_worker} = :sys.get_state(shard_server)
 
       assert %{
                retry_tick_ms: 1,
                queue: %{retry_base_backoff_ms: 1}
              } = :sys.get_state(persistence_worker)
+    end
+  end
+
+  describe "deterministic cuts" do
+    defp start_cut_server(backend, log_pid, cut_interval_us) do
+      {:ok, server} =
+        Server.start_link(
+          cluster: "test-cluster",
+          object_storage: backend,
+          log: log_pid,
+          cut_interval_us: cut_interval_us
+        )
+
+      on_exit(fn ->
+        if Process.alive?(server), do: GenServer.stop(server)
+      end)
+
+      server
+    end
+
+    defp version_in_bucket(bucket, offset, interval), do: Version.from_integer(bucket * interval + offset)
+
+    defp cut_of_bucket(bucket, interval), do: Version.from_integer((bucket + 1) * interval - 1)
+
+    test "bucket crossing commands a flush and the confirmed cut reaches the log", %{
+      backend: backend,
+      shard_base: shard_base
+    } do
+      interval = 1_000
+      server = start_cut_server(backend, self(), interval)
+      shard_id = shard_base + 40
+
+      txn = fn v -> make_transaction([{:set, "k", "v"}], [{shard_id, 1}], v) end
+
+      # Data lands in bucket 5; the push that crosses into bucket 6 closes it.
+      v_in_bucket = version_in_bucket(5, 100, interval)
+      v_crossing = version_in_bucket(6, 0, interval)
+      cut = cut_of_bucket(5, interval)
+
+      :ok = Server.push(server, v_in_bucket, txn.(v_in_bucket))
+      :ok = Server.push(server, v_crossing, txn.(v_crossing))
+
+      assert_receive {:min_durable_version, ^cut}, 1_500
+    end
+
+    test "heartbeat-only stream (no shards) still advances the floor", %{backend: backend} do
+      interval = 1_000
+      server = start_cut_server(backend, self(), interval)
+
+      heartbeat = fn v -> make_transaction([], [], v) end
+
+      v1 = version_in_bucket(3, 10, interval)
+      v2 = version_in_bucket(4, 10, interval)
+      cut = cut_of_bucket(3, interval)
+
+      :ok = Server.push(server, v1, heartbeat.(v1))
+      :ok = Server.push(server, v2, heartbeat.(v2))
+
+      assert_receive {:min_durable_version, ^cut}, 1_500
+      assert Server.min_durable_version(server) == cut
+    end
+
+    test "a quiet stretch spanning several buckets is closed by one cut", %{backend: backend} do
+      interval = 1_000
+      server = start_cut_server(backend, self(), interval)
+
+      heartbeat = fn v -> make_transaction([], [], v) end
+
+      v1 = version_in_bucket(1, 0, interval)
+      v9 = version_in_bucket(9, 0, interval)
+      cut = cut_of_bucket(8, interval)
+
+      :ok = Server.push(server, v1, heartbeat.(v1))
+      :ok = Server.push(server, v9, heartbeat.(v9))
+
+      assert_receive {:min_durable_version, ^cut}, 1_500
+    end
+
+    test "a shard activated mid-bucket starts at the last completed cut, not a buffered version", %{
+      backend: backend,
+      shard_base: shard_base
+    } do
+      interval = 1_000
+      server = start_cut_server(backend, self(), interval)
+      shard_id = shard_base + 41
+
+      heartbeat = fn v -> make_transaction([], [], v) end
+      txn = fn v -> make_transaction([{:set, "k", "v"}], [{shard_id, 1}], v) end
+
+      # Establish a completed cut with heartbeats only
+      v1 = version_in_bucket(1, 0, interval)
+      v2 = version_in_bucket(2, 0, interval)
+      cut1 = cut_of_bucket(1, interval)
+
+      :ok = Server.push(server, v1, heartbeat.(v1))
+      :ok = Server.push(server, v2, heartbeat.(v2))
+      assert_receive {:min_durable_version, ^cut1}, 1_500
+
+      # First slice for the shard arrives mid-bucket: its data is only
+      # buffered, so the min must stay at the last completed cut.
+      v_mid = version_in_bucket(2, 500, interval)
+      :ok = Server.push(server, v_mid, txn.(v_mid))
+      :timer.sleep(50)
+
+      assert Server.min_durable_version(server) == cut1
+    end
+
+    test "idle shards do not pin the floor", %{backend: backend, shard_base: shard_base} do
+      interval = 1_000
+      server = start_cut_server(backend, self(), interval)
+      idle_shard = shard_base + 42
+      busy_shard = shard_base + 43
+
+      txn = fn shard, v -> make_transaction([{:set, "k", "v"}], [{shard, 1}], v) end
+
+      # The idle shard receives data once, in bucket 1
+      v_idle = version_in_bucket(1, 100, interval)
+      :ok = Server.push(server, v_idle, txn.(idle_shard, v_idle))
+
+      # The busy shard keeps receiving data through buckets 2..4
+      for bucket <- 2..4 do
+        v = version_in_bucket(bucket, 100, interval)
+        :ok = Server.push(server, v, txn.(busy_shard, v))
+      end
+
+      # The idle shard confirmed every cut without new data: the floor is the
+      # last completed cut, not the idle shard's last flush.
+      cut = cut_of_bucket(3, interval)
+      assert_receive {:min_durable_version, ^cut}, 1_500
     end
   end
 

@@ -38,9 +38,13 @@ An immutable object-storage file holding one shard's transaction slices for a ra
 
 A module responsible for encoding/decoding keys or values for storage and transmission. Examples: `TupleKeyCodec`, `BertValueCodec`.
 
+### **Currency**
+
+The high-water knowledge carried on every ShardServer pull reply: "here is your data" or "nothing for you, but you are current through version v." Busy shards learn it from slice pushes; idle shards learn it by subscription — a parked materializer asks its Demux once, and the Demux answers the moment its high-water advances. Currency is what lets a materializer for a quiet shard keep advancing its version (and serving fresh reads) without any timers or polling.
+
 ### **Cut**
 
-A deterministic version-time boundary at which the Demux commands every ShardServer to persist its buffered slices as a chunk. Cuts are pure version arithmetic (fixed buckets of the cut interval) and fire only once the known committed version has reached them, so nothing that is not known-committed ever becomes durable in object storage.
+A deterministic version-time boundary at which the Demux commands every ShardServer to persist its buffered slices as a chunk. Cuts are pure version arithmetic (fixed buckets of the cut interval) and fire only once the known committed version has reached them, so nothing that is not known-committed ever becomes durable in object storage. The WAL's active segment rolls on the same boundaries, so trimming can physically drop history at the cut cadence.
 
 ### **Cold Start**
 
@@ -125,6 +129,10 @@ The distributed database architecture that Bedrock follows, separating control p
 ### **Gateway**
 
 The client-facing interface that manages transaction coordination and serves as the entry point for all client operations. See also: [Gateway implementation](deep-dives/architecture/infrastructure/gateway.md).
+
+### **Generation**
+
+One recovery's set of logs. Recovery does not repair old logs in place: it recruits a fresh generation, replays the surviving WAL tail into it, and lets [reconciliation](#reconciliation) retire the previous generation once the new layout is durable. Because the old WAL was trimmed in normal operation, the replay copies a few seconds of tail rather than the cluster's history.
 
 ---
 
@@ -240,9 +248,13 @@ The guarantee that within a transaction, read operations immediately see the eff
 
 The process of restoring system state after failures, coordinated by the Director and involving state reconstruction from durable logs.
 
+### **Reconciliation**
+
+The single destruction path for workers, mirroring recovery as the single creation path. When a newly durable transaction system layout is broadcast, each foreman retires every worker it hosts that the layout does not reference: previous-generation logs and any strays left by interrupted recovery attempts. A worker, for this purpose, is a directory with a valid manifest; anything the foreman cannot identify is left alone.
+
 ### **Recovery Info**
 
-State information provided by components during recovery, including version numbers, durability status, and operational state.
+State information provided by components during recovery, including version numbers, durability status, and operational state. Logs report their oldest and newest versions; materializers report their durable version and shard assignment, which is how recovery reuses survivors.
 
 ### **Resolver**
 
@@ -306,7 +318,11 @@ A per-transaction process that manages the complete lifecycle of a single transa
 
 ### **Transaction System Layout**
 
-The blueprint that defines how all components in a Bedrock cluster connect and communicate during transaction processing. Contains component process IDs, key range assignments, service mappings, and operational status for the entire cluster. See also: [Transaction System Layout overview](quick-reads/transaction-system-layout.md).
+The blueprint that defines how all components in a Bedrock cluster connect and communicate during transaction processing. Contains component process IDs, key range assignments, service mappings, and operational status for the entire cluster. Once durable, it is also the single source of truth for what should exist: [reconciliation](#reconciliation) retires any worker the layout does not reference. See also: [Transaction System Layout overview](quick-reads/transaction-system-layout.md).
+
+### **Trim Floor**
+
+The version below which a log's WAL may be recycled. The floor is object-storage confirmation alone — the minimum cut every shard has confirmed durable in chunks — so readers never hold the WAL back. It is deliberately not persisted: on restart it regresses to what the on-disk segments define and re-derives from fresh confirmations.
 
 ---
 

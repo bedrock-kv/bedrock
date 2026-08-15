@@ -65,6 +65,7 @@ The persistent transaction log interface that maintains the complete history of 
 - Sequential transaction ordering maintenance
 - Recovery replay capability provision
 - Per-shard slice distribution through its Demux, with object-storage chunk persistence and WAL trimming behind the confirmed durable floor
+- Segment rolling on cut boundaries, so the WAL's disk footprint tracks a few seconds of traffic rather than the cluster's lifetime
 
 ### [Storage](../deep-dives/architecture/data-plane/storage.md)
 

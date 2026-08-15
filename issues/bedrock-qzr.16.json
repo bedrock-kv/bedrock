@@ -7,9 +7,15 @@
   "id": "bedrock-qzr.16",
   "labels": [],
   "parent": "bedrock-qzr",
+  "comments": [
+    {
+      "text": "Implemented TDD on stacked branch worktree-qzr16-shard-ownership: anonymous caller-owned ShardServers, pid-scoped durability reports, fatal pre-cut slicing/start failures, two-real-Shale gated conditional-create/WAL-trim integration, and ownership/durability guide updates. Quality gates green: mix format --check-formatted, mix credo --strict, mix dialyzer, mix test (2484 tests, 158 properties, 13 doctests; 0 failures).",
+      "timestamp": "2026-08-15T22:34:26Z"
+    }
+  ],
   "priority": 0,
   "status": "in_progress",
   "title": "Give every replicated log an independent ShardServer per shard",
   "type": "bug",
-  "updated_at": "2026-08-15T22:20:14Z"
+  "updated_at": "2026-08-15T22:34:26Z"
 }

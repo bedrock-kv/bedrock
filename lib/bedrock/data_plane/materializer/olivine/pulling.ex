@@ -11,6 +11,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Pulling do
   @type puller_state :: %{
           start_after: Bedrock.version(),
           worker_id: Worker.id(),
+          owner: pid(),
           apply_transactions_fn: ([Transaction.encoded()] -> Bedrock.version()),
           get_durable_version_fn: (-> Bedrock.version()),
           logs: %{Log.id() => LogDescriptor.t()},
@@ -31,6 +32,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Pulling do
     state = %{
       start_after: start_after,
       worker_id: worker_id,
+      owner: self(),
       apply_transactions_fn: apply_transactions_fn,
       get_durable_version_fn: get_durable_version_fn,
       logs: logs,
@@ -57,7 +59,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Pulling do
   @spec call_timeout() :: pos_integer()
   def call_timeout, do: 5_000
 
-  @spec long_pull_loop(puller_state()) :: no_return()
+  @spec long_pull_loop(puller_state()) :: :ok | no_return()
   def long_pull_loop(%{apply_transactions_fn: apply_transactions_fn} = state) do
     case select_log(state) do
       {:ok, {log_id, %{status: {:up, worker_pid}}}} ->
@@ -72,6 +74,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Pulling do
             trace_log_pull_succeeded(state.start_after, length(transactions))
             new_state = process_pulled_transactions(state, transactions, apply_transactions_fn)
             long_pull_loop(new_state)
+
+          {:error, {:version_too_old, floor}} ->
+            # The WAL trimmed past us. The floor is data, not a dead log:
+            # hand it to the owner (which re-bootstraps from object storage
+            # chunks and restarts pulling) and end this puller.
+            trace_log_pull_failed(state.start_after, {:version_too_old, floor})
+            send(state.owner, {:pull_floor_exceeded, floor})
+            :ok
 
           {:error, reason} ->
             trace_log_pull_failed(state.start_after, reason)

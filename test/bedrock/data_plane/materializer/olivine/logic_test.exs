@@ -12,6 +12,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.KeySelector
   alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.Chunk
+  alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
 
@@ -57,6 +59,55 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
     encoded = Transaction.encode(transaction_map)
     {:ok, with_version} = Transaction.add_commit_version(encoded, Version.from_integer(version_int))
     with_version
+  end
+
+  defmodule IdleLog do
+    @moduledoc false
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(nil), do: {:ok, nil}
+
+    @impl true
+    def handle_call({:pull, _from_version, _opts}, _from, state), do: {:reply, {:ok, []}, state}
+  end
+
+  describe "catch_up_from_chunks/2" do
+    test "returns :no_chunk_source without a snapshot handle", %{test_dir: test_dir} do
+      state = create_test_state(test_dir)
+
+      assert {:error, :no_chunk_source} = Logic.catch_up_from_chunks(state, Version.from_integer(1_000))
+    end
+
+    test "applies chunk slices for the gap and resumes pulling", %{test_dir: test_dir} do
+      state = create_test_state(test_dir, :catch_up_test, "catchup")
+      backend = ObjectStorage.backend(LocalFilesystem, root: Path.join(test_dir, "object_storage"))
+
+      # A chunk for our shard holding versions 100 and 200
+      tx100 = create_transaction([{:set, "a", "1"}], 100)
+      tx200 = create_transaction([{:set, "b", "2"}], 200)
+      {:ok, chunk} = Chunk.encode([{100, tx100}, {200, tx200}])
+      :ok = ObjectStorage.put(backend, Keys.chunk_path("myshard", 200), chunk)
+
+      {:ok, log} = IdleLog.start_link(nil)
+
+      state = %{
+        state
+        | snapshot: Snapshot.new(backend, "myshard"),
+          pull_sources: {%{"log_1" => []}, %{"log_1" => %{status: {:up, log}}}}
+      }
+
+      assert {:ok, caught_up} = Logic.catch_up_from_chunks(state, Version.from_integer(1_000))
+
+      # The gap data arrived through the normal apply path, in order
+      assert_receive {:apply_transactions, [^tx100, ^tx200]}, 2_000
+
+      # And the WAL puller is running again
+      assert %State{pull_task: %Task{}} = caught_up
+      Logic.stop_pulling(caught_up)
+    end
   end
 
   describe "startup/4" do

@@ -16,6 +16,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Materializer.Telemetry
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage.ChunkReader
   alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
   alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.ObjectStorage.SnapshotBundle
@@ -136,7 +137,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
           {:ok, State.t()}
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
-    t = stop_pulling(t)
+    t =
+      t
+      |> stop_pulling()
+      |> Map.put(:pull_sources, {logs, services})
+      |> start_pulling_from(durable_version)
+
+    t
+    |> update_mode(:running)
+    |> then(&{:ok, &1})
+  end
+
+  @spec start_pulling_from(State.t(), Bedrock.version()) :: State.t()
+  defp start_pulling_from(%{pull_sources: {logs, services}} = t, start_after) do
     main_process_pid = self()
 
     apply_and_notify_fn = fn transactions ->
@@ -149,18 +162,63 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
     puller =
       Pulling.start_pulling(
-        durable_version,
+        start_after,
         t.id,
         logs,
         services,
         apply_and_notify_fn,
-        fn -> Database.load_current_durable_version(database) end
+        fn -> current_durable_version(database) end
       )
 
-    t
-    |> update_mode(:running)
-    |> put_puller(puller)
-    |> then(&{:ok, &1})
+    put_puller(t, puller)
+  end
+
+  # The bare durable version (load_current_durable_version wraps it in :ok).
+  @spec current_durable_version(Database.t()) :: Bedrock.version()
+  defp current_durable_version(database) do
+    {:ok, version} = Database.load_current_durable_version(database)
+    version
+  end
+
+  @doc """
+  Catches up from object storage chunks after the WAL trim floor passed this
+  materializer's position, then resumes pulling from the WAL.
+
+  Chunk slices from the configured shard fill the gap between our durable
+  version and the floor; the WAL still holds everything above the floor
+  (straddling segments are never trimmed), so the two sources meet with no
+  gap for this shard. Returns `{:error, :no_chunk_source}` when no snapshot
+  handle (cluster + shard) is configured — there is no way home, and the
+  caller should fail loudly rather than retry forever.
+  """
+  @spec catch_up_from_chunks(State.t(), floor :: Bedrock.version()) ::
+          {:ok, State.t()} | {:error, :no_chunk_source}
+  def catch_up_from_chunks(%{snapshot: nil}, _floor), do: {:error, :no_chunk_source}
+  def catch_up_from_chunks(%{pull_sources: nil}, _floor), do: {:error, :no_chunk_source}
+
+  def catch_up_from_chunks(t, floor) do
+    t = stop_pulling(t)
+
+    durable_version = current_durable_version(t.database)
+    from_int = durable_version |> Version.to_integer() |> Kernel.+(1)
+    reader = ChunkReader.new(t.snapshot.backend, t.snapshot.shard_tag)
+    main_process_pid = self()
+
+    last_applied =
+      reader
+      |> ChunkReader.read_from_version(from_int)
+      |> Stream.map(fn {_version_int, slice} -> slice end)
+      |> Stream.chunk_every(100)
+      |> Enum.reduce(durable_version, fn batch, _acc ->
+        send(main_process_pid, {:apply_transactions, batch})
+        Transaction.commit_version!(List.last(batch))
+      end)
+
+    # Chunks may lag the floor when this shard was idle in the gap: nothing
+    # of ours is missing there, so resume the WAL at whichever is further.
+    resume_after = max(last_applied, floor)
+
+    {:ok, start_pulling_from(t, resume_after)}
   end
 
   @spec info(State.t(), Materializer.fact_name() | [Materializer.fact_name()]) ::

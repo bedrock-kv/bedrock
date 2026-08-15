@@ -38,6 +38,10 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
               {encoded_transaction :: Transaction.encoded(), ack_fn :: (:ok | {:error, term()} -> :ok)}
           },
           #
+          subscribers: %{
+            Bedrock.service_id() => {durable_version :: Bedrock.version(), seen_at :: Bedrock.version()}
+          },
+          #
           mode: mode(),
           oldest_version: Bedrock.version(),
           otp_name: Worker.otp_name(),
@@ -69,6 +73,8 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             segments: [],
             active_segment: nil,
             pending_pushes: %{},
+            #
+            subscribers: %{},
             #
             mode: :locked,
             oldest_version: nil,

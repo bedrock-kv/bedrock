@@ -94,7 +94,9 @@ defmodule Bedrock.DataPlane.Log do
     - `{:error, :invalid_from_version}`: The provided `from_version` is invalid.
     - `{:error, :invalid_last_version}`: The specified `last_version` is invalid.
     - `{:error, :version_too_new}`: The version specified is too recent.
-    - `{:error, :version_too_old}`: The version specified is too old.
+    - `{:error, {:version_too_old, floor}}`: The version specified is below
+      the WAL's trim floor; `floor` is the oldest version still available.
+      Consumers below it should catch up from object storage chunks.
     - `{:error, :version_not_found}`: The version cannot be found.
     - `{:error, :unavailable}`: Log is unavailable for operation.
   """
@@ -106,6 +108,7 @@ defmodule Bedrock.DataPlane.Log do
             last_version: Bedrock.version(),
             recovery: boolean(),
             subscriber: {subscriber_id :: String.t(), last_durable_version :: Bedrock.version()},
+            willing_to_wait_in_ms: Bedrock.timeout_in_ms(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
         ) ::
@@ -116,7 +119,7 @@ defmodule Bedrock.DataPlane.Log do
           | {:error, :invalid_from_version}
           | {:error, :invalid_last_version}
           | {:error, :version_too_new}
-          | {:error, :version_too_old}
+          | {:error, {:version_too_old, floor :: Bedrock.version()}}
           | {:error, :version_not_found}
           | {:error, :unavailable}
   @type pull_error :: pull_errors()

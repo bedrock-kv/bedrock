@@ -36,6 +36,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @max_retry_delay_ms 30_000
   @max_retry_attempts 10
 
+  # A subscriber's floor stops holding back trim once it has been silent for
+  # this much version-time (~60s). Aging out is safe: a pull below the floor
+  # returns the floor itself, and the subscriber re-bootstraps from object
+  # storage chunks.
+  @subscriber_ttl_us 60_000_000
+
   @doc false
   @spec child_spec(
           opts :: [
@@ -240,6 +246,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:pull, from_version, opts}, from, t) do
     trace_pull_transactions(from_version, opts)
 
+    t = note_subscriber(t, opts[:subscriber])
+
     case pull(t, from_version, opts) do
       {:ok, t, transactions} ->
         reply(t, {:ok, transactions})
@@ -401,15 +409,60 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
+  # Records the floor a WAL subscriber (materializer) announces on pull, and
+  # re-runs trim when it advances — a subscriber can be what's holding the
+  # tail back.
+  defp note_subscriber(t, nil), do: t
+
+  defp note_subscriber(t, {subscriber_id, durable_version}) when is_binary(durable_version) do
+    previous = Map.get(t.subscribers, subscriber_id)
+    subscribers = Map.put(t.subscribers, subscriber_id, {durable_version, t.last_version})
+    t = %{t | subscribers: subscribers}
+
+    case previous do
+      {^durable_version, _seen_at} -> t
+      _changed -> trim_durable_segments(t)
+    end
+  end
+
+  # Malformed subscriber info never enters the floor computation.
+  defp note_subscriber(t, _malformed), do: t
+
+  # The trim floor is the object-storage watermark further held back by every
+  # live subscriber's announced floor. Subscribers silent for longer than the
+  # TTL (in version-time) no longer count — and are pruned.
+  defp effective_trim_floor(t) do
+    live_floors =
+      for {_id, {durable_version, seen_at}} <- t.subscribers,
+          Version.distance(t.last_version, seen_at) <= @subscriber_ttl_us,
+          do: durable_version
+
+    Enum.min([t.min_durable_version | live_floors])
+  end
+
+  defp prune_expired_subscribers(t) do
+    subscribers =
+      t.subscribers
+      |> Enum.filter(fn {_id, {_durable, seen_at}} ->
+        Version.distance(t.last_version, seen_at) <= @subscriber_ttl_us
+      end)
+      |> Map.new()
+
+    %{t | subscribers: subscribers}
+  end
+
   defp trim_durable_segments(%{segment_recycler: nil} = t), do: t
   defp trim_durable_segments(%{segments: []} = t), do: t
   defp trim_durable_segments(%{min_durable_version: nil} = t), do: t
+  defp trim_durable_segments(%{mode: mode} = t) when mode != :running, do: t
 
   defp trim_durable_segments(t) do
+    t = prune_expired_subscribers(t)
+    trim_floor = effective_trim_floor(t)
     segments_oldest_first = Enum.reverse(t.segments)
 
     {segments_to_trim_oldest_first, remaining_segments_oldest_first} =
-      Enum.split_while(segments_oldest_first, &segment_fully_durable?(&1, t.min_durable_version))
+      Enum.split_while(segments_oldest_first, &segment_fully_durable?(&1, trim_floor))
 
     Enum.each(segments_to_trim_oldest_first, fn segment ->
       :ok = Segment.return_to_recycler(segment, t.segment_recycler)

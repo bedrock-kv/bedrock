@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T20:13:21Z",
+  "close_reason": "Attempt accumulates lock_failed_service_ids (survives across attempts); refresh_available_services excludes them; replacement log line moved after successful create+lock and reworded to 'replaced'. Verified on the user's data dir: one replacement line, 593ms recovery, correct read.",
   "created": "2026-08-15T20:11:11Z",
   "description": "User observed 5 'replacing log candidates that failed to lock' lines in 2ms, each naming a different fresh worker id for the SAME ghost. Two defects: (1) the Logger.info fires before creation — under rapid attempt stalls (foreman not yet ready) the announced workers never existed; log after success instead. (2) The director relearns the same ghost every attempt: lock failures are only pruned from the view at recovery COMPLETION. RecoveryAttempt now accumulates lock_failed_service_ids across attempts and refresh_available_services excludes them, so a ghost trips exactly one attempt per director; previously created replacements that did register are then reused as ordinary candidates instead of creating more.",
   "id": "bedrock-qzr.14",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Lock-failed services are remembered across recovery attempts; replacement logged after the fact",
   "type": "bug",
-  "updated_at": "2026-08-15T20:11:11Z"
+  "updated_at": "2026-08-15T20:13:21Z"
 }

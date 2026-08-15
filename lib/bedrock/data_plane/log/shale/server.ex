@@ -42,6 +42,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   # storage chunks.
   @subscriber_ttl_us 60_000_000
 
+  # Alarm when the trim floor lags the WAL tip by more than this much
+  # version-time (8 cut intervals). Growth is unbounded-with-alerting by
+  # default; pass reject_pushes_above_lag_us to enforce a hard limit.
+  @floor_lag_alarm_us 40_000_000
+
   @doc false
   @spec child_spec(
           opts :: [
@@ -51,7 +56,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
             foreman: pid(),
             path: Path.t(),
             object_storage: module(),
-            start_unlocked: boolean()
+            start_unlocked: boolean(),
+            reject_pushes_above_lag_us: non_neg_integer()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -62,6 +68,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     path = Keyword.fetch!(opts, :path)
     object_storage = Keyword.fetch!(opts, :object_storage)
     start_unlocked = Keyword.get(opts, :start_unlocked, false)
+    reject_pushes_above_lag_us = Keyword.get(opts, :reject_pushes_above_lag_us)
 
     %{
       id: {__MODULE__, id},
@@ -76,7 +83,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
              foreman,
              path,
              object_storage,
-             start_unlocked
+             start_unlocked,
+             reject_pushes_above_lag_us
            },
            [name: otp_name]
          ]}
@@ -84,9 +92,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  @spec init({module(), atom(), Log.id(), pid(), Path.t(), module(), boolean()}) ::
+  @spec init({module(), atom(), Log.id(), pid(), Path.t(), module(), boolean(), non_neg_integer() | nil}) ::
           {:ok, State.t(), {:continue, :initialization}}
-  def init({cluster, otp_name, id, foreman, path, object_storage, start_unlocked}) do
+  def init({cluster, otp_name, id, foreman, path, object_storage, start_unlocked, reject_pushes_above_lag_us}) do
     initial_mode = if start_unlocked, do: :running, else: :locked
 
     {:ok,
@@ -99,6 +107,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
        otp_name: otp_name,
        foreman: foreman,
        object_storage: object_storage,
+       reject_pushes_above_lag_us: reject_pushes_above_lag_us,
        oldest_version: Version.zero(),
        last_version: Version.zero()
      }, {:continue, :initialization}}
@@ -230,7 +239,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   @impl true
   def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t) do
-    with {:ok, transaction} <- Transaction.validate(transaction_bytes),
+    with :ok <- check_wal_backpressure(t),
+         {:ok, transaction} <- Transaction.validate(transaction_bytes),
          :ok <- validate_has_shard_index(transaction),
          {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
       # Push to Demux for distribution to ShardServers (async)
@@ -469,10 +479,50 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end)
 
     remaining_segments = Enum.reverse(remaining_segments_oldest_first)
+    lag_us = Version.distance(t.last_version, trim_floor)
+
+    trace_trim(
+      trim_floor,
+      t.last_version,
+      lag_us,
+      length(segments_to_trim_oldest_first),
+      length(remaining_segments) + 1
+    )
 
     t
     |> Map.put(:segments, remaining_segments)
     |> Map.put(:oldest_version, determine_oldest_version(t.active_segment, remaining_segments))
+    |> check_floor_lag_alarm(trim_floor, lag_us)
+  end
+
+  # Alarm once per crossing; clears when the floor catches back up.
+  defp check_floor_lag_alarm(t, trim_floor, lag_us) do
+    cond do
+      lag_us > @floor_lag_alarm_us and not t.floor_lag_alarm_active ->
+        trace_floor_lag_alarm(trim_floor, t.last_version, lag_us, @floor_lag_alarm_us)
+        %{t | floor_lag_alarm_active: true}
+
+      lag_us <= @floor_lag_alarm_us and t.floor_lag_alarm_active ->
+        %{t | floor_lag_alarm_active: false}
+
+      true ->
+        t
+    end
+  end
+
+  # Optional hard limit: refuse new pushes while the trim floor lags the WAL
+  # tip by more than the configured version-time. Disabled (nil) by default —
+  # the documented posture is unbounded-with-alerting. A log with no floor
+  # yet (nothing confirmed) never rejects.
+  defp check_wal_backpressure(%{reject_pushes_above_lag_us: nil}), do: :ok
+  defp check_wal_backpressure(%{min_durable_version: nil}), do: :ok
+
+  defp check_wal_backpressure(t) do
+    if Version.distance(t.last_version, effective_trim_floor(t)) > t.reject_pushes_above_lag_us do
+      {:error, :wal_backpressure}
+    else
+      :ok
+    end
   end
 
   defp segment_fully_durable?(segment, min_durable_version) do

@@ -41,6 +41,8 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           subscribers: %{
             Bedrock.service_id() => {durable_version :: Bedrock.version(), seen_at :: Bedrock.version()}
           },
+          floor_lag_alarm_active: boolean(),
+          reject_pushes_above_lag_us: non_neg_integer() | nil,
           #
           mode: mode(),
           oldest_version: Bedrock.version(),
@@ -75,6 +77,8 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             pending_pushes: %{},
             #
             subscribers: %{},
+            floor_lag_alarm_active: false,
+            reject_pushes_above_lag_us: nil,
             #
             mode: :locked,
             oldest_version: nil,

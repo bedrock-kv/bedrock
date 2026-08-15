@@ -66,6 +66,23 @@ defmodule Bedrock.DataPlane.Demux.DurabilityTest do
     end
   end
 
+  describe "min_entry/1" do
+    test "returns nil for empty tracker" do
+      assert Durability.min_entry(Durability.new()) == nil
+    end
+
+    test "identifies the shard pinning the floor" do
+      durability = Durability.new()
+      {:ok, durability} = Durability.activate_shard(durability, 0, 1000)
+      {:ok, durability} = Durability.activate_shard(durability, 1, 500)
+
+      assert Durability.min_entry(durability) == {500, 1}
+
+      {:ok, durability} = Durability.update_shard(durability, 1, 1500)
+      assert Durability.min_entry(durability) == {1000, 0}
+    end
+  end
+
   describe "min_durable_version/1" do
     test "returns nil for empty tracker" do
       durability = Durability.new()

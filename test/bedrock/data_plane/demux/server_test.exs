@@ -228,6 +228,39 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       assert Server.min_durable_version(server) == cut1
     end
 
+    test "floor advancement telemetry names the pinning shard", %{backend: backend, shard_base: shard_base} do
+      test_pid = self()
+      handler_id = "demux-floor-telemetry-#{:erlang.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:bedrock, :demux, :durability, :floor_advanced],
+          fn event, measurements, metadata, pid -> send(pid, {:telemetry, event, measurements, metadata}) end,
+          test_pid
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      interval = 1_000
+      server = start_cut_server(backend, self(), interval)
+      shard_id = shard_base + 44
+
+      txn = fn v -> make_transaction([{:set, "k", "v"}], [{shard_id, 1}], v) end
+
+      v_in_bucket = version_in_bucket(5, 100, interval)
+      v_crossing = version_in_bucket(6, 0, interval)
+      cut = cut_of_bucket(5, interval)
+
+      :ok = Server.push(server, v_in_bucket, txn.(v_in_bucket))
+      :ok = Server.push(server, v_crossing, txn.(v_crossing))
+
+      assert_receive {:telemetry, [:bedrock, :demux, :durability, :floor_advanced], measurements, metadata}, 1_500
+      assert metadata.min_durable_version == cut
+      assert metadata.pinning_shard_id == shard_id
+      assert measurements.active_shards == 1
+    end
+
     test "idle shards do not pin the floor", %{backend: backend, shard_base: shard_base} do
       interval = 1_000
       server = start_cut_server(backend, self(), interval)

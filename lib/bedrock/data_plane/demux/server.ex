@@ -51,6 +51,7 @@ defmodule Bedrock.DataPlane.Demux.Server do
 
   alias Bedrock.DataPlane.Demux.Durability
   alias Bedrock.DataPlane.Demux.MutationSlicer
+  alias Bedrock.DataPlane.Demux.PersistenceTelemetry
   alias Bedrock.DataPlane.Demux.ShardServer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
@@ -319,6 +320,14 @@ defmodule Bedrock.DataPlane.Demux.Server do
         # If min advanced, notify log
         if new_min != old_min and new_min != nil do
           notify_log_durability(state.log, new_min)
+
+          {_min, pinning_shard_id} = Durability.min_entry(durability)
+
+          PersistenceTelemetry.emit_floor_advanced(
+            new_min,
+            pinning_shard_id,
+            Durability.active_shard_count(durability)
+          )
         end
 
         %{state | durability: durability}

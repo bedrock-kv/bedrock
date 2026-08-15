@@ -74,4 +74,43 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
       })
     )
   end
+
+  @spec trace_trim(
+          floor :: Bedrock.version(),
+          last_version :: Bedrock.version(),
+          lag_us :: non_neg_integer(),
+          segments_recycled :: non_neg_integer(),
+          segments_retained :: non_neg_integer()
+        ) :: :ok
+  def trace_trim(floor, last_version, lag_us, segments_recycled, segments_retained) do
+    Telemetry.execute(
+      [:bedrock, :log, :trim],
+      %{
+        lag_us: lag_us,
+        segments_recycled: segments_recycled,
+        segments_retained: segments_retained
+      },
+      Map.merge(trace_metadata(), %{
+        floor: floor,
+        last_version: last_version
+      })
+    )
+  end
+
+  @spec trace_floor_lag_alarm(
+          floor :: Bedrock.version(),
+          last_version :: Bedrock.version(),
+          lag_us :: non_neg_integer(),
+          limit_us :: non_neg_integer()
+        ) :: :ok
+  def trace_floor_lag_alarm(floor, last_version, lag_us, limit_us) do
+    Telemetry.execute(
+      [:bedrock, :log, :floor_lag_alarm],
+      %{lag_us: lag_us, limit_us: limit_us},
+      Map.merge(trace_metadata(), %{
+        floor: floor,
+        last_version: last_version
+      })
+    )
+  end
 end

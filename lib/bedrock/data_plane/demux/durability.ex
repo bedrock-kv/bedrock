@@ -135,6 +135,21 @@ defmodule Bedrock.DataPlane.Demux.Durability do
   end
 
   @doc """
+  Returns the minimum entry — `{version, shard_id}` — identifying WHICH shard
+  currently pins the floor (FDB's MinPoppedTag equivalent).
+
+  Returns `nil` if no shards are being tracked.
+  """
+  @spec min_entry(t()) :: {version(), shard_id()} | nil
+  def min_entry(%__MODULE__{version_index: index}) do
+    if :gb_sets.is_empty(index) do
+      nil
+    else
+      :gb_sets.smallest(index)
+    end
+  end
+
+  @doc """
   Returns the durable version for a specific shard.
 
   Returns `nil` if the shard is not being tracked.

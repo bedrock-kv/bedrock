@@ -8,7 +8,7 @@
   "labels": [],
   "priority": 3,
   "status": "open",
-  "title": "Mass-death recruitment thundering herd; placement always picks first capable node",
+  "title": "Materializer placement always picks first capable node; spread round-robin",
   "type": "task",
-  "updated_at": "2026-08-15T20:38:08Z"
+  "updated_at": "2026-08-15T20:46:37Z"
 }

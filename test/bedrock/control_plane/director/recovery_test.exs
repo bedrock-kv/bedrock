@@ -365,8 +365,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         )
         |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
         |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
-        |> Map.put(:materializer_info_fn, fn _pid, [:durable_version] ->
-          {:ok, %{durable_version: durable_version}}
+        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
+          {:ok, %{current_version: durable_version}}
         end)
         |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
           {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
@@ -509,6 +509,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     node_capabilities = %{
       log: [:node1@host, :node2@host, :node3@host],
       storage: [:node1@host, :node2@host, :node3@host],
+      materializer: [:node1@host, :node2@host, :node3@host],
       coordination: [:node1@host, :node2@host, :node3@host],
       resolution: [:node1@host, :node2@host, :node3@host]
     }
@@ -562,12 +563,16 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   defp create_mock_service_info(kind) do
-    %{
+    base = %{
       kind: kind,
       durable_version: Version.from_integer(95),
       oldest_version: Version.zero(),
       last_version: Version.from_integer(100)
     }
+
+    # Materializers report their shard assignment when locked (the
+    # bootstrap phase reuses them by shard).
+    if kind == :materializer, do: Map.put(base, :shard_id, 0), else: base
   end
 
   defp with_mocked_worker_creation(context) do

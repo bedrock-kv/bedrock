@@ -231,6 +231,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   end
 
   defp supported_info, do: ~w[
+      current_version
       durable_version
       oldest_durable_version
       id
@@ -240,6 +241,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
       kind
       n_keys
       otp_name
+      shard_id
       size_in_bytes
       supported_info
       utilization
@@ -247,6 +249,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
   defp gather_info(:oldest_durable_version, t), do: Database.durable_version(t.database)
   defp gather_info(:durable_version, t), do: Database.durable_version(t.database)
+  # The applied (in-memory) position — what reads can be served through.
+  # Distinct from :durable_version, which eviction clamps to the
+  # known-committed version and which therefore trails by design.
+  defp gather_info(:current_version, t), do: t.index_manager.current_version
+  defp gather_info(:shard_id, t), do: t.shard_num
   defp gather_info(:id, t), do: t.id
   defp gather_info(:key_ranges, t), do: IndexManager.info(t.index_manager, :key_ranges)
   defp gather_info(:kind, _t), do: :materializer

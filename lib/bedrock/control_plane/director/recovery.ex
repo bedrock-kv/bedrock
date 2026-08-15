@@ -125,6 +125,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
         |> persist_config()
         |> persist_new_transaction_system_layout()
+        |> prune_service_directory()
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
@@ -140,6 +141,41 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         trace_recovery_failed(Interval.between(t.recovery_attempt.started_at, now()), reason)
         t
     end
+  end
+
+  @doc """
+  The directory ids a completed recovery's layout does not reference.
+
+  These are ghosts: registrations left behind by workers on nodes that no
+  longer exist under that name (node names change across restarts, and
+  nothing on a dead node can deregister itself). Entries on live nodes need
+  no help here — their foreman retires and deregisters them through layout
+  reconciliation — but only the director can clean up for the dead.
+  """
+  @spec ghost_directory_ids(
+          services :: %{Worker.id() => term()},
+          TransactionSystemLayout.t()
+        ) :: [Worker.id()]
+  def ghost_directory_ids(services, %{services: layout_services}) when is_map(layout_services) do
+    services
+    |> Map.keys()
+    |> Enum.reject(&Map.has_key?(layout_services, &1))
+  end
+
+  def ghost_directory_ids(_services, _layout), do: []
+
+  @spec prune_service_directory(State.t()) :: State.t()
+  defp prune_service_directory(t) do
+    case ghost_directory_ids(t.services, t.transaction_system_layout) do
+      [] ->
+        t
+
+      ghost_ids ->
+        _ = Coordinator.deregister_services(t.coordinator, ghost_ids)
+        %{t | services: Map.drop(t.services, ghost_ids)}
+    end
+  catch
+    :exit, _ -> t
   end
 
   @spec refresh_available_services(State.t()) :: %{Worker.id() => {atom(), {atom(), node()}}}

@@ -168,6 +168,25 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     end
   end
 
+  describe "ghost_directory_ids/2" do
+    test "selects exactly the directory entries the layout does not reference" do
+      services = %{
+        "live_log" => {:log, {:a, :node1}},
+        "live_mat" => {:materializer, {:b, :node1}},
+        "ghost" => {:log, {:c, :dead@nowhere}}
+      }
+
+      layout = %{services: %{"live_log" => %{}, "live_mat" => %{}}}
+
+      assert Recovery.ghost_directory_ids(services, layout) == ["ghost"]
+    end
+
+    test "an invalid layout selects nothing" do
+      assert Recovery.ghost_directory_ids(%{"x" => {:log, {:a, :n}}}, %{}) == []
+      assert Recovery.ghost_directory_ids(%{"x" => {:log, {:a, :n}}}, nil) == []
+    end
+  end
+
   describe "setup_for_subsequent_recovery/1" do
     test "increments attempt counter and resets state" do
       recovery_attempt = %RecoveryAttempt{

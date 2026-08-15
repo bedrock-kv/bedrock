@@ -78,6 +78,64 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       assert %{{:log, 2} => _, {:log, 3} => _} = logs
     end
 
+    test "an unlockable candidate (ghost registration) is replaced, not a stall" do
+      # The directory can carry registrations from dead nodes — nothing on
+      # a dead node can deregister itself. Recruitment must treat a failed
+      # lock as 'this candidate is gone' and create a fresh worker instead
+      # of wedging every recovery attempt forever.
+      good_pid = spawn(fn -> Process.sleep(:infinity) end)
+      replacement_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt = %{
+        cluster: TestCluster,
+        epoch: 3,
+        logs: %{{:vacancy, 1} => %{}, {:vacancy, 2} => %{}},
+        transaction_services: %{},
+        service_pids: %{}
+      }
+
+      context =
+        create_recovery_context(
+          %{{:log, :old} => %{}},
+          %{
+            "ghost_log" => {:log, {:ghost_worker, :dead@nowhere}},
+            "good_log" => {:log, {:good_worker, :node1}}
+          },
+          node_capabilities: %{log: [:node1@host]},
+          create_worker_fn: fn _foreman, _id, :log, _opts -> {:ok, :replacement_ref} end,
+          worker_info_fn: fn {_ref, _node}, _facts, _opts ->
+            {:ok, %{id: "replacement", otp_name: :replacement_otp, kind: :log, pid: replacement_pid}}
+          end,
+          lock_service_fn: fn
+            {:log, {:ghost_worker, _}}, _epoch ->
+              {:error, :unavailable}
+
+            {:log, {:good_worker, _}}, _epoch ->
+              {:ok, good_pid, %{kind: :log, oldest_version: 0, last_version: 1}}
+
+            {:log, {:replacement_otp, _}}, _epoch ->
+              {:ok, replacement_pid, %{kind: :log, oldest_version: 0, last_version: 0}}
+          end
+        )
+
+      log =
+        capture_log(fn ->
+          assert {%{logs: logs, transaction_services: services}, LogReplayPhase} =
+                   LogRecruitmentPhase.execute(recovery_attempt, context)
+
+          # The ghost id is gone from the layout; the good candidate and a
+          # fresh replacement fill the two vacancies.
+          refute Map.has_key?(logs, "ghost_log")
+          assert Map.has_key?(logs, "good_log")
+          assert map_size(logs) == 2
+
+          refute Map.has_key?(services, "ghost_log")
+          assert %{"good_log" => %{status: {:up, ^good_pid}}} = services
+        end)
+
+      assert log =~ "replacing unlockable log candidates"
+    end
+
     test "workers created this attempt complete recruitment in the SAME attempt" do
       # A just-created worker cannot be in the coordinator's directory yet
       # (advertisement is async) — recruitment must lock it via the ref it

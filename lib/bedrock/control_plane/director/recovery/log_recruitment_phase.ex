@@ -51,16 +51,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
          # directory yet (advertisement is async) — lock them via the refs
          # we already hold rather than stalling until they rediscover
          # themselves. This is what lets recruitment finish in one attempt.
-         {:ok, existing_log_services} <-
+         {:ok, existing_log_services, unlockable_ids} <-
            extract_and_lock_existing_log_services(
              logs,
              Map.merge(context.available_services, service_refs(updated_services)),
              recovery_attempt,
              context
+           ),
+         # A candidate that fails to lock is information, not a stall: the
+         # directory can hold ghost registrations from dead nodes (node
+         # names change across restarts, and nothing on a dead node can
+         # deregister itself). Skip the ghost and create a fresh worker in
+         # its place — the attempt acts on its view, and the failed lock
+         # is the view.
+         {:ok, logs, replacement_services} <-
+           replace_unlockable_candidates(
+             logs,
+             unlockable_ids,
+             available_log_nodes,
+             recovery_attempt,
+             context
            ) do
       trace_recovery_all_log_vacancies_filled()
 
-      all_log_services = Map.merge(existing_log_services, updated_services)
+      all_log_services =
+        existing_log_services |> Map.merge(updated_services) |> Map.merge(replacement_services)
+
       all_log_pids = extract_service_pids(all_log_services)
 
       trace_recovery_log_recruitment_completed(
@@ -261,61 +277,81 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
           map(),
           map()
         ) ::
-          {:ok, %{String.t() => map()}} | {:error, term()}
+          {:ok, %{String.t() => map()}, unlockable :: [Log.id()]} | {:error, term()}
+  # Lock every non-vacancy candidate. A candidate that cannot be found or
+  # locked is collected rather than halting the attempt — the caller
+  # replaces it with a fresh worker. Only a newer epoch halts: that means
+  # this recovery has been superseded.
   defp extract_and_lock_existing_log_services(logs, available_services, recovery_attempt, context) do
     existing_log_ids =
       logs
       |> Map.keys()
       |> Enum.reject(&match?({:vacancy, _}, &1))
 
-    Enum.reduce_while(existing_log_ids, {:ok, %{}}, fn log_id, {:ok, locked_services} ->
-      process_log_service_locking(
-        log_id,
-        available_services,
-        recovery_attempt,
-        context,
-        locked_services
-      )
+    Enum.reduce_while(existing_log_ids, {:ok, %{}, []}, fn log_id, {:ok, locked_services, unlockable} ->
+      case Map.get(available_services, log_id) do
+        {_kind, last_seen} = service ->
+          case lock_recruited_service(service, recovery_attempt.epoch, context) do
+            {:ok, pid, info} ->
+              locked_service = %{status: {:up, pid}, kind: info.kind, last_seen: last_seen}
+              {:cont, {:ok, Map.put(locked_services, log_id, locked_service), unlockable}}
+
+            {:error, :newer_epoch_exists} = error ->
+              {:halt, error}
+
+            {:error, _reason} ->
+              {:cont, {:ok, locked_services, [log_id | unlockable]}}
+          end
+
+        _ ->
+          {:cont, {:ok, locked_services, [log_id | unlockable]}}
+      end
     end)
   end
 
-  @spec process_log_service_locking(String.t(), map(), map(), map(), map()) ::
-          {:cont, {:ok, map()}} | {:halt, {:error, term()}}
-  defp process_log_service_locking(log_id, available_services, recovery_attempt, context, locked_services) do
-    case Map.get(available_services, log_id) do
-      {_kind, last_seen} = service ->
-        handle_log_service_locking(
-          service,
-          last_seen,
-          log_id,
-          recovery_attempt,
-          context,
-          locked_services
-        )
+  @spec replace_unlockable_candidates(
+          %{Log.id() => any()},
+          [Log.id()],
+          [node()],
+          map(),
+          RecoveryPhase.context()
+        ) :: {:ok, %{Log.id() => any()}, %{String.t() => map()}} | {:error, term()}
+  defp replace_unlockable_candidates(logs, [], _nodes, _recovery_attempt, _context), do: {:ok, logs, %{}}
 
-      _ ->
-        {:halt, {:error, {:recruited_service_unavailable, log_id}}}
-    end
-  end
+  defp replace_unlockable_candidates(logs, unlockable_ids, available_nodes, recovery_attempt, context) do
+    replacement_ids = Enum.map(unlockable_ids, fn _ -> Worker.random_id() end)
 
-  @spec handle_log_service_locking(tuple(), tuple(), String.t(), map(), map(), map()) ::
-          {:cont, {:ok, map()}} | {:halt, {:error, term()}}
-  defp handle_log_service_locking(service, last_seen, log_id, recovery_attempt, context, locked_services) do
-    case lock_recruited_service(service, recovery_attempt.epoch, context) do
-      {:ok, pid, info} ->
-        locked_service = %{
-          status: {:up, pid},
-          kind: info.kind,
-          last_seen: last_seen
-        }
+    Logger.info(
+      "Bedrock recruitment: replacing unlockable log candidates #{inspect(unlockable_ids)} " <>
+        "with fresh workers #{inspect(replacement_ids)}"
+    )
 
-        {:cont, {:ok, Map.put(locked_services, log_id, locked_service)}}
+    with {:ok, replacement_services} <-
+           create_new_log_workers(replacement_ids, available_nodes, recovery_attempt, context),
+         {:ok, locked_replacements, []} <-
+           extract_and_lock_existing_log_services(
+             Map.new(replacement_ids, &{&1, []}),
+             service_refs(replacement_services),
+             recovery_attempt,
+             context
+           ) do
+      swapped_logs =
+        unlockable_ids
+        |> Enum.zip(replacement_ids)
+        |> Enum.reduce(logs, fn {ghost_id, new_id}, acc ->
+          {descriptor, acc} = Map.pop(acc, ghost_id)
+          Map.put(acc, new_id, descriptor)
+        end)
 
-      {:error, :newer_epoch_exists} = error ->
-        {:halt, error}
+      {:ok, swapped_logs, Map.merge(replacement_services, locked_replacements)}
+    else
+      {:ok, _locked, still_unlockable} when is_list(still_unlockable) ->
+        # A freshly created worker failing to lock is a real infrastructure
+        # problem, not a ghost — stall honestly.
+        {:error, {:failed_to_lock_recruited_service, still_unlockable}}
 
-      {:error, reason} ->
-        {:halt, {:error, {:failed_to_lock_recruited_service, log_id, reason}}}
+      error ->
+        error
     end
   end
 

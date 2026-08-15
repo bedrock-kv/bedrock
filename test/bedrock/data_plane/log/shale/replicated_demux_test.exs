@@ -142,6 +142,85 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
     end)
   end
 
+  test "replicas produce identical ordered slices and chunks from different arrival orders", %{tmp_dir: tmp_dir} do
+    object_root = Path.join(tmp_dir, "deterministic-objects")
+    first_wal_root = Path.join(tmp_dir, "deterministic-first-wal")
+    second_wal_root = Path.join(tmp_dir, "deterministic-second-wal")
+    File.mkdir_p!(object_root)
+    File.mkdir_p!(first_wal_root)
+    File.mkdir_p!(second_wal_root)
+
+    shared_backend = ObjectStorage.backend(LocalFilesystem, root: object_root)
+
+    gated_backend =
+      ObjectStorage.backend(GatedObjectStorage,
+        delegate: shared_backend,
+        controller: self()
+      )
+
+    first_log = start_log("ordered-first", first_wal_root, gated_backend)
+    second_log = start_log("ordered-second", second_wal_root, gated_backend)
+
+    shard_id = 23
+    first_version = Version.from_integer(1_000)
+    second_version = Version.from_integer(2_000)
+    crossing_version = Version.from_integer(Demux.default_cut_interval_us())
+    heartbeat_version = Version.increment(crossing_version)
+
+    first =
+      TransactionTestSupport.new_log_transaction(first_version, %{"first" => "1"}, shard_id: shard_id)
+
+    second =
+      TransactionTestSupport.new_log_transaction(second_version, %{"second" => "2"}, shard_id: shard_id)
+
+    crossing =
+      TransactionTestSupport.new_log_transaction(crossing_version, %{"third" => "3"}, shard_id: shard_id)
+
+    heartbeat = TransactionTestSupport.new_log_transaction(heartbeat_version, %{})
+
+    first_crossing = queue_push(first_log, crossing, second_version)
+    first_second = queue_push(first_log, second, first_version)
+    assert :ok = Log.push(first_log, first, Version.zero(), known_committed_version: Version.zero())
+    assert :ok = Task.await(first_second, 2_000)
+    assert :ok = Task.await(first_crossing, 2_000)
+
+    second_second = queue_push(second_log, second, first_version)
+    second_crossing = queue_push(second_log, crossing, second_version)
+    assert :ok = Log.push(second_log, first, Version.zero(), known_committed_version: Version.zero())
+    assert :ok = Task.await(second_second, 2_000)
+    assert :ok = Task.await(second_crossing, 2_000)
+
+    assert {:ok, first_shard_server} = Log.get_shard_server(first_log, shard_id)
+    assert {:ok, second_shard_server} = Log.get_shard_server(second_log, shard_id)
+
+    expected_versions = [first_version, second_version, crossing_version]
+
+    assert {:ok, first_slices, _currency} =
+             ShardServer.pull(first_shard_server, first_version, timeout: 100, limit: 10)
+
+    assert {:ok, second_slices, _currency} =
+             ShardServer.pull(second_shard_server, first_version, timeout: 100, limit: 10)
+
+    assert Enum.map(first_slices, &elem(&1, 0)) == expected_versions
+    assert second_slices == first_slices
+
+    assert :ok =
+             Log.push(first_log, heartbeat, crossing_version, known_committed_version: crossing_version)
+
+    assert :ok =
+             Log.push(second_log, heartbeat, crossing_version, known_committed_version: crossing_version)
+
+    assert_receive {:conditional_create_waiting, first_worker, first_ref, chunk_key, proposed_chunk}, 2_000
+
+    assert_receive {:conditional_create_waiting, second_worker, second_ref, ^chunk_key, ^proposed_chunk}, 2_000
+
+    send(first_worker, {:release_conditional_create, first_ref})
+    assert_receive {:conditional_create_finished, ^first_ref, :ok}, 2_000
+
+    send(second_worker, {:release_conditional_create, second_ref})
+    assert_receive {:conditional_create_finished, ^second_ref, {:error, :already_exists}}, 2_000
+  end
+
   defp start_log(label, wal_root, object_storage) do
     suffix = :erlang.unique_integer([:positive])
 
@@ -168,6 +247,19 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
     end)
 
     pid
+  end
+
+  defp queue_push(log, transaction, expected_version) do
+    task =
+      Task.async(fn ->
+        Log.push(log, transaction, expected_version, known_committed_version: Version.zero())
+      end)
+
+    eventually(fn ->
+      assert Map.has_key?(:sys.get_state(log).pending_pushes, expected_version)
+    end)
+
+    task
   end
 
   defp eventually(assertion, timeout \\ 2_000) do

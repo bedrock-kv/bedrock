@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   use ExUnit.Case, async: false
 
   alias Bedrock.Cluster
+  alias Bedrock.DataPlane.Demux.ShardServer
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Log.Shale.State
@@ -243,6 +244,43 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       send(demux, {:currency_request, self(), nil})
 
       assert_receive {:currency, ^v1, ^v1}, 1_000
+    end
+
+    test "a parked future push advances only KCV, then drains every transaction to the shard stream", %{
+      server: pid
+    } do
+      make_running(pid, Version.zero())
+
+      v1 = Version.from_integer(100)
+      v2 = Version.from_integer(200)
+      v3 = Version.from_integer(300)
+      tx1 = TransactionTestSupport.new_log_transaction(v1, %{"one" => "1"})
+      tx2 = TransactionTestSupport.new_log_transaction(v2, %{"two" => "2"})
+      tx3 = TransactionTestSupport.new_log_transaction(v3, %{"three" => "3"})
+
+      assert :ok = GenServer.call(pid, {:push, tx1, Version.zero(), Version.zero()})
+
+      future_push =
+        Task.async(fn ->
+          GenServer.call(pid, {:push, tx3, v2, v1}, 5_000)
+        end)
+
+      eventually(fn ->
+        assert Map.has_key?(:sys.get_state(pid).pending_pushes, v2)
+      end)
+
+      demux = demux_of(pid)
+      assert %{high_water: ^v1, known_committed_version: ^v1} = :sys.get_state(demux)
+
+      assert :ok = GenServer.call(pid, {:push, tx2, v1, Version.zero()})
+      assert :ok = Task.await(future_push, 2_000)
+
+      assert {:ok, shard_server} = GenServer.call(pid, {:get_shard_server, 0})
+
+      assert {:ok, slices, %{high_water: ^v3, kcv: ^v1}} =
+               ShardServer.pull(shard_server, v1, timeout: 100, limit: 10)
+
+      assert Enum.map(slices, &elem(&1, 0)) == [v1, v2, v3]
     end
 
     test "a demux slicing failure takes down the owning log", %{server: pid} do
@@ -792,6 +830,14 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert map_size(final_state.pending_pushes) == 0
       expected_final_version = Version.from_integer(sequence_length)
       assert final_state.last_version == expected_final_version
+
+      assert {:ok, shard_server} = GenServer.call(server, {:get_shard_server, 0})
+
+      assert {:ok, slices, %{high_water: ^expected_final_version}} =
+               ShardServer.pull(shard_server, Version.from_integer(1), timeout: 100, limit: sequence_length)
+
+      assert Enum.map(slices, &elem(&1, 0)) ==
+               Enum.map(1..sequence_length, &Version.from_integer/1)
 
       # Cleanup server
       cleanup_server(server)

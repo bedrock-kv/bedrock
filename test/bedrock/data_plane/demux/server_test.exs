@@ -355,6 +355,46 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
   end
 
   describe "version currency" do
+    test "a standalone KCV advance is monotonic and does not change transaction high-water", %{server: server} do
+      high_water = Version.from_integer(7_000)
+      newer_kcv = Version.from_integer(6_500)
+      older_kcv = Version.from_integer(6_000)
+      txn = make_transaction([], nil, high_water)
+
+      :ok = Server.push(server, high_water, txn, Version.zero())
+      :ok = Server.advance_known_committed_version(server, newer_kcv)
+
+      assert %{high_water: ^high_water, known_committed_version: ^newer_kcv} = :sys.get_state(server)
+
+      :ok = Server.advance_known_committed_version(server, older_kcv)
+      assert %{high_water: ^high_water, known_committed_version: ^newer_kcv} = :sys.get_state(server)
+    end
+
+    test "a standalone KCV advance releases an already-pending cut", %{backend: backend} do
+      interval = 1_000
+      server = start_cut_server(backend, self(), interval)
+      first_version = version_in_bucket(5, 100, interval)
+      crossing_version = version_in_bucket(6, 0, interval)
+      cut_version = cut_of_bucket(5, interval)
+
+      :ok = Server.push(server, first_version, make_transaction([], [], first_version), first_version)
+
+      :ok =
+        Server.push(
+          server,
+          crossing_version,
+          make_transaction([], [], crossing_version),
+          first_version
+        )
+
+      refute_receive {:min_durable_version, _, _}, 100
+
+      :ok = Server.advance_known_committed_version(server, cut_version)
+
+      assert_receive {:min_durable_version, _, ^cut_version}, 1_000
+      assert %{high_water: ^crossing_version} = :sys.get_state(server)
+    end
+
     test "answers currency requests with the high-water and known-committed versions", %{server: server} do
       version = Version.from_integer(7_000)
       kcv = Version.from_integer(6_500)

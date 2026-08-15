@@ -237,24 +237,22 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:push, transaction_bytes, expected_version, known_committed_version}, from, %State{} = t) do
     with :ok <- check_wal_backpressure(t),
          {:ok, transaction} <- Transaction.validate(transaction_bytes),
-         :ok <- validate_has_shard_index(transaction),
-         {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
-      # Push to Demux for distribution to ShardServers (async). A locked
-      # log has no demux (its flush pipeline is quiesced); the WAL still
-      # appends, and recovery replays through a fresh demux.
-      #
-      # The demux gets the transaction's OWN commit version — never
-      # `expected_version`, which is the push protocol's gap-check argument
-      # (the PREVIOUS version). Forwarding the previous version would leave
-      # the demux's high-water — and every currency signal, cut boundary,
-      # and chunk name derived from it — one commit behind reality.
-      if t.demux do
-        Demux.Server.push(t.demux, Transaction.commit_version!(transaction), transaction, known_committed_version)
-      end
+         :ok <- validate_has_shard_index(transaction) do
+      case push(t, expected_version, transaction, ack_fn(from)) do
+        {:ok, t, appended_transactions} ->
+          finish_push(t, appended_transactions, known_committed_version, expected_version, transaction)
 
-      noreply(t, continue: {:notify_waiting_pullers, expected_version, transaction})
+        {:wait, t} ->
+          advance_demux_kcv(t.demux, known_committed_version)
+          noreply(t, continue: :check_for_expired_pullers)
+
+        {:error, _reason, t, appended_transactions} ->
+          finish_push(t, appended_transactions, known_committed_version, expected_version, transaction)
+
+        {:error, _reason} = error ->
+          reply(t, error, continue: :check_for_expired_pullers)
+      end
     else
-      {:wait, t} -> noreply(t, continue: :check_for_expired_pullers)
       {:error, _reason} = error -> reply(t, error, continue: :check_for_expired_pullers)
     end
   end
@@ -323,6 +321,40 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       {:error, _} ->
         {:error, :missing_shard_index}
     end
+  end
+
+  # Pushing owns predecessor scheduling and WAL appends; the Server owns the
+  # corresponding live Demux delivery. The binaries returned here are the
+  # exact ref-counted inputs written to the WAL, already in predecessor-chain
+  # order, so forwarding neither slices nor copies them.
+  defp finish_push(t, appended_transactions, known_committed_version, expected_version, transaction) do
+    forward_appended_transactions(t.demux, appended_transactions, known_committed_version)
+
+    if appended_transactions == [] do
+      noreply(t, continue: :check_for_expired_pullers)
+    else
+      noreply(t, continue: {:notify_waiting_pullers, expected_version, transaction})
+    end
+  end
+
+  defp forward_appended_transactions(nil, _transactions, _known_committed_version), do: :ok
+
+  defp forward_appended_transactions(demux, transactions, known_committed_version) do
+    Enum.each(transactions, fn transaction ->
+      Demux.Server.push(
+        demux,
+        Transaction.commit_version!(transaction),
+        transaction,
+        known_committed_version
+      )
+    end)
+  end
+
+  defp advance_demux_kcv(_demux, nil), do: :ok
+  defp advance_demux_kcv(nil, _known_committed_version), do: :ok
+
+  defp advance_demux_kcv(demux, known_committed_version) do
+    Demux.Server.advance_known_committed_version(demux, known_committed_version)
   end
 
   @spec check_running(term()) :: {:error, :unavailable}

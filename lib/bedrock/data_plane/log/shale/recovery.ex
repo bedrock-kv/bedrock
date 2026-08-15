@@ -211,7 +211,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
           {:cont, {Bedrock.version(), State.t()}} | {:halt, {:error, term()}}
   defp handle_valid_transaction_bytes(bytes, version, last_version, t) do
     with {:ok, _transaction} <- Transaction.decode(bytes),
-         {:ok, t} <- push(t, last_version, bytes, fn _ -> :ok end) do
+         {:ok, t, [^bytes]} <- push(t, last_version, bytes, fn _ -> :ok end) do
       # Replay routes through the fresh Demux so the replayed range re-enters
       # the chunk pipeline and re-confirms deterministically.
       push_to_demux(t, version, bytes)
@@ -219,6 +219,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     else
       {:wait, _t} -> {:halt, {:error, :tx_out_of_order}}
       {:error, :invalid_format} -> {:halt, {:error, :invalid_transaction}}
+      {:error, reason, _t, _appended_transactions} -> {:halt, {:error, reason}}
       {:error, _reason} = error -> {:halt, error}
     end
   end
@@ -305,11 +306,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     {:ok, sentinel} = Transaction.add_commit_version(encoded_sentinel, version_binary)
 
     case push(t, version, sentinel, fn _ -> :ok end) do
-      {:ok, t} ->
+      {:ok, t, [^sentinel]} ->
         push_to_demux(t, version_binary, sentinel)
         t
 
-      {:error, _} ->
+      {:error, _reason, _t, _appended_transactions} ->
+        raise "Failed to push sentinel"
+
+      {:error, _reason} ->
         raise "Failed to push sentinel"
     end
   end

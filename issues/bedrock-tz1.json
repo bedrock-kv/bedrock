@@ -6,9 +6,9 @@
   "description": "create_transaction/2 is duplicated in 7 olivine test files (persistence_integration, page_chain_loading, page_chain_recovery_bug, incremental_loading, atomic_operations, empty_block_squashing, logic_test) because TransactionTestSupport.new_log_transaction/3 is map-based and can't express ordered/duplicate-key mutation lists. Add a list variant and migrate. Related: bedrock-aa5 (shared index fixtures).",
   "id": "bedrock-tz1",
   "labels": [],
-  "priority": 2,
+  "priority": 3,
   "status": "open",
   "title": "Add mutation-list transaction helper; dedupe create_transaction/2 (7 copies)",
   "type": "task",
-  "updated_at": "2026-07-14T18:57:46Z"
+  "updated_at": "2026-08-15T20:46:23Z"
 }

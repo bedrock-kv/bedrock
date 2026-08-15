@@ -2,6 +2,8 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T20:37:44Z",
+  "close_reason": "Fixed by PR #109 (eecf16dc): record_read_intent/3 in point_reads.ex registers read conflicts at read-issue time, FDB-aligned, including :not_found results.",
   "created": "2026-07-17T01:39:37Z",
   "description": "Point reads that miss storage ({:error, :not_found}) never enter the read conflict set: wrap_storage_get_result falls through the generic error clause and skips Tx.merge_storage_read, so two concurrent txns can read-miss the same key, both write it, and both commit (see PR #108 for the result-normalization approach). Fix aligned with FoundationDB NativeAPI Transaction::get: register the single-key read conflict at read-issue time in get_key_from_storage (unless snapshot), via Tx.add_read_conflict_key, making conflict correctness independent of the storage result shape.",
   "id": "bedrock-udr",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Register point-read conflicts on read intent (FDB-aligned)",
   "type": "task",
-  "updated_at": "2026-07-17T01:44:40Z"
+  "updated_at": "2026-08-15T20:37:44Z"
 }

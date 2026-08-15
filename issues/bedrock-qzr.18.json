@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T21:34:22Z",
+  "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nLogReplayPhase passes max(durable_version, oldest_available) as first_version, but Log.pull defines its cursor as exclusive and TransactionStreams filters version greater than the cursor. Shale recovery also writes an empty sentinel at first_version. When first_version is the source WAL's actual oldest retained transaction, that real transaction is skipped and replaced by the sentinel.\n\nObserved reproduction:\nA source containing mutations at versions 1 and 2 reported range {1, 2}; the recovered log contained an empty version 1 sentinel and only the version 2 mutation.\n\nImpact:\nDeterministic data loss during ordinary restart recovery after WAL trimming.\n\nAcceptance criteria:\n- The replay range contract is made unambiguous and consistent end to end.\n- Recovery copies the real transaction at the oldest retained boundary exactly once.\n- Sentinel initialization cannot overwrite or stand in for a real source transaction.\n- Integration tests use actual Shale source and destination logs for trimmed and untrimmed boundaries, including first == last and gaps.\n- Documentation and type specs state whether every boundary is inclusive or exclusive.",
+  "id": "bedrock-qzr.18",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 0,
+  "status": "open",
+  "title": "Preserve the first retained transaction during log replay",
+  "type": "bug",
+  "updated_at": "2026-08-15T21:34:22Z"
+}

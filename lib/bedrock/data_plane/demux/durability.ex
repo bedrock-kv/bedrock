@@ -183,25 +183,7 @@ defmodule Bedrock.DataPlane.Demux.Durability do
     Map.keys(versions)
   end
 
-  @doc """
-  Deactivates a shard, removing it from durability tracking.
-
-  This is typically used during cleanup or when a shard is no longer needed.
-  Returns the updated durability tracker.
-  """
-  @spec deactivate_shard(t(), shard_id()) :: t()
-  def deactivate_shard(%__MODULE__{} = durability, shard_id) do
-    case Map.fetch(durability.shard_versions, shard_id) do
-      :error ->
-        # Not tracked, nothing to do
-        durability
-
-      {:ok, version} ->
-        %{
-          durability
-          | shard_versions: Map.delete(durability.shard_versions, shard_id),
-            version_index: :gb_sets.delete_any({version, shard_id}, durability.version_index)
-        }
-    end
-  end
+  # Note: there is deliberately no deactivate_shard. Under commanded cuts an
+  # idle or drained shard confirms every cut instantly and cannot pin the
+  # floor, and the whole tracker is rebuilt with a fresh Demux at recovery.
 end

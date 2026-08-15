@@ -184,23 +184,25 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   Catches up from object storage chunks after the WAL trim floor passed this
   materializer's position, then resumes pulling from the WAL.
 
-  Chunk slices from the configured shard fill the gap between our durable
-  version and the floor; the WAL still holds everything above the floor
-  (straddling segments are never trimmed), so the two sources meet with no
-  gap for this shard. Returns `{:error, :no_chunk_source}` when no snapshot
-  handle (cluster + shard) is configured — there is no way home, and the
-  caller should fail loudly rather than retry forever.
+  Catch-up begins at `applied_version` — the puller's in-memory position,
+  carried in the floor message — never at the (older) database-durable
+  version, which would re-apply the in-memory window through non-idempotent
+  mutations. Chunk slices from the configured shard fill the gap up to the
+  floor; the WAL still holds everything above the floor (straddling segments
+  are never trimmed), so the two sources meet with no gap for this shard.
+  Returns `{:error, :no_chunk_source}` when no snapshot handle (cluster +
+  shard) is configured — there is no way home, and the caller should fail
+  loudly rather than retry forever.
   """
-  @spec catch_up_from_chunks(State.t(), floor :: Bedrock.version()) ::
+  @spec catch_up_from_chunks(State.t(), floor :: Bedrock.version(), applied_version :: Bedrock.version()) ::
           {:ok, State.t()} | {:error, :no_chunk_source}
-  def catch_up_from_chunks(%{snapshot: nil}, _floor), do: {:error, :no_chunk_source}
-  def catch_up_from_chunks(%{pull_sources: nil}, _floor), do: {:error, :no_chunk_source}
+  def catch_up_from_chunks(%{snapshot: nil}, _floor, _applied_version), do: {:error, :no_chunk_source}
+  def catch_up_from_chunks(%{pull_sources: nil}, _floor, _applied_version), do: {:error, :no_chunk_source}
 
-  def catch_up_from_chunks(t, floor) do
+  def catch_up_from_chunks(t, floor, applied_version) do
     t = stop_pulling(t)
 
-    durable_version = current_durable_version(t.database)
-    from_int = durable_version |> Version.to_integer() |> Kernel.+(1)
+    from_int = applied_version |> Version.to_integer() |> Kernel.+(1)
     reader = ChunkReader.new(t.snapshot.backend, t.snapshot.shard_tag)
     main_process_pid = self()
 
@@ -209,7 +211,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
       |> ChunkReader.read_from_version(from_int)
       |> Stream.map(fn {_version_int, slice} -> slice end)
       |> Stream.chunk_every(100)
-      |> Enum.reduce(durable_version, fn batch, _acc ->
+      |> Enum.reduce(applied_version, fn batch, _acc ->
         send(main_process_pid, {:apply_transactions, batch})
         Transaction.commit_version!(List.last(batch))
       end)

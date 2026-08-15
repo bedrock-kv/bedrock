@@ -439,90 +439,39 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
   end
 
-  describe "subscriber floors" do
-    setup %{server_opts: opts} do
-      pid = setup_server(opts)
-      on_exit(fn -> cleanup_server(pid) end)
-      {:ok, server: pid}
-    end
+  defp seed_trimmable_segments(pid, path) do
+    v10 = Version.from_integer(10)
+    v20 = Version.from_integer(20)
+    v30 = Version.from_integer(30)
 
-    defp seed_trimmable_segments(pid, path) do
-      v10 = Version.from_integer(10)
-      v20 = Version.from_integer(20)
-      v30 = Version.from_integer(30)
+    tx10 = TransactionTestSupport.new_log_transaction(10, %{"k10" => "v10"})
+    tx20 = TransactionTestSupport.new_log_transaction(20, %{"k20" => "v20"})
+    tx30 = TransactionTestSupport.new_log_transaction(30, %{"k30" => "v30"})
 
-      tx10 = TransactionTestSupport.new_log_transaction(10, %{"k10" => "v10"})
-      tx20 = TransactionTestSupport.new_log_transaction(20, %{"k20" => "v20"})
-      tx30 = TransactionTestSupport.new_log_transaction(30, %{"k30" => "v30"})
+    seg10_path = Path.join(path, Segment.encode_file_name(10))
+    seg20_path = Path.join(path, Segment.encode_file_name(20))
+    seg30_path = Path.join(path, Segment.encode_file_name(30))
 
-      seg10_path = Path.join(path, Segment.encode_file_name(10))
-      seg20_path = Path.join(path, Segment.encode_file_name(20))
-      seg30_path = Path.join(path, Segment.encode_file_name(30))
+    File.write!(seg10_path, <<0>>)
+    File.write!(seg20_path, <<0>>)
+    File.write!(seg30_path, <<0>>)
 
-      File.write!(seg10_path, <<0>>)
-      File.write!(seg20_path, <<0>>)
-      File.write!(seg30_path, <<0>>)
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | mode: :running,
+          last_version: v30,
+          active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
+          segments: [
+            %Segment{path: seg20_path, min_version: v20, transactions: [tx20]},
+            %Segment{path: seg10_path, min_version: v10, transactions: [tx10]}
+          ],
+          oldest_version: v10,
+          min_durable_version: nil
+      }
+    end)
 
-      :sys.replace_state(pid, fn state ->
-        %{
-          state
-          | mode: :running,
-            last_version: v30,
-            active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
-            segments: [
-              %Segment{path: seg20_path, min_version: v20, transactions: [tx20]},
-              %Segment{path: seg10_path, min_version: v10, transactions: [tx10]}
-            ],
-            oldest_version: v10,
-            min_durable_version: nil
-        }
-      end)
-
-      %{v10: v10, v20: v20, v30: v30, seg10_path: seg10_path}
-    end
-
-    test "a live subscriber's floor holds back trim; its advance releases it", %{server: pid, path: path} do
-      %{v10: v10, seg10_path: seg10_path} = seed_trimmable_segments(pid, path)
-
-      # Subscriber reports durable v5 — below segment 10's last version
-      {:ok, _} =
-        GenServer.call(pid, {:pull, Version.from_integer(15), [subscriber: {"mat_1", Version.from_integer(5)}]})
-
-      # Demux watermark would allow trimming segment 10, but the subscriber floor forbids it
-      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(15)})
-      :pong = GenServer.call(pid, :ping)
-
-      state = :sys.get_state(pid)
-      assert Enum.map(state.segments, & &1.min_version) == [Version.from_integer(20), v10]
-      assert File.exists?(seg10_path)
-
-      # The subscriber catches up past segment 10: trim proceeds on its report
-      {:ok, _} =
-        GenServer.call(pid, {:pull, Version.from_integer(25), [subscriber: {"mat_1", Version.from_integer(25)}]})
-
-      state = :sys.get_state(pid)
-      assert Enum.map(state.segments, & &1.min_version) == [Version.from_integer(20)]
-      refute File.exists?(seg10_path)
-    end
-
-    test "a subscriber silent for longer than the TTL no longer pins the floor", %{server: pid, path: path} do
-      %{seg10_path: seg10_path} = seed_trimmable_segments(pid, path)
-
-      {:ok, _} =
-        GenServer.call(pid, {:pull, Version.from_integer(15), [subscriber: {"mat_2", Version.from_integer(5)}]})
-
-      # Version-time races far past the subscriber's last report (TTL is 60s of version-time)
-      expired_last_version = Version.from_integer(70_000_000)
-      :sys.replace_state(pid, fn state -> %{state | last_version: expired_last_version} end)
-
-      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(15)})
-      :pong = GenServer.call(pid, :ping)
-
-      state = :sys.get_state(pid)
-      assert Enum.map(state.segments, & &1.min_version) == [Version.from_integer(20)]
-      refute File.exists?(seg10_path)
-      assert state.subscribers == %{}
-    end
+    %{v10: v10, v20: v20, v30: v30, seg10_path: seg10_path}
   end
 
   describe "trim telemetry and backpressure" do

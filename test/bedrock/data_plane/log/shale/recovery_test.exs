@@ -150,29 +150,11 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
     end
   end
 
-  describe "recover_from/4 demux and chunk hygiene" do
+  describe "recover_from/4 demux reset" do
     setup %{tmp_dir: tmp_dir, state: state} do
       backend = ObjectStorage.backend(LocalFilesystem, root: Path.join(tmp_dir, "object_storage"))
       state = %{state | cluster: "test-cluster", object_storage: backend}
       {:ok, state: state, backend: backend}
-    end
-
-    test "deletes chunks named above the recovery durable version, keeps those at or below", %{
-      state: state,
-      backend: backend
-    } do
-      # By the naming promise, a chunk named <= the floor contains only
-      # committed data; anything named above it may contain discarded
-      # versions and must go (replay re-produces the committed part).
-      :ok = ObjectStorage.put(backend, Keys.chunk_path("a", 500), "committed")
-      :ok = ObjectStorage.put(backend, Keys.chunk_path("a", 1_500), "suspect")
-      :ok = ObjectStorage.put(backend, Keys.chunk_path("b", 2_000), "suspect")
-
-      assert {:ok, _t} = Recovery.recover_from(state, [], version(1_000), version(1_000))
-
-      assert {:ok, "committed"} = ObjectStorage.get(backend, Keys.chunk_path("a", 500))
-      assert {:error, :not_found} = ObjectStorage.get(backend, Keys.chunk_path("a", 1_500))
-      assert {:error, :not_found} = ObjectStorage.get(backend, Keys.chunk_path("b", 2_000))
     end
 
     test "starts a fresh demux and resets the durability floor", %{state: state, backend: backend} do

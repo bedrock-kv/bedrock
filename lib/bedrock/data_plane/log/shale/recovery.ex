@@ -22,8 +22,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
-  alias Bedrock.ObjectStorage
-  alias Bedrock.ObjectStorage.Keys
 
   @spec recover_from(
           State.t(),
@@ -45,7 +43,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     |> ensure_active_segment(first_version)
     |> open_writer()
     |> reset_demux()
-    |> cleanup_chunks_above(first_version)
     |> push_sentinel(first_version)
     |> pull_transactions_from_sources(source_logs, first_version, last_version)
     |> case do
@@ -95,37 +92,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     :exit, _ -> :ok
   end
 
-  @doc """
-  Deletes every chunk named above the recovery durable version.
-
-  By the chunk-naming promise ("nothing in me is newer than my name"), a
-  chunk named at or below the floor contains only committed data; anything
-  named above it may contain versions the recovery discarded. Left in place,
-  a later deterministic re-flush would see `:already_exists` and confirm
-  content that is wrong. Deleting is safe: everything committed above the
-  floor is still in the surviving WALs (old logs never trim while locked)
-  and is re-produced identically by replay before commits resume.
-  """
-  @spec cleanup_chunks_above(State.t(), Bedrock.version()) :: State.t()
-  def cleanup_chunks_above(%{object_storage: nil} = t, _durable_version), do: t
-
-  def cleanup_chunks_above(t, durable_version) do
-    durable_int = Version.to_integer(durable_version)
-
-    t.object_storage
-    |> ObjectStorage.list("c/")
-    |> Enum.each(fn key ->
-      case Keys.extract_version(key) do
-        {:ok, version} when version > durable_int ->
-          :ok = ObjectStorage.delete(t.object_storage, key)
-
-        _ ->
-          :ok
-      end
-    end)
-
-    t
-  end
+  # No chunk cleanup pass: cut broadcasts are gated on the known-committed
+  # version, so chunks can never contain versions a recovery would discard.
+  # Deterministic replay re-produces byte-identical chunks, and
+  # `:already_exists` is always a truthful confirmation.
 
   @spec pull_transactions_from_sources(
           t :: State.t(),

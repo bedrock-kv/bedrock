@@ -77,10 +77,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Pulling do
 
           {:error, {:version_too_old, floor}} ->
             # The WAL trimmed past us. The floor is data, not a dead log:
-            # hand it to the owner (which re-bootstraps from object storage
-            # chunks and restarts pulling) and end this puller.
+            # hand it to the owner — along with our applied position, which
+            # is where chunk catch-up must resume to avoid re-applying —
+            # and end this puller.
             trace_log_pull_failed(state.start_after, {:version_too_old, floor})
-            send(state.owner, {:pull_floor_exceeded, floor})
+            send(state.owner, {:pull_floor_exceeded, floor, state.start_after})
             :ok
 
           {:error, reason} ->

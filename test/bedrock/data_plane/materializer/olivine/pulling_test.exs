@@ -36,7 +36,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PullingTest do
         fn -> Version.zero() end
       )
 
-    assert_receive {:pull_floor_exceeded, ^floor}, 2_000
+    assert_receive {:pull_floor_exceeded, ^floor, applied_version}, 2_000
+    assert applied_version == Version.zero()
 
     # The puller ends instead of circuit-breaking and retrying forever
     assert {:ok, :ok} = Task.yield(puller, 2_000)

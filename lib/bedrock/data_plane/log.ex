@@ -62,7 +62,7 @@ defmodule Bedrock.DataPlane.Log do
           transaction :: Transaction.encoded(),
           last_commit_version :: Bedrock.version()
         ) ::
-          :ok | {:error, :tx_out_of_order | :locked | :unavailable}
+          :ok | {:error, :tx_out_of_order | :locked | :unavailable | :wal_backpressure}
   def push(log, transaction, last_commit_version), do: call(log, {:push, transaction, last_commit_version}, :infinity)
 
   @doc """

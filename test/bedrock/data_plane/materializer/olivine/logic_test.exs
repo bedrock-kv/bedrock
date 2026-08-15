@@ -78,7 +78,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
     test "returns :no_chunk_source without a snapshot handle", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
 
-      assert {:error, :no_chunk_source} = Logic.catch_up_from_chunks(state, Version.from_integer(1_000))
+      assert {:error, :no_chunk_source} = Logic.catch_up_from_chunks(state, Version.from_integer(1_000), Version.zero())
     end
 
     test "applies chunk slices for the gap and resumes pulling", %{test_dir: test_dir} do
@@ -99,7 +99,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
           pull_sources: {%{"log_1" => []}, %{"log_1" => %{status: {:up, log}}}}
       }
 
-      assert {:ok, caught_up} = Logic.catch_up_from_chunks(state, Version.from_integer(1_000))
+      assert {:ok, caught_up} = Logic.catch_up_from_chunks(state, Version.from_integer(1_000), Version.zero())
 
       # The gap data arrived through the normal apply path, in order
       assert_receive {:apply_transactions, [^tx100, ^tx200]}, 2_000

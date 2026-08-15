@@ -57,9 +57,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   # Default pull limit
   @default_pull_limit 100
 
-  # Retry delay when the persistence queue is full and a cut is pending
-  @cut_retry_ms 50
-
   @doc """
   Starts a ShardServer for the given shard.
 
@@ -262,12 +259,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   end
 
   @impl true
-  def handle_info(:process_cuts, state) do
-    state = process_cuts(state)
-    {:noreply, state, next_timeout(state)}
-  end
-
-  @impl true
   def handle_info({:flush_dropped, payload, reason}, state) do
     # A flush that exhausted its retries can never confirm its cut; wedging
     # here would freeze the WAL trim floor silently. Crash instead — the
@@ -330,16 +321,13 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
           cut_version: cut
         }
 
-        case PersistenceWorker.enqueue(state.persistence_worker, payload) do
-          :ok ->
-            # Flushed entries stay in the buffer (still pullable) until the
-            # chunk write is confirmed.
-            %{state | pending_cuts: rest, flush_in_progress: true, pending_flush_cut: cut}
+        # At most one payload is ever in flight (flush_in_progress gates
+        # this path), so the queue cannot be full.
+        :ok = PersistenceWorker.enqueue(state.persistence_worker, payload)
 
-          {:error, :queue_full} ->
-            Process.send_after(self(), :process_cuts, @cut_retry_ms)
-            state
-        end
+        # Flushed entries stay in the buffer (still pullable) until the
+        # chunk write is confirmed.
+        %{state | pending_cuts: rest, flush_in_progress: true, pending_flush_cut: cut}
     end
   end
 

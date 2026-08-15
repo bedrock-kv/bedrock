@@ -254,13 +254,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   end
 
   @impl true
-  def handle_info({:pull_floor_exceeded, _floor}, %State{mode: :locked} = t), do: noreply(t)
+  def handle_info({:pull_floor_exceeded, _floor, _applied_version}, %State{mode: :locked} = t), do: noreply(t)
 
-  def handle_info({:pull_floor_exceeded, floor}, %State{} = t) do
+  def handle_info({:pull_floor_exceeded, floor, applied_version}, %State{} = t) do
     # The WAL trimmed past our position. Fill the gap from object storage
     # chunks and resume pulling; with no chunk source configured there is no
     # way home — fail loudly instead of retrying forever.
-    case Logic.catch_up_from_chunks(t, floor) do
+    case Logic.catch_up_from_chunks(t, floor, applied_version) do
       {:ok, t} -> noreply(t)
       {:error, :no_chunk_source} -> {:stop, {:wal_floor_exceeded_without_chunk_source, floor}, t}
     end

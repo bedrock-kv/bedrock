@@ -36,12 +36,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @max_retry_delay_ms 30_000
   @max_retry_attempts 10
 
-  # A subscriber's floor stops holding back trim once it has been silent for
-  # this much version-time (~60s). Aging out is safe: a pull below the floor
-  # returns the floor itself, and the subscriber re-bootstraps from object
-  # storage chunks.
-  @subscriber_ttl_us 60_000_000
-
   # Alarm when the trim floor lags the WAL tip by more than this much
   # version-time (8 cut intervals). Growth is unbounded-with-alerting by
   # default; pass reject_pushes_above_lag_us to enforce a hard limit.
@@ -256,8 +250,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:pull, from_version, opts}, from, t) do
     trace_pull_transactions(from_version, opts)
 
-    t = note_subscriber(t, opts[:subscriber])
-
     case pull(t, from_version, opts) do
       {:ok, t, transactions} ->
         reply(t, {:ok, transactions})
@@ -419,56 +411,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  # Records the floor a WAL subscriber (materializer) announces on pull, and
-  # re-runs trim when it advances — a subscriber can be what's holding the
-  # tail back.
-  defp note_subscriber(t, nil), do: t
-
-  defp note_subscriber(t, {subscriber_id, durable_version}) when is_binary(durable_version) do
-    previous = Map.get(t.subscribers, subscriber_id)
-    subscribers = Map.put(t.subscribers, subscriber_id, {durable_version, t.last_version})
-    t = %{t | subscribers: subscribers}
-
-    case previous do
-      {^durable_version, _seen_at} -> t
-      _changed -> trim_durable_segments(t)
-    end
-  end
-
-  # Malformed subscriber info never enters the floor computation.
-  defp note_subscriber(t, _malformed), do: t
-
-  # The trim floor is the object-storage watermark further held back by every
-  # live subscriber's announced floor. Subscribers silent for longer than the
-  # TTL (in version-time) no longer count — and are pruned.
-  defp effective_trim_floor(t) do
-    live_floors =
-      for {_id, {durable_version, seen_at}} <- t.subscribers,
-          Version.distance(t.last_version, seen_at) <= @subscriber_ttl_us,
-          do: durable_version
-
-    Enum.min([t.min_durable_version | live_floors])
-  end
-
-  defp prune_expired_subscribers(t) do
-    subscribers =
-      t.subscribers
-      |> Enum.filter(fn {_id, {_durable, seen_at}} ->
-        Version.distance(t.last_version, seen_at) <= @subscriber_ttl_us
-      end)
-      |> Map.new()
-
-    %{t | subscribers: subscribers}
-  end
-
   defp trim_durable_segments(%{segment_recycler: nil} = t), do: t
   defp trim_durable_segments(%{segments: []} = t), do: t
   defp trim_durable_segments(%{min_durable_version: nil} = t), do: t
-  defp trim_durable_segments(%{mode: mode} = t) when mode != :running, do: t
 
+  # Only reachable in :running mode (the watermark handler is the sole
+  # caller and it gates on mode). Materializers never hold the WAL back:
+  # they catch up from object-storage chunks and snapshots, so the trim
+  # floor is object-storage confirmation alone (the Demux watermark).
   defp trim_durable_segments(t) do
-    t = prune_expired_subscribers(t)
-    trim_floor = effective_trim_floor(t)
+    trim_floor = t.min_durable_version
     segments_oldest_first = Enum.reverse(t.segments)
 
     {segments_to_trim_oldest_first, remaining_segments_oldest_first} =
@@ -518,7 +470,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   defp check_wal_backpressure(%{min_durable_version: nil}), do: :ok
 
   defp check_wal_backpressure(t) do
-    if Version.distance(t.last_version, effective_trim_floor(t)) > t.reject_pushes_above_lag_us do
+    if Version.distance(t.last_version, t.min_durable_version) > t.reject_pushes_above_lag_us do
       {:error, :wal_backpressure}
     else
       :ok

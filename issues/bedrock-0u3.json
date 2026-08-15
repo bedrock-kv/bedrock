@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T20:37:53Z",
+  "close_reason": "Moot: apply_tsl_delta / the Director delta channel doesn't exist on the basis branch, and Phase B (bedrock-q67.9) deletes the channel entirely — validation of it is pointless per the q67.9 rescope.",
   "created": "2026-07-14T22:59:30Z",
   "description": "apply_delta_to_shard_materializers has no clause for non-pid/non-:remove values -\u003e FunctionClauseError -\u003e director death -\u003e full recovery. Caller is internal (distributor recruitment), but a malformed delta shouldn't cost a recovery. Validate and return {:error, :invalid_delta}. From PR #92 second-pass audit. Note: recruitment branch (PR #95) merged the tsl-delta branch BEFORE the second-pass fix commit 43250c70 (tsl_live? flag) — re-merge feature/q67-tsl-delta into feature/q67-recruitment before landing #95.",
   "id": "bedrock-0u3",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Validate TSL deltas: malformed delta value crashes director into full recovery",
   "type": "task",
-  "updated_at": "2026-07-14T22:59:30Z"
+  "updated_at": "2026-08-15T20:37:53Z"
 }

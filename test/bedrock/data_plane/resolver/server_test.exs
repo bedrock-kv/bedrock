@@ -562,6 +562,53 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     end
   end
 
+  describe "MVCC floor enforcement after sweep (bedrock-qzr.1)" do
+    setup do
+      start_test_server(sweep_interval_ms: 100, version_retention_ms: 200)
+    end
+
+    test "aborts transactions whose read version predates pruned conflict history", %{server: server} do
+      # T1 writes "hot_key" at version-time 1s.
+      write_version = Version.from_integer(1_000_000)
+
+      t1 =
+        Transaction.encode(%{
+          mutations: [{:set, "hot_key", "value"}],
+          read_conflicts: [],
+          write_conflicts: [{"hot_key", "hot_key\0"}]
+        })
+
+      assert {:ok, [], _} =
+               Resolver.resolve_transactions(server, 1, Version.zero(), write_version, [t1], [[]], timeout: 1000)
+
+      # Advance version-time to 10s so the retention horizon (10s - 200ms)
+      # passes T1's entry, then let the sweep fire.
+      advanced_version = Version.from_integer(10_000_000)
+
+      assert {:ok, [], _} =
+               Resolver.resolve_transactions(server, 1, write_version, advanced_version, [], [], timeout: 1000)
+
+      Process.sleep(150)
+      send(server, :timeout)
+      wait_until(fn -> :sys.get_state(server).conflicts.versions == [] end)
+
+      # T2 read "hot_key" at a version below T1's write. That write is now
+      # pruned, so the conflict is invisible — T2 must be aborted, not
+      # silently committed.
+      t2 =
+        Transaction.encode(%{
+          mutations: [{:set, "other_key", "value"}],
+          read_conflicts: {Version.from_integer(500_000), [{"hot_key", "hot_key\0"}]},
+          write_conflicts: [{"other_key", "other_key\0"}]
+        })
+
+      next_version = Version.from_integer(10_000_001)
+
+      assert {:ok, [0], _} =
+               Resolver.resolve_transactions(server, 1, advanced_version, next_version, [t2], [[]], timeout: 1000)
+    end
+  end
+
   describe "property-based testing" do
     setup do
       start_test_server()

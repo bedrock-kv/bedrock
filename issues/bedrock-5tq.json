@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T17:18:07Z",
+  "description": "While correcting the guides for the Demux-streaming work (bedrock-qzr.6), a pass over all ~40 guide files surfaced pre-existing drift unrelated to that branch: broken links to never-written pages, dead code paths from the storage-\u003ematerializer rename, sections describing mechanisms that do not exist in the implementation, malformed glossary formatting, and stale status documents. Each child ticket is a verified observation, not a suspicion — file paths and line numbers checked against the tree at worktree-qzr2-wal-trim (6484e63a).",
+  "id": "bedrock-5tq",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Guides accuracy audit: pre-existing drift between docs and code",
+  "type": "epic",
+  "updated_at": "2026-08-15T17:18:07Z"
+}

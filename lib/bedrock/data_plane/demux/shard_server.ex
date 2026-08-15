@@ -179,6 +179,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     {:ok, persistence_worker} =
       PersistenceWorker.start_link(
         perform: fn payload -> persist_flush_payload(owner_pid, payload, object_storage, shard_tag) end,
+        on_drop: fn payload, reason -> send(owner_pid, {:flush_dropped, payload, reason}) end,
         capacity: persistence_queue_capacity,
         max_retries: persistence_max_retries,
         retry_base_backoff_ms: persistence_retry_backoff_ms,
@@ -264,6 +265,15 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   def handle_info(:process_cuts, state) do
     state = process_cuts(state)
     {:noreply, state, next_timeout(state)}
+  end
+
+  @impl true
+  def handle_info({:flush_dropped, payload, reason}, state) do
+    # A flush that exhausted its retries can never confirm its cut; wedging
+    # here would freeze the WAL trim floor silently. Crash instead — the
+    # link chain (ShardServer -> Demux -> Log) turns this into a recovery.
+    {:stop, {:flush_permanently_failed, %{shard_id: state.shard_id, cut_version: payload.cut_version, reason: reason}},
+     state}
   end
 
   @impl true

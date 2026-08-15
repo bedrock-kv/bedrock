@@ -554,6 +554,65 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
     end
   end
 
+  describe "permanent flush failure" do
+    defmodule BrokenLocalFilesystem do
+      @moduledoc false
+      @behaviour ObjectStorage
+
+      @impl true
+      def put(config, key, data, opts \\ []), do: LocalFilesystem.put(config, key, data, opts)
+
+      @impl true
+      def get(config, key), do: LocalFilesystem.get(config, key)
+
+      @impl true
+      def delete(config, key), do: LocalFilesystem.delete(config, key)
+
+      @impl true
+      def list(config, prefix, opts \\ []), do: LocalFilesystem.list(config, prefix, opts)
+
+      @impl true
+      def put_if_not_exists(_config, _key, _data, _opts \\ []), do: {:error, :permanently_broken}
+
+      @impl true
+      def get_with_version(config, key), do: LocalFilesystem.get_with_version(config, key)
+
+      @impl true
+      def put_if_version_matches(config, key, version_token, data, opts \\ []) do
+        LocalFilesystem.put_if_version_matches(config, key, version_token, data, opts)
+      end
+    end
+
+    test "crashes the ShardServer when a flush exhausts its retries", %{test_dir: test_dir, registry: registry} do
+      backend = ObjectStorage.backend(BrokenLocalFilesystem, root: test_dir)
+      shard_id = :erlang.unique_integer([:positive]) + 800
+
+      Process.flag(:trap_exit, true)
+
+      {:ok, server} =
+        ShardServer.start_link(
+          shard_id: shard_id,
+          demux: self(),
+          cluster: "test-cluster",
+          object_storage: backend,
+          registry: registry,
+          persistence_max_retries: 1,
+          persistence_retry_backoff_ms: 1,
+          persistence_retry_tick_ms: 1
+        )
+
+      slice = make_slice([{:set, "key", "value"}])
+      ShardServer.push(server, Version.from_integer(1000), slice)
+      ShardServer.flush(server, Version.from_integer(1100))
+
+      # A permanently failing flush must not wedge silently: the server
+      # crashes so the linked Demux -> Log chain converts it into recovery.
+      assert_receive {:EXIT, ^server, {:flush_permanently_failed, meta}}, 2_000
+      assert meta.shard_id == shard_id
+      refute_received {:durable, ^shard_id, _}
+    end
+  end
+
   describe "waiting/notification" do
     test "notifies waiting pullers when data arrives", %{test_dir: test_dir, registry: registry} do
       backend = ObjectStorage.backend(LocalFilesystem, root: test_dir)

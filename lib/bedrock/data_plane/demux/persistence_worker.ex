@@ -14,12 +14,14 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
 
   defstruct [
     :perform,
+    :on_drop,
     :queue,
     :retry_tick_ms
   ]
 
   @type state :: %__MODULE__{
           perform: (term() -> :ok | {:error, term()}),
+          on_drop: (payload :: term(), reason :: term() -> any()) | nil,
           queue: PersistenceQueue.t(),
           retry_tick_ms: pos_integer()
         }
@@ -48,6 +50,7 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
   @impl true
   def init(opts) do
     perform = Keyword.fetch!(opts, :perform)
+    on_drop = Keyword.get(opts, :on_drop)
 
     queue =
       PersistenceQueue.new(
@@ -66,7 +69,11 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
       raise ArgumentError, "retry_tick_ms must be a positive integer"
     end
 
-    {:ok, %__MODULE__{perform: perform, queue: queue, retry_tick_ms: retry_tick_ms}}
+    if on_drop != nil and !is_function(on_drop, 2) do
+      raise ArgumentError, ":on_drop must be a function with arity 2"
+    end
+
+    {:ok, %__MODULE__{perform: perform, on_drop: on_drop, queue: queue, retry_tick_ms: retry_tick_ms}}
   end
 
   @impl true
@@ -116,6 +123,7 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
             %{state | queue: queue}
 
           {:dropped, queue} ->
+            if state.on_drop, do: state.on_drop.(payload, reason)
             send(self(), :drain)
             %{state | queue: queue}
 

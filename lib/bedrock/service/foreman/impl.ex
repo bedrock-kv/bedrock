@@ -35,11 +35,12 @@ defmodule Bedrock.Service.Foreman.Impl do
     |> Enum.map(fn {_id, worker_info} -> compact_service_info_from_worker_info(worker_info) end)
   end
 
-  @spec do_new_worker(State.t(), Worker.id(), :log | :materializer) :: {State.t(), Worker.ref()}
-  def do_new_worker(t, id, kind) do
+  @spec do_new_worker(State.t(), Worker.id(), :log | :materializer, params :: map()) ::
+          {State.t(), Worker.ref()}
+  def do_new_worker(t, id, kind, params \\ %{}) do
     worker_info =
       id
-      |> initialize_new_worker(worker_for_kind(kind), %{}, t.path, t.cluster)
+      |> initialize_new_worker(worker_for_kind(kind), params, t.path, t.cluster)
       |> try_to_start_worker(t.cluster, t.object_storage)
       |> advertise_running_worker(t.cluster)
 

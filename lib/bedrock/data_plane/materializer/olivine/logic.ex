@@ -12,12 +12,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Pulling
   alias Bedrock.DataPlane.Materializer.Olivine.State
+  alias Bedrock.DataPlane.Materializer.Olivine.Streaming
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
   alias Bedrock.DataPlane.Materializer.Telemetry
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage.ChunkReader
   alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
+  alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.ObjectStorage.SnapshotBundle
   alias Bedrock.Service.Worker
@@ -30,8 +32,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
   def startup(otp_name, foreman, id, path, opts \\ []) do
     cluster = Keyword.get(opts, :cluster)
-    shard_id = Keyword.get(opts, :shard_id)
-    snapshot = build_snapshot_handle(cluster, shard_id)
+    {shard_tag, shard_num} = normalize_shard(Keyword.get(opts, :shard_id))
+    snapshot = build_snapshot_handle(cluster, shard_tag)
 
     with :ok <- ensure_directory_exists(path),
          :ok <- maybe_load_snapshot(path, snapshot),
@@ -42,12 +44,29 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
          path: path,
          otp_name: otp_name,
          id: id,
-         shard_id: shard_id,
+         shard_id: shard_tag,
+         shard_num: shard_num,
          foreman: foreman,
          database: database,
          index_manager: index_manager,
          snapshot: snapshot
        }}
+    end
+  end
+
+  # The shard assignment arrives as either the numeric shard id (the form the
+  # SHARD_INDEX and ShardServers use) or its base-36 tag (the form object
+  # storage paths use). Keep both: the tag for the snapshot handle, the
+  # number for ShardServer discovery.
+  @spec normalize_shard(non_neg_integer() | String.t() | nil) ::
+          {tag :: String.t() | nil, num :: non_neg_integer() | nil}
+  defp normalize_shard(nil), do: {nil, nil}
+  defp normalize_shard(shard_num) when is_integer(shard_num), do: {Keys.shard_tag(shard_num), shard_num}
+
+  defp normalize_shard(shard_tag) when is_binary(shard_tag) do
+    case Keys.parse_shard_tag(shard_tag) do
+      {:ok, shard_num} -> {shard_tag, shard_num}
+      {:error, _} -> {shard_tag, nil}
     end
   end
 
@@ -127,11 +146,24 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   end
 
   @spec stop_pulling(State.t()) :: State.t()
-  def stop_pulling(%{pull_task: nil} = t), do: t
+  def stop_pulling(%{pull_task: nil} = t), do: release_pending_ingest(t)
 
   def stop_pulling(%{pull_task: puller} = t) do
     Pulling.stop(puller)
-    reset_puller(t)
+
+    t
+    |> reset_puller()
+    |> release_pending_ingest()
+  end
+
+  # A puller parked in a backpressured ingest call must not be left waiting
+  # on a reply that will never come; replying to an already-dead caller is a
+  # harmless no-op.
+  defp release_pending_ingest(%{pending_ingest: nil} = t), do: t
+
+  defp release_pending_ingest(%{pending_ingest: from} = t) do
+    GenServer.reply(from, :ok)
+    %{t | pending_ingest: nil}
   end
 
   @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
@@ -149,6 +181,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   end
 
   @spec start_pulling_from(State.t(), Bedrock.version()) :: State.t()
+  defp start_pulling_from(%{shard_num: shard_num, pull_sources: {logs, services}} = t, start_after)
+       when is_integer(shard_num) do
+    # The stream puller: everything — history, recent data, and version
+    # currency — comes from this shard's ShardServer. Batches are handed
+    # over synchronously; the server withholds the reply for backpressure.
+    server = self()
+    ingest_fn = fn transactions, kcv -> GenServer.call(server, {:ingest, transactions, kcv}, :infinity) end
+
+    puller = Streaming.start_pulling(shard_num, start_after, logs, services, ingest_fn)
+    put_puller(t, puller)
+  end
+
   defp start_pulling_from(%{pull_sources: {logs, services}} = t, start_after) do
     main_process_pid = self()
 

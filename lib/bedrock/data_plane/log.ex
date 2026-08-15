@@ -136,6 +136,17 @@ defmodule Bedrock.DataPlane.Log do
   def pull(log, start_after, opts), do: call(log, {:pull, start_after, opts}, opts[:timeout_in_ms] || :infinity)
 
   @doc """
+  Returns the Demux ShardServer for the given shard on this log.
+
+  This is a materializer's only data-plane contact with a log: a one-time
+  discovery call (repeated only on failover). All data then flows from the
+  ShardServer — chunks for history, buffer for recent transactions.
+  """
+  @spec get_shard_server(log :: ref(), shard_id :: non_neg_integer()) ::
+          {:ok, pid()} | {:error, term()}
+  def get_shard_server(log, shard_id), do: call(log, {:get_shard_server, shard_id}, 5_000)
+
+  @doc """
   The initial transaction that is applied to a new log if the current version
   is set to 0 during a recovery. It is an explicit a directive to clear the
   entire key range.

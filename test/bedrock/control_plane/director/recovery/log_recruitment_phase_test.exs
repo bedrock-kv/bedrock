@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
   import ExUnit.CaptureLog
 
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
+  alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -71,10 +72,48 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
       context = create_recovery_context(%{{:log, 1} => %{}}, available_services, lock_service_fn: lock_service_fn)
 
-      assert {%{logs: logs}, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase} =
+      assert {%{logs: logs}, LogReplayPhase} =
                LogRecruitmentPhase.execute(recovery_attempt, context)
 
       assert %{{:log, 2} => _, {:log, 3} => _} = logs
+    end
+
+    test "workers created this attempt complete recruitment in the SAME attempt" do
+      # A just-created worker cannot be in the coordinator's directory yet
+      # (advertisement is async) — recruitment must lock it via the ref it
+      # already holds, never stall waiting to rediscover its own creation.
+      recovery_attempt = %{
+        cluster: TestCluster,
+        epoch: 1,
+        logs: %{{:vacancy, 1} => %{}},
+        transaction_services: %{},
+        service_pids: %{}
+      }
+
+      worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        create_recovery_context(
+          %{{:log, 1} => %{}},
+          # No candidates: the vacancy forces worker creation
+          %{},
+          node_capabilities: %{log: [:node1@host]},
+          create_worker_fn: fn _foreman, _id, :log, _opts -> {:ok, :new_log_ref} end,
+          worker_info_fn: fn {_ref, node}, _facts, _opts ->
+            {:ok, %{id: "new_log", otp_name: :new_log_otp, kind: :log, pid: worker_pid}}
+          end,
+          lock_service_fn: fn _service, _epoch ->
+            {:ok, worker_pid, %{kind: :log, oldest_version: 0, last_version: 1}}
+          end
+        )
+
+      assert {%{logs: logs, transaction_services: services}, LogReplayPhase} =
+               LogRecruitmentPhase.execute(recovery_attempt, context)
+
+      # The vacancy was filled by the new worker, and it is locked/tracked
+      assert map_size(logs) == 1
+      [new_id] = Map.keys(logs)
+      assert %{^new_id => %{status: {:up, ^worker_pid}}} = services
     end
   end
 

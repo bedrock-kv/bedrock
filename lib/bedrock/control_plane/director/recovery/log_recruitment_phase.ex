@@ -47,10 +47,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
            ),
          {:ok, updated_services} <-
            create_new_log_workers(new_worker_ids, available_log_nodes, recovery_attempt, context),
+         # Workers created THIS attempt cannot be in the coordinator's
+         # directory yet (advertisement is async) — lock them via the refs
+         # we already hold rather than stalling until they rediscover
+         # themselves. This is what lets recruitment finish in one attempt.
          {:ok, existing_log_services} <-
            extract_and_lock_existing_log_services(
              logs,
-             context.available_services,
+             Map.merge(context.available_services, service_refs(updated_services)),
              recovery_attempt,
              context
            ) do
@@ -157,6 +161,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
         candidate_id -> {candidate_id, descriptor}
       end
     end)
+  end
+
+  # The directory-shaped view of freshly created workers: {kind, last_seen}
+  @spec service_refs(%{String.t() => map()}) :: %{String.t() => {atom(), {atom(), node()}}}
+  defp service_refs(updated_services) do
+    Map.new(updated_services, fn {id, %{kind: kind, last_seen: last_seen}} -> {id, {kind, last_seen}} end)
   end
 
   @spec create_new_log_workers([String.t()], [node()], map(), RecoveryPhase.context()) ::

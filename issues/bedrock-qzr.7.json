@@ -5,7 +5,7 @@
   "closed_at": "2026-08-15T17:28:01Z",
   "close_reason": "Committed on worktree-qzr2-wal-trim; mix docs builds clean; no basalt references remain in guides/.",
   "created": "2026-08-15T17:27:47Z",
-  "description": "Docs-only pass over guides/ for changes made on worktree-qzr2-wal-trim: basalt references removed (glossary entry, architecture/implementations listings, storage related-components, transactions components list); storage-pulls-from-logs narrative replaced with per-shard Demux streaming (log.md core ops + storage integration, storage.md, data-plane quick read, transactions.md background section + sequence diagram, shale.md serving notes); sequencer commit reply documents the piggybacked KCV (sequencer.md, transactions.md step 4.2/4.6); commanded KCV-gated cuts, chunk naming, idle-shard instant confirmation, on_drop fail-fast, and trim guards (async-persistence-queue.md, durability-foundation.md); Foreman.new_worker/4 params (foreman.md); glossary gains Demux entry and KCV piggyback note. Excludes everything ticketed under bedrock-5tq (gateway links, stale line refs, shale.md pre-existing mechanisms, storage-vs-materializer terminology pass, glossary hygiene, status docs).",
+  "description": "SUPERSEDED/CORRECTED: my guides commit 5ce12f77 was authored against a working tree that didn't reflect the user's own qzr.6 pass (6484e63a) and partially reverted it (deleted olivine.md, replaced richer sections). Remediated in 0160f44f: qzr.6 restored in full; only the genuinely additive corrections kept — transactions.md sequence diagram 4-tuple sequencer reply + KCV on log pushes + step 4.2 text, and sequencer.md's KCV-piggyback paragraph.",
   "id": "bedrock-qzr.7",
   "labels": [],
   "parent": "bedrock-qzr",
@@ -13,5 +13,5 @@
   "status": "closed",
   "title": "Guides: correct branch-driven drift from qzr.2-.5 (basalt removal, demux streaming, KCV plumbing)",
   "type": "chore",
-  "updated_at": "2026-08-15T17:28:01Z"
+  "updated_at": "2026-08-15T17:30:01Z"
 }

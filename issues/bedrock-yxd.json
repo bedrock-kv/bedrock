@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T20:37:53Z",
+  "close_reason": "Moot: the distributor test directory (readoption_test.exs etc.) and the code under test were removed by the qzr rework; the unfiltered telemetry handlers no longer exist.",
   "created": "2026-07-15T14:57:45Z",
   "description": "From PR #102 gating audit: multiple async: true distributor test files attach global telemetry handlers without filtering on their own cluster/module — cross-test event bleed caused one confirmed failure (readoption refute_receive tripped by the integration test's distributor at seed 424242, fixed for that file) and is the suspect class for one unreproduced full-suite failure at seed 31337. Sweep all distributor/control_plane test telemetry handlers and filter on the owning test's cluster (pattern: readoption_test.exs post-57edb3b9). Also fold in: recruit/2's epoch lock is still unbounded (harmonize with readoption's 30s bound).",
   "id": "bedrock-yxd",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Test hygiene: unfiltered global telemetry handlers across async distributor tests",
   "type": "task",
-  "updated_at": "2026-07-15T14:57:45Z"
+  "updated_at": "2026-08-15T20:37:53Z"
 }

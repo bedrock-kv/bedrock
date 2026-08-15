@@ -22,30 +22,30 @@ The current foundation covers:
    - CRUD/list operations
    - native conditional semantics (`If-None-Match`, `If-Match`)
 4. Bounded async persistence queue/worker in Demux shard flow.
-5. Durable watermark progression only after confirmed object-store writes.
-6. WAL trimming gated by confirmed monotonic durable watermark.
+5. Deterministic, known-committed-gated chunk cuts: durable watermark
+   progression only after confirmed object-store writes, and never past the
+   known committed version.
+6. WAL trimming gated by confirmed monotonic durable watermark (mode-gated,
+   clamped to the WAL's bounds, pid-tagged against stale Demux incarnations).
 7. Fail-fast corruption handling during object-backed replay.
 8. WAL commit acknowledgment only after append + fsync on required log replicas.
 
 ## End-to-End Durability Flow
 
-1. `Demux.Server.push/4` routes shard slices — each push carrying the
-   transaction's own commit version and the piggybacked known-committed
-   version (KCV) — without blocking on object-store I/O.
-2. The Demux commands deterministic, KCV-gated cuts (`{:flush, cut_version}`)
-   on fixed version-time boundaries; each `ShardServer` enqueues its cut batch
-   to `PersistenceWorker`. Nothing not known-committed ever becomes durable,
-   so chunks can never contain versions a recovery would discard.
-3. Worker writes chunk objects to object storage, each named for the last
-   commit it contains.
-4. `ShardServer` advances its durable watermark only after confirmed write
-   (an empty buffer confirms a cut immediately, so idle shards never pin the
-   floor). A flush that exhausts its retries crashes the ShardServer —
-   the link chain converts it into a recovery instead of a silent wedge.
-5. `Demux.Server` computes the log's `min_durable_version` across shards
-   (falling back to the last completed cut when no shards are active).
-6. Log WAL trimming advances only behind that confirmed minimum boundary,
-   and only while the log is `:running`.
+1. `Demux.Server.push/4` routes shard slices (with the piggybacked known
+   committed version) without blocking on object-store I/O.
+2. The Demux commands deterministic version-time cuts; a cut fires only once
+   the known committed version has reached it, so nothing not known-committed
+   ever becomes durable.
+3. Each `ShardServer` flushes everything at or below the commanded cut through
+   `PersistenceWorker`, which writes chunk objects to object storage (chunks
+   are named for the last commit they contain).
+4. `ShardServer` confirms the cut only after the confirmed write (an empty
+   buffer confirms immediately, so idle shards never pin the floor).
+5. `Demux.Server` computes the minimum durable version across shards.
+6. Log WAL trimming advances only behind that confirmed minimum boundary —
+   the trim floor is object-storage confirmation alone; readers never hold
+   the WAL back.
 
 This preserves hot-path responsiveness while keeping durability and trim behavior
 explicit and monotonic.

@@ -39,7 +39,7 @@ The Sequencer's version assignment creates the foundation for all transaction or
 Sequencer serves as the **global version authority** with these specific responsibilities:
 
 - **Read Version Assignment**: Provides consistent snapshot points using the known committed version
-- **Commit Version Assignment**: Issues globally unique, monotonically increasing commit versions with Lamport clock chains, alongside the known committed version for piggybacking on log pushes
+- **Commit Version Assignment**: Issues globally unique, monotonically increasing commit versions with Lamport clock chains
 - **Version State Tracking**: Maintains known committed, last commit, and next commit version counters
 - **Consistency Coordination**: Ensures read versions only reflect durably committed transactions through feedback loops
 - **Recovery Integration**: Accepts initial version state from Director to maintain correct version progression

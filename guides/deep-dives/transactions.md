@@ -17,7 +17,7 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 - **[Commit Proxy](architecture/data-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
 - **[Resolver](architecture/data-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
 - **[Log System](architecture/data-plane/log.md)**: Provides durable transaction storage with strict ordering
-- **[Storage (Olivine)](architecture/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions streamed per shard from each log's Demux
+- **[Storage (Olivine)](architecture/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
 
 > 💡 **Deep Dive Available**: Click on any component name above to access detailed technical documentation including APIs, implementation details, performance characteristics, and code references.
 
@@ -107,11 +107,11 @@ sequenceDiagram
     deactivate TransactionBuilder
     
     Note over Log, Storage: Background: Storage Streams from the Log's Demux
-    Storage->>Log: get_shard_server(shard) [one-time discovery]
+    Storage->>Log: get_shard_server(shard_id) — one-time discovery
     Log-->>Storage: {:ok, shard_server}
-    Storage->>Log: ShardServer.pull(from_version)
-    Log-->>Storage: {:ok, [transactions], %{high_water, kcv}}
-    Storage->>Storage: apply transactions to local storage
+    Storage->>Log: ShardServer.pull(from_version) — chunks + buffer
+    Log-->>Storage: {:ok, [slices], %{high_water, kcv}}
+    Storage->>Storage: apply slices to local storage
 ```
 
 ## Component Deep Dives
@@ -369,23 +369,22 @@ This is the most complex phase involving multiple distributed components working
 
 ## Background Operations
 
-### Storage Updates from the Log's Demux
+### Storage Updates from the Demux
 
 **Purpose**: Eventually consistent application of committed transactions to storage servers.
 
 **Process**:
 
-1. Each log's Demux slices every pushed transaction by shard and routes the slices to per-shard ShardServers (in-memory buffer for recent data, object-storage chunks for history)
-2. A storage server discovers its ShardServer through the log (`get_shard_server/2`, one-time, repeated only on failover) and streams its own shard from there—one continuous stream from any starting position
-3. Transactions are applied in version order; empty pull replies carry a high-water version ("current through v") so idle shards keep advancing, and every reply carries the known-committed version, which gates disk eviction
-4. Storage maintains multiple versions for MVCC reads
-5. Old versions are garbage collected based on minimum read version
+1. Each storage server streams its shard's slices from a log's Demux ShardServer — object-storage chunks for history, the in-memory buffer for recent data, one continuous stream
+2. Slices are applied in version order; empty "current through v" replies advance the server's version when its shard is idle
+3. Storage maintains multiple versions for MVCC reads, applying eagerly but persisting to disk only up to the known committed version
+4. Old versions leave memory through window advancement based on version-time lag
 
 **Key Code Locations**:
 
 - Storage streaming: `lib/bedrock/data_plane/materializer/olivine/streaming.ex`
-- Demux slicing and cuts: `lib/bedrock/data_plane/demux/server.ex`
-- Per-shard stream serving: `lib/bedrock/data_plane/demux/shard_server.ex`
+- Shard serving: `lib/bedrock/data_plane/demux/shard_server.ex`
+- Log pull (recovery-only): `lib/bedrock/data_plane/log.ex`
 
 ## Error Handling and Recovery
 

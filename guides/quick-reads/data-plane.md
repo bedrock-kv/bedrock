@@ -64,7 +64,7 @@ The persistent transaction log interface that maintains the complete history of 
 - Transaction persistence and durability guarantees
 - Sequential transaction ordering maintenance
 - Recovery replay capability provision
-- Tag-based transaction filtering for efficient storage coordination
+- Per-shard slice distribution through its Demux, with object-storage chunk persistence and WAL trimming behind the confirmed durable floor
 
 ### [Storage](../deep-dives/architecture/data-plane/storage.md)
 
@@ -73,7 +73,7 @@ The multi-version key-value storage interface that serves read operations across
 **Core Responsibilities:**
 
 - MVCC read operation serving across multiple versions
-- Per-shard stream following (from each log's Demux) and state maintenance
+- Per-shard stream following (from the log's Demux) and state maintenance
 - Key-value data organization and retrieval
 - Version-specific snapshot consistency provision
 
@@ -87,7 +87,7 @@ The Data Plane receives coordination from the Control Plane during recovery and 
 4. **Conflict Detection**: Commit Proxy coordinates with Resolvers to detect version conflicts
 5. **Commit Coordination**: Commit Proxy orchestrates two-phase commit across required Log servers
 6. **Durability Confirmation**: Log servers acknowledge only after WAL append + fsync before commit confirmation
-7. **Storage Propagation**: Storage servers stream their shard from each log's Demux to maintain local MVCC state
+7. **Storage Propagation**: Storage servers stream their shard's slices from each log's Demux to maintain local MVCC state
 
 ## Consistency Guarantees
 

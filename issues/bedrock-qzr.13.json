@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T20:03:47Z",
+  "description": "User's livebook run: replace-unlockable-candidates path called create_new_log_workers without the insufficient_nodes guard; with node_capabilities.log momentarily empty (registration timing on a booting node), assign_workers_to_nodes hit rem(0,0) -\u003e ArithmeticError -\u003e director crash. Converged via crash+restart, but a stall ({:insufficient_nodes, n, 0}) is the honest behavior. Guard moved into create_new_log_workers so every caller is safe. Also renamed 'unlockable' (reads as able-to-be-unlocked) to 'lock-failed' throughout.",
+  "id": "bedrock-qzr.13",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 2,
+  "status": "open",
+  "title": "Ghost replacement stalls on zero log-capable nodes instead of crashing (rem/0)",
+  "type": "bug",
+  "updated_at": "2026-08-15T20:03:47Z"
+}

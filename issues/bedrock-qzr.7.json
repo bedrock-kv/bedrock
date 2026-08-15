@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T17:28:01Z",
+  "close_reason": "Committed on worktree-qzr2-wal-trim; mix docs builds clean; no basalt references remain in guides/.",
   "created": "2026-08-15T17:27:47Z",
   "description": "Docs-only pass over guides/ for changes made on worktree-qzr2-wal-trim: basalt references removed (glossary entry, architecture/implementations listings, storage related-components, transactions components list); storage-pulls-from-logs narrative replaced with per-shard Demux streaming (log.md core ops + storage integration, storage.md, data-plane quick read, transactions.md background section + sequence diagram, shale.md serving notes); sequencer commit reply documents the piggybacked KCV (sequencer.md, transactions.md step 4.2/4.6); commanded KCV-gated cuts, chunk naming, idle-shard instant confirmation, on_drop fail-fast, and trim guards (async-persistence-queue.md, durability-foundation.md); Foreman.new_worker/4 params (foreman.md); glossary gains Demux entry and KCV piggyback note. Excludes everything ticketed under bedrock-5tq (gateway links, stale line refs, shale.md pre-existing mechanisms, storage-vs-materializer terminology pass, glossary hygiene, status docs).",
   "id": "bedrock-qzr.7",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Guides: correct branch-driven drift from qzr.2-.5 (basalt removal, demux streaming, KCV plumbing)",
   "type": "chore",
-  "updated_at": "2026-08-15T17:27:47Z"
+  "updated_at": "2026-08-15T17:28:01Z"
 }

@@ -133,6 +133,11 @@ defmodule Bedrock.DataPlane.Demux.Server do
 
   @impl true
   def init(opts) do
+    # Trapping exits lets terminate/2 stop ShardServers synchronously — a
+    # recovery reset must be certain no stale flush can land after teardown.
+    # Crash propagation is preserved by re-raising in handle_info(:EXIT).
+    Process.flag(:trap_exit, true)
+
     cluster = Keyword.fetch!(opts, :cluster)
     object_storage = Keyword.fetch!(opts, :object_storage)
     log = Keyword.fetch!(opts, :log)
@@ -177,6 +182,25 @@ defmodule Bedrock.DataPlane.Demux.Server do
   def handle_info({:durable, shard_id, durable_version}, state) do
     state = handle_durability_report(state, shard_id, durable_version)
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_info({:EXIT, _pid, :normal}, state), do: {:noreply, state}
+
+  # A ShardServer (or the owning log) died: propagate — fail-fast. Our
+  # terminate/2 will stop the remaining ShardServers synchronously.
+  def handle_info({:EXIT, _pid, reason}, state), do: {:stop, reason, state}
+
+  @impl true
+  def terminate(_reason, state) do
+    Enum.each(state.shard_servers, fn {_shard_id, pid} -> stop_shard_server(pid) end)
+    :ok
+  end
+
+  defp stop_shard_server(pid) do
+    GenServer.stop(pid, :shutdown, 5_000)
+  catch
+    :exit, _ -> :ok
   end
 
   # Private implementation
@@ -305,7 +329,9 @@ defmodule Bedrock.DataPlane.Demux.Server do
     end
   end
 
+  # Tagged with our pid so the log can reject watermarks from a stale Demux
+  # incarnation after a recovery reset.
   defp notify_log_durability(log, min_durable_version) do
-    send(log, {:min_durable_version, min_durable_version})
+    send(log, {:min_durable_version, self(), min_durable_version})
   end
 end

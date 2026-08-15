@@ -14,6 +14,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   """
   import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
 
+  alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
@@ -21,6 +22,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.Keys
 
   @spec recover_from(
           State.t(),
@@ -41,6 +44,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     |> discard_all_segments()
     |> ensure_active_segment(first_version)
     |> open_writer()
+    |> reset_demux()
+    |> cleanup_chunks_above(first_version)
     |> push_sentinel(first_version)
     |> pull_transactions_from_sources(source_logs, first_version, last_version)
     |> case do
@@ -57,6 +62,69 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
       error ->
         error
     end
+  end
+
+  @doc """
+  Tears down the previous Demux incarnation (synchronously, so no stale
+  buffer or in-flight flush can write a chunk afterward) and starts a fresh
+  one. The durability floor resets to nil: it re-derives from fresh
+  confirmations only, pinning trim at the recovery durable version until the
+  replayed range re-confirms.
+
+  States without an object storage backend (segment-only unit tests) are
+  left untouched.
+  """
+  @spec reset_demux(State.t()) :: State.t()
+  def reset_demux(%{object_storage: nil} = t), do: t
+
+  def reset_demux(t) do
+    if t.demux do
+      Process.unlink(t.demux)
+      stop_demux(t.demux)
+    end
+
+    case Demux.Server.start_link(cluster: t.cluster, object_storage: t.object_storage, log: self()) do
+      {:ok, demux} -> %{t | demux: demux, min_durable_version: nil}
+      {:error, reason} -> raise "Failed to start demux for recovery: #{inspect(reason)}"
+    end
+  end
+
+  defp stop_demux(demux) do
+    GenServer.stop(demux, :shutdown, 10_000)
+  catch
+    :exit, _ -> :ok
+  end
+
+  @doc """
+  Deletes every chunk named above the recovery durable version.
+
+  By the chunk-naming promise ("nothing in me is newer than my name"), a
+  chunk named at or below the floor contains only committed data; anything
+  named above it may contain versions the recovery discarded. Left in place,
+  a later deterministic re-flush would see `:already_exists` and confirm
+  content that is wrong. Deleting is safe: everything committed above the
+  floor is still in the surviving WALs (old logs never trim while locked)
+  and is re-produced identically by replay before commits resume.
+  """
+  @spec cleanup_chunks_above(State.t(), Bedrock.version()) :: State.t()
+  def cleanup_chunks_above(%{object_storage: nil} = t, _durable_version), do: t
+
+  def cleanup_chunks_above(t, durable_version) do
+    durable_int = Version.to_integer(durable_version)
+
+    t.object_storage
+    |> ObjectStorage.list("c/")
+    |> Enum.each(fn key ->
+      case Keys.extract_version(key) do
+        {:ok, version} when version > durable_int ->
+          :ok = ObjectStorage.delete(t.object_storage, key)
+
+        _ ->
+          :ok
+      end
+    end)
+
+    t
   end
 
   @spec pull_transactions_from_sources(
@@ -182,6 +250,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   defp handle_valid_transaction_bytes(bytes, version, last_version, t) do
     with {:ok, _transaction} <- Transaction.decode(bytes),
          {:ok, t} <- push(t, last_version, bytes, fn _ -> :ok end) do
+      # Replay routes through the fresh Demux so the replayed range re-enters
+      # the chunk pipeline and re-confirms deterministically.
+      push_to_demux(t, version, bytes)
       {:cont, {version, t}}
     else
       {:wait, _t} -> {:halt, {:error, :tx_out_of_order}}
@@ -189,6 +260,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
       {:error, _reason} = error -> {:halt, error}
     end
   end
+
+  defp push_to_demux(%{demux: nil}, _version, _bytes), do: :ok
+  defp push_to_demux(t, version, bytes), do: Demux.Server.push(t.demux, version, bytes)
 
   @spec abort_all_waiting_pullers(State.t()) :: State.t()
   def abort_all_waiting_pullers(%{waiting_pullers: waiting_pullers} = t) do
@@ -264,11 +338,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     version_binary = if is_binary(version), do: version, else: Version.from_integer(version)
     {:ok, sentinel} = Transaction.add_commit_version(encoded_sentinel, version_binary)
 
-    sentinel = sentinel
-
     case push(t, version, sentinel, fn _ -> :ok end) do
-      {:ok, t} -> t
-      {:error, _} -> raise "Failed to push sentinel"
+      {:ok, t} ->
+        push_to_demux(t, version_binary, sentinel)
+        t
+
+      {:error, _} ->
+        raise "Failed to push sentinel"
     end
   end
 end

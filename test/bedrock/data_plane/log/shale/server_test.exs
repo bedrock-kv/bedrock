@@ -293,7 +293,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       make_running(pid, Version.from_integer(1000))
 
       version = Version.from_integer(42)
-      send(pid, {:min_durable_version, version})
+      send(pid, {:min_durable_version, demux_of(pid), version})
 
       # Allow message to be processed
       :pong = GenServer.call(pid, :ping)
@@ -305,7 +305,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     test "ignores min_durable_version message unless running", %{server: pid} do
       assert %State{mode: :locked} = :sys.get_state(pid)
 
-      send(pid, {:min_durable_version, Version.from_integer(42)})
+      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(42)})
+      :pong = GenServer.call(pid, :ping)
+
+      state = :sys.get_state(pid)
+      assert state.min_durable_version == nil
+    end
+
+    test "ignores min_durable_version from a stale demux incarnation", %{server: pid} do
+      make_running(pid, Version.from_integer(1000))
+
+      send(pid, {:min_durable_version, self(), Version.from_integer(42)})
       :pong = GenServer.call(pid, :ping)
 
       state = :sys.get_state(pid)
@@ -316,7 +326,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       last_version = Version.from_integer(50)
       make_running(pid, last_version)
 
-      send(pid, {:min_durable_version, Version.from_integer(100)})
+      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(100)})
       :pong = GenServer.call(pid, :ping)
 
       state = :sys.get_state(pid)
@@ -332,7 +342,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       # Send durability update
       version = Version.from_integer(100)
-      send(pid, {:min_durable_version, version})
+      send(pid, {:min_durable_version, demux_of(pid), version})
       :pong = GenServer.call(pid, :ping)
 
       # Now should return actual version
@@ -346,10 +356,10 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       newer = Version.from_integer(200)
       older = Version.from_integer(100)
 
-      send(pid, {:min_durable_version, newer})
+      send(pid, {:min_durable_version, demux_of(pid), newer})
       :pong = GenServer.call(pid, :ping)
 
-      send(pid, {:min_durable_version, older})
+      send(pid, {:min_durable_version, demux_of(pid), older})
       :pong = GenServer.call(pid, :ping)
 
       state = :sys.get_state(pid)
@@ -389,7 +399,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
         }
       end)
 
-      send(pid, {:min_durable_version, v15})
+      send(pid, {:min_durable_version, demux_of(pid), v15})
       :pong = GenServer.call(pid, :ping)
       state = :sys.get_state(pid)
 
@@ -419,7 +429,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
         }
       end)
 
-      send(pid, {:min_durable_version, v10})
+      send(pid, {:min_durable_version, demux_of(pid), v10})
       :pong = GenServer.call(pid, :ping)
       state = :sys.get_state(pid)
 
@@ -630,6 +640,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   defp cleanup_server(pid) do
     if Process.alive?(pid), do: GenServer.stop(pid)
   end
+
+  defp demux_of(pid), do: :sys.get_state(pid).demux
 
   defp make_running(pid, last_version) do
     :sys.replace_state(pid, fn state -> %{state | mode: :running, last_version: last_version} end)

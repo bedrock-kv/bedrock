@@ -95,7 +95,11 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
         )
 
       on_exit(fn ->
-        if Process.alive?(tuned_server), do: GenServer.stop(tuned_server)
+        try do
+          if Process.alive?(tuned_server), do: GenServer.stop(tuned_server, :shutdown)
+        catch
+          :exit, _ -> :ok
+        end
       end)
 
       shard_id = shard_base + 30
@@ -124,11 +128,17 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
           cut_interval_us: cut_interval_us
         )
 
-      on_exit(fn ->
-        if Process.alive?(server), do: GenServer.stop(server)
-      end)
+      # The demux dies with its log (the test process); this is best-effort
+      # cleanup for the case where it outlives the exit signal.
+      on_exit(fn -> safe_stop(server) end)
 
       server
+    end
+
+    defp safe_stop(server) do
+      if Process.alive?(server), do: GenServer.stop(server, :shutdown)
+    catch
+      :exit, _ -> :ok
     end
 
     defp version_in_bucket(bucket, offset, interval), do: Version.from_integer(bucket * interval + offset)
@@ -153,7 +163,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       :ok = Server.push(server, v_in_bucket, txn.(v_in_bucket))
       :ok = Server.push(server, v_crossing, txn.(v_crossing))
 
-      assert_receive {:min_durable_version, ^cut}, 1_500
+      assert_receive {:min_durable_version, _, ^cut}, 1_500
     end
 
     test "heartbeat-only stream (no shards) still advances the floor", %{backend: backend} do
@@ -169,7 +179,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       :ok = Server.push(server, v1, heartbeat.(v1))
       :ok = Server.push(server, v2, heartbeat.(v2))
 
-      assert_receive {:min_durable_version, ^cut}, 1_500
+      assert_receive {:min_durable_version, _, ^cut}, 1_500
       assert Server.min_durable_version(server) == cut
     end
 
@@ -186,7 +196,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       :ok = Server.push(server, v1, heartbeat.(v1))
       :ok = Server.push(server, v9, heartbeat.(v9))
 
-      assert_receive {:min_durable_version, ^cut}, 1_500
+      assert_receive {:min_durable_version, _, ^cut}, 1_500
     end
 
     test "a shard activated mid-bucket starts at the last completed cut, not a buffered version", %{
@@ -207,7 +217,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
 
       :ok = Server.push(server, v1, heartbeat.(v1))
       :ok = Server.push(server, v2, heartbeat.(v2))
-      assert_receive {:min_durable_version, ^cut1}, 1_500
+      assert_receive {:min_durable_version, _, ^cut1}, 1_500
 
       # First slice for the shard arrives mid-bucket: its data is only
       # buffered, so the min must stay at the last completed cut.
@@ -239,7 +249,7 @@ defmodule Bedrock.DataPlane.Demux.ServerTest do
       # The idle shard confirmed every cut without new data: the floor is the
       # last completed cut, not the idle shard's last flush.
       cut = cut_of_bucket(3, interval)
-      assert_receive {:min_durable_version, ^cut}, 1_500
+      assert_receive {:min_durable_version, _, ^cut}, 1_500
     end
   end
 

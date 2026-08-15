@@ -278,9 +278,22 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   @impl true
   def terminate(_reason, state) do
-    # Best-effort synchronous flush on shutdown.
-    flush_remaining_sync(state)
+    # No best-effort flush: the WAL owns shutdown durability, and a partial
+    # flush would produce a non-deterministic, un-cut chunk. Stopping the
+    # persistence worker synchronously guarantees no chunk write can land
+    # after this server is gone (recovery deletes chunks right after
+    # tearing the Demux tree down).
+    stop_persistence_worker(state.persistence_worker)
     :ok
+  end
+
+  defp stop_persistence_worker(pid) do
+    # Unlink first: the worker's exit signal would otherwise kill this
+    # (non-trapping) server mid-terminate and clobber its own exit reason.
+    Process.unlink(pid)
+    GenServer.stop(pid, :shutdown, 5_000)
+  catch
+    :exit, _ -> :ok
   end
 
   # Private implementation
@@ -455,14 +468,6 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
       {:error, :already_exists} -> :ok
       {:error, reason} -> {:error, {:write_failed, reason}}
     end
-  end
-
-  defp flush_remaining_sync(%{buffer: []}), do: :ok
-
-  defp flush_remaining_sync(state) do
-    shard_tag = Keys.shard_tag(state.shard_id)
-    _ = persist_transactions(state.object_storage, shard_tag, state.buffer)
-    :ok
   end
 
   defp report_durability(demux, shard_id, version) do

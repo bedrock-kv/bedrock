@@ -154,7 +154,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  @spec handle_info(:timeout | :retry_initialization | {:min_durable_version, Bedrock.version()}, State.t()) ::
+  @spec handle_info(:timeout | :retry_initialization | {:min_durable_version, pid(), Bedrock.version()}, State.t()) ::
           {:noreply, State.t()} | {:noreply, State.t(), {:continue, :check_for_expired_pullers}}
   def handle_info(:timeout, t), do: noreply(t, continue: :check_for_expired_pullers)
 
@@ -175,15 +175,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  def handle_info({:min_durable_version, version}, %{mode: :running} = t) do
+  def handle_info({:min_durable_version, demux, version}, %{mode: :running, demux: demux} = t) do
     t
     |> advance_min_durable_version(version)
     |> noreply()
   end
 
-  # Outside :running the WAL may be mid-recovery or locked; confirmations are
-  # re-derived from fresh flushes, so dropping stale ones is always safe.
-  def handle_info({:min_durable_version, _version}, t), do: noreply(t)
+  # Watermarks from a stale Demux incarnation (pid mismatch after a recovery
+  # reset) or outside :running are dropped; confirmations are re-derived from
+  # fresh flushes, so losing them is always safe.
+  def handle_info({:min_durable_version, _demux, _version}, t), do: noreply(t)
 
   @impl true
   @spec handle_call(

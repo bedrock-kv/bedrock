@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-15T21:34:22Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 0,
-  "status": "open",
+  "status": "in_progress",
   "title": "Preserve the first retained transaction during log replay",
   "type": "bug",
-  "updated_at": "2026-08-15T23:45:45Z"
+  "updated_at": "2026-08-15T23:46:18Z"
 }

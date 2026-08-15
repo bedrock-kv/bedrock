@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T19:43:27Z",
+  "close_reason": "Guides updated and docs build verified.",
   "created": "2026-08-15T19:43:23Z",
   "description": "Rewrite durability-foundation.md as the life-of-a-write narrative (WAL -\u003e demux -\u003e cuts/chunks -\u003e floor/trim with segment rolling; streaming reads with currency; restart behavior with generational logs, materializer reuse, reconciliation); correct quick-reads/recovery.md and deep-dives/recovery.md to the actual phase chain (retire vacancy-creation/version-determination/storage-recruitment references, add materializer bootstrap and reconciliation); glossary entries for Currency, Generation, Reconciliation, Trim Floor plus refreshed Cut/TSL/Recovery Info; trim/floor telemetry documented.",
   "id": "bedrock-qzr.11",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Update guides for the qzr durability/recovery arc",
   "type": "chore",
-  "updated_at": "2026-08-15T19:43:23Z"
+  "updated_at": "2026-08-15T19:43:27Z"
 }

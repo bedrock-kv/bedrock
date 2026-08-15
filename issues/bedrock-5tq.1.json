@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T17:18:22Z",
+  "description": "guides/deep-dives/architecture/infrastructure/ contains cluster.md, foreman.md, link.md, transaction-builder.md — no gateway.md — yet at least 8 files link to it (glossary.md:127, quick-reads/{control-plane,data-plane,transactions}.md, quick-reads/recovery/{proxy-startup,transaction-system-layout,persistence,sequencer-startup,monitoring}.md, deep-dives/architecture.md, deep-dives/transactions.md 'Gateway Deep Dive'). Either write the gateway deep-dive (the Gateway/TransactionBuilder split is real and load-bearing) or repoint the links at transaction-builder.md/glossary. Also sweep for other targets that do not exist.",
+  "id": "bedrock-5tq.1",
+  "labels": [],
+  "parent": "bedrock-5tq",
+  "priority": 2,
+  "status": "open",
+  "title": "Broken links: gateway.md is referenced by 8+ guides but does not exist",
+  "type": "bug",
+  "updated_at": "2026-08-15T17:18:22Z"
+}

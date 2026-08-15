@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T11:11:00Z",
+  "description": "",
+  "id": "bedrock-wn6",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Hex package ships 8.2MB of dialyzer PLTs from priv/plts; add explicit files list",
+  "type": "bug",
+  "updated_at": "2026-08-15T11:11:00Z"
+}

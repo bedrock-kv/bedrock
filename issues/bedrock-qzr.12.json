@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-15T20:02:09Z",
+  "close_reason": "Recruitment skips-and-replaces unlockable candidates (ghost registrations from dead node names); director prunes non-layout directory entries after completed recovery. Verified against the user's actual wedged data dir: recovery completes in 561ms and hello reads back world.",
   "created": "2026-08-15T19:57:37Z",
   "description": "User's livebook data dir hangs on restart: the coordinator's raft-durable service directory retains registrations from prior sessions, including workers registered by dead node names (livebook mints a fresh node name per runtime, orphaning all prior registrations). Log recruitment treats a ghost as a recruitable candidate, fails to lock it (:unavailable at the dead address), and HALTS the attempt: {:failed_to_lock_recruited_service, id, :unavailable} on every attempt forever. Chicken-and-egg: deregistration requires reconciliation, reconciliation requires a completed recovery, recovery cannot complete because of the ghost. Fix: (1) recruitment treats a lock failure on a candidate the same as the candidate being absent — skip it and create a fresh worker (an attempt is a pure function of its view; the failed lock is the view). (2) After recovery completes and the layout is durable, the director deregisters directory entries the layout does not reference — layout-is-truth extended from local workers to the directory; live-but-stale workers re-register on rejoin and get reconciled locally. WAL/chunks in the user's dir verified healthy; the hello-\u003eworld chunk is intact.",
   "id": "bedrock-qzr.12",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Recovery tolerates ghost directory entries; the director prunes them after completion",
   "type": "bug",
-  "updated_at": "2026-08-15T19:57:37Z"
+  "updated_at": "2026-08-15T20:02:09Z"
 }

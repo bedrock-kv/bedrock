@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T21:34:22Z",
+  "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nShale queues future pushes as transaction plus acknowledgement only. When a predecessor arrives, do_pending_pushes writes and acknowledges queued successors internally, but Server forwards only the predecessor to Demux. The queued transactions are present in the WAL and acknowledged to clients while absent from ShardServers, chunks, and materializer streams.\n\nObserved reproduction:\nAfter pushing version 2 before version 1, the WAL ended at version 2 while the shard stream ended at version 1.\n\nImpact:\nAcknowledged writes can disappear from the read path and from object-storage durability. Once the WAL trims, the omission can become permanent; replicas receiving different arrival orders can also produce divergent chunk contents.\n\nAcceptance criteria:\n- Pending entries preserve every value needed for Demux forwarding, including KCV.\n- Draining pending pushes exposes or forwards every appended transaction exactly once and in commit-version order.\n- Concurrent shuffled pushes leave WAL, Demux high-water, ShardServer contents, and materializer-visible state at the same final version.\n- A regression test uses the real Shale Server and a real or instrumented Demux, not ACK-only assertions.\n- Replica tests cover different arrival orders and verify identical chunk payloads.",
+  "id": "bedrock-qzr.17",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 0,
+  "status": "open",
+  "title": "Forward every queued out-of-order Shale push through Demux",
+  "type": "bug",
+  "updated_at": "2026-08-15T21:34:22Z"
+}

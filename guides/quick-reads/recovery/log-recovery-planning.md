@@ -41,7 +41,7 @@ This conservative approach ensures every recovered transaction achieved full cro
 
 ## Data Maximization
 
-Recovery attempts to copy from all available logs within each shard, not just the minimum required. This provides more transaction history for [storage servers](../../deep-dives/architecture/data-plane/storage.md) that need to catch up during their own recovery.
+Recovery attempts to copy from all available logs within each shard, not just the minimum required. This preserves more transaction history in the rebuilt logs, whose Demux replay re-produces the object-storage chunks that [storage servers](../../deep-dives/architecture/data-plane/storage.md) stream during their own catch-up.
 
 ## Failure Handling
 

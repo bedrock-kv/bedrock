@@ -63,6 +63,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
           # metadata_materializer should be the system shard materializer
           assert updated_attempt.metadata_materializer == system_materializer_pid
+
+          # Every creation reaches transaction_services — the layout is
+          # built from it, and reconciliation retires anything the layout
+          # doesn't reference.
+          created_pids =
+            for {_id, %{kind: :materializer, status: {:up, pid}}} <- updated_attempt.transaction_services, do: pid
+
+          assert system_materializer_pid in created_pids
+          assert user_materializer_pid in created_pids
         end)
 
       assert log =~ "Fresh cluster detected"
@@ -313,6 +322,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
           assert updated_attempt.metadata_materializer == materializer_pid
           assert updated_attempt.shard_layout
+
+          # The creation is recorded: the layout will reference it, so
+          # reconciliation cannot retire the worker recovery just made.
+          assert Enum.any?(updated_attempt.transaction_services, fn
+                   {_id, %{kind: :materializer, status: {:up, ^materializer_pid}}} -> true
+                   _ -> false
+                 end)
         end)
 
       assert log =~ "System shard materializer not found, creating new one"

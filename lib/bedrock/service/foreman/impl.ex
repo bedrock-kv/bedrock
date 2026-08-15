@@ -15,10 +15,14 @@ defmodule Bedrock.Service.Foreman.Impl do
 
   alias Bedrock.Cluster
   alias Bedrock.Cluster.Link
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo
+  alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
+
+  require Logger
 
   @spec do_fetch_workers(State.t()) :: [Worker.ref()]
   def do_fetch_workers(t), do: otp_names_for_running_workers(t)
@@ -33,6 +37,54 @@ defmodule Bedrock.Service.Foreman.Impl do
       worker_healthy?(worker_info) and worker_info.manifest != nil
     end)
     |> Enum.map(fn {_id, worker_info} -> compact_service_info_from_worker_info(worker_info) end)
+  end
+
+  @doc """
+  Retires every hosted worker the layout does not reference.
+
+  The durable transaction system layout is the single source of truth for
+  what should exist: recovery attempts are the only creation path, and this
+  is the only destruction path. Old-generation logs (their WAL replayed
+  into the new generation before the layout became durable) and stray
+  materializers from premature recovery attempts are removed by the same
+  rule — no stray detection, no age heuristics.
+
+  A layout with no services is not a valid layout (every recovery produces
+  at least one log), so it retires nothing.
+  """
+  @spec do_reconcile_workers(State.t(), TransactionSystemLayout.t()) :: State.t()
+  def do_reconcile_workers(t, %{services: services}) when is_map(services) and map_size(services) > 0 do
+    case workers_to_retire(t.workers, services) do
+      [] ->
+        t
+
+      to_retire ->
+        Logger.info("Bedrock foreman: retiring workers not in the durable layout: #{inspect(to_retire)}")
+
+        Enum.reduce(to_retire, t, fn worker_id, acc ->
+          {acc, _result} = do_remove_worker(acc, worker_id)
+          acc
+        end)
+    end
+  end
+
+  def do_reconcile_workers(t, _layout), do: t
+
+  @doc """
+  The hosted worker ids a layout does not reference.
+
+  Only entries with a valid manifest qualify: a worker IS a directory with
+  a manifest. The boot scan ingests every subdirectory of the base path,
+  and shared-path deployments put non-worker directories (the
+  coordinator's raft state, the object storage root) alongside workers —
+  things the foreman cannot identify are not its to destroy.
+  """
+  @spec workers_to_retire(%{Worker.id() => WorkerInfo.t()}, %{Worker.id() => term()}) :: [Worker.id()]
+  def workers_to_retire(workers, services) do
+    for {id, %{manifest: %Manifest{worker: worker}}} <- workers,
+        not is_nil(worker),
+        not Map.has_key?(services, id),
+        do: id
   end
 
   @spec do_new_worker(State.t(), Worker.id(), :log | :materializer, params :: map()) ::
@@ -158,8 +210,22 @@ defmodule Bedrock.Service.Foreman.Impl do
   defp terminate_worker_process(%{health: :stopped}, _cluster), do: :ok
   defp terminate_worker_process(%{health: {:failed_to_start, _}}, _cluster), do: :ok
 
+  # Best-effort: a ghost directory entry is tolerable (locking a gone
+  # service fails and is skipped), but leaving one behind on every
+  # retirement would accrete forever.
   @spec unadvertise_worker(WorkerInfo.t(), module()) :: :ok
-  defp unadvertise_worker(_worker_info, _cluster), do: :ok
+  defp unadvertise_worker(%{id: worker_id}, cluster) do
+    case Link.fetch_coordinator(cluster.otp_name(:link)) do
+      {:ok, coordinator} ->
+        _ = Coordinator.deregister_services(coordinator, [worker_id])
+        :ok
+
+      _ ->
+        :ok
+    end
+  catch
+    _, _ -> :ok
+  end
 
   @spec cleanup_worker_directory(WorkerInfo.t(), String.t()) ::
           :ok | {:error, {:failed_to_remove_directory, File.posix(), Path.t()}}

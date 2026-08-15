@@ -92,6 +92,15 @@ defmodule Bedrock.Service.Foreman.Server do
   @impl true
   def handle_cast(_, t), do: noreply(t)
 
+  # A newly durable transaction system layout arrived (forwarded by this
+  # node's Link): retire any hosted worker the layout doesn't reference.
+  @impl true
+  def handle_info({:tsl_updated, transaction_system_layout}, t),
+    do: t |> do_reconcile_workers(transaction_system_layout) |> noreply()
+
+  @impl true
+  def handle_info(_, t), do: noreply(t)
+
   @impl true
   def handle_continue(:spin_up, t), do: t |> do_spin_up() |> noreply()
 end

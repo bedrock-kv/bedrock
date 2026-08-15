@@ -86,7 +86,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
     # Create materializers for all shards in the layout
     case create_materializers_for_shards(shard_tags, recovery_attempt, context) do
-      {:ok, shard_materializers} ->
+      {:ok, shard_materializers, created_services} ->
         # Get the system shard materializer as metadata_materializer for backward compat
         system_shard = RecoveryAttempt.system_shard_id()
         metadata_materializer = Map.get(shard_materializers, system_shard)
@@ -96,6 +96,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
           |> Map.put(:metadata_materializer, metadata_materializer)
           |> Map.put(:shard_layout, shard_layout)
           |> Map.put(:shard_materializers, shard_materializers)
+          |> Map.update!(:transaction_services, &Map.merge(&1, created_services))
 
         {updated_attempt, CommitProxyStartupPhase}
 
@@ -113,12 +114,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     |> Enum.uniq()
   end
 
-  # Create materializers for multiple shards
+  # Create materializers for multiple shards, collecting both the pid map
+  # and the service records of what was created — a created worker that
+  # never reaches transaction_services never reaches the layout, and the
+  # reconciliation rule would retire the workers recovery just made.
   defp create_materializers_for_shards(shard_tags, recovery_attempt, context) do
-    Enum.reduce_while(shard_tags, {:ok, %{}}, fn shard_tag, {:ok, acc} ->
+    Enum.reduce_while(shard_tags, {:ok, %{}, %{}}, fn shard_tag, {:ok, by_shard, services} ->
       case create_and_start_materializer(shard_tag, recovery_attempt, context) do
-        {:ok, pid} ->
-          {:cont, {:ok, Map.put(acc, shard_tag, pid)}}
+        {:ok, pid, {worker_id, descriptor}} ->
+          {:cont, {:ok, Map.put(by_shard, shard_tag, pid), Map.put(services, worker_id, descriptor)}}
 
         {:error, reason} ->
           {:halt, {:error, {shard_tag, reason}}}
@@ -126,14 +130,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end)
   end
 
-  # Create a materializer for a specific shard and start it pulling
+  # Create a materializer for a specific shard and start it pulling.
+  # Returns the pid plus the service record ({id, descriptor}) that must
+  # travel into transaction_services so the layout references the creation.
   defp create_and_start_materializer(shard_tag, recovery_attempt, context) do
     with {:ok, node} <- find_materializer_capable_node(context),
-         {:ok, {worker_ref, node}} <- create_materializer_worker(node, shard_tag, recovery_attempt, context),
+         {:ok, {worker_id, worker_ref, node}} <-
+           create_materializer_worker(node, shard_tag, recovery_attempt, context),
          {:ok, pid} <-
            lock_new_materializer({:materializer, {worker_ref, node}, shard_tag}, recovery_attempt.epoch, context),
          :ok <- start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
-      {:ok, pid}
+      descriptor = %{kind: :materializer, last_seen: {worker_ref, node}, status: {:up, pid}}
+      {:ok, pid, {worker_id, descriptor}}
     end
   end
 
@@ -149,7 +157,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
            timeout: 30_000,
            params: %{"shard_id" => shard_tag}
          ) do
-      {:ok, worker_ref} -> {:ok, {worker_ref, node}}
+      {:ok, worker_ref} -> {:ok, {worker_id, worker_ref, node}}
       {:error, reason} -> {:error, {:failed_to_create_materializer, reason, shard_tag}}
     end
   end
@@ -201,7 +209,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     # durable state, including the shard layout this phase exists to read.
     existing_by_shard = existing_materializers_by_shard(recovery_attempt)
 
-    with {:ok, materializer_service} <- find_or_create_materializer(existing_by_shard, recovery_attempt, context),
+    with {:ok, materializer_service, created_system} <-
+           find_or_create_materializer(existing_by_shard, recovery_attempt, context),
          {:ok, materializer_pid} <- lock_materializer(materializer_service, recovery_attempt.epoch, context),
          # Unlock with logs so it streams the replayed WAL from the demux
          :ok <-
@@ -222,7 +231,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
              context
            ),
          {:ok, shard_layout} <- get_shard_layout(materializer_pid, recovery_version, context),
-         {:ok, shard_materializers} <-
+         {:ok, shard_materializers, created_services} <-
            ensure_materializers_for_shards(
              shard_layout,
              existing_by_shard,
@@ -231,12 +240,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
              recovery_attempt,
              context
            ) do
+      # Every creation must reach transaction_services: the layout is built
+      # from it, and reconciliation retires anything the layout doesn't
+      # reference — including workers recovery itself just made.
+      all_created =
+        Map.merge(created_services, system_service_entry(created_system, materializer_pid))
+
       updated_attempt =
         recovery_attempt
         |> Map.put(:metadata_materializer, materializer_pid)
         |> Map.put(:shard_layout, shard_layout)
         |> Map.put(:shard_materializers, shard_materializers)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
+        |> Map.update!(:transaction_services, &Map.merge(&1, all_created))
 
       {updated_attempt, CommitProxyStartupPhase}
     else
@@ -244,6 +260,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         {recovery_attempt, {:stalled, reason}}
     end
   end
+
+  defp system_service_entry(nil, _pid), do: %{}
+
+  defp system_service_entry({worker_id, last_seen}, pid),
+    do: %{worker_id => %{kind: :materializer, last_seen: last_seen, status: {:up, pid}}}
 
   # Resolvers are recreated each epoch, one per shard range in the
   # recovered layout — the same construction the fresh-cluster path uses,
@@ -280,15 +301,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   end
 
   # Reuse the locked system-shard materializer; create one only when none
-  # survived (a genuinely lost materializer team).
+  # survived (a genuinely lost materializer team). A creation also returns
+  # {worker_id, last_seen} so the caller can record it in the transaction
+  # services once the lock provides the pid.
   defp find_or_create_materializer(existing_by_shard, recovery_attempt, context) do
     case Map.fetch(existing_by_shard, RecoveryAttempt.system_shard_id()) do
       {:ok, service} ->
-        {:ok, service}
+        {:ok, service, nil}
 
       :error ->
         Logger.info("System shard materializer not found, creating new one")
-        create_materializer(recovery_attempt, context)
+
+        with {:ok, node} <- find_materializer_capable_node(context),
+             {:ok, {worker_id, worker_ref, node}} <-
+               create_materializer_worker(node, RecoveryAttempt.system_shard_id(), recovery_attempt, context) do
+          {:ok, {:materializer, {worker_ref, node}}, {worker_id, {worker_ref, node}}}
+        end
     end
   end
 
@@ -304,17 +332,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
        ) do
     shard_layout
     |> extract_shard_tags()
-    |> Enum.reduce_while({:ok, already_started}, fn shard_tag, {:ok, acc} ->
+    |> Enum.reduce_while({:ok, already_started, %{}}, fn shard_tag, {:ok, acc, services} ->
       case Map.fetch(acc, shard_tag) do
         {:ok, _pid} ->
-          {:cont, {:ok, acc}}
+          {:cont, {:ok, acc, services}}
 
         :error ->
           shard_tag
           |> start_materializer_for_shard(existing_by_shard, recovery_version, recovery_attempt, context)
           |> case do
-            {:ok, pid} -> {:cont, {:ok, Map.put(acc, shard_tag, pid)}}
-            {:error, reason} -> {:halt, {:error, {shard_tag, reason}}}
+            {:ok, pid, created} ->
+              {:cont, {:ok, Map.put(acc, shard_tag, pid), Map.merge(services, created)}}
+
+            {:error, reason} ->
+              {:halt, {:error, {shard_tag, reason}}}
           end
       end
     end)
@@ -325,20 +356,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
       {:ok, service} ->
         with {:ok, pid} <- lock_materializer(service, recovery_attempt.epoch, context),
              :ok <- unlock_and_start_pulling(pid, shard_tag, recovery_version, recovery_attempt, context) do
-          {:ok, pid}
+          {:ok, pid, %{}}
         end
 
       :error ->
         Logger.info("Materializer for shard #{shard_tag} not found, creating new one")
-        create_and_start_materializer(shard_tag, recovery_attempt, context)
-    end
-  end
 
-  # Create a new materializer on a capable node
-  defp create_materializer(recovery_attempt, context) do
-    with {:ok, node} <- find_materializer_capable_node(context),
-         {:ok, {worker_ref, node}} <- create_materializer_on_node(node, recovery_attempt, context) do
-      {:ok, {:materializer, {worker_ref, node}, RecoveryAttempt.system_shard_id()}}
+        with {:ok, pid, {worker_id, descriptor}} <-
+               create_and_start_materializer(shard_tag, recovery_attempt, context) do
+          {:ok, pid, %{worker_id => descriptor}}
+        end
     end
   end
 
@@ -347,24 +374,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     case Map.get(caps, :materializer, []) do
       [node | _] -> {:ok, node}
       [] -> {:error, :no_materializer_capable_nodes}
-    end
-  end
-
-  # Create the worker via Foreman with shard_id param
-  defp create_materializer_on_node(node, recovery_attempt, context) do
-    foreman_ref = {recovery_attempt.cluster.otp_name(:foreman), node}
-    worker_id = Worker.random_id()
-    system_shard = RecoveryAttempt.system_shard_id()
-
-    create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
-
-    # Pass shard_id in params so materializer knows its assignment
-    case create_worker_fn.(foreman_ref, worker_id, :materializer,
-           timeout: 30_000,
-           params: %{"shard_id" => system_shard}
-         ) do
-      {:ok, worker_ref} -> {:ok, {worker_ref, node}}
-      {:error, reason} -> {:error, {:failed_to_create_materializer, reason, system_shard}}
     end
   end
 

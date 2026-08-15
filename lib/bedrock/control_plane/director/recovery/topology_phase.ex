@@ -149,11 +149,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
     |> Map.new()
   end
 
+  # The TSL's services map is the layout's statement of what exists: the
+  # new-generation logs and the active shard materializers. Reconciliation
+  # treats it as the single source of truth — any worker a foreman hosts
+  # that is not referenced here gets retired once this layout is durable.
   defp extract_service_ids(recovery_attempt) do
-    # Only log services - storage teams are retired
-    recovery_attempt.logs
-    |> Map.keys()
-    |> MapSet.new()
+    log_ids = recovery_attempt.logs |> Map.keys() |> MapSet.new()
+
+    active_materializer_pids = recovery_attempt.shard_materializers |> Map.values() |> MapSet.new()
+
+    materializer_ids =
+      for {id, %{status: {:up, pid}}} <- recovery_attempt.transaction_services,
+          MapSet.member?(active_materializer_pids, pid),
+          into: MapSet.new(),
+          do: id
+
+    MapSet.union(log_ids, materializer_ids)
   end
 
   @spec build_service_descriptor(
@@ -173,8 +184,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
         }
 
       _ ->
-        # Service not found in available services
-        nil
+        # Not advertised yet — workers created during THIS recovery attempt
+        # can't be in the directory (advertisement is async), but the
+        # attempt holds their full service records. Dropping them here
+        # would strike them from the layout and reconciliation would kill
+        # the workers recovery just created.
+        Map.get(recovery_attempt.transaction_services, service_id)
     end
   end
 

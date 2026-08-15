@@ -6,9 +6,9 @@
   "description": "credo 1.7.19 (required for Elixir 1.20 compatibility, bumped in PR #81) expanded ExpensiveEmptyEnumCheck and flags 22 length/1-vs-empty-list sites (mostly tests) plus 7 Refactor.Nesting sites. Both checks were disabled in .credo.exs to keep the CI matrix PR scoped. Fix the sites and remove the two entries from the disabled list.",
   "id": "bedrock-jsu",
   "labels": [],
-  "priority": 2,
+  "priority": 3,
   "status": "open",
   "title": "Fix ExpensiveEmptyEnumCheck and Nesting credo findings; re-enable checks",
   "type": "task",
-  "updated_at": "2026-07-14T19:31:28Z"
+  "updated_at": "2026-08-15T20:46:24Z"
 }

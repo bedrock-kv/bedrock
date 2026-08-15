@@ -1,8 +1,10 @@
 defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log.Shale.Pushing
   alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Version
@@ -86,6 +88,67 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       assert_receive {:ack_result, {:error, :eio}}
 
       assert :ok = Writer.close(writer)
+    end
+  end
+
+  describe "segment rolling on cut boundaries" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "pushing_roll_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+
+      {:ok, recycler} =
+        SegmentRecycler.start_link(
+          path: dir,
+          min_available: 2,
+          max_available: 4,
+          segment_size: 1_000_000
+        )
+
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      %{dir: dir, recycler: recycler}
+    end
+
+    defp write!(state, version_int) do
+      tx = TransactionTestSupport.new_log_transaction(version_int, %{"k" => "v"})
+      {:ok, state} = Pushing.write_encoded_transaction(state, tx)
+      state
+    end
+
+    test "a push crossing a cut-interval boundary rolls the active segment", %{dir: dir, recycler: recycler} do
+      interval = Demux.Server.default_cut_interval_us()
+
+      state = %State{
+        mode: :ready,
+        path: dir,
+        segment_recycler: recycler,
+        writer: nil,
+        active_segment: nil,
+        segments: [],
+        last_version: Version.from_integer(0)
+      }
+
+      # Two writes inside the first bucket: one segment, no roll
+      state = state |> write!(1_000) |> write!(2_000)
+      assert state.segments == []
+      first_segment = state.active_segment
+
+      # Crossing into the next bucket rolls: fresh active segment named for
+      # the crossing version, previous segment retired to the trimmable list
+      state = write!(state, interval + 1)
+
+      assert state.active_segment.min_version == Version.from_integer(interval + 1)
+      assert [%{min_version: min}] = state.segments
+      assert min == first_segment.min_version
+
+      # Another write in the same bucket does not roll again
+      state = write!(state, interval + 2_000)
+      assert length(state.segments) == 1
+
+      # A quiet stretch spanning several buckets still rolls just once
+      state = write!(state, 4 * interval + 1)
+      assert length(state.segments) == 2
+      assert state.active_segment.min_version == Version.from_integer(4 * interval + 1)
     end
   end
 

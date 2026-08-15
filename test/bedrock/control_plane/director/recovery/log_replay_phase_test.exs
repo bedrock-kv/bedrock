@@ -24,6 +24,54 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
     end
   end
 
+  describe "the replay copy range" do
+    defp attempt_with(durable_version, version_vector) do
+      recovery_attempt()
+      |> Map.put(:durable_version, durable_version)
+      |> Map.put(:version_vector, version_vector)
+      |> Map.put(:old_log_ids_to_copy, ["old_log"])
+      |> Map.put(:survivor_log_ids, ["old_log"])
+      |> Map.put(:logs, %{"new_log" => []})
+      |> Map.put(:service_pids, %{"old_log" => self(), "new_log" => self()})
+    end
+
+    defp context_capturing_copy_range(test_pid) do
+      %{
+        node_tracking: nil,
+        copy_log_data_fn: fn _new_id, _survivors, first, last, _pids ->
+          send(test_pid, {:copy_range, first, last})
+          {:ok, self()}
+        end
+      }
+    end
+
+    test "never starts below what the source WAL can supply (its trimmed oldest)" do
+      # The durable floor regresses to zero on restart (it is not
+      # persisted), but a trimmed WAL begins at its oldest retained
+      # version. Everything below that is durable in object-storage chunks
+      # — that is the only way it got trimmed — so the copy starts at the
+      # vector's first element.
+      oldest = Version.from_integer(5_000_000)
+      tip = Version.from_integer(9_000_000)
+
+      attempt = attempt_with(Version.zero(), {oldest, tip})
+      {_attempt, _next} = LogReplayPhase.execute(attempt, context_capturing_copy_range(self()))
+
+      assert_receive {:copy_range, ^oldest, ^tip}
+    end
+
+    test "skips the already-durable prefix when the floor is ahead of the WAL's oldest" do
+      oldest = Version.from_integer(5_000_000)
+      floor = Version.from_integer(7_000_000)
+      tip = Version.from_integer(9_000_000)
+
+      attempt = attempt_with(floor, {oldest, tip})
+      {_attempt, _next} = LogReplayPhase.execute(attempt, context_capturing_copy_range(self()))
+
+      assert_receive {:copy_range, ^floor, ^tip}
+    end
+  end
+
   describe "replay_old_logs_into_new_logs/5" do
     test "handles empty new log IDs" do
       new_log_ids = []

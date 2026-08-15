@@ -72,6 +72,16 @@ defmodule Bedrock.DataPlane.Demux.Server do
   # Default cut interval (~5 seconds of version-time, in microseconds)
   @default_cut_interval_us 5_000_000
 
+  @doc """
+  The default cut-interval in microseconds of version-time.
+
+  The WAL rolls its active segment on the same boundaries (see
+  `Shale.Pushing`), so that trimming — which can never touch the active
+  segment — physically drops history at the cut cadence.
+  """
+  @spec default_cut_interval_us() :: pos_integer()
+  def default_cut_interval_us, do: @default_cut_interval_us
+
   defstruct [
     :cluster,
     :object_storage,

@@ -6,7 +6,7 @@
 
 ## The Performance Problem
 
-When Bedrock [commits](../../../glossary.md#commit) a transaction, that transaction is immediately durable in the log servers. But serving reads directly from logs would be prohibitively slow—logs are optimized for append-only writes, not random key lookups. The solution is storage servers (called *materializers* in the codebase) that maintain read-optimized copies of the data, updated asynchronously from a per-shard stream produced by each log's Demux.
+When Bedrock [commits](../../../glossary.md#commit) a transaction, that transaction is immediately durable in the log servers. But serving reads directly from logs would be prohibitively slow—logs are optimized for append-only writes, not random key lookups. The solution is storage servers that maintain read-optimized copies of the data, updated asynchronously from the per-shard streams that each log's Demux produces.
 
 This creates a classic consistency challenge: how do you serve fast reads from local caches while ensuring that transactions see a consistent view of the world? Storage servers solve this fundamental tension between performance and correctness through [Multi-Version Concurrency Control (MVCC)](../../../glossary.md#multi-version-concurrency-control), [eventually consistent](../../../glossary.md#eventually-consistent) handling, and pluggable architecture that can adapt to different workloads while maintaining strict [ACID](../../../glossary.md#acid) guarantees.
 
@@ -20,7 +20,7 @@ Version management also solves garbage collection elegantly. Storage servers can
 
 ## The Eventual Consistency Dance
 
-Storage servers maintain an eventually consistent relationship with the transaction log. Committed transactions arrive asynchronously over each server's shard stream: the log's Demux slices every transaction by shard, and each storage server streams exactly its own shard's slice — object-storage chunks for history, the ShardServer's in-memory buffer for recent data, one continuous stream from any starting position. Every stream reply also carries version currency ("nothing for you, but you are current through v"), so a server whose shard is idle keeps advancing without ever polling. There is still always a window where a transaction has been committed but not yet reflected in all storage servers.
+Storage servers maintain an eventually consistent relationship with the transaction log. Committed transactions arrive asynchronously: each log's Demux slices every transaction by shard, and a storage server streams exactly its own shard's slices from the corresponding ShardServer—object-storage chunks for history, the in-memory buffer for recent data, one continuous stream with no gap between them. Every pull reply also carries version currency ("nothing for you, but you are current through v"), so a storage server keeps advancing its version even when its shard is idle. This means there's always a small window where a transaction has been committed but not yet reflected in all storage servers.
 
 Bedrock handles this carefully through version leasing. The [Gateway](../../../glossary.md#gateway) ensures that transactions only read at versions that are guaranteed to be available on all storage servers they'll access. If a transaction tries to read at version 100, the system first confirms that all relevant storage servers have applied transactions up to at least version 100.
 
@@ -40,9 +40,9 @@ This pluggability enables experimentation and gradual migration. A cluster could
 
 ## Recovery: Storage as Cache, Not Source of Truth
 
-The relationship between storage servers and the durable stream becomes crucial during recovery. A storage server can be completely rebuilt from its shard's snapshot and chunk history in object storage, which means it is not a point of failure for data durability—that responsibility belongs to the logs and the chunk pipeline behind them.
+The relationship between storage servers and logs becomes crucial during recovery. Storage servers can be completely rebuilt from the transaction log, which means they're not a point of failure for data durability—that responsibility belongs entirely to the logs.
 
-Storage servers apply transactions eagerly for read currency but only persist to disk up to the known committed version, so their disk can never hold a version a recovery would discard. When a recovery rolls the cluster back, the rollback is a pure in-memory pointer discard—no disk surgery. A server that has been offline simply resumes its shard stream from its own applied position; the stream serves any starting point, so a stale server just has more stream to drink.
+During recovery, storage servers report their current state to the Director: what's the latest version they've applied, and what's the oldest version they still retain. If a storage server has been offline and missed transactions, it simply resumes its shard stream from its own applied position—chunks in object storage reach arbitrarily far back, so a stale server (or one restored from an old snapshot) just has more stream to drink; there is no separate catch-up mode. When a recovery rolls the cluster back, the storage server discards its in-memory versions above the recovery version—a pointer operation, never disk surgery, because nothing above the known-committed version is ever evicted to disk.
 
 ## Integration with the Transaction System
 
@@ -52,8 +52,8 @@ For the complete transaction flow, see **[Transaction Processing Deep Dive](../.
 
 ## Related Components
 
-- **[Olivine](../implementations/olivine.md)**: The materializer engine implementation
-- **[Log System](log.md)**: Hosts the Demux whose per-shard streams feed storage updates
+- **Olivine**: The primary multi-version materializer engine implementation
+- **[Log System](log.md)**: Source of committed transactions, delivered as per-shard streams through each log's Demux
 - **[Transaction Builder](../infrastructure/transaction-builder.md)**: Primary consumer of storage read operations with horse racing performance optimization
 - **[Gateway](../infrastructure/gateway.md)**: Coordinates read version leasing to ensure Storage server data availability
 - **[Director](../control-plane/director.md)**: Control plane component that manages storage recovery and key range assignment

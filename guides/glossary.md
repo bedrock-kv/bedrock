@@ -30,17 +30,9 @@ The strategy of processing multiple transactions together to amortize overhead c
 
 ## C
 
-### **Chunk**
-
-An immutable object-storage file holding one shard's transaction slices for a range of versions. Chunks are written by ShardServers on Demux-commanded cuts and are named for the last commit they contain, so a reader can find the chunk covering any version with a single next-key-after listing call. Because cuts are deterministic and gated on the known committed version, every replica produces byte-identical chunks.
-
 ### **Codec**
 
 A module responsible for encoding/decoding keys or values for storage and transmission. Examples: `TupleKeyCodec`, `BertValueCodec`.
-
-### **Cut**
-
-A deterministic version-time boundary at which the Demux commands every ShardServer to persist its buffered slices as a chunk. Cuts are pure version arithmetic (fixed buckets of the cut interval) and fire only once the known committed version has reached them, so nothing that is not known-committed ever becomes durable in object storage.
 
 ### **Cold Start**
 
@@ -76,7 +68,7 @@ The transaction processing layer consisting of Sequencers, Commit Proxies, Resol
 
 ### **Demux**
 
-The process tree owned by each running log that slices every pushed transaction by shard and routes the slices to per-shard ShardServers. The Demux commands deterministic chunk cuts, tracks the minimum durable version that gates WAL trimming, and answers currency subscriptions so idle shards' materializers stay current without polling. It is the log's only data-plane consumer, and materializers' only data-plane source.
+The per-log component that slices every pushed transaction by shard and routes the slices to per-shard ShardServers, which buffer recent data in memory and persist history as chunk files in object storage. The Demux commands deterministic, known-committed-gated chunk cuts, tracks per-shard durability to derive the WAL trim floor, and serves version currency to storage servers streaming their shards.
 
 ### **Director**
 
@@ -152,7 +144,7 @@ A contiguous segment of the key space, defined by start and end keys (e.g., `{"a
 
 ### **Known Committed Version**
 
-The highest version number confirmed as durably committed across all log servers, serving as the readable horizon for new transactions. Returned by read version requests to ensure consistent snapshots, and piggybacked by commit proxies on every log push (FoundationDB tlog parity): downstream durability — chunk cuts in the Demux and window eviction in materializers — is gated on it, so nothing that is not known-committed ever becomes durable anywhere, and recovery rollback is pure pointer manipulation.
+The highest version number confirmed as durably committed across all log servers, serving as the readable horizon for new transactions. Returned by read version requests to ensure consistent snapshots. Also returned with every commit version assignment and piggybacked by commit proxies on every log push, so downstream durability machinery — the Demux's chunk cuts and storage eviction — can guarantee that nothing not known-committed ever becomes durable.
 
 ---
 
@@ -178,10 +170,6 @@ The component that provides durable, ordered transaction storage and serves as t
 
 ## M
 
-### **Materializer**
-
-The codebase's name for a [Storage](deep-dives/architecture/data-plane/storage.md) server: the component that materializes queryable, versioned key-value state for a single shard by streaming that shard's slices from a log's Demux. See also: [Olivine](#olivine), the materializer engine implementation.
-
 ### **Manifest**
 
 A configuration file that describes worker capabilities and system configuration for service discovery.
@@ -201,10 +189,6 @@ A concurrency control method that maintains multiple versions of each data item,
 ---
 
 ## O
-
-### **Olivine**
-
-The materializer engine implementation: a versioned page index over one shard's key range, fed by a single stream (snapshot, then chunks, then the ShardServer buffer). Applies eagerly for read currency but persists to disk only up to the known committed version, which makes recovery rollback a pure in-memory pointer discard. See also: [Olivine implementation details](deep-dives/architecture/implementations/olivine.md).
 
 ### **Optimistic Concurrency Control**
 
@@ -268,13 +252,9 @@ An independent partition of data identified by range tags, enabling parallel pro
 
 The log storage engine implementation that provides durable, append-only transaction logging with strict version ordering. This is one kind of [Log](deep-dives/architecture/data-plane/log.md) server implementation. See also: [Shale implementation details](deep-dives/architecture/implementations/shale.md).
 
-### **ShardServer**
-
-The per-shard process in a log's Demux tree that buffers its shard's recent transaction slices, persists them as chunks on commanded cuts, and serves the shard's continuous stream to materializers — chunks for history, buffer for recent data, with version currency on every reply.
-
 ### **Storage**
 
-The component that serves read requests and maintains versioned key-value data by streaming its shard's committed transactions from a log's Demux (called a [Materializer](#materializer) in the codebase). See also: [Storage implementation](deep-dives/architecture/data-plane/storage.md).
+The component that serves read requests and maintains versioned key-value data by streaming its shard's committed transactions from the log's Demux (object-storage chunks for history, the in-memory buffer for recent data). See also: [Storage implementation](deep-dives/architecture/data-plane/storage.md).
 
 ### **Storage Team**
 

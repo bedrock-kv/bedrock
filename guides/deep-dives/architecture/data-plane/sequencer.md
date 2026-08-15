@@ -14,7 +14,7 @@ Version numbers serve two distinct purposes in Bedrock. [Read versions](../../..
 
 The Sequencer tracks three distinct version counters to implement proper [Lamport clock](../../../glossary.md#lamport-clock) semantics. The [known committed version](../../../glossary.md#known-committed-version) represents the highest version confirmed as durably committed across all log servers, serving as the readable horizon for new transactions. [Read version](../../../glossary.md#read-version) requests return this value, ensuring transactions see a consistent snapshot of committed data.
 
-[Commit version](../../../glossary.md#commit-version) assignment implements the Lamport clock mechanism by returning a version pair: the [last commit version](../../../glossary.md#last-commit-version) and the newly assigned commit version. This pair forms the Lamport clock chain {last_commit_version, next_commit_version} that enables conflict detection—Resolvers can determine causality relationships between transactions based on these version boundaries. Each assignment updates the last commit version to the value just handed to the commit proxy.
+[Commit version](../../../glossary.md#commit-version) assignment implements the Lamport clock mechanism by returning the [last commit version](../../../glossary.md#last-commit-version) and the newly assigned commit version. This pair forms the Lamport clock chain {last_commit_version, next_commit_version} that enables conflict detection—Resolvers can determine causality relationships between transactions based on these version boundaries. Each assignment updates the last commit version to the value just handed to the commit proxy. The reply also carries the current [known committed version](../../../glossary.md#known-committed-version), which commit proxies piggyback on every log push (FoundationDB tlog parity): downstream durability machinery—the Demux's chunk cuts and storage eviction—gates on it so that nothing not known-committed ever becomes durable.
 
 Commit success reporting advances the known committed version when commit proxies confirm successful persistence to logs. This feedback loop ensures the readable horizon advances only when transactions are durably committed, maintaining strict consistency between version assignment and data visibility.
 
@@ -39,7 +39,7 @@ The Sequencer's version assignment creates the foundation for all transaction or
 Sequencer serves as the **global version authority** with these specific responsibilities:
 
 - **Read Version Assignment**: Provides consistent snapshot points using the known committed version
-- **Commit Version Assignment**: Issues globally unique, monotonically increasing commit versions with Lamport clock chains
+- **Commit Version Assignment**: Issues globally unique, monotonically increasing commit versions with Lamport clock chains, alongside the known committed version for piggybacking on log pushes
 - **Version State Tracking**: Maintains known committed, last commit, and next commit version counters
 - **Consistency Coordination**: Ensures read versions only reflect durably committed transactions through feedback loops
 - **Recovery Integration**: Accepts initial version state from Director to maintain correct version progression

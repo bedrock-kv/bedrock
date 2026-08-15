@@ -89,13 +89,18 @@ Foremanprocesses coordinate with cluster service discovery:
 ### Worker Creation and Management
 
 ```elixir
-# Create a new materializer worker with its shard assignment (stored in the
-# worker's manifest and handed to the worker at startup)
-{:ok, worker_ref} =
-  Foreman.new_worker(foreman, "materializer_1", :materializer, params: %{"shard_id" => 1})
+# Create a new storage worker
+{:ok, worker_ref} = Foreman.new_worker(foreman, "storage_1", :storage)
 
-# Create a new log worker
+# Create a new log worker  
 {:ok, worker_ref} = Foreman.new_worker(foreman, "log_1", :log)
+
+# Create a materializer with its shard assignment; params are stored in the
+# worker's manifest and handed to the worker at startup
+{:ok, worker_ref} =
+  Foreman.new_worker(foreman, "materializer_1", :materializer,
+    params: %{"shard_id" => 1}
+  )
 
 # List all running workers
 {:ok, workers} = Foreman.all(foreman)
@@ -224,7 +229,7 @@ Foreman serves as the **service creation foundation** in Bedrock's service regis
   - **Batch Operations**: Efficient provision of multiple service advertisements simultaneously
 
 - **From Director**: Receives worker creation requests during recovery
-  - **Worker Specification**: `new_worker/4` creates specific worker types on demand, carrying startup params (a materializer's shard assignment) into the worker manifest
+  - **Worker Specification**: `new_worker/4` creates specific worker types on demand; `opts[:params]` travels through the worker manifest to startup (this is how a materializer learns its shard assignment)
   - **Resource Allocation**: Coordinates working directory creation and process supervision
   - **Health Validation**: `wait_for_healthy/2` ensures workers are operational before recovery proceeds
   - **Batch Creation**: Supports creation of multiple workers for efficient recovery scaling

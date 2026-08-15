@@ -12,7 +12,7 @@ The Log system acts as the single source of truth for what transactions have bee
 
 ## Core Operations
 
-The Log system exposes a minimal interface with just a handful of essential operations. The `push` operation accepts a transaction and makes it durable at a specific version number, enforcing strict ordering by rejecting out-of-sequence transactions; every push also piggybacks the known committed version from the commit proxies, which gates everything downstream that becomes durable. The `pull` operation serves transaction ranges during recovery — that is its only remaining consumer. Materializers do not pull from the log: they stream their shard's slice of the transaction stream from the log's Demux (`get_shard_server/2` is the one discovery call a materializer makes against a log). Recovery operations allow logs to be locked during cluster recovery and rebuilt from other log servers when necessary.
+The Log system exposes a minimal interface with just a handful of essential operations. The `push` operation accepts a transaction and makes it durable at a specific version number, enforcing strict ordering by rejecting out-of-sequence transactions; each push also carries the known-committed version piggybacked by the commit proxies, which downstream durability machinery gates on. The `pull` operation serves transaction ranges during recovery—recovery is its only consumer. Storage servers never pull the raw log: `get_shard_server` introduces a storage server to the ShardServer for its shard (a one-time discovery call, repeated only on failover), and all data then flows from that per-shard stream. Recovery operations allow logs to be locked during cluster recovery and rebuilt from other log servers when necessary.
 
 This simple contract enables the complex behaviors that follow, while keeping the interface clean enough that different storage engines can implement it in radically different ways.
 
@@ -28,13 +28,13 @@ Bedrock runs multiple log servers, and every committed transaction is replicated
 
 The benefit of this model is that losing any single log server doesn't result in data loss. During recovery, the system can reconstruct the complete transaction history from any surviving log server. If one log server becomes temporarily unavailable, the entire commit process waits rather than proceeding with incomplete replication, ensuring that durability guarantees are never compromised.
 
-## The Demux: Per-Shard Distribution and WAL Trimming
+## Storage Server Integration
 
-Each running log owns a Demux — a process tree that splits every pushed transaction into per-shard slices and hands them to ShardServers. A ShardServer buffers its shard's recent slices in memory and, on deterministic version-time boundaries ("cuts") commanded by the Demux, persists them to object storage as chunk files. A cut only fires once the piggybacked known committed version has reached it, so nothing that is not known-committed ever becomes durable — chunks can never contain versions a recovery would discard. Chunks are named for the last commit they contain, which lets a reader find the chunk covering any version with a single object-store listing call.
+Each log owns a Demux that slices every pushed transaction by shard and hands the pieces to per-shard ShardServers. A ShardServer buffers recent slices in memory and, on deterministic version-time boundaries ("cuts") commanded by the Demux—and released only once the known-committed version has reached them—flushes them as chunk files to object storage, named for the last commit they contain. Storage servers stream exactly their own shard from this pipeline: chunks for history, the buffer for recent data, one continuous stream that serves any starting position. Pull replies carry version currency (`%{high_water, kcv}`), so an idle shard's storage server still advances—event-driven, with no polling or timers anywhere in the chain.
 
-Materializers are the Demux's consumers. Each materializer streams its shard from its ShardServer — chunks for history, the buffer for recent data, seamlessly from any starting position — and receives version currency (`high_water` and the known committed version) on every reply, so idle shards stay current without any polling. The log's WAL is trimmed behind the minimum durable version confirmed by object storage: readers never hold the WAL back, and a materializer that falls behind simply reads further back on the chunk stream at its own expense.
+This is also what lets the WAL stay bounded: once every shard confirms its chunks durable in object storage, the log trims the covered segments. The trim floor is object-storage confirmation alone—readers never hold the WAL back, and a lagging storage server is simply further back on the stream, reading chunks, with the cost falling on the laggard rather than the cluster.
 
-This architecture allows the system to optimize reads and writes independently. Writes go through the fast log append path for immediate durability, while reads are served from local materializers that follow their shard stream asynchronously. The version-based consistency model ensures that readers see a coherent view of the data despite this temporal separation.
+This architecture allows the system to optimize reads and writes independently. Writes go through the fast log append path for immediate durability, while reads are served from local storage servers that have been updated asynchronously. The version-based consistency model ensures that readers see a coherent view of the data despite this temporal separation.
 
 ## Recovery and System Restoration
 
@@ -57,6 +57,6 @@ The minimal contract means that different log servers can coexist in the same cl
 
 - **[Shale](../implementations/shale.md)**: Primary disk-based implementation of the Log interface
 - **[Commit Proxy](commit-proxy.md)**: Orchestrates transaction durability through Log persistence coordination
-- **[Storage](storage.md)**: Streams per-shard transactions from the log's Demux for local state updates
+- **[Storage](storage.md)**: Streams its shard's committed transactions from the log's Demux for local state updates
 - **[Director](../control-plane/director.md)**: Control plane component that manages Log recovery and infrastructure planning
 - **[Foreman](../infrastructure/foreman.md)**: Infrastructure component that creates and manages Log worker processes

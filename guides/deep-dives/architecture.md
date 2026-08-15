@@ -31,7 +31,7 @@ For a comprehensive overview, see [Data Plane Overview](../quick-reads/data-plan
 
 These are concrete storage engines that implement the data plane interfaces:
 
-- **[Olivine](architecture/implementations/olivine.md)** - The materializer engine: a versioned page index fed by a per-shard stream from each log's Demux
+- **Olivine** - The multi-version materializer engine that streams its shard from the log's Demux
 - **[Shale](architecture/implementations/shale.md)** - An example disk-based write-ahead-log implementation with segment file management
 
 Implementation components can be swapped or configured based on performance requirements, hardware characteristics, and deployment constraints.

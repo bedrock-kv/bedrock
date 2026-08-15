@@ -35,6 +35,83 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     key
   end
 
+  defmodule CountingBackend do
+    @moduledoc false
+    @behaviour ObjectStorage
+
+    @impl true
+    def get(config, key) do
+      send(Keyword.fetch!(config, :notify), {:get, key})
+      LocalFilesystem.get(config, key)
+    end
+
+    @impl true
+    def put(config, key, data, opts \\ []), do: LocalFilesystem.put(config, key, data, opts)
+    @impl true
+    def delete(config, key), do: LocalFilesystem.delete(config, key)
+    @impl true
+    def list(config, prefix, opts \\ []), do: LocalFilesystem.list(config, prefix, opts)
+    @impl true
+    def put_if_not_exists(config, key, data, opts \\ []), do: LocalFilesystem.put_if_not_exists(config, key, data, opts)
+    @impl true
+    def get_with_version(config, key), do: LocalFilesystem.get_with_version(config, key)
+
+    @impl true
+    def put_if_version_matches(config, key, version_token, data, opts \\ []),
+      do: LocalFilesystem.put_if_version_matches(config, key, version_token, data, opts)
+  end
+
+  describe "chunk selection from key names alone" do
+    test "read_from_version fetches only the chunks it needs", %{backend: backend, root: root} do
+      # Five chunks; a read from 450 needs only the last two (maxes 500, 700)
+      write_chunk(backend, "s", [{100, "a"}, {150, "b"}])
+      write_chunk(backend, "s", [{200, "c"}])
+      write_chunk(backend, "s", [{300, "d"}, {350, "e"}])
+      needed_1 = write_chunk(backend, "s", [{400, "f"}, {500, "g"}])
+      needed_2 = write_chunk(backend, "s", [{600, "h"}, {700, "i"}])
+
+      counting = ObjectStorage.backend(CountingBackend, root: root, notify: self())
+      reader = ChunkReader.new(counting, "s")
+
+      versions =
+        reader
+        |> ChunkReader.read_from_version(450)
+        |> Enum.map(fn {v, _} -> v end)
+
+      assert versions == [500, 600, 700]
+
+      # The names alone decided which chunks to touch: exactly the two
+      # needed, never the three below the target.
+      fetched = collect_gets()
+      assert Enum.sort(fetched) == Enum.sort([needed_1, needed_2])
+    end
+
+    test "find_chunk_for_version reads at most one chunk", %{backend: backend, root: root} do
+      write_chunk(backend, "s", [{100, "a"}])
+      covering = write_chunk(backend, "s", [{200, "b"}, {300, "c"}])
+      write_chunk(backend, "s", [{400, "d"}])
+
+      counting = ObjectStorage.backend(CountingBackend, root: root, notify: self())
+      reader = ChunkReader.new(counting, "s")
+
+      assert ChunkReader.find_chunk_for_version(reader, 250) == covering
+      assert collect_gets() == [covering]
+
+      # A version in the gap between chunks: the boundary chunk's min is
+      # above it, so there is no containing chunk — one read to learn that.
+      assert ChunkReader.find_chunk_for_version(reader, 150) == nil
+      assert collect_gets() == [covering]
+    end
+
+    defp collect_gets(acc \\ []) do
+      receive do
+        {:get, key} -> collect_gets([key | acc])
+      after
+        0 -> Enum.reverse(acc)
+      end
+    end
+  end
+
   describe "new/2" do
     test "creates reader", %{backend: backend} do
       reader = ChunkReader.new(backend, "shard")

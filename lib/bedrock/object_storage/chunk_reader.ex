@@ -147,23 +147,54 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
   end
 
   @doc """
+  The max contained version encoded in a chunk key's name.
+
+  A chunk is named for the last commit it contains, so the name alone
+  answers the only question a reader asks of a chunk it has not fetched:
+  "could this chunk hold anything at or after my target?"
+  """
+  @spec max_version_from_key(String.t()) :: version()
+  def max_version_from_key(key) do
+    {:ok, version} = key |> Path.basename() |> Keys.key_to_version()
+    version
+  end
+
+  @doc """
   Finds the chunk containing a specific version.
 
   Returns the chunk key if found, or `nil` if no chunk contains that version.
-  Searches through chunks (newest first) until finding one where
-  `min_version <= target <= max_version`.
+  The candidate — the chunk with the smallest named max at or above the
+  target — is identified from key names alone; one chunk read confirms its
+  min bound.
   """
   @spec find_chunk_for_version(t(), version()) :: String.t() | nil
   def find_chunk_for_version(%__MODULE__{} = reader, target_version) do
-    reader
-    |> list_chunk_metadata()
-    |> Enum.find(fn {_key, min_version, max_version} ->
-      target_version >= min_version and target_version <= max_version
-    end)
-    |> case do
-      {key, _, _} -> key
-      nil -> nil
+    case covering_chunk_keys(reader, target_version) do
+      [] ->
+        nil
+
+      keys ->
+        candidate = List.first(keys)
+
+        case read_chunk_header(reader, candidate) do
+          {:ok, %{min_version: min}} when min <= target_version -> candidate
+          {:ok, _header} -> nil
+          {:error, reason} -> raise ReadError, reason: reason, key: candidate
+        end
     end
+  end
+
+  # The keys a read from `target_version` needs, oldest first, decided from
+  # names alone. Ascending key order is descending max order (inverted
+  # names), so the needed set is the leading run of the listing while the
+  # named max stays at or above the target — and take_while stops the paged
+  # listing at the first chunk that provably holds nothing we want.
+  @spec covering_chunk_keys(t(), version()) :: [String.t()]
+  defp covering_chunk_keys(reader, target_version) do
+    reader
+    |> list_chunks()
+    |> Stream.take_while(&(max_version_from_key(&1) >= target_version))
+    |> Enum.reverse()
   end
 
   @doc """
@@ -261,23 +292,13 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
 
   # State: {reader, chunk_keys_to_process, current_transactions, remaining_limit}
   defp init_read_state(reader, target_version, limit) do
-    # Find all chunks and filter to those that might contain versions >= target
-    chunk_keys_with_versions =
-      reader
-      |> list_chunk_metadata()
-      |> Enum.filter(fn {_key, _min, max_version} ->
-        # Keep chunks where max >= target (might have relevant transactions)
-        max_version >= target_version
-      end)
-      |> Enum.to_list()
+    # Chunk names carry the max contained version, which is the entire
+    # selection predicate: no per-chunk metadata reads, only the chunks
+    # that will actually be read get fetched.
+    needed_keys = covering_chunk_keys(reader, target_version)
 
-    # Sort by max_version ascending (oldest first for forward reading)
-    sorted =
-      Enum.sort_by(chunk_keys_with_versions, fn {_key, min_version, _max} -> min_version end)
-
-    # Find first chunk that could contain target and start from there
     {chunks_to_process, first_chunk_transactions} =
-      case find_starting_chunk(reader, sorted, target_version) do
+      case find_starting_chunk(reader, needed_keys, target_version) do
         {remaining_chunks, transactions} -> {remaining_chunks, transactions}
         nil -> {[], []}
       end
@@ -291,7 +312,7 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
 
   defp find_starting_chunk(_reader, [], _target_version), do: nil
 
-  defp find_starting_chunk(reader, [{key, _min, _max} | rest], target_version) do
+  defp find_starting_chunk(reader, [key | rest], target_version) do
     case read_chunk(reader, key) do
       {:ok, chunk} ->
         case Chunk.find_first_entry_gte(chunk.directory, target_version) do
@@ -329,18 +350,6 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
 
   defp read_next_transaction({reader, [key | rest_chunks], [], limit}) when is_binary(key) do
     # Load next chunk - key is a string path
-    case read_chunk(reader, key) do
-      {:ok, chunk} ->
-        transactions = Chunk.extract_transactions(chunk)
-        read_next_transaction({reader, rest_chunks, transactions, limit})
-
-      {:error, reason} ->
-        raise ReadError, reason: reason, key: key
-    end
-  end
-
-  defp read_next_transaction({reader, [{key, _min, _max} | rest_chunks], [], limit}) do
-    # Load next chunk - from metadata tuple
     case read_chunk(reader, key) do
       {:ok, chunk} ->
         transactions = Chunk.extract_transactions(chunk)

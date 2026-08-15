@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-15T21:34:22Z",
+  "description": "Review finding from worktree-qzr2-wal-trim. Related to bedrock-wxf.6, but this ticket is the correctness defect in the current Olivine compaction path.\n\nProblem:\nOlivine continues accepting and applying synchronous ingest calls while background compaction captures an older durable snapshot. The stream puller advances after each acknowledged ingest. At compaction_ready, Server replaces the index with only the captured durable version, clears the intake queue, and retains the already-advanced pull task. Transactions ingested during compaction therefore vanish from the materializer until a later recovery or restart rewinds the stream.\n\nImpact:\nReads can lose previously visible committed state after compaction.\n\nAcceptance criteria:\n- Every transaction accepted during compaction remains readable after cutover.\n- The solution either preserves/replays the post-snapshot suffix or safely stops and restarts the puller from the compacted durable boundary.\n- Backpressured pending ingest callers are handled correctly during success, failure, lock, and shutdown paths.\n- A deterministic concurrency test holds compaction open, ingests a suffix, completes cutover, and verifies all suffix versions and values without restarting the materializer.\n- The test verifies the stream resumes without duplicates or gaps.",
+  "id": "bedrock-qzr.19",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 1,
+  "status": "open",
+  "title": "Preserve live Olivine ingestion across compaction cutover",
+  "type": "bug",
+  "updated_at": "2026-08-15T21:34:22Z"
+}

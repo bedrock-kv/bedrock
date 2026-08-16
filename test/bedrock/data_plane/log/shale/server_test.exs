@@ -347,10 +347,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
     test "handles recover_from with invalid version range", %{server: pid} do
       source_logs = [self()]
-      first_version = Version.from_integer(10)
-      last_version = Version.from_integer(1)
+      replay_after = Version.from_integer(10)
+      last_inclusive = Version.from_integer(1)
 
-      catch_exit(GenServer.call(pid, {:recover_from, source_logs, first_version, last_version}, 500))
+      assert {:error, {:failed_to_recover, :invalid_version_range}} =
+               GenServer.call(pid, {:recover_from, source_logs, replay_after, last_inclusive}, 500)
     end
   end
 
@@ -480,11 +481,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
           state
           | mode: :running,
             last_version: v30,
-            active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
+            active_segment: %Segment{
+              path: seg30_path,
+              min_version: v30,
+              previous_version: v20,
+              transactions: [tx30]
+            },
             segments: [
-              %Segment{path: seg20_path, min_version: v20, transactions: [tx20]},
-              %Segment{path: seg10_path, min_version: v10, transactions: [tx10]}
+              %Segment{path: seg20_path, min_version: v20, previous_version: v10, transactions: [tx20]},
+              %Segment{path: seg10_path, min_version: v10, previous_version: Version.zero(), transactions: [tx10]}
             ],
+            available_after: Version.zero(),
             oldest_version: v10,
             min_durable_version: nil
         }
@@ -496,6 +503,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       assert state.min_durable_version == v15
       assert Enum.map(state.segments, & &1.min_version) == [v20]
+      assert state.available_after == v10
       assert state.oldest_version == v20
       refute File.exists?(seg10_path)
       assert File.exists?(seg20_path)
@@ -513,7 +521,12 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
           state
           | mode: :running,
             last_version: v10,
-            active_segment: %Segment{path: seg10_path, min_version: v10, transactions: [tx10]},
+            active_segment: %Segment{
+              path: seg10_path,
+              min_version: v10,
+              previous_version: Version.zero(),
+              transactions: [tx10]
+            },
             segments: [],
             oldest_version: v10,
             min_durable_version: nil
@@ -552,11 +565,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
         state
         | mode: :running,
           last_version: v30,
-          active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
+          active_segment: %Segment{
+            path: seg30_path,
+            min_version: v30,
+            previous_version: v20,
+            transactions: [tx30]
+          },
           segments: [
-            %Segment{path: seg20_path, min_version: v20, transactions: [tx20]},
-            %Segment{path: seg10_path, min_version: v10, transactions: [tx10]}
+            %Segment{path: seg20_path, min_version: v20, previous_version: v10, transactions: [tx20]},
+            %Segment{path: seg10_path, min_version: v10, previous_version: Version.zero(), transactions: [tx10]}
           ],
+          available_after: Version.zero(),
           oldest_version: v10,
           min_durable_version: nil
       }

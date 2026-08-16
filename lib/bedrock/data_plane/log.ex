@@ -17,12 +17,14 @@ defmodule Bedrock.DataPlane.Log do
   @type fact_name ::
           Worker.fact_name()
           | :last_version
+          | :available_after
           | :oldest_version
           | :minimum_durable_version
 
   @type recovery_info :: %{
           kind: :log,
           last_version: Bedrock.version(),
+          available_after: Bedrock.version(),
           oldest_version: Bedrock.version(),
           minimum_durable_version: Bedrock.version() | :unavailable
         }
@@ -37,16 +39,18 @@ defmodule Bedrock.DataPlane.Log do
     - A list containing:
       - `:kind`: Identifies the entity as a log.
       - `:last_version`: The latest version present in the log.
-      - `:oldest_version`: The earliest version still available in the log.
-      - `:minimum_durable_version`: The lowest version that is guaranteed to
-        be durable. This could be a specific version or `:unavailable` if
-        not determinable.
+      - `:available_after`: The exclusive cursor after which every retained
+        transaction is available.
+      - `:oldest_version`: Informational first retained transaction version.
+      - `:minimum_durable_version`: The object-storage watermark through which
+        data is durable. This could be a specific version or `:unavailable`
+        after restart.
 
   Useful in scenarios where system recovery needs to consider the current
   state of log versions, ensuring consistency and order.
   """
   @spec recovery_info :: [fact_name()]
-  def recovery_info, do: [:kind, :last_version, :oldest_version, :minimum_durable_version]
+  def recovery_info, do: [:kind, :last_version, :available_after, :oldest_version, :minimum_durable_version]
 
   @doc """
   Apply a new transaction to the log. The previous transaction version is given
@@ -108,7 +112,7 @@ defmodule Bedrock.DataPlane.Log do
     - `{:error, :invalid_last_version}`: The specified `last_version` is invalid.
     - `{:error, :version_too_new}`: The version specified is too recent.
     - `{:error, {:version_too_old, floor}}`: The version specified is below
-      the WAL's trim floor; `floor` is the oldest version still available.
+      the WAL's trim floor; `floor` is the exclusive `available_after` cursor.
       Consumers below it should catch up from object storage chunks.
     - `{:error, :version_not_found}`: The version cannot be found.
     - `{:error, :unavailable}`: Log is unavailable for operation.
@@ -149,9 +153,10 @@ defmodule Bedrock.DataPlane.Log do
   def get_shard_server(log, shard_id), do: call(log, {:get_shard_server, shard_id}, 5_000)
 
   @doc """
-  The initial transaction that is applied to a new log if the current version
-  is set to 0 during a recovery. It is an explicit a directive to clear the
-  entire key range.
+  Encodes an empty transaction at version zero for callers that need one.
+
+  Recovery does not use this as a cursor or progress marker. Empty recovery
+  state is represented by persisted WAL metadata, never by a transaction.
   """
   @spec initial_transaction :: Transaction.encoded()
   def initial_transaction do
@@ -177,6 +182,7 @@ defmodule Bedrock.DataPlane.Log do
            recovery_info :: [
              kind: :log,
              last_version: Bedrock.version(),
+             available_after: Bedrock.version(),
              oldest_version: Bedrock.version(),
              minimum_durable_version: Bedrock.version() | :unavailable
            ]}
@@ -184,10 +190,7 @@ defmodule Bedrock.DataPlane.Log do
   defdelegate lock_for_recovery(storage, epoch), to: Worker
 
   @doc """
-  Initiates a recovery process from the given source log(s) spanning the
-  transactions specified by the given first/last versions. If the first version
-  is 0, a special _initial transaction_ is applied to the log. This transaction
-  is defined by `initial_transaction/0`.
+  Initiates recovery from source logs over `(replay_after, last_inclusive]`.
 
   The function ensures that the transaction log is consistent with the
   source logs by pulling from them and applying the transactions.
@@ -198,18 +201,16 @@ defmodule Bedrock.DataPlane.Log do
     - `source_logs`: List of source log references from which transactions are
       recovered, or a single ref for backward compatibility. Empty list or nil
       is sent for initial recovery when there are no source logs.
-    - `first_version`: The starting point of the recovery. Transactions _after_
-      this version are applied.
-    - `last_version`: The ending point of the recovery. Transactions up to and
-      including this version are applied.
+    - `replay_after`: The exclusive starting cursor. No transaction is created
+      at this version.
+    - `last_inclusive`: The inclusive endpoint that recovery must observe before
+      it can report success.
 
   ## Multi-Source Recovery (Consistent Hashing)
 
-  When multiple source logs are provided, the log pulls transactions from all
-  sources and uses the shard index embedded in each transaction to filter for
-  mutations belonging to shards this log serves (determined by ShardRouter).
-  This supports the consistent hashing model where shard→log mapping is computed
-  rather than stored.
+  When multiple source logs are provided, Shale can try another survivor if a
+  source is unavailable. Every log stores the same encoded transaction stream;
+  the destination appends each binary unchanged and its Demux performs slicing.
 
   ## Return Values:
 
@@ -220,12 +221,12 @@ defmodule Bedrock.DataPlane.Log do
   @spec recover_from(
           log :: ref(),
           source_logs :: [ref()] | ref() | nil,
-          first_version :: Bedrock.version(),
-          last_version :: Bedrock.version()
+          replay_after :: Bedrock.version(),
+          last_inclusive :: Bedrock.version()
         ) ::
           {:ok, pid()} | {:error, :unavailable}
-  def recover_from(log, source_logs, first_version, last_version),
-    do: call(log, {:recover_from, normalize_source_logs(source_logs), first_version, last_version}, :infinity)
+  def recover_from(log, source_logs, replay_after, last_inclusive),
+    do: call(log, {:recover_from, normalize_source_logs(source_logs), replay_after, last_inclusive}, :infinity)
 
   # Normalize source_logs to always be a list for consistent handling
   defp normalize_source_logs(nil), do: []

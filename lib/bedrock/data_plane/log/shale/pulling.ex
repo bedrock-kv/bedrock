@@ -23,11 +23,21 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
           | {:error, {:version_too_old, floor :: Bedrock.version()}}
   def pull(t, from_version, opts \\ [])
 
-  def pull(t, from_version, _) when from_version >= t.last_version, do: {:waiting_for, from_version}
+  def pull(t, from_version, opts) when from_version >= t.last_version do
+    if opts[:recovery] == true and from_version == t.last_version and opts[:last_version] == t.last_version do
+      case check_for_locked_outside_of_recovery(true, t) do
+        :ok -> {:ok, t, []}
+        error -> error
+      end
+    else
+      {:waiting_for, from_version}
+    end
+  end
 
-  # The floor is data, not a wall: a puller below it learns where the WAL
-  # now begins and can re-bootstrap from object storage up to that point.
-  def pull(t, from_version, _) when from_version < t.oldest_version, do: {:error, {:version_too_old, t.oldest_version}}
+  # `available_after` is the persisted exclusive floor. A puller below it
+  # must re-bootstrap from object storage through that cursor.
+  def pull(t, from_version, _) when from_version < t.available_after,
+    do: {:error, {:version_too_old, t.available_after}}
 
   def pull(t, from_version, opts) do
     with :ok <- check_for_locked_outside_of_recovery(opts[:recovery] || false, t),
@@ -57,7 +67,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pulling do
         end
 
       {:error, :version_too_old} ->
-        {:error, {:version_too_old, t.oldest_version}}
+        {:error, {:version_too_old, t.available_after}}
 
       error ->
         error

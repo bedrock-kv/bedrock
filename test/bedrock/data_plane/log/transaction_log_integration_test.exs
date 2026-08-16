@@ -54,7 +54,7 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     {:ok, transaction_with_version} =
       Transaction.add_commit_version(encoded_transaction, commit_version)
 
-    {:ok, writer} = Writer.open(@test_file)
+    {:ok, writer} = Writer.open(@test_file, Version.zero())
     {:ok, _updated_writer} = Writer.append(writer, transaction_with_version, commit_version)
     Writer.close(writer)
 
@@ -92,7 +92,7 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
       %{mutations: [{:clear, "key3"}]}
     ]
 
-    {:ok, writer} = Writer.open(@test_file)
+    {:ok, writer} = Writer.open(@test_file, Version.zero())
 
     {final_writer, _} =
       Enum.reduce(transactions, {writer, 1}, fn tx, {w, version_num} ->
@@ -129,7 +129,7 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     version = Version.from_integer(123)
     {:ok, tx_with_version} = Transaction.add_commit_version(encoded, version)
 
-    {:ok, writer} = Writer.open(@test_file)
+    {:ok, writer} = Writer.open(@test_file, Version.zero())
     {:ok, _} = Writer.append(writer, tx_with_version, version)
     Writer.close(writer)
 
@@ -152,7 +152,7 @@ defmodule Bedrock.DataPlane.Log.TransactionLogIntegrationTest do
     version = Version.from_integer(1)
     {:ok, tx_with_version} = Transaction.add_commit_version(encoded, version)
 
-    {:ok, writer} = Writer.open(@test_file)
+    {:ok, writer} = Writer.open(@test_file, Version.zero())
     {:ok, _} = Writer.append(writer, tx_with_version, version)
     Writer.close(writer)
 

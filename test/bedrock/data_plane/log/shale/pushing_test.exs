@@ -66,7 +66,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
         File.rm(path)
       end)
 
-      assert {:ok, writer} = Writer.open(path, sync_fun: fn _fd -> {:error, :eio} end)
+      assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: fn _fd -> {:error, :eio} end)
 
       state = %State{
         mode: :ready,
@@ -161,7 +161,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
         end)
       end
 
-      assert {:ok, writer} = Writer.open(path, sync_fun: sync_fun)
+      assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: sync_fun)
 
       state = %State{
         mode: :ready,

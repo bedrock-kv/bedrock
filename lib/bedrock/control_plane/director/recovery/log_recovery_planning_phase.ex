@@ -5,7 +5,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
 
   Runs when logs existed in the previous layout. Uses simple majority quorum - if more than half
   of the logs from the previous layout are available (locked), recovery can proceed. The version
-  vector is computed as `{max(oldest), min(newest)}` across all available logs.
+  vector is computed as `{max(available_after), min(last_inclusive)}` across
+  all available logs. Its lower element is an exclusive cursor, not the first
+  retained transaction.
 
   Also calculates `durable_version` as the minimum of all logs' `minimum_durable_version` values,
   representing the highest version guaranteed to be persisted to durable storage (ObjectStorage)
@@ -74,8 +76,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
   @doc """
   Computes the version vector from log recovery info.
 
-  Returns `{max(oldest), min(newest)}` across all logs, which represents the
-  range of transactions that are guaranteed to be complete across all survivors.
+  Returns `{max(available_after), min(last_inclusive)}` across all logs, which
+  represents the common recovery range `(available_after, last_inclusive]`.
   """
   @spec compute_version_vector(%{Log.id() => Log.recovery_info()}) ::
           {:ok, Bedrock.version_vector()} | {:error, :invalid_version_range}
@@ -84,44 +86,46 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
   end
 
   def compute_version_vector(log_recovery_info) do
-    {max_oldest, min_newest} =
+    {max_available_after, min_last_inclusive} =
       log_recovery_info
       |> Map.values()
-      |> Enum.reduce({Version.zero(), nil}, fn info, {current_max_oldest, current_min_newest} ->
-        oldest = info[:oldest_version]
-        newest = info[:last_version]
+      |> Enum.reduce({Version.zero(), nil}, fn info, {current_max_available_after, current_min_last_inclusive} ->
+        available_after = info[:available_after]
+        last_inclusive = info[:last_version]
 
-        new_max_oldest = if oldest > current_max_oldest, do: oldest, else: current_max_oldest
+        new_max_available_after =
+          if available_after > current_max_available_after,
+            do: available_after,
+            else: current_max_available_after
 
-        new_min_newest =
+        new_min_last_inclusive =
           cond do
-            current_min_newest == nil -> newest
-            newest < current_min_newest -> newest
-            true -> current_min_newest
+            current_min_last_inclusive == nil -> last_inclusive
+            last_inclusive < current_min_last_inclusive -> last_inclusive
+            true -> current_min_last_inclusive
           end
 
-        {new_max_oldest, new_min_newest}
+        {new_max_available_after, new_min_last_inclusive}
       end)
 
-    # Validate the range
-    if valid_range?({max_oldest, min_newest}) do
-      {:ok, {max_oldest, min_newest}}
+    if valid_range?({max_available_after, min_last_inclusive}) do
+      {:ok, {max_available_after, min_last_inclusive}}
     else
       {:error, :invalid_version_range}
     end
   end
 
   @doc """
-  Validates a version range is valid (oldest <= newest, with special handling for zero).
+  Validates an exclusive/inclusive recovery range (`available_after <= last_inclusive`).
   """
   @spec valid_range?(Bedrock.version_vector()) :: boolean()
-  def valid_range?({oldest, newest}) do
+  def valid_range?({available_after, last_inclusive}) do
     zero_version = Version.zero()
 
     cond do
-      oldest == zero_version -> true
-      newest == zero_version -> false
-      true -> newest >= oldest
+      available_after == zero_version -> true
+      last_inclusive == zero_version -> false
+      true -> last_inclusive >= available_after
     end
   end
 

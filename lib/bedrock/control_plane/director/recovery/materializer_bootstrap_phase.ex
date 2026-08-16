@@ -202,7 +202,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     # WAL trim floor — is NOT a rollback target: it regresses to zero on
     # restart by design, and rolling a populated materializer back to it
     # would discard real state.)
-    {_oldest, recovery_version} = recovery_attempt.version_vector
+    {_available_after, recovery_version} = recovery_attempt.version_vector
 
     # Materializers were locked during the locking phase; their recovery
     # info carries their shard assignments. Reuse them — they hold the

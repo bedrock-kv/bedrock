@@ -12,10 +12,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   @type t :: %__MODULE__{
           path: String.t(),
           min_version: Bedrock.version(),
+          previous_version: Bedrock.version(),
           transactions: nil | [Transaction.encoded()]
         }
   defstruct path: nil,
             min_version: nil,
+            previous_version: nil,
             transactions: nil
 
   @wal_prefix "wal_"
@@ -31,9 +33,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   @spec decode_file_name(String.t()) :: pos_integer()
   def decode_file_name(@wal_prefix <> log_number), do: String.to_integer(log_number, 32)
 
-  @spec allocate_from_recycler(SegmentRecycler.server(), String.t(), Bedrock.version()) ::
+  @spec allocate_from_recycler(
+          SegmentRecycler.server(),
+          String.t(),
+          Bedrock.version(),
+          Bedrock.version()
+        ) ::
           {:ok, t()} | {:error, :allocation_failed}
-  def allocate_from_recycler(segment_recycler, path, version) do
+  def allocate_from_recycler(segment_recycler, path, version, previous_version) do
     path_to_file = Path.join(path, encode_file_name(Version.to_integer(version)))
 
     case SegmentRecycler.check_out(segment_recycler, path_to_file) do
@@ -41,6 +48,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
         {:ok,
          %__MODULE__{
            min_version: version,
+           previous_version: previous_version,
            path: path_to_file
          }}
 
@@ -49,9 +57,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
     end
   end
 
-  @spec allocate_from_recycler!(SegmentRecycler.server(), String.t(), Bedrock.version()) :: t()
-  def allocate_from_recycler!(segment_recycler, path, version) do
-    case allocate_from_recycler(segment_recycler, path, version) do
+  @spec allocate_from_recycler!(SegmentRecycler.server(), String.t(), Bedrock.version(), Bedrock.version()) :: t()
+  def allocate_from_recycler!(segment_recycler, path, version, previous_version) do
+    case allocate_from_recycler(segment_recycler, path, version, previous_version) do
       {:ok, segment} ->
         segment
 
@@ -67,16 +75,22 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   Create a new segment from the given file path. We stat the file to get the
   size, ensuring that it exists.
   """
-  @spec from_path(path_to_file :: String.t()) :: {:ok, t()} | {:error, :does_not_exist}
+  @spec from_path(path_to_file :: String.t()) ::
+          {:ok, t()}
+          | {:error, :does_not_exist | {:unsupported_wal_format, String.t()} | {:invalid_wal_format, String.t()}}
   def from_path(path_to_file) do
-    if File.exists?(path_to_file) do
+    with true <- File.exists?(path_to_file),
+         {:ok, previous_version} <- TransactionStreams.read_previous_version(path_to_file) do
       {:ok,
        %__MODULE__{
          path: path_to_file,
-         min_version: path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer()
+         min_version: path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer(),
+         previous_version: previous_version
        }}
     else
-      {:error, :does_not_exist}
+      false -> {:error, :does_not_exist}
+      {:error, :unsupported_wal_format} -> {:error, {:unsupported_wal_format, path_to_file}}
+      {:error, _reason} -> {:error, {:invalid_wal_format, path_to_file}}
     end
   end
 

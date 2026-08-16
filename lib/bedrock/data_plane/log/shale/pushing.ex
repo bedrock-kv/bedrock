@@ -91,9 +91,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
           raise "Failed to extract version: #{inspect(reason)}"
       end
 
-    case Segment.allocate_from_recycler(t.segment_recycler, t.path, version) do
+    previous_version = t.last_version
+
+    case Segment.allocate_from_recycler(t.segment_recycler, t.path, version, previous_version) do
       {:ok, new_segment} ->
-        case Writer.open(new_segment.path) do
+        case Writer.open(new_segment.path, previous_version) do
           {:ok, new_writer} ->
             write_encoded_transaction(
               %{
@@ -123,9 +125,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
           # segment is trim-immune, so a low-traffic log that never fills a
           # segment would otherwise hold its entire history in one
           # untrimmable file — and every recovery would copy that history
-          # from version zero. Rolling per cut bucket keeps oldest_version
-          # chasing the trim floor, which bounds recovery replay to the
-          # untrimmed tail. A roll is a rename from the preallocated pool.
+          # from version zero. Rolling per cut bucket gives trimming a
+          # successor header whose persisted predecessor keeps
+          # `available_after` chasing the untrimmed tail. A roll is a rename
+          # from the preallocated pool.
           case Writer.close(t.writer) do
             :ok -> write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
             {:error, reason} -> {:error, reason, t}
@@ -150,11 +153,22 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   end
 
   defp append_encoded_transaction(t, encoded_transaction, version) do
+    had_transactions? = wal_has_transactions?(t)
+
     case Writer.append(t.writer, encoded_transaction, version) do
       {:ok, writer} ->
         # Update the active segment's transaction cache to keep it coherent with disk
         updated_active_segment = update_segment_transaction_cache(t.active_segment, encoded_transaction)
-        {:ok, %{t | writer: writer, last_version: version, active_segment: updated_active_segment}}
+        oldest_version = if had_transactions?, do: t.oldest_version, else: version
+
+        {:ok,
+         %{
+           t
+           | writer: writer,
+             last_version: version,
+             oldest_version: oldest_version,
+             active_segment: updated_active_segment
+         }}
 
       {:error, :segment_full} ->
         case Writer.close(t.writer) do
@@ -165,6 +179,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       {:error, reason} ->
         {:error, reason, t}
     end
+  end
+
+  defp wal_has_transactions?(t) do
+    [t.active_segment | t.segments]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.any?(fn segment -> Segment.transactions(segment) != [] end)
   end
 
   @spec update_segment_transaction_cache(Segment.t(), Transaction.encoded()) :: Segment.t()

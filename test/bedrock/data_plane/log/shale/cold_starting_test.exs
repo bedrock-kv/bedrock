@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
 
   alias Bedrock.DataPlane.Log.Shale.ColdStarting
   alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Version
 
   @segment_dir "test/fixtures/segments"
@@ -15,9 +16,9 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
 
   describe "reload_segments_at_path/2" do
     test "returns segments sorted by version in descending order" do
-      create_segment_file(1)
-      create_segment_file(2)
-      create_segment_file(10)
+      create_segment_file(1, 0)
+      create_segment_file(2, 1)
+      create_segment_file(10, 2)
 
       version_10 = Version.from_integer(10)
       version_2 = Version.from_integer(2)
@@ -25,14 +26,16 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
 
       assert {:ok,
               [
-                %Segment{min_version: ^version_10},
-                %Segment{min_version: ^version_2},
-                %Segment{min_version: ^version_1}
+                %Segment{min_version: ^version_10, previous_version: ^version_2},
+                %Segment{min_version: ^version_2, previous_version: ^version_1},
+                %Segment{min_version: ^version_1, previous_version: previous_version}
               ]} = ColdStarting.reload_segments_at_path(@segment_dir)
+
+      assert previous_version == Version.zero()
     end
 
     test "ignores non-matching files in directory" do
-      create_segment_file(1)
+      create_segment_file(1, 0)
       File.write!(Path.join(@segment_dir, "other_file.log"), "")
 
       version_1 = Version.from_integer(1)
@@ -54,9 +57,20 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
       # Directory exists but has no segment files
       assert {:ok, []} = ColdStarting.reload_segments_at_path(@segment_dir)
     end
+
+    test "fails closed for a legacy segment without a persisted predecessor" do
+      path = Path.join(@segment_dir, Segment.encode_file_name(1))
+      File.write!(path, <<"BED0", 0::128>>)
+
+      assert {:error, {:unsupported_wal_format, ^path}} =
+               ColdStarting.reload_segments_at_path(@segment_dir)
+    end
   end
 
-  defp create_segment_file(version) do
-    File.write!(Path.join(@segment_dir, Segment.encode_file_name(version)), "")
+  defp create_segment_file(version, previous_version) do
+    path = Path.join(@segment_dir, Segment.encode_file_name(version))
+    File.write!(path, :binary.copy(<<0>>, 1024))
+    {:ok, writer} = Writer.open(path, Version.from_integer(previous_version))
+    :ok = Writer.close(writer)
   end
 end

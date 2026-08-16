@@ -44,11 +44,15 @@ defmodule Bedrock.DataPlane.Log.Tracing do
 
   def log_event(:lock_for_recovery, _, %{epoch: epoch}), do: info("Lock for recovery in epoch #{epoch}")
 
-  def log_event(:recover_from, _, %{source_log: :none}), do: info("Reset to initial version")
+  def log_event(:recover_from, _, %{source_logs: []}), do: info("Persist empty replay baseline")
 
-  def log_event(:recover_from, _, %{source_log: source_log, first_version: first_version, last_version: last_version}) do
+  def log_event(:recover_from, _, %{
+        source_logs: source_logs,
+        replay_after: replay_after,
+        last_inclusive: last_inclusive
+      }) do
     info(
-      "Recover from #{inspect(source_log)} with versions #{Version.to_string(first_version)} to #{Version.to_string(last_version)}"
+      "Recover from #{inspect(source_logs)} over (#{Version.to_string(replay_after)}, #{Version.to_string(last_inclusive)}]"
     )
   end
 

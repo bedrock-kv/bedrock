@@ -11,7 +11,7 @@ defmodule Bedrock.DataPlane.LogTest do
     test "returns list of fact names for recovery" do
       result = Log.recovery_info()
 
-      expected = [:kind, :last_version, :oldest_version, :minimum_durable_version]
+      expected = [:kind, :last_version, :available_after, :oldest_version, :minimum_durable_version]
       assert result == expected
     end
   end
@@ -36,13 +36,13 @@ defmodule Bedrock.DataPlane.LogTest do
 
     test "delegates to GenServerApi call with proper arguments" do
       source_log = :source_log_ref
-      first_version = 100
-      last_version = 200
+      replay_after = 100
+      last_inclusive = 200
       test_pid = self()
 
       # Spawn a process that will make the call and we'll capture the message
       spawn(fn ->
-        Log.recover_from(test_pid, source_log, first_version, last_version)
+        Log.recover_from(test_pid, source_log, replay_after, last_inclusive)
       end)
 
       # Log.recover_from normalizes single refs to lists
@@ -63,12 +63,12 @@ defmodule Bedrock.DataPlane.LogTest do
 
     test "accepts list of source logs directly" do
       source_logs = [:log1, :log2]
-      first_version = 100
-      last_version = 200
+      replay_after = 100
+      last_inclusive = 200
       test_pid = self()
 
       spawn(fn ->
-        Log.recover_from(test_pid, source_logs, first_version, last_version)
+        Log.recover_from(test_pid, source_logs, replay_after, last_inclusive)
       end)
 
       # Lists are passed through unchanged

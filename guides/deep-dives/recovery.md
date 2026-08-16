@@ -18,11 +18,11 @@ Recovery's first line of defense: the recovered Transaction System Layout is che
 
 ## Phase 1: [Service Locking](../quick-reads/recovery/service-locking.md)
 
-Recovery establishes exclusive control by locking the old layout's logs and every advertised materializer. Locking does two jobs at once. It fences: a locked service reports only to this recovery's director, and an older epoch's director can never reclaim it. And it informs: each locked service returns its recovery info — logs report their oldest and newest versions, materializers report their durable version and shard assignment. That information is what lets the later phases reuse survivors instead of discarding them.
+Recovery establishes exclusive control by locking the old layout's logs and every advertised materializer. Locking does two jobs at once. It fences: a locked service reports only to this recovery's director, and an older epoch's director can never reclaim it. And it informs: each locked service returns its recovery info — logs report the persisted exclusive `available_after` cursor, their first retained transaction for inspection, and their inclusive endpoint; materializers report their durable version and shard assignment. That information is what lets the later phases reuse survivors instead of discarding them.
 
 ## Phase 2: [Log Recovery Planning](../quick-reads/recovery/log-recovery-planning.md)
 
-From the locked logs, recovery computes the version vector: the range of transactions guaranteed complete across the surviving majority. The first element is the oldest version any survivor can still supply — the WAL below it has been trimmed, which can only happen after that history became durable in object-storage chunks. The last element is the recovery version: the cluster's rollback point, always at or above the known committed version at the moment of failure, because every log receives every version. This phase also seeds vacancies for a fresh generation of logs: Bedrock does not repair old logs in place, it replaces them and copies the data forward.
+From the locked logs, recovery computes the version vector `{available_after, last_inclusive}`: the common range `(available_after, last_inclusive]` guaranteed complete across the surviving majority. The first element is a cursor persisted in every WAL segment header, not the first transaction. The second is the recovery endpoint. This phase also seeds vacancies for a fresh generation of logs: Bedrock does not repair old logs in place, it replaces them and copies the data forward.
 
 ## Phase 3: [Log Recruitment](../quick-reads/recovery/log-recruitment.md)
 
@@ -30,7 +30,7 @@ The log vacancies are filled: available log workers are reused as candidates, an
 
 ## Phase 4: [Log Replay](../quick-reads/recovery/log-replay.md)
 
-Committed transactions are copied from the surviving logs into the new generation. The copy range starts at the later of the durable floor and the vector's first element, and replay routes every copied transaction through the new log's fresh Demux, so the per-shard buffers and chunk pipeline are rebuilt as a side effect — deterministic cuts reproduce byte-identical chunks, and "already exists" is a truthful confirmation. Because the old WAL was trimmed in normal operation, this copies a few seconds of tail, not the cluster's lifetime; replay cost is independent of cluster age.
+Committed transactions are copied from the surviving logs into the new generation. Object storage is durable through `durable_through`, so replay uses the exclusive cursor `replay_after = max(durable_through, available_after)` and copies `(replay_after, last_inclusive]`. It routes every copied transaction through the new log's fresh Demux, so the per-shard buffers and chunk pipeline are rebuilt as a side effect — deterministic cuts reproduce byte-identical chunks, and "already exists" is a truthful confirmation. No lower-bound sentinel is appended: an empty range persists only its cursor, while a non-empty replay succeeds only after observing the inclusive endpoint. Because the old WAL was trimmed in normal operation, this copies a few seconds of tail, not the cluster's lifetime; replay cost is independent of cluster age.
 
 ## Phase 5: [Sequencer Startup](../quick-reads/recovery/sequencer-startup.md)
 

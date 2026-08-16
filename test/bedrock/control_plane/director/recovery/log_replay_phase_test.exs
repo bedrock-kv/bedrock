@@ -45,30 +45,28 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       }
     end
 
-    test "never starts below what the source WAL can supply (its trimmed oldest)" do
+    test "never starts below the source WAL's persisted availability cursor" do
       # The durable floor regresses to zero on restart (it is not
-      # persisted), but a trimmed WAL begins at its oldest retained
-      # version. Everything below that is durable in object-storage chunks
-      # — that is the only way it got trimmed — so the copy starts at the
-      # vector's first element.
-      oldest = Version.from_integer(5_000_000)
+      # persisted), while a trimmed WAL persists its exclusive predecessor
+      # cursor. The copy starts at that cursor without skipping retained data.
+      available_after = Version.from_integer(5_000_000)
       tip = Version.from_integer(9_000_000)
 
-      attempt = attempt_with(Version.zero(), {oldest, tip})
+      attempt = attempt_with(Version.zero(), {available_after, tip})
       {_attempt, _next} = LogReplayPhase.execute(attempt, context_capturing_copy_range(self()))
 
-      assert_receive {:copy_range, ^oldest, ^tip}
+      assert_receive {:copy_range, ^available_after, ^tip}
     end
 
-    test "skips the already-durable prefix when the floor is ahead of the WAL's oldest" do
-      oldest = Version.from_integer(5_000_000)
-      floor = Version.from_integer(7_000_000)
+    test "skips the already-durable prefix when durable_through is ahead" do
+      available_after = Version.from_integer(5_000_000)
+      durable_through = Version.from_integer(7_000_000)
       tip = Version.from_integer(9_000_000)
 
-      attempt = attempt_with(floor, {oldest, tip})
+      attempt = attempt_with(durable_through, {available_after, tip})
       {_attempt, _next} = LogReplayPhase.execute(attempt, context_capturing_copy_range(self()))
 
-      assert_receive {:copy_range, ^floor, ^tip}
+      assert_receive {:copy_range, ^durable_through, ^tip}
     end
   end
 

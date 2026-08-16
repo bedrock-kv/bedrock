@@ -10,6 +10,13 @@ This glossary defines key terms and concepts used throughout the Bedrock distrib
 
 ## A
 
+### **Available After**
+
+The exclusive WAL cursor after which every retained transaction is available.
+Shale persists it as the `previous_version` in each segment header, so trimming
+and cold restart cannot erase the boundary needed by `Log.pull/3`. It is not the
+same as the first retained transaction.
+
 ### **ACID**
 
 **Atomicity, Consistency, Isolation, Durability** - The four fundamental properties of database transactions that Bedrock guarantees. All operations in a transaction either succeed together (atomicity), maintain data validity (consistency), appear isolated from other transactions (isolation), and survive system failures (durability).

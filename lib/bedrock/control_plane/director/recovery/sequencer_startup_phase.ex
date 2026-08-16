@@ -56,7 +56,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.SequencerStartupPhase do
 
   @spec build_sequencer_child_spec(RecoveryAttempt.t()) :: Supervisor.child_spec()
   defp build_sequencer_child_spec(recovery_attempt) do
-    {_first_version, last_committed_version} = recovery_attempt.version_vector
+    {_available_after, last_committed_version} = recovery_attempt.version_vector
 
     Sequencer.child_spec(
       cluster: recovery_attempt.cluster,

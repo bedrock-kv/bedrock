@@ -1,41 +1,53 @@
 # Log Replay: Data Migration to Trusted Infrastructure
 
-**Copying committed transactions from potentially compromised logs to verified new infrastructure.**
+**Copying the committed WAL tail into a fresh generation of logs.**
 
-The log replay phase transfers all committed transaction data from old [logs](../../deep-dives/architecture/data-plane/log.md) to newly recruited log services. Rather than attempting to salvage potentially compromised infrastructure, Bedrock systematically copies transaction data to verified, reliable storage before the new system begins operation.
+Each new log receives the locked survivor set and rebuilds from any available
+survivor. Every log holds the same encoded transaction stream, so the source
+transaction binary is appended unchanged; the destination's Demux performs
+normal shard slicing after the WAL append.
 
-## Core Process
+## One Range Convention
 
-**Smart Pairing Algorithm**  
-Recovery pairs each new log with old logs using round-robin distribution. When scaling from 2 to 4 logs:
+Planning supplies `{available_after, last_inclusive}` and object storage is
+known durable through `durable_through`. Replay computes:
 
-- New log 1 ← Old log 1  
-- New log 2 ← Old log 2
-- New log 3 ← Old log 1 (cycles back)
-- New log 4 ← Old log 2
+```text
+replay_after = max(durable_through, available_after)
+copy range   = (replay_after, last_inclusive]
+```
 
-**Selective Data Migration**  
-Only committed transactions within the established [version](../../glossary.md#version) range determined during [version determination](version-determination.md) undergo copying. Uncommitted transactions are deliberately excluded to maintain system consistency.
+Both lower inputs are exclusive cursors. `Log.pull/3` remains exclusive at its
+start and inclusive at `last_version`, so there is no conversion at an API
+boundary. A transaction at the first retained version is copied exactly once,
+including when it is the only retained transaction. Numeric version gaps are
+valid.
 
-**Parallel Execution**  
-Each old-to-new log pairing operates in parallel, maximizing throughput while maintaining strict consistency requirements.
+The destination records `replay_after` as logical WAL position without
+creating a transaction. An empty range persists that baseline in a WAL segment
+header. A non-empty range begins with the first real source transaction and
+routes that exact binary through the fresh Demux.
 
-## Reliability Philosophy
+Recovery succeeds only after observing `last_inclusive`. An empty page before
+that endpoint is an incomplete replay, not evidence of success. Replay never
+assigns the requested endpoint speculatively and never writes an empty
+transaction as a progress marker.
 
-Bedrock chooses data integrity over operational efficiency. Even though old logs contain correct transaction data, recovery copies this information to newly recruited logs rather than reusing potentially compromised storage. This ensures all transaction data resides on verified infrastructure before system startup.
+## Why Restart Preserves the Boundary
 
-The new [transaction system layout](transaction-system-layout.md) often differs significantly—different log services, node assignments, and potentially different durability policies. Complete data migration ensures compatibility between system generations.
+Every WAL segment header stores the `previous_version` current when the segment
+was created. The header and first entry are covered by the same fsync before the
+old segment can become trim-eligible. Consequently, after trim and cold restart,
+the oldest retained segment still states the exact exclusive cursor preceding
+its data. Legacy headers without that fact fail closed.
 
-## Error Handling
+New logs recover in parallel. Source unavailability is reported or retried
+against another survivor; malformed, out-of-order, beyond-endpoint, or
+incomplete data fails recovery.
 
-- **Service Failures**: Controlled stall with detailed diagnostics
-- **Epoch Conflicts**: Immediate termination if `:newer_epoch_exists` indicates a newer recovery attempt
-- **Fail-Fast**: Clean termination enables coordinator restart with fresh state
+**Prerequisites**: [Log recovery planning](log-recovery-planning.md),
+[log recruitment](log-recruitment.md), and [service locking](service-locking.md)
 
-## Phase Integration
+**Next phase**: [Sequencer startup](sequencer-startup.md)
 
-**Prerequisites**: [Log recruitment](log-recruitment.md), [version determination](version-determination.md), [service locking](service-locking.md)  
-**Next Phase**: [Sequencer startup](sequencer-startup.md) with populated transaction data  
 **Implementation**: `lib/bedrock/control_plane/director/recovery/log_replay_phase.ex`
-
-This phase marks the transformation from architectural planning to operational infrastructure capable of serving transaction workloads with complete data integrity confidence.

@@ -61,6 +61,13 @@ the cuts use, so there is always a finished segment for the floor to catch — a
 log's disk footprint stays proportional to a few seconds of traffic, not to
 its lifetime.
 
+Each new WAL segment durably records the prior WAL tip as `previous_version`
+in its header before the preceding segment can become trim-eligible. After a
+cold restart, the oldest retained header therefore preserves `available_after`:
+the exact exclusive replay cursor before retained data. This cursor is distinct
+from the first retained transaction and remains meaningful across numeric
+version gaps.
+
 The commit acknowledgment never waits for any of this. Clients are
 acknowledged on WAL fsync; chunk writes and floor advancement happen behind
 the scenes, and the floor only ever moves forward.

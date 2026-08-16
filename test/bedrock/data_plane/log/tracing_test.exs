@@ -77,21 +77,21 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
     end
 
     test "handles :recover_from event with no source" do
-      assert_log_contains(:recover_from, %{}, %{source_log: :none}, "Reset to initial version")
+      assert_log_contains(:recover_from, %{}, %{source_logs: []}, "Persist empty replay baseline")
     end
 
     test "handles :recover_from event with source log" do
       metadata = %{
-        source_log: :log_server_2,
-        first_version: Version.from_integer(100),
-        last_version: Version.from_integer(150)
+        source_logs: [:log_server_2],
+        replay_after: Version.from_integer(100),
+        last_inclusive: Version.from_integer(150)
       }
 
       assert_log_contains(
         :recover_from,
         %{},
         metadata,
-        "Recover from :log_server_2 with versions <0,0,0,0,0,0,0,100> to <0,0,0,0,0,0,0,150>"
+        "Recover from [:log_server_2] over (<0,0,0,0,0,0,0,100>, <0,0,0,0,0,0,0,150>]"
       )
     end
 

@@ -464,11 +464,13 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     |> with_log_recovery_info(%{
       "existing_log_1" => %{
         kind: :log,
+        available_after: Version.zero(),
         oldest_version: Version.zero(),
         last_version: Version.from_integer(100)
       },
       "existing_log_2" => %{
         kind: :log,
+        available_after: Version.zero(),
         oldest_version: Version.zero(),
         last_version: Version.from_integer(100)
       }
@@ -593,6 +595,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     base = %{
       kind: kind,
       durable_version: Version.from_integer(95),
+      available_after: Version.zero(),
       oldest_version: Version.zero(),
       last_version: Version.from_integer(100)
     }

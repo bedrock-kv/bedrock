@@ -69,11 +69,11 @@ flowchart TD
    references recovery already holds, so recruitment completes in a single
    attempt.
 4. **[Log Replay](recovery/log-replay.md)** - Copy the surviving WAL tail
-   into the new generation of logs. The copy starts at the later of the
-   durable floor and the oldest version the survivors still hold — history
-   below that is already durable in object-storage chunks, which is the
-   only way it left the WAL — so replay cost is bounded by the untrimmed
-   tail, not the cluster's age.
+   into the new generation of logs. The copy range is
+   `(max(durable_through, available_after), last_inclusive]`; the persisted
+   lower cursor preserves the first retained transaction even after trim and
+   restart. History below it is already durable in object-storage chunks, so
+   replay cost is bounded by the untrimmed tail, not the cluster's age.
 5. **[Sequencer Startup](recovery/sequencer-startup.md)** - Start the
    global version authority at the recovery version.
 6. **Materializer Bootstrap** - Reuse the surviving materializers: hand

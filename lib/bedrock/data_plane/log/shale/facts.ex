@@ -21,7 +21,18 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
 
   @spec supported_info() :: [Log.fact_name()]
   def supported_info,
-    do: [:id, :kind, :minimum_durable_version, :oldest_version, :last_version, :otp_name, :pid, :state, :supported_info]
+    do: [
+      :id,
+      :kind,
+      :minimum_durable_version,
+      :available_after,
+      :oldest_version,
+      :last_version,
+      :otp_name,
+      :pid,
+      :state,
+      :supported_info
+    ]
 
   @spec gather_info(Log.fact_name(), State.t()) ::
           String.t()
@@ -43,6 +54,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Facts do
   defp gather_info(:minimum_durable_version, %{min_durable_version: nil}), do: :unavailable
   defp gather_info(:minimum_durable_version, %{min_durable_version: v}), do: v
 
+  defp gather_info(:available_after, t), do: t.available_after
   defp gather_info(:oldest_version, t), do: t.oldest_version
   defp gather_info(:last_version, t), do: t.last_version
 

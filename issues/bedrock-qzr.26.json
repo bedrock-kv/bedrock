@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-17T13:51:03Z",
+  "description": "Review finding from PR #121 / bedrock-qzr.18.\n\nEstablished behavior\n\nShale configures the segment recycler with 64 MiB files. `Segment.allocate_from_recycler/4` returns a new segment with the struct default `transactions: nil`, even though the freshly checked-out segment is known to contain no transactions.\n\nBefore every append, `Pushing.append_encoded_transaction/3` calls `wal_has_transactions?/1`. On the first append to a fresh or rolled segment, that function examines the new active segment first and calls `Segment.transactions/1`. Because its cache is nil, `ensure_transactions_are_loaded/1` enumerates `TransactionStreams.from_file!/1`, whose resource initializer calls `File.read!/1` for the entire preallocated file.\n\nThe Log GenServer therefore performs a synchronous 64 MiB file read and binary allocation before the initial append and before the first append of every cut-driven segment roll. This storage scan exists only to decide whether `oldest_version` should be initialized.\n\nInvariant\n\nSegment construction must distinguish known-empty newly allocated storage from cold-loaded storage whose transactions have not been decoded. WAL metadata decisions on the push path must come from logical state, not by reading segment contents.\n\nRequired direction\n\n- Construct recycler-allocated segments with `transactions: []`; reserve `nil` for segments discovered during cold start.\n- Remove `wal_has_transactions?/1` from the append path. Determine whether the retained WAL contains a transaction from the exclusive cursor invariant (`last_version == available_after` denotes an empty baseline) or from equally explicit state.\n- Keep cold-start loading lazy where callers genuinely require transaction bytes.\n\nAcceptance criteria\n\n- The initial append and the first append after a cut-driven roll perform no segment read or transaction deserialization before writing.\n- A newly allocated segment is represented as known empty; a segment created by `from_path/1` remains explicitly unloaded.\n- Tests cover initial empty WAL, persisted empty replay baseline, nonempty WAL, cut-driven roll, and cold restart without changing `oldest_version`, `available_after`, or `last_version` semantics.\n- A regression test fails if the append path calls `Segment.transactions/1` or the WAL file loader solely to determine emptiness.\n- WAL encoding, append ordering, and sync behavior remain unchanged.\n- The fix does not add a second scan or a separate persisted boolean.",
+  "id": "bedrock-qzr.26",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 1,
+  "status": "open",
+  "title": "Do not materialize preallocated WAL segments on the push path",
+  "type": "bug",
+  "updated_at": "2026-08-17T13:51:03Z"
+}

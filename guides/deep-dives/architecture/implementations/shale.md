@@ -84,8 +84,20 @@ Shale recycles only completed segments fully behind the floor and recomputes
 `available_after` from the oldest segment that remains.
 
 Trim-floor telemetry reports lag and segment counts. Growth is
-unbounded-with-alerting by default; an optional hard limit rejects pushes with
-`{:error, :wal_backpressure}`.
+unbounded-with-alerting by default. The optional hard limit is an epoch-fatal
+safety fuse, not retryable per-push backpressure. Shale checks each prospective
+commit version, including queued successors when a predecessor gap closes. If
+the version-time lag exceeds the limit, every affected caller is released with
+`{:error, {:recovery_required, {:wal_limit_exceeded, details}}}` and the commit
+proxy stops so the Director can recover the known-committed prefix. Continuing
+the epoch would be unsafe because the sequencer and resolvers have already
+incorporated the refused version, and some log replicas may already have
+fsynced it.
+
+The fuse emits `[:bedrock, :log, :wal_limit_exceeded]` at error severity with
+the floor, current tip, prospective version, lag, configured limit, and queued
+count. Recovery replay is exempt because it copies history already selected as
+committed.
 
 ## Code References
 

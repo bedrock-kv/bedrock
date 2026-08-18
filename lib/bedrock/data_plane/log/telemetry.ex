@@ -63,6 +63,27 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
     )
   end
 
+  @spec trace_wal_limit_exceeded(
+          floor :: Bedrock.version(),
+          last_version :: Bedrock.version(),
+          commit_version :: Bedrock.version(),
+          lag_us :: pos_integer(),
+          limit_us :: non_neg_integer(),
+          pending_pushes :: non_neg_integer()
+        ) :: :ok
+  def trace_wal_limit_exceeded(floor, last_version, commit_version, lag_us, limit_us, pending_pushes) do
+    Telemetry.execute(
+      [:bedrock, :log, :wal_limit_exceeded],
+      %{lag_us: lag_us, limit_us: limit_us, pending_pushes: pending_pushes},
+      Map.merge(trace_metadata(), %{
+        floor: floor,
+        last_version: last_version,
+        commit_version: commit_version,
+        recovery_required: true
+      })
+    )
+  end
+
   @spec trace_pull_transactions(from_version :: Bedrock.version(), opts :: Keyword.t()) :: :ok
   def trace_pull_transactions(from_version, opts) do
     Telemetry.execute(

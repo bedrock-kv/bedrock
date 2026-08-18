@@ -11,6 +11,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
   @type appended_transactions :: [Transaction.encoded()]
   @type append_error :: {:error, term(), State.t(), appended_transactions()}
+  @type wal_limit_error ::
+          {:recovery_required,
+           {:wal_limit_exceeded,
+            %{
+              commit_version: Bedrock.version(),
+              min_durable_version: Bedrock.version(),
+              last_version: Bedrock.version(),
+              lag_us: pos_integer(),
+              limit_us: non_neg_integer()
+            }}}
 
   @spec push(
           t :: State.t(),
@@ -37,11 +47,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
         :ok = ack_fn.(:ok)
         do_pending_pushes(t, [encoded_transaction])
 
-      {:error, :wal_backpressure = reason, t} ->
-        # Queued successors carry even later commit versions, so none of
-        # them can be admitted either — and with this push rejected, the
-        # gap in front of them can never fill. Reject them all rather
-        # than strand their callers.
+      {:error, {:recovery_required, {:wal_limit_exceeded, _}} = reason, t} ->
+        # Version assignment and resolution have already scheduled this
+        # link for commit. Refusing its WAL append invalidates the epoch;
+        # release every successor so the commit proxies can fail fast and
+        # the Director can recover instead of leaving callers stranded.
         :ok = ack_fn.({:error, reason})
         {:error, reason, reject_pending_pushes(t, reason), []}
 
@@ -86,10 +96,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
             :ok = ack_fn.(:ok)
             do_pending_pushes(new_t, [encoded_transaction | appended])
 
-          {:error, :wal_backpressure = reason, error_t} ->
-            # Everything still queued has a later commit version and is
-            # equally inadmissible: reject the lot, leaving the admitted
-            # prefix as the tip and no caller stranded.
+          {:error, {:recovery_required, {:wal_limit_exceeded, _}} = reason, error_t} ->
+            # The admitted prefix remains the durable tip. The failed link
+            # makes every queued successor unusable in this epoch, so wake
+            # all of their callers and let coordinated recovery decide the
+            # committed prefix.
             :ok = ack_fn.({:error, reason})
             {:error, reason, reject_pending_pushes(error_t, reason), Enum.reverse(appended)}
 
@@ -242,19 +253,42 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
     if t.last_version == t.available_after, do: appended_version, else: t.oldest_version
   end
 
-  # The optional hard limit, enforced against each transaction's own
-  # prospective commit version — for direct appends AND entries drained
-  # from the pending queue (which may have been admitted unchecked while
-  # no durable floor existed yet). Only running logs are subject to it:
-  # recovery replay copies already-committed history and must never be
-  # refused. Disabled (nil limit) is the documented
-  # unbounded-with-alerting posture; a log with no confirmed floor has
-  # nothing to measure against.
-  @spec admit(State.t(), Bedrock.version() | nil) :: :ok | {:error, :wal_backpressure}
-  defp admit(%{mode: :running, reject_pushes_above_lag_us: limit, min_durable_version: floor}, version)
+  # This optional limit is an epoch-fatal WAL safety fuse, not ordinary
+  # retryable backpressure. Once the sequencer has assigned a version and
+  # resolvers have processed it, refusing a required WAL append means the
+  # current epoch cannot continue: replicas may hold different speculative
+  # tails and the sequencer's successor chain includes the refused link.
+  #
+  # Enforce it against each transaction's own prospective commit version,
+  # for direct appends and entries drained from the pending queue. Recovery
+  # replay copies already-committed history and must never trip the fuse.
+  # A nil limit retains the unbounded posture; without a confirmed floor
+  # there is not yet a safe distance to measure.
+  @spec admit(State.t(), Bedrock.version() | nil) :: :ok | {:error, wal_limit_error()}
+  defp admit(%{mode: :running, reject_pushes_above_lag_us: limit, min_durable_version: floor} = t, version)
        when not is_nil(limit) and not is_nil(floor) and not is_nil(version) do
-    if Version.distance(version, floor) > limit do
-      {:error, :wal_backpressure}
+    lag_us = Version.distance(version, floor)
+
+    if lag_us > limit do
+      trace_wal_limit_exceeded(
+        floor,
+        t.last_version,
+        version,
+        lag_us,
+        limit,
+        map_size(t.pending_pushes)
+      )
+
+      {:error,
+       {:recovery_required,
+        {:wal_limit_exceeded,
+         %{
+           commit_version: version,
+           min_durable_version: floor,
+           last_version: t.last_version,
+           lag_us: lag_us,
+           limit_us: limit
+         }}}}
     else
       :ok
     end

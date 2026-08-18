@@ -14,6 +14,16 @@ defmodule Bedrock.DataPlane.Log do
   @type ref :: Worker.ref()
   @type id :: Worker.id()
   @type health :: Worker.health()
+  @type wal_limit_error ::
+          {:recovery_required,
+           {:wal_limit_exceeded,
+            %{
+              commit_version: Bedrock.version(),
+              min_durable_version: Bedrock.version(),
+              last_version: Bedrock.version(),
+              lag_us: pos_integer(),
+              limit_us: non_neg_integer()
+            }}}
   @type fact_name ::
           Worker.fact_name()
           | :last_version
@@ -61,6 +71,11 @@ defmodule Bedrock.DataPlane.Log do
   This call will not return until the transaction has been made durable on the
   log, ensuring that the transactions that precede it are also durable.
 
+  If the optional WAL lag safety limit is exceeded, the call returns
+  `{:error, {:recovery_required, {:wal_limit_exceeded, details}}}`. This is
+  fatal to the current transaction-system epoch: the caller must not retry or
+  continue the assigned version chain without coordinated recovery.
+
   ## Options
 
     - `known_committed_version`: The highest version known to be committed
@@ -74,7 +89,7 @@ defmodule Bedrock.DataPlane.Log do
           last_commit_version :: Bedrock.version(),
           opts :: [known_committed_version: Bedrock.version() | nil]
         ) ::
-          :ok | {:error, :tx_out_of_order | :locked | :unavailable | :wal_backpressure}
+          :ok | {:error, :tx_out_of_order | :locked | :unavailable | wal_limit_error()}
   def push(log, transaction, last_commit_version, opts \\ []) do
     call(log, {:push, transaction, last_commit_version, opts[:known_committed_version]}, :infinity)
   end

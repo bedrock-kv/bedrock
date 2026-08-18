@@ -598,7 +598,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       :ok =
         :telemetry.attach_many(
           handler_id,
-          [[:bedrock, :log, :trim], [:bedrock, :log, :floor_lag_alarm]],
+          [
+            [:bedrock, :log, :trim],
+            [:bedrock, :log, :floor_lag_alarm],
+            [:bedrock, :log, :wal_limit_exceeded]
+          ],
           fn event, measurements, metadata, pid -> send(pid, {:telemetry, event, measurements, metadata}) end,
           test_pid
         )
@@ -641,7 +645,9 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       refute_received {:telemetry, [:bedrock, :log, :floor_lag_alarm], _, _}
     end
 
-    test "pushes are rejected past the configured lag limit", %{server_opts: opts} do
+    test "crossing the configured WAL limit loudly requires recovery", %{server_opts: opts} do
+      attach_trim_telemetry("wal-limit")
+
       # A second server needs its own segment directory: two recyclers
       # sharing one directory rename the same preallocated files out from
       # under each other, occasionally killing this server mid-setup.
@@ -671,7 +677,19 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       encoded_bytes = TransactionTestSupport.new_log_transaction(5_000_001, %{"k" => "v"})
 
-      assert {:error, :wal_backpressure} = GenServer.call(pid, {:push, encoded_bytes, Version.from_integer(5_000_001)})
+      assert {:error, {:recovery_required, {:wal_limit_exceeded, details}}} =
+               GenServer.call(pid, {:push, encoded_bytes, Version.from_integer(5_000_001)})
+
+      assert details.commit_version == Version.from_integer(5_000_001)
+      assert details.min_durable_version == Version.from_integer(10)
+      assert details.last_version == Version.from_integer(5_000_000)
+      assert details.lag_us == 4_999_991
+      assert details.limit_us == 1_000
+
+      assert_receive {:telemetry, [:bedrock, :log, :wal_limit_exceeded], measurements, metadata}
+      assert measurements == %{lag_us: 4_999_991, limit_us: 1_000, pending_pushes: 0}
+      assert metadata.recovery_required
+      assert metadata.commit_version == Version.from_integer(5_000_001)
     end
   end
 

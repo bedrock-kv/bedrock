@@ -26,6 +26,7 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
         [:bedrock, :log, :recover_from],
         [:bedrock, :log, :push],
         [:bedrock, :log, :push_out_of_order],
+        [:bedrock, :log, :wal_limit_exceeded],
         [:bedrock, :log, :pull]
       ],
       &__MODULE__.handle_event/4,
@@ -192,6 +193,28 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
     end
   end
 
+  describe "trace_wal_limit_exceeded/6" do
+    test "emits an epoch-fatal event with the complete safety-limit context" do
+      Telemetry.trace_metadata(%{log_id: "log-1"})
+      floor = Version.from_integer(1_000)
+      last_version = Version.from_integer(3_000)
+      commit_version = Version.from_integer(5_000)
+
+      assert :ok =
+               Telemetry.trace_wal_limit_exceeded(floor, last_version, commit_version, 4_000, 2_500, 3)
+
+      assert_received {:telemetry_event, [:bedrock, :log, :wal_limit_exceeded],
+                       %{lag_us: 4_000, limit_us: 2_500, pending_pushes: 3},
+                       %{
+                         log_id: "log-1",
+                         floor: ^floor,
+                         last_version: ^last_version,
+                         commit_version: ^commit_version,
+                         recovery_required: true
+                       }}
+    end
+  end
+
   describe "trace_pull_transactions/2" do
     test "emits telemetry event with pull details" do
       from_version = Version.from_integer(50)
@@ -237,6 +260,7 @@ defmodule Bedrock.DataPlane.Log.TelemetryTest do
       assert :ok = Telemetry.trace_recover_from(:log, version, version)
       assert :ok = Telemetry.trace_push_transaction(transaction)
       assert :ok = Telemetry.trace_push_out_of_order(version, version)
+      assert :ok = Telemetry.trace_wal_limit_exceeded(version, version, version, 1, 0, 0)
       assert :ok = Telemetry.trace_pull_transactions(version, [])
     end
 

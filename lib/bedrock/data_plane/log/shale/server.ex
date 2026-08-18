@@ -39,7 +39,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   # Alarm when the trim floor lags the WAL tip by more than this much
   # version-time (8 cut intervals). Growth is unbounded-with-alerting by
-  # default; pass reject_pushes_above_lag_us to enforce a hard limit.
+  # default; reject_pushes_above_lag_us opts into an epoch-fatal safety
+  # fuse despite its legacy option name.
   @floor_lag_alarm_us 40_000_000
 
   @doc false

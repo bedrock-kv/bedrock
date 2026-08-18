@@ -10,13 +10,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Materializer.Olivine.CompactionWriter.SplitFile, as: SplitFileWriter
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
-  alias Bedrock.DataPlane.Materializer.Olivine.Pulling
+  alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Materializer.Olivine.State
+  alias Bedrock.DataPlane.Materializer.Olivine.Streaming
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
   alias Bedrock.DataPlane.Materializer.Telemetry
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
+  alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.ObjectStorage.SnapshotBundle
   alias Bedrock.Service.Worker
@@ -29,8 +30,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
   def startup(otp_name, foreman, id, path, opts \\ []) do
     cluster = Keyword.get(opts, :cluster)
-    shard_id = Keyword.get(opts, :shard_id)
-    snapshot = build_snapshot_handle(cluster, shard_id)
+    {shard_tag, shard_num} = normalize_shard(Keyword.get(opts, :shard_id))
+    snapshot = build_snapshot_handle(cluster, shard_tag)
 
     with :ok <- ensure_directory_exists(path),
          :ok <- maybe_load_snapshot(path, snapshot),
@@ -41,12 +42,29 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
          path: path,
          otp_name: otp_name,
          id: id,
-         shard_id: shard_id,
+         shard_id: shard_tag,
+         shard_num: shard_num,
          foreman: foreman,
          database: database,
          index_manager: index_manager,
          snapshot: snapshot
        }}
+    end
+  end
+
+  # The shard assignment arrives as either the numeric shard id (the form the
+  # SHARD_INDEX and ShardServers use) or its base-36 tag (the form object
+  # storage paths use). Keep both: the tag for the snapshot handle, the
+  # number for ShardServer discovery.
+  @spec normalize_shard(non_neg_integer() | String.t() | nil) ::
+          {tag :: String.t() | nil, num :: non_neg_integer() | nil}
+  defp normalize_shard(nil), do: {nil, nil}
+  defp normalize_shard(shard_num) when is_integer(shard_num), do: {Keys.shard_tag(shard_num), shard_num}
+
+  defp normalize_shard(shard_tag) when is_binary(shard_tag) do
+    case Keys.parse_shard_tag(shard_tag) do
+      {:ok, shard_num} -> {shard_tag, shard_num}
+      {:error, _} -> {shard_tag, nil}
     end
   end
 
@@ -126,41 +144,95 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   end
 
   @spec stop_pulling(State.t()) :: State.t()
-  def stop_pulling(%{pull_task: nil} = t), do: t
+  def stop_pulling(%{pull_task: nil} = t), do: release_pending_ingest(t)
 
   def stop_pulling(%{pull_task: puller} = t) do
-    Pulling.stop(puller)
-    reset_puller(t)
+    Streaming.stop(puller)
+
+    t
+    |> reset_puller()
+    |> release_pending_ingest()
+  end
+
+  # A puller parked in a backpressured ingest call must not be left waiting
+  # on a reply that will never come; replying to an already-dead caller is a
+  # harmless no-op.
+  defp release_pending_ingest(%{pending_ingest: nil} = t), do: t
+
+  defp release_pending_ingest(%{pending_ingest: from} = t) do
+    GenServer.reply(from, :ok)
+    %{t | pending_ingest: nil}
   end
 
   @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
           {:ok, State.t()}
   def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
-    t = stop_pulling(t)
-    main_process_pid = self()
-
-    apply_and_notify_fn = fn transactions ->
-      send(main_process_pid, {:apply_transactions, transactions})
-      last_transaction = List.last(transactions)
-      Transaction.commit_version!(last_transaction)
-    end
-
-    database = t.database
-
-    puller =
-      Pulling.start_pulling(
-        durable_version,
-        t.id,
-        logs,
-        services,
-        apply_and_notify_fn,
-        fn -> Database.load_current_durable_version(database) end
-      )
+    t =
+      t
+      |> stop_pulling()
+      |> rollback_uncommitted(durable_version)
+      |> Map.put(:pull_sources, {logs, services})
 
     t
+    |> start_pulling_from(resume_position(t))
     |> update_mode(:running)
-    |> put_puller(puller)
     |> then(&{:ok, &1})
+  end
+
+  # The recovery version is the cluster's rollback point: everything this
+  # materializer applied above it was an uncommitted suffix, and it lives
+  # only in memory (eviction is clamped to the known-committed version,
+  # which the recovery version can never undercut). Discarding it is pure
+  # pointer manipulation. Queued-but-unapplied transactions are dropped
+  # too: the resumed stream re-delivers everything after the rollback point.
+  defp rollback_uncommitted(t, recovery_version) do
+    %{
+      t
+      | index_manager: IndexManager.rollback_to(t.index_manager, recovery_version),
+        intake_queue: IntakeQueue.new(),
+        known_committed_version: nil
+    }
+  end
+
+  # A streaming materializer resumes from its own applied position — the
+  # stream serves any starting point (chunks reach arbitrarily far back),
+  # so a materializer restored from an old snapshot simply has more stream
+  # to drink.
+  defp resume_position(t), do: t.index_manager.current_version
+
+  @doc """
+  Restarts the stream from a rewind point.
+
+  Compaction cutover rewinds the index to the durable snapshot, which makes
+  the running puller's position meaningless — the same situation recovery
+  handles at unlock, resolved the same way: stop the puller and rejoin the
+  stream at the boundary. The stream re-delivers everything after it; no
+  suffix bookkeeping, no special path.
+  """
+  @spec resume_pulling_from(State.t(), Bedrock.version()) :: State.t()
+  def resume_pulling_from(t, start_after) do
+    t
+    |> stop_pulling()
+    |> start_pulling_from(start_after)
+  end
+
+  # Without a shard assignment there is no stream to join: the materializer
+  # is static, fed only through direct ingest (unit-test configurations).
+  # Production materializers always receive their shard from the director.
+  # Without pull sources (never unlocked into a layout), likewise.
+  @spec start_pulling_from(State.t(), Bedrock.version()) :: State.t()
+  defp start_pulling_from(%{shard_num: nil} = t, _start_after), do: t
+  defp start_pulling_from(%{pull_sources: nil} = t, _start_after), do: t
+
+  defp start_pulling_from(%{shard_num: shard_num, pull_sources: {logs, services}} = t, start_after) do
+    # The stream puller: everything — history, recent data, and version
+    # currency — comes from this shard's ShardServer. Batches are handed
+    # over synchronously; the server withholds the reply for backpressure.
+    server = self()
+    ingest_fn = fn transactions, kcv -> GenServer.call(server, {:ingest, transactions, kcv}, :infinity) end
+
+    puller = Streaming.start_pulling(shard_num, start_after, logs, services, ingest_fn)
+    put_puller(t, puller)
   end
 
   @spec info(State.t(), Materializer.fact_name() | [Materializer.fact_name()]) ::
@@ -177,6 +249,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   end
 
   defp supported_info, do: ~w[
+      current_version
       durable_version
       oldest_durable_version
       id
@@ -186,6 +259,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
       kind
       n_keys
       otp_name
+      shard_id
       size_in_bytes
       supported_info
       utilization
@@ -193,6 +267,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
   defp gather_info(:oldest_durable_version, t), do: Database.durable_version(t.database)
   defp gather_info(:durable_version, t), do: Database.durable_version(t.database)
+  # The applied (in-memory) position — what reads can be served through.
+  # Distinct from :durable_version, which eviction clamps to the
+  # known-committed version and which therefore trails by design.
+  defp gather_info(:current_version, t), do: t.index_manager.current_version
+  defp gather_info(:shard_id, t), do: t.shard_num
   defp gather_info(:id, t), do: t.id
   defp gather_info(:key_ranges, t), do: IndexManager.info(t.index_manager, :key_ranges)
   defp gather_info(:kind, _t), do: :materializer
@@ -216,7 +295,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   def advance_window(%State{} = state) do
     start_time = System.monotonic_time(:microsecond)
 
-    case IndexManager.advance_window(state.index_manager, max_eviction_size()) do
+    # The eviction cap is the known-committed version: nothing above it may
+    # become durable, so a recovery rollback never has to touch disk.
+    case IndexManager.advance_window(state.index_manager, max_eviction_size(), state.known_committed_version) do
       {:no_eviction, updated_index_manager} ->
         updated_state = %{state | index_manager: updated_index_manager}
         {:ok, updated_state}

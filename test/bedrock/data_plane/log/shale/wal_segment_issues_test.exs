@@ -166,7 +166,9 @@ defmodule Bedrock.DataPlane.Log.Shale.WalSegmentIssuesTest do
 
   # Helper for push operations with better error handling
   defp assert_push_success(state, expected_version, transaction) do
-    assert {:ok, new_state} = Pushing.push(state, expected_version, transaction, fn _ -> :ok end)
+    assert %{state: new_state, appended: [{_version, ^transaction}], replies: [{_token, :ok}], parked?: false} =
+             Pushing.push(state, expected_version, transaction, :test_token)
+
     new_state
   end
 

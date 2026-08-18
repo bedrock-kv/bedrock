@@ -126,11 +126,13 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       log_recovery_info_by_id: %{
         {:log, 1} => %{
           kind: :log,
+          available_after: Version.zero(),
           oldest_version: Version.zero(),
           last_version: Version.from_integer(100)
         },
         {:log, 2} => %{
           kind: :log,
+          available_after: Version.zero(),
           oldest_version: Version.zero(),
           last_version: Version.from_integer(100)
         }
@@ -453,6 +455,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
        %{
          kind: :test,
          durable_version: Version.from_integer(95),
+         available_after: Version.zero(),
          oldest_version: Version.zero(),
          last_version: Version.from_integer(100)
        }}
@@ -595,6 +598,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
      %{
        kind: :test,
        durable_version: Version.from_integer(95),
+       available_after: Version.zero(),
        oldest_version: Version.zero(),
        last_version: Version.from_integer(100)
      }}

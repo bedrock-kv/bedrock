@@ -18,7 +18,9 @@ defmodule Bedrock.DataPlane.Materializer do
   @type fact_name ::
           Worker.fact_name()
           | :key_ranges
+          | :current_version
           | :durable_version
+          | :shard_id
           | :n_objects
           | :path
           | :size_in_bytes
@@ -27,11 +29,12 @@ defmodule Bedrock.DataPlane.Materializer do
   @type recovery_info :: %{
           kind: :materializer,
           durable_version: Bedrock.version(),
-          oldest_durable_version: Bedrock.version()
+          oldest_durable_version: Bedrock.version(),
+          shard_id: non_neg_integer() | nil
         }
 
   @spec recovery_info :: [fact_name()]
-  def recovery_info, do: [:kind, :durable_version, :oldest_durable_version]
+  def recovery_info, do: [:kind, :durable_version, :oldest_durable_version, :shard_id]
 
   @doc """
   Returns the value for the given key/version, or resolved key-value for KeySelector/version.
@@ -131,7 +134,7 @@ defmodule Bedrock.DataPlane.Materializer do
 
   Range is [start_key, end_key) - includes start_key, excludes end_key.
   Supports both binary keys and KeySelectors for range boundaries.
-  Only supported by Olivine materializer engine; Basalt returns {:error, :unsupported}.
+  Supported by the Olivine materializer engine.
   """
   def get_range(storage, start_key_or_selector, end_key_or_selector, version, opts \\ [])
 

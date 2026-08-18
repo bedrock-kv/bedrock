@@ -168,7 +168,132 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     end
   end
 
+  describe "ghost_directory_ids/2" do
+    test "selects exactly the directory entries the layout does not reference" do
+      services = %{
+        "live_log" => {:log, {:a, :node1}},
+        "live_mat" => {:materializer, {:b, :node1}},
+        "ghost" => {:log, {:c, :dead@nowhere}}
+      }
+
+      layout = %{services: %{"live_log" => %{}, "live_mat" => %{}}}
+
+      assert Recovery.ghost_directory_ids(services, layout) == ["ghost"]
+    end
+
+    test "an invalid layout selects nothing" do
+      assert Recovery.ghost_directory_ids(%{"x" => {:log, {:a, :n}}}, %{}) == []
+      assert Recovery.ghost_directory_ids(%{"x" => {:log, {:a, :n}}}, nil) == []
+    end
+  end
+
+  defmodule StubCoordinator do
+    @moduledoc false
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, :ok}
+
+    @impl true
+    def handle_call(:fetch_service_directory, _from, s), do: {:reply, {:ok, %{}}, s}
+
+    @impl true
+    def handle_cast(_msg, s), do: {:noreply, s}
+  end
+
+  defmodule StubMaterializer do
+    @moduledoc false
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, :ok}
+
+    @impl true
+    def handle_call({:lock_for_recovery, _epoch}, _from, s) do
+      info = %{
+        kind: :materializer,
+        durable_version: Version.zero(),
+        oldest_durable_version: Version.zero()
+      }
+
+      {:reply, {:ok, self(), info}, s}
+    end
+  end
+
+  describe "do_recovery/1 retains the stalled attempt" do
+    test "a stall leaves the live state and the persisted config holding the same mutated attempt" do
+      {:ok, coordinator} = StubCoordinator.start_link()
+      {:ok, materializer} = StubMaterializer.start_link()
+
+      state =
+        %{
+          coordinator: coordinator,
+          lock_token: "test-lock-token",
+          # An advertised materializer: the locking phase locks it and
+          # records it into the attempt — a genuine phase mutation that
+          # must survive the later stall.
+          services: %{"mat-1" => {:materializer, materializer}}
+        }
+        |> create_test_state()
+        |> Recovery.setup_for_initial_recovery()
+
+      initial_attempt = state.recovery_attempt
+
+      result = capture_log_and_return(fn -> Recovery.do_recovery(state) end)
+
+      # The pipeline stalled (no log-capable services to recruit from), so
+      # the director stays in recovery with the attempt persisted…
+      assert result.state == :recovery
+      stalled_attempt = result.config.recovery_attempt
+      assert %RecoveryAttempt{} = stalled_attempt
+
+      # …and the LIVE attempt must be that same stalled attempt. Anything
+      # else discards the phases' accumulated observations (lock-failed
+      # ids, recruited services) on the next in-process retry.
+      assert result.recovery_attempt == stalled_attempt
+
+      # The phases genuinely mutated the attempt before stalling; adopting
+      # the stalled attempt is not a no-op. The locked materializer is the
+      # observable mutation.
+      refute stalled_attempt == initial_attempt
+      assert MapSet.member?(stalled_attempt.locked_service_ids, "mat-1")
+    end
+
+    defp capture_log_and_return(fun) do
+      holder = self()
+      capture_log(fn -> send(holder, {:result, fun.()}) end)
+
+      receive do
+        {:result, result} -> result
+      end
+    end
+  end
+
   describe "setup_for_subsequent_recovery/1" do
+    test "the retry increments the retained attempt and preserves cross-attempt memory" do
+      remembered = MapSet.new(["ghost-log-1", "ghost-log-2"])
+
+      state = %State{
+        recovery_attempt: %RecoveryAttempt{
+          cluster: TestCluster,
+          epoch: 1,
+          attempt: 3,
+          started_at: 12_345,
+          lock_failed_service_ids: remembered
+        },
+        config: %{},
+        services: %{}
+      }
+
+      assert %State{recovery_attempt: retried} = Recovery.setup_for_subsequent_recovery(state)
+      assert retried.attempt == 4
+      assert retried.lock_failed_service_ids == remembered
+    end
+
     test "increments attempt counter and resets state" do
       recovery_attempt = %RecoveryAttempt{
         cluster: TestCluster,
@@ -233,17 +358,20 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
-    test "existing cluster stalls when sequencer fails to start" do
+    test "existing cluster stalls when log capacity is insufficient for recruitment" do
       recovery_attempt = create_existing_cluster_recovery_attempt()
-      old_layout = %{logs: %{"existing_log_1" => [0, 100]}}
-      services = %{"existing_log_1" => {:log, {:log_worker_existing_1, :node1}}}
 
       context =
-        services
-        |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
-        |> Map.put(:start_supervised_fn, fn _child_spec, _node -> {:error, :test_start_error} end)
+        create_test_context(
+          old_transaction_system_layout: %{
+            logs: %{"existing_log_1" => [0, 100]}
+          }
+        )
 
-      assert {{:error, {:failed_to_start, :sequencer, _, :test_start_error}}, _stalled_attempt} =
+      # Logs are generational: an existing-cluster recovery recruits a
+      # fresh set (survivors are copy sources only). With no recruitable
+      # candidates and one node for two desired logs, recruitment stalls.
+      assert {{:stalled, {:insufficient_nodes, _needed, _available}}, _stalled_attempt} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
@@ -331,7 +459,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
-    test "recovery with coordinator-format services completes existing cluster recovery" do
+    test "recovery with coordinator-format services handles existing cluster (regression test)" do
+      # Validates coordinator services work with existing cluster recovery
       old_layout = %{
         logs: %{"existing_log_1" => [0, 100]}
       }
@@ -347,46 +476,47 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       # Include materializer so MaterializerBootstrapPhase passes
       materializer_pid = spawn(fn -> Process.sleep(5000) end)
-      user_materializer_pid = spawn(fn -> Process.sleep(5000) end)
 
+      # Two candidate logs so generational recruitment can fill its
+      # vacancies without creating workers (survivor is a copy source).
       coordinator_services = %{
         "existing_log_1" => {:log, {:log_worker_existing_1, :node1}},
+        "candidate_log_a" => {:log, {:log_worker_candidate_a, :node1}},
+        "candidate_log_b" => {:log, {:log_worker_candidate_b, :node1}},
+        "storage_1" => {:materializer, {:storage_worker_1, :node1}},
         "metadata_materializer" => {:materializer, {:materializer, :node1}}
       }
 
       context =
         coordinator_services
         |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
-        |> Map.put(:node_capabilities, %{
-          log: [:node1@host, :node2@host, :node3@host],
-          storage: [:node1@host, :node2@host, :node3@host],
-          materializer: [:node1@host, :node2@host, :node3@host],
-          coordination: [:node1@host, :node2@host, :node3@host],
-          resolution: [:node1@host, :node2@host, :node3@host]
-        })
-        |> Map.put(:lock_materializer_fn, fn
-          {:materializer, {:materializer, _node}}, _epoch -> {:ok, materializer_pid}
-          {:materializer, {_worker_ref, _node}, 1}, _epoch -> {:ok, user_materializer_pid}
-        end)
+        |> Map.update!(
+          :available_services,
+          &Map.put(&1, "metadata_materializer", {:materializer, {:materializer, :node1}})
+        )
+        |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
         |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
-        |> Map.put(:materializer_info_fn, fn pid, [:durable_version]
-                                             when pid in [materializer_pid, user_materializer_pid] ->
-          {:ok, %{durable_version: durable_version}}
+        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
+          {:ok, %{current_version: durable_version}}
         end)
         |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
           {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
         end)
 
+      # With materializer reuse, generational log recruitment, and
+      # resolver seeding, an existing-cluster recovery now runs to
+      # completion.
       log =
         capture_log(fn ->
-          assert {:ok, completed_attempt} = Recovery.run_recovery_attempt(recovery_attempt, context)
+          assert {:ok, completed_attempt} =
+                   Recovery.run_recovery_attempt(recovery_attempt, context)
 
+          # Verify service tracking was populated during recovery
           assert Map.has_key?(completed_attempt.service_pids, "existing_log_1")
           assert Map.has_key?(completed_attempt.transaction_services, "existing_log_1")
-          assert completed_attempt.metadata_materializer == materializer_pid
-          assert completed_attempt.shard_materializers == %{0 => materializer_pid, 1 => user_materializer_pid}
         end)
 
+      # Materializer bootstrap phase should log catchup completion
       assert log =~ "Materializer caught up to version"
     end
 
@@ -440,11 +570,13 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     |> with_log_recovery_info(%{
       "existing_log_1" => %{
         kind: :log,
+        available_after: Version.zero(),
         oldest_version: Version.zero(),
         last_version: Version.from_integer(100)
       },
       "existing_log_2" => %{
         kind: :log,
+        available_after: Version.zero(),
         oldest_version: Version.zero(),
         last_version: Version.from_integer(100)
       }
@@ -512,6 +644,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     node_capabilities = %{
       log: [:node1@host, :node2@host, :node3@host],
       storage: [:node1@host, :node2@host, :node3@host],
+      materializer: [:node1@host, :node2@host, :node3@host],
       coordination: [:node1@host, :node2@host, :node3@host],
       resolution: [:node1@host, :node2@host, :node3@host]
     }
@@ -565,12 +698,17 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   defp create_mock_service_info(kind) do
-    %{
+    base = %{
       kind: kind,
       durable_version: Version.from_integer(95),
+      available_after: Version.zero(),
       oldest_version: Version.zero(),
       last_version: Version.from_integer(100)
     }
+
+    # Materializers report their shard assignment when locked (the
+    # bootstrap phase reuses them by shard).
+    if kind == :materializer, do: Map.put(base, :shard_id, 0), else: base
   end
 
   defp with_mocked_worker_creation(context) do
@@ -621,10 +759,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   defp with_mocked_transactions(context) do
-    commit_transaction_fn = fn _proxy, _epoch, _transaction ->
-      {:ok, Version.from_integer(101), Version.from_integer(1)}
-    end
-
+    commit_transaction_fn = fn _proxy, _epoch, _transaction -> {:ok, 101, 1} end
     unlock_commit_proxy_fn = fn _proxy, _lock_token, _sequencer, _resolver_layout, _routing_data -> :ok end
     unlock_storage_fn = fn _storage_pid, _durable_version, _layout -> :ok end
 

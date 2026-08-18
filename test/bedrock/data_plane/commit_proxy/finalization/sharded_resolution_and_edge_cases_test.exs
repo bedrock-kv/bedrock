@@ -358,7 +358,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
                Finalization.try_to_push_transaction_to_log_direct(
                  {name, node()},
                  "encoded_transaction",
-                 @last_commit_version
+                 @last_commit_version,
+                 nil
                )
     end
   end

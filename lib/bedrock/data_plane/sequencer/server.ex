@@ -78,8 +78,10 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
           State.t()
         ) ::
           {:reply,
-           {:ok, Bedrock.version()} | {:ok, Bedrock.version(), Bedrock.version()} | :ok | {:error, :wrong_epoch},
-           State.t()}
+           {:ok, Bedrock.version()}
+           | {:ok, Bedrock.version(), Bedrock.version(), Bedrock.version()}
+           | :ok
+           | {:error, :wrong_epoch}, State.t()}
   def handle_call({:next_read_version, epoch}, _from, %{epoch: epoch} = t) do
     read_version = Version.from_integer(t.known_committed_version_int)
     emit_next_read_version(read_version)
@@ -106,8 +108,12 @@ defmodule Bedrock.DataPlane.Sequencer.Server do
     last_commit_version = Version.from_integer(t.last_commit_version_int)
     commit_version = Version.from_integer(commit_version_int)
 
+    # Piggybacked so the proxy can carry it on every log push (FDB tlog
+    # parity): downstream durability sinks gate on it.
+    known_committed_version = Version.from_integer(t.known_committed_version_int)
+
     emit_next_commit_version(last_commit_version, commit_version, elapsed_us)
-    reply(updated_state, {:ok, last_commit_version, commit_version})
+    reply(updated_state, {:ok, last_commit_version, commit_version, known_committed_version})
   end
 
   def handle_call({:next_commit_version, _wrong_epoch}, _from, t) do

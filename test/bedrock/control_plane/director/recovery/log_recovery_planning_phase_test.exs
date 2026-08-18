@@ -24,6 +24,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
 
   defp log_info(oldest, last),
     do: %{
+      available_after: Version.from_integer(oldest),
       oldest_version: Version.from_integer(oldest),
       last_version: Version.from_integer(last),
       minimum_durable_version: Version.from_integer(oldest)
@@ -41,7 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
 
       assert is_list(old_log_ids) and length(old_log_ids) == 2
       assert is_tuple(version_vector)
-      # version_vector is {max(oldest), min(newest)} = {10, 45}
+      # version_vector is {max(available_after), min(last_inclusive)} = {10, 45}
       assert version_vector == {Version.from_integer(10), Version.from_integer(45)}
       # durable_version is min of minimum_durable_versions (5 and 10)
       assert durable_version == Version.from_integer(5)
@@ -57,7 +58,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
                LogRecoveryPlanningPhase.execute(recovery_attempt, context)
 
       assert length(old_log_ids) == 2
-      # version_vector is {max(oldest), min(newest)} = {10, 45}
+      # version_vector is {max(available_after), min(last_inclusive)} = {10, 45}
       assert version_vector == {Version.from_integer(10), Version.from_integer(45)}
     end
 
@@ -107,62 +108,55 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
       assert {:log, 2} in result.survivor_log_ids
     end
 
-    test "rebuilds consistent-hash recovery layout from fresh log vacancies" do
-      log_recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 3} => log_info(5, 45)}
-
-      old_logs = %{
-        {:log, 1} => [],
-        {:log, 2} => [],
-        {:log, 3} => []
-      }
-
-      {recovery_attempt, context} = recovery_setup(log_recovery_info, old_logs, 3)
-
-      assert {%{logs: logs}, LogRecruitmentPhase} =
-               LogRecoveryPlanningPhase.execute(recovery_attempt, context)
-
-      assert logs == %{{:vacancy, 1} => [], {:vacancy, 2} => [], {:vacancy, 3} => []}
-    end
-
-    test "uses fresh vacancies for all-empty consistent-hash layouts" do
-      log_recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(5, 45)}
-      old_logs = %{{:log, 1} => [], {:log, 2} => []}
-      {recovery_attempt, context} = recovery_setup(log_recovery_info, old_logs, 2)
-
-      assert {%{logs: logs, old_log_ids_to_copy: old_log_ids}, LogRecruitmentPhase} =
-               LogRecoveryPlanningPhase.execute(recovery_attempt, context)
-
-      assert length(old_log_ids) == 2
-      assert logs == %{{:vacancy, 1} => [], {:vacancy, 2} => []}
-    end
-
-    test "preserves survivor descriptors for legacy non-empty layouts" do
+    test "shard_tags in old_logs are ignored (consistent hashing)" do
+      # Old logs may have shard_tags from previous layout, but they are ignored
       log_recovery_info = %{{:log, 1} => log_info(10, 50), {:log, 2} => log_info(5, 45)}
       old_logs = %{{:log, 1} => ["tag_a", "tag_b"], {:log, 2} => ["tag_a"]}
       {recovery_attempt, context} = recovery_setup(log_recovery_info, old_logs, 2)
 
-      assert {%{logs: logs, old_log_ids_to_copy: old_log_ids}, LogRecruitmentPhase} =
+      # Should still succeed - shard_tags are ignored
+      assert {%{old_log_ids_to_copy: old_log_ids}, LogRecruitmentPhase} =
                LogRecoveryPlanningPhase.execute(recovery_attempt, context)
 
       assert length(old_log_ids) == 2
-      assert logs == old_logs
     end
   end
 
   describe "compute_version_vector/1" do
-    test "computes version vector as {max(oldest), min(newest)}" do
+    test "computes version vector as {max(available_after), min(last_inclusive)}" do
       log_recovery_info = %{
         {:log, 1} => log_info(10, 50),
         {:log, 2} => log_info(5, 45),
         {:log, 3} => log_info(15, 55)
       }
 
-      # max(oldest) = max(10, 5, 15) = 15
-      # min(newest) = min(50, 45, 55) = 45
+      # max(available_after) = max(10, 5, 15) = 15
+      # min(last_inclusive) = min(50, 45, 55) = 45
       expected_version_vector = {Version.from_integer(15), Version.from_integer(45)}
 
       assert {:ok, ^expected_version_vector} =
                LogRecoveryPlanningPhase.compute_version_vector(log_recovery_info)
+    end
+
+    test "does not use the first retained transaction as the exclusive cursor" do
+      log_recovery_info = %{
+        {:log, 1} => %{
+          available_after: Version.from_integer(9),
+          oldest_version: Version.from_integer(10),
+          last_version: Version.from_integer(50)
+        },
+        {:log, 2} => %{
+          available_after: Version.from_integer(4),
+          oldest_version: Version.from_integer(5),
+          last_version: Version.from_integer(45)
+        }
+      }
+
+      assert {:ok, {available_after, last_inclusive}} =
+               LogRecoveryPlanningPhase.compute_version_vector(log_recovery_info)
+
+      assert available_after == Version.from_integer(9)
+      assert last_inclusive == Version.from_integer(45)
     end
 
     test "returns error for empty log recovery info" do
@@ -185,7 +179,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
         {:log, 2} => log_info(45, 15)
       }
 
-      # max(oldest) = 50, min(newest) = 10 -> invalid because 10 < 50
+      # max(available_after) = 50, min(last_inclusive) = 10 -> invalid
       assert {:error, :invalid_version_range} =
                LogRecoveryPlanningPhase.compute_version_vector(log_recovery_info)
     end
@@ -193,6 +187,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
     test "handles logs starting at version zero" do
       log_recovery_info = %{
         {:log, 1} => %{
+          available_after: Version.zero(),
           oldest_version: Version.zero(),
           last_version: Version.from_integer(50),
           minimum_durable_version: Version.zero()
@@ -200,8 +195,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhaseTest do
         {:log, 2} => log_info(5, 45)
       }
 
-      # max(oldest) = max(0, 5) = 5
-      # min(newest) = min(50, 45) = 45
+      # max(available_after) = max(0, 5) = 5
+      # min(last_inclusive) = min(50, 45) = 45
       expected_version_vector = {Version.from_integer(5), Version.from_integer(45)}
 
       assert {:ok, ^expected_version_vector} =

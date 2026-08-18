@@ -35,10 +35,10 @@ defmodule Bedrock.DataPlane.Sequencer.CommitIntegrationTest do
       assert {:ok, ^initial_version} = Sequencer.next_read_version(sequencer_pid, @epoch)
 
       # 2. Assign commit versions (simulate commit proxy getting versions)
-      assert {:ok, ^initial_version, commit_v1} = Sequencer.next_commit_version(sequencer_pid, @epoch)
+      assert {:ok, ^initial_version, commit_v1, _kcv} = Sequencer.next_commit_version(sequencer_pid, @epoch)
       assert commit_v1 > initial_version
 
-      assert {:ok, ^commit_v1, commit_v2} = Sequencer.next_commit_version(sequencer_pid, @epoch)
+      assert {:ok, ^commit_v1, commit_v2, _kcv} = Sequencer.next_commit_version(sequencer_pid, @epoch)
       assert commit_v2 > commit_v1
 
       # 3. Verify read version is still old
@@ -57,7 +57,7 @@ defmodule Bedrock.DataPlane.Sequencer.CommitIntegrationTest do
       assert {:ok, ^commit_v2} = Sequencer.next_read_version(sequencer_pid, @epoch)
 
       # 8. Get another commit version to verify assignment counter advanced
-      assert {:ok, ^commit_v2, next_commit} = Sequencer.next_commit_version(sequencer_pid, @epoch)
+      assert {:ok, ^commit_v2, next_commit, _kcv} = Sequencer.next_commit_version(sequencer_pid, @epoch)
       assert next_commit > commit_v2
     end
 
@@ -66,9 +66,9 @@ defmodule Bedrock.DataPlane.Sequencer.CommitIntegrationTest do
       sequencer_pid = start_test_sequencer(initial_version, :test_sequencer_2)
 
       # Assign three versions
-      assert {:ok, _, v1} = Sequencer.next_commit_version(sequencer_pid, @epoch)
-      assert {:ok, _, v2} = Sequencer.next_commit_version(sequencer_pid, @epoch)
-      assert {:ok, _, v3} = Sequencer.next_commit_version(sequencer_pid, @epoch)
+      assert {:ok, _, v1, _kcv} = Sequencer.next_commit_version(sequencer_pid, @epoch)
+      assert {:ok, _, v2, _kcv} = Sequencer.next_commit_version(sequencer_pid, @epoch)
+      assert {:ok, _, v3, _kcv} = Sequencer.next_commit_version(sequencer_pid, @epoch)
 
       # Versions should be monotonically increasing
       assert v1 > initial_version
@@ -95,7 +95,7 @@ defmodule Bedrock.DataPlane.Sequencer.CommitIntegrationTest do
       tasks =
         for _i <- 1..10 do
           Task.async(fn ->
-            assert {:ok, read_v, commit_v} = Sequencer.next_commit_version(sequencer_pid, @epoch)
+            assert {:ok, read_v, commit_v, _kcv} = Sequencer.next_commit_version(sequencer_pid, @epoch)
             # Verify invariant: read_version <= commit_version
             assert read_v <= commit_v
             {read_v, commit_v}

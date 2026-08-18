@@ -32,6 +32,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
         active_segment: segment,
         segments: [],
         oldest_version: Version.from_integer(0),
+        available_after: Version.from_integer(0),
         last_version: Version.from_integer(3),
         mode: :ready,
         params: @default_params
@@ -49,11 +50,13 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
       assert {:waiting_for, ^version_4} = Pulling.pull(state, version_4)
     end
 
-    test "returns error when from_version is too old", %{state: state} do
-      # Test with a version that's older than oldest_version in the state
-      # The state has oldest_version = 0, so we'll create a state with older version = 1 to test this properly
-      older_state = %{state | oldest_version: Version.from_integer(1)}
-      assert {:error, :version_too_old} = Pulling.pull(older_state, Version.from_integer(0))
+    test "uses available_after, not the first actual transaction, as the exclusive floor", %{state: state} do
+      available_after = Version.from_integer(1)
+      older_state = %{state | oldest_version: Version.from_integer(2), available_after: available_after}
+
+      assert {:error, {:version_too_old, ^available_after}} = Pulling.pull(older_state, Version.from_integer(0))
+      assert {:ok, _, [first | _]} = Pulling.pull(older_state, available_after)
+      assert TransactionTestSupport.extract_log_version(first) == Version.from_integer(2)
     end
 
     test "returns transactions within version range", %{state: state} do
@@ -78,6 +81,14 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
 
       assert {:error, :not_ready} = Pulling.pull(locked_state, version_1)
       assert {:ok, _, _} = Pulling.pull(locked_state, version_1, recovery: true)
+    end
+
+    test "returns an empty completed range when recovery is already at the endpoint", %{state: state} do
+      endpoint = state.last_version
+      locked_state = %{state | mode: :locked}
+
+      assert {:ok, ^locked_state, []} =
+               Pulling.pull(locked_state, endpoint, recovery: true, last_version: endpoint)
     end
 
     test "respects pull limits", %{state: state} do
@@ -196,6 +207,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
         active_segment: segment,
         segments: [],
         oldest_version: Version.from_integer(0),
+        available_after: Version.from_integer(0),
         last_version: Version.from_integer(5),
         mode: :locked,
         params: @default_params

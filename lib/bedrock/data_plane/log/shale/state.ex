@@ -23,6 +23,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           id: Worker.id(),
           foreman: Foreman.ref(),
           path: String.t(),
+          segment_loader: (String.t() -> {:ok, [Segment.t()]} | {:error, term()}) | nil,
           segment_recycler: SegmentRecycler.server() | nil,
           object_storage: module() | nil,
           demux: pid() | nil,
@@ -31,14 +32,17 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           #
           last_version: Bedrock.version(),
           writer: Writer.t() | nil,
+          writer_opts: keyword(),
           active_segment: Segment.t() | nil,
           segments: [Segment.t()],
           pending_pushes: %{
-            Bedrock.version() =>
-              {encoded_transaction :: Transaction.encoded(), ack_fn :: (:ok | {:error, term()} -> :ok)}
+            Bedrock.version() => {encoded_transaction :: Transaction.encoded(), reply_token :: term()}
           },
           #
+          reject_pushes_above_lag_us: non_neg_integer() | nil,
+          #
           mode: mode(),
+          available_after: Bedrock.version(),
           oldest_version: Bedrock.version(),
           otp_name: Worker.otp_name(),
           params: %{
@@ -58,6 +62,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             foreman: nil,
             id: nil,
             path: nil,
+            segment_loader: nil,
             segment_recycler: nil,
             object_storage: nil,
             demux: nil,
@@ -66,11 +71,15 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             #
             last_version: nil,
             writer: nil,
+            writer_opts: [],
             segments: [],
             active_segment: nil,
             pending_pushes: %{},
             #
+            reject_pushes_above_lag_us: nil,
+            #
             mode: :locked,
+            available_after: <<0::unsigned-big-64>>,
             oldest_version: nil,
             otp_name: nil,
             pending_transactions: %{},

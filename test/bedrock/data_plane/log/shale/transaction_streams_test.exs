@@ -54,6 +54,32 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsTest do
       assert TransactionTestSupport.extract_log_version(transaction) == Version.from_integer(2)
     end
 
+    test "does not load older segments at or below the requested cursor" do
+      transaction_300 = create_test_transaction(300, %{"key" => "value"})
+
+      newest = %Segment{
+        path: "newest",
+        min_version: Version.from_integer(300),
+        previous_version: Version.from_integer(200),
+        transactions: [transaction_300]
+      }
+
+      irrelevant_older = %Segment{
+        path: "must_not_be_loaded",
+        min_version: Version.from_integer(100),
+        previous_version: Version.from_integer(0),
+        transactions: nil
+      }
+
+      assert {:ok, stream} =
+               TransactionStreams.from_segments(
+                 [newest, irrelevant_older],
+                 Version.from_integer(200)
+               )
+
+      assert [^transaction_300] = Enum.to_list(stream)
+    end
+
     test "returns error when given empty segment list" do
       assert {:error, :not_found} = TransactionStreams.from_segments([], Version.from_integer(1))
     end

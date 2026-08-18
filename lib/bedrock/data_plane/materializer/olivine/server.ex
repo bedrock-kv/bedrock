@@ -23,6 +23,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   # Larger batches during lulls when no reads are waiting
   @timeout_batch_count 50
 
+  # Ingest backpressure: above the high-water the ingest reply is withheld
+  # (the puller blocks); it is released once the queue drains below the
+  # release mark.
+  @ingest_high_water_count 1_000
+  @ingest_release_count 500
+
   @spec child_spec(opts :: keyword()) :: map()
   def child_spec(opts) do
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
@@ -62,7 +68,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     # Set operation context metadata for this request
     Telemetry.trace_metadata(%{operation: :get, key: key})
 
-    fetch_opts = Keyword.put(opts, :reply_fn, reply_fn_for(from))
+    fetch_opts = opts |> Keyword.put(:reply_fn, reply_fn_for(from)) |> Keyword.put_new(:wait_ms, 1_000)
     context = Reading.ReadingContext.new(t.index_manager, t.database)
 
     {updated_manager, result} =
@@ -71,10 +77,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
         context,
         key,
         version,
-        Keyword.put_new(fetch_opts, :wait_ms, 1_000)
+        fetch_opts
       )
 
     updated_state = %{t | read_request_manager: updated_manager}
+    schedule_waiter_expiration(t.read_request_manager, updated_manager, fetch_opts[:wait_ms])
 
     case result do
       :ok -> noreply(updated_state, continue: :maybe_process_transactions)
@@ -86,7 +93,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     # Set operation context metadata for this request
     Telemetry.trace_metadata(%{operation: :get_range, key: {start_key, end_key}})
 
-    fetch_opts = Keyword.put(opts, :reply_fn, reply_fn_for(from))
+    fetch_opts = opts |> Keyword.put(:reply_fn, reply_fn_for(from)) |> Keyword.put_new(:wait_ms, 1_000)
     context = Reading.ReadingContext.new(t.index_manager, t.database)
 
     {updated_manager, result} =
@@ -96,14 +103,50 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
         start_key,
         end_key,
         version,
-        Keyword.put_new(fetch_opts, :wait_ms, 1_000)
+        fetch_opts
       )
 
     updated_state = %{t | read_request_manager: updated_manager}
+    schedule_waiter_expiration(t.read_request_manager, updated_manager, fetch_opts[:wait_ms])
 
     case result do
       :ok -> noreply(updated_state, continue: :maybe_process_transactions)
       {:error, _reason} = error -> reply(updated_state, error)
+    end
+  end
+
+  # The puller hands over a batch and waits for :ok. While locked, the
+  # puller is being torn down: acknowledge and discard.
+  @impl true
+  def handle_call({:ingest, _encoded_transactions, _kcv}, _from, %State{mode: :locked} = t), do: reply(t, :ok)
+
+  # Only the current puller may feed the stream. A superseded puller —
+  # torn down at compaction cutover or recovery unlock — may have died
+  # with an ingest call already in this mailbox; applying that batch
+  # would graft a stale suffix, with a gap beneath it, onto the rewound
+  # index. Acknowledge and discard. (With no puller at all, direct
+  # ingest is the static unit-test configuration and is accepted.)
+  def handle_call({:ingest, _encoded_transactions, _kcv}, {caller, _}, %State{pull_task: %Task{pid: pid}} = t)
+      when caller !== pid, do: reply(t, :ok)
+
+  def handle_call({:ingest, encoded_transactions, kcv}, from, %State{} = t) do
+    updated_intake_queue = IntakeQueue.add_transactions(t.intake_queue, encoded_transactions)
+    queue_size = IntakeQueue.size(updated_intake_queue)
+
+    t = %{
+      t
+      | intake_queue: updated_intake_queue,
+        known_committed_version: max_version(t.known_committed_version, kcv)
+    }
+
+    Telemetry.trace_transactions_queued(length(encoded_transactions), queue_size)
+
+    if queue_size >= @ingest_high_water_count do
+      # Backpressure: hold the reply until the queue drains. The puller
+      # cannot outrun the applier because the applier holds the reply.
+      noreply(%{t | pending_ingest: from}, continue: :process_transactions)
+    else
+      reply(t, :ok, continue: :process_transactions)
     end
   end
 
@@ -162,11 +205,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     case IntakeQueue.take_batch_by_count(t.intake_queue, @continuation_batch_count) do
       {[], nil, updated_intake_queue} ->
         # Queue empty, just wait for new transactions or timeout
-        updated_state = %{t | intake_queue: updated_intake_queue}
-        maybe_schedule_read_timeout(updated_state)
+        updated_state = maybe_release_ingest(%{t | intake_queue: updated_intake_queue})
+        noreply(updated_state)
 
       {batch, _batch_last_version, updated_intake_queue} ->
-        updated_state = %{t | intake_queue: updated_intake_queue}
+        updated_state = maybe_release_ingest(%{t | intake_queue: updated_intake_queue})
         # Process small batch for responsiveness
         {:ok, state_with_txns, version} = Logic.apply_transactions(updated_state, batch)
         final_state = notify_waiting_fetches(state_with_txns, version)
@@ -187,10 +230,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   def handle_continue(:advance_window, %State{} = t) do
     if t.allow_window_advancement do
       {:ok, state_after_window} = Logic.advance_window(t)
-      maybe_schedule_read_timeout(state_after_window)
+      noreply(state_after_window)
     else
       # Compaction in progress - skip window advancement
-      maybe_schedule_read_timeout(t)
+      noreply(t)
     end
   end
 
@@ -217,17 +260,20 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     %{state | read_request_manager: updated_manager}
   end
 
-  defp expire_waiting_fetches(state) do
-    updated_manager = Reading.expire_waiting_fetches(state.read_request_manager)
-    %{state | read_request_manager: updated_manager}
-  end
+  defp maybe_release_ingest(%State{pending_ingest: nil} = t), do: t
 
-  defp maybe_schedule_read_timeout(state) do
-    case Reading.next_timeout(state.read_request_manager) do
-      nil -> noreply(state)
-      timeout -> noreply(state, timeout: timeout)
+  defp maybe_release_ingest(%State{pending_ingest: from} = t) do
+    if IntakeQueue.size(t.intake_queue) < @ingest_release_count do
+      GenServer.reply(from, :ok)
+      %{t | pending_ingest: nil}
+    else
+      t
     end
   end
+
+  defp max_version(nil, version), do: version
+  defp max_version(version, nil), do: version
+  defp max_version(a, b), do: max(a, b)
 
   @impl true
   # Discard transactions when locked
@@ -246,17 +292,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
   @impl true
   def handle_info(:timeout, %State{} = t) do
-    state_after_expiration = expire_waiting_fetches(t)
-
     # First, process a larger batch of transactions for throughput
-    case IntakeQueue.take_batch_by_count(state_after_expiration.intake_queue, @timeout_batch_count) do
+    case IntakeQueue.take_batch_by_count(t.intake_queue, @timeout_batch_count) do
       {[], nil, updated_intake_queue} ->
         # No transactions to process, advance window during this lull
-        updated_state = %{state_after_expiration | intake_queue: updated_intake_queue}
+        updated_state = maybe_release_ingest(%{t | intake_queue: updated_intake_queue})
         noreply(updated_state, continue: :advance_window)
 
       {batch, _batch_last_version, updated_intake_queue} ->
-        updated_state = %{state_after_expiration | intake_queue: updated_intake_queue}
+        updated_state = maybe_release_ingest(%{t | intake_queue: updated_intake_queue})
         # Process larger batch for throughput
         {:ok, state_with_txns, version} = Logic.apply_transactions(updated_state, batch)
         state_after_txns = notify_waiting_fetches(state_with_txns, version)
@@ -268,17 +312,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   end
 
   @impl true
-  def handle_info({:transactions_applied, version}, %State{} = t) do
-    t
-    |> notify_waiting_fetches(version)
-    |> maybe_schedule_read_timeout()
+  def handle_info(:expire_waiting_fetches, %State{} = t) do
+    updated_manager = Reading.expire_waiting_fetches(t.read_request_manager)
+    noreply(%{t | read_request_manager: updated_manager})
   end
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _reason}, %State{} = t) do
     updated_manager = Reading.remove_active_task(t.read_request_manager, pid)
     updated_state = %{t | read_request_manager: updated_manager}
-    maybe_schedule_read_timeout(updated_state)
+    noreply(updated_state)
   end
 
   @impl true
@@ -290,6 +333,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     # Atomic cutover to compacted files
     # Get file paths from old database
     alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
+
+    # The cutover rewinds the index to the durable snapshot, so the
+    # running puller's position (and any batch it has in flight) is
+    # meaningless. Stop it first — releasing a backpressure-parked ingest
+    # reply on the way — and rejoin the stream at the durable boundary
+    # once the new state is built. The stream re-delivers everything
+    # ingested during compaction; nothing is lost and nothing special
+    # remembers it.
+    t = Logic.stop_pulling(t)
 
     {data_db, index_db} = t.database
     data_path = data_db.file_name
@@ -389,10 +441,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     # Optionally upload snapshot to ObjectStorage (async, fire-and-forget)
     Logic.maybe_upload_snapshot(new_state, data_path, idx_path, durable_version)
 
-    # Resume normal operation
-    # The puller will automatically fetch transactions from durable_version + 1
-    # and rebuild the buffer through normal transaction processing
-    noreply(new_state)
+    # Resume: a fresh puller joins the stream at the durable boundary and
+    # re-delivers everything after it through the normal apply path.
+    noreply(Logic.resume_pulling_from(new_state, durable_version))
   end
 
   @impl true
@@ -433,6 +484,17 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   def terminate(_reason, _state), do: :ok
 
   defp reply_fn_for(from), do: fn result -> GenServer.reply(from, result) end
+
+  defp schedule_waiter_expiration(previous_manager, updated_manager, wait_ms)
+       when is_integer(wait_ms) and wait_ms > 0 do
+    if previous_manager.waiting_fetches != updated_manager.waiting_fetches do
+      Process.send_after(self(), :expire_waiting_fetches, wait_ms)
+    end
+
+    :ok
+  end
+
+  defp schedule_waiter_expiration(_previous_manager, _updated_manager, _wait_ms), do: :ok
 
   # Calculate min/max key bounds from page_map
   defp calculate_key_bounds_from_pages(page_map) when map_size(page_map) == 0, do: {<<0xFF, 0xFF>>, <<>>}

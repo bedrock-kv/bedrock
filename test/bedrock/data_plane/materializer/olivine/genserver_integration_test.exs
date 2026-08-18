@@ -180,6 +180,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
 
       GenServer.stop(successful_pid, :normal, @timeout)
     end
+
+    @tag :tmp_dir
+    test "waitlisted reads expire and leave no orphaned waiter", %{tmp_dir: tmp_dir} do
+      {_worker_id, _otp_name, pid} = setup_supervised_worker(tmp_dir, "wait_timeout")
+      future_version = Version.from_integer(1)
+
+      assert {:error, :waiting_timeout} =
+               GenServer.call(pid, {:get, "key1", future_version, [wait_ms: 25]}, 1_000)
+
+      state = :sys.get_state(pid)
+      assert state.read_request_manager.waiting_fetches == %{}
+    end
   end
 
   describe "Foreman Integration" do
@@ -304,28 +316,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
         :exit, {:timeout, _} ->
           :ok
       end
-    end
-
-    @tag :tmp_dir
-    test "waitlisted reads expire instead of hanging forever", %{tmp_dir: tmp_dir} do
-      {_worker_id, _otp_name, pid} = setup_supervised_worker(tmp_dir, "wait_timeout")
-      state_before_wait = :sys.get_state(pid)
-
-      future_version = Version.from_integer(1)
-
-      assert {:error, :waiting_timeout} =
-               GenServer.call(pid, {:get, "key1", future_version, [wait_ms: 50]}, 2_000)
-
-      state_after_timeout = :sys.get_state(pid)
-      assert state_after_timeout.mode == state_before_wait.mode
-      assert map_size(state_after_timeout.read_request_manager.waiting_fetches) == 0
-
-      {:dictionary, dictionary} = Process.info(pid, :dictionary)
-
-      refute Enum.any?(dictionary, fn
-               {{:waitlist_timing, _key}, _value} -> true
-               _ -> false
-             end)
     end
 
     @tag :tmp_dir

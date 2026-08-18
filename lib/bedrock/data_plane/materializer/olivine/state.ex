@@ -27,7 +27,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
           window_lag_time_μs: non_neg_integer(),
           compaction_task: Task.t() | nil,
           allow_window_advancement: boolean(),
-          snapshot: Snapshot.t() | nil
+          snapshot: Snapshot.t() | nil,
+          pull_sources: {logs :: map(), services :: map()} | nil,
+          shard_num: non_neg_integer() | nil,
+          known_committed_version: Bedrock.version() | nil,
+          pending_ingest: GenServer.from() | nil
         }
   defstruct otp_name: nil,
             path: nil,
@@ -45,7 +49,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
             window_lag_time_μs: 5_000_000,
             compaction_task: nil,
             allow_window_advancement: true,
-            snapshot: nil
+            snapshot: nil,
+            pull_sources: nil,
+            shard_num: nil,
+            known_committed_version: nil,
+            pending_ingest: nil
 
   @spec update_mode(t(), :locked | :running) :: t()
   def update_mode(t, mode), do: %{t | mode: mode}

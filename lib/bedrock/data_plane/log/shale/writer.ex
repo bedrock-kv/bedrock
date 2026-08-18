@@ -3,13 +3,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
   A struct that represents a writer for a segment.
   """
 
+  alias Bedrock.DataPlane.Log.Shale.WalFormat
   alias Bedrock.DataPlane.Transaction
 
-  defstruct [:fd, :write_offset, :bytes_remaining, :sync_fun]
-
-  @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
-  @eof_marker <<@wal_eof_version::binary, 0::unsigned-big-32, 0::unsigned-big-32>>
-  @empty_segment_header <<"BED0">> <> @eof_marker
+  defstruct [:fd, :write_offset, :bytes_remaining, :sync_fun, :pwrite_fun]
 
   @typedoc """
   A `Writer` is a handle to a segment that can be used to write transcations
@@ -20,24 +17,30 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
           fd: File.file_descriptor(),
           write_offset: pos_integer(),
           bytes_remaining: pos_integer(),
-          sync_fun: (File.file_descriptor() -> :ok | {:error, File.posix()})
+          sync_fun: (File.file_descriptor() -> :ok | {:error, File.posix()}),
+          pwrite_fun: (File.file_descriptor(), non_neg_integer(), iodata() -> :ok | {:error, File.posix()})
         }
 
-  @spec open(path_to_file :: String.t(), opts :: keyword()) :: {:ok, t()} | {:error, File.posix()}
-  def open(path_to_file, opts \\ []) do
+  @spec open(path_to_file :: String.t(), previous_version :: Bedrock.version(), opts :: keyword()) ::
+          {:ok, t()} | {:error, File.posix()}
+  def open(path_to_file, previous_version, opts \\ []) do
     sync_fun = Keyword.get(opts, :sync_fun, &:file.sync/1)
+    pwrite_fun = Keyword.get(opts, :pwrite_fun, &:file.pwrite/3)
+    empty_segment = WalFormat.empty_segment(previous_version)
+    header_size = WalFormat.current_header_size()
 
     with {:ok, stat} <- File.stat(path_to_file),
          {:ok, fd} <- File.open(path_to_file, [:write, :read, :raw, :binary]) do
       # Write header - close fd on failure to avoid leak
-      case :file.pwrite(fd, 0, @empty_segment_header) do
+      case pwrite_fun.(fd, 0, empty_segment) do
         :ok ->
           {:ok,
            %__MODULE__{
              fd: fd,
-             write_offset: 4,
-             bytes_remaining: stat.size - 4 - 16,
-             sync_fun: sync_fun
+             write_offset: header_size,
+             bytes_remaining: stat.size - header_size - byte_size(WalFormat.eof_marker()),
+             sync_fun: sync_fun,
+             pwrite_fun: pwrite_fun
            }}
 
         {:error, reason} ->
@@ -50,6 +53,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
   @spec close(writer :: t() | nil) :: :ok | {:error, File.posix()}
   def close(nil), do: :ok
   def close(%__MODULE__{} = writer), do: :file.close(writer.fd)
+
+  @doc "Persists an empty segment header and its replay cursor."
+  @spec sync(t()) :: :ok | {:error, File.posix()}
+  def sync(%__MODULE__{} = writer), do: writer.sync_fun.(writer.fd)
 
   @spec append(t(), Transaction.encoded(), Bedrock.version()) ::
           {:ok, t()} | {:error, :segment_full} | {:error, File.posix()}
@@ -69,7 +76,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
     >>
 
     writer.fd
-    |> :file.pwrite(writer.write_offset, [log_entry, @eof_marker])
+    |> writer.pwrite_fun.(writer.write_offset, [log_entry, WalFormat.eof_marker()])
     |> case do
       :ok ->
         case writer.sync_fun.(writer.fd) do

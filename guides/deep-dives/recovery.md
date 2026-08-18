@@ -1,73 +1,75 @@
 # Bedrock's Recovery Architecture: Building Reliability Through Simplicity
 
-When distributed systems fail, engineers face a fundamental choice: patch the immediate problems or rebuild from a trusted foundation. Bedrock chooses reconstruction over repair, rebuilding the entire [transaction processing infrastructure](architecture.md) from verified persistent state when any critical component fails. This approach trades recovery time—typically measured in seconds—for absolute confidence in system integrity.
+When distributed systems fail, engineers face a fundamental choice: patch the immediate problems or rebuild from a trusted foundation. Bedrock chooses reconstruction over repair, rebuilding the entire [transaction processing infrastructure](architecture.md) from verified persistent state when any critical component fails. This approach trades recovery time—typically well under a second—for absolute confidence in system integrity.
 
 Bedrock inverts traditional distributed systems priorities, following FoundationDB's architectural principle[^1]: optimize for the worst-case scenario rather than normal operation. When anything goes wrong, assume everything might be compromised and rebuild the entire transaction system. This philosophy rests on three key insights: reliability theory favors simplicity over complex recovery optimization, comprehensive reconstruction enables complete confidence while targeted repairs leave lingering questions about hidden corruption, and complex recovery logic is fundamentally untestable across every possible failure combination. Simple, comprehensive recovery provides a single, well-defined path that can be thoroughly validated against real-world scenarios.
 
-Bedrock's recovery transforms a failed distributed system into trusted operational infrastructure through a carefully orchestrated sequence of phases. Each phase builds upon verified results from the previous stage, creating a logical progression from uncertainty to complete confidence in system integrity.
+Two rules keep that path simple:
+
+**An attempt is a pure function of the current view.** Recovery runs against whatever the coordinator's service directory says right now, and a changed view retriggers it. An attempt that fires before the workers it needs have registered fails in microseconds and mutates nothing; the registration that changes the view triggers the attempt that succeeds. There are no waiting heuristics, no grace periods, and no give-up timers — the event-driven retry is the wait mechanism. A typical restart converges in two attempts: one premature, one complete.
+
+**The durable layout is the single source of truth for what exists.** Recovery is the only path that creates workers. When a recovery completes and its transaction system layout is durably stored, every foreman compares the workers it hosts against the layout and retires the ones it does not reference. Old-generation logs and any strays from interrupted attempts are removed by the same rule — no stray detection, no age heuristics, no cleanup jobs. Between the two rules, debris is impossible: attempts are free, and anything an attempt leaves behind is reconciled away when a later attempt succeeds.
+
+Recovery proceeds through a sequence of phases, each building on verified results from the previous one.
 
 ## Phase 0: [TSL Validation](../quick-reads/recovery/tsl-validation.md)
 
-The TSL validation phase serves as recovery's first line of defense against data corruption by ensuring that recovered Transaction System Layout (TSL) data maintains proper type safety and passes sanity checks after potential corruption or version mismatches. The algorithm systematically validates type conversions across all TSL components, particularly version number representations essential for MVCC operations, and immediately terminates if any validation fails rather than proceeding with potentially corrupted configuration data.
+Recovery's first line of defense: the recovered Transaction System Layout is checked for type safety and sanity before anything trusts it. If the persisted configuration is corrupt, recovery stops here rather than building on it.
 
 ## Phase 1: [Service Locking](../quick-reads/recovery/service-locking.md)
 
-The service locking phase establishes exclusive control over the failed system by solving the fundamental coordination problem of which director has authority to proceed when multiple recovery attempts might occur simultaneously. Recovery locks every service from the previous transaction system layout through epoch-based precedence, instructing them to cease normal operations and report exclusively to the recovery director, while simultaneously determining whether this represents a new cluster initialization or existing system requiring data recovery.
+Recovery establishes exclusive control by locking the old layout's logs and every advertised materializer. Locking does two jobs at once. It fences: a locked service reports only to this recovery's director, and an older epoch's director can never reclaim it. And it informs: each locked service returns its recovery info — logs report the persisted exclusive `available_after` cursor, their first retained transaction for inspection, and their inclusive endpoint; materializers report their durable version and shard assignment. That information is what lets the later phases reuse survivors instead of discarding them.
 
 ## Phase 2: [Log Recovery Planning](../quick-reads/recovery/log-recovery-planning.md)
 
-The log recovery planning phase determines what committed transaction data can be safely preserved from potentially compromised infrastructure by systematically analyzing Bedrock's natural redundancy architecture. The algorithm examines available logs within each shard, generates all possible combinations meeting quorum requirements, and calculates the recoverable version range using cross-shard minimum calculation to ensure the recovered system maintains strict consistency guarantees while maximizing transaction history preservation.
+From the locked logs, recovery computes the version vector `{available_after, last_inclusive}`: the common range `(available_after, last_inclusive]` guaranteed complete across the surviving majority. The first element is a cursor persisted in every WAL segment header, not the first transaction. The second is the recovery endpoint. This phase also seeds vacancies for a fresh generation of logs: Bedrock does not repair old logs in place, it replaces them and copies the data forward.
 
-## Phase 3: [Vacancy Creation](../quick-reads/recovery/vacancy-creation.md)
+## Phase 3: [Log Recruitment](../quick-reads/recovery/log-recruitment.md)
 
-The vacancy creation phase solves the sophisticated architectural challenge of specifying the complete structure of a new distributed system without prematurely binding that structure to specific machines or processes. Recovery creates abstract vacancy placeholders that separate architectural planning from infrastructure assignment, treating different service types according to their fundamental characteristics: logs receive clean-slate reconstruction regardless of old availability, storage services get ultra-conservative preservation strategies that maintain existing assignments while adding vacancies only when needed, and resolvers receive computational resource planning through descriptors that map key ranges to vacancy placeholders.
+The log vacancies are filled: available log workers are reused as candidates, and new workers are created where candidates run out. A worker created during the attempt cannot yet appear in the coordinator's directory — advertisement is asynchronous — so recruitment locks its own creations through the references it already holds rather than waiting to rediscover them. Recruitment therefore completes in the same attempt that started it.
 
-## Phase 4: [Version Determination](../quick-reads/recovery/version-determination.md)
+## Phase 4: [Log Replay](../quick-reads/recovery/log-replay.md)
 
-The version determination phase establishes the critical mathematical foundation of the highest transaction version guaranteed durable across the entire cluster through rigorous examination of storage team health and replica consistency. The algorithm employs a two-tier approach: calculating fault-tolerant versions within each storage team by selecting versions ensuring quorum availability, then determining the cluster-wide minimum to establish a conservative recovery baseline that accounts for potential replica failures during reconstruction.
+Committed transactions are copied from the surviving logs into the new generation. Object storage is durable through `durable_through`, so replay uses the exclusive cursor `replay_after = max(durable_through, available_after)` and copies `(replay_after, last_inclusive]`. It routes every copied transaction through the new log's fresh Demux, so the per-shard buffers and chunk pipeline are rebuilt as a side effect — deterministic cuts reproduce byte-identical chunks, and "already exists" is a truthful confirmation. No lower-bound sentinel is appended: an empty range persists only its cursor, while a non-empty replay succeeds only after observing the inclusive endpoint. Because the old WAL was trimmed in normal operation, this copies a few seconds of tail, not the cluster's lifetime; replay cost is independent of cluster age.
 
-## Phase 5: [Log Recruitment](../quick-reads/recovery/log-recruitment.md)
+## Phase 5: [Sequencer Startup](../quick-reads/recovery/sequencer-startup.md)
 
-The log recruitment phase embodies Bedrock's core philosophy of choosing reliability over optimization by aggressively creating entirely new log infrastructure rather than attempting to salvage potentially compromised components. The recruitment strategy implements a three-tier approach: discovering existing available log services in the cluster, creating fresh log workers distributed across nodes using round-robin assignment when needed, and establishing exclusive control through comprehensive locking to prevent interference while validating operational readiness.
+The singleton version authority starts at the recovery version. From here on, every version it mints is newer than anything the old system produced, and the known committed version it tracks gates all downstream durability.
 
-## Phase 6: [Storage Recruitment](../quick-reads/recovery/storage-recruitment.md)
+## Phase 6: Materializer Bootstrap
 
-Storage recruitment represents recovery's most cautious operational phase because storage services contain irreplaceable persistent data that would be expensive or impossible to reconstruct if lost. The algorithm implements a strict preservation hierarchy that never modifies existing services from the old system, only recruiting available services not part of the previous infrastructure to fill specific vacancy gaps, and creating new storage workers with fault-tolerant distribution when candidates prove insufficient, all while ensuring comprehensive validation through exhaustive locking to guarantee zero risk to valuable persistent data.
+The surviving materializers get their shards back. Recovery indexes the locked materializers by shard assignment (when several claim one shard — strays from an interrupted attempt — the most-advanced durable state wins), unlocks each with its shard's logs at the recovery version, and lets it resume streaming from its own applied position. Unlocking at the recovery version means an in-memory rollback at most: a materializer's disk never holds anything above the known committed version, so there is never disk surgery.
 
-## Phase 7: [Log Replay](../quick-reads/recovery/log-replay.md)
+The system-shard materializer has one extra job: it holds the shard layout — the map from key ranges to shards — in ordinary system keys. Recovery waits for it to catch up to the recovery version by streaming the replayed WAL from the new log's Demux, then reads the layout from it. That layout drives everything placed afterward: which shards need materializers, and where resolvers split the keyspace. Only a shard with no survivor gets a freshly created materializer, which starts empty and rebuilds from object-storage chunks.
 
-The log replay phase orchestrates the critical transfer of committed transaction data from the compromised system to newly constructed infrastructure, exemplifying Bedrock's fundamental reliability philosophy of choosing data integrity over operational optimization. The algorithm implements intelligent pairing between new and old log services using round-robin distribution, selectively copying only committed transactions within the established version vector while deliberately excluding uncommitted transactions to ensure the new system begins operation with completely clean, consistent transaction history.
+## Phase 7: [Commit Proxy Startup](../quick-reads/recovery/proxy-startup.md)
 
-## Phase 8: [Sequencer Startup](../quick-reads/recovery/sequencer-startup.md)
+Commit proxies are deployed across coordination-capable nodes and held locked until the layout phase releases them, preventing premature transaction processing.
 
-The sequencer startup phase addresses one of distributed systems' most fundamental challenges by establishing a singleton service that provides global transaction ordering authority across the entire cluster. The sequencer initializes on the director's current node using the established recovery baseline as its starting version, ensuring every transaction receives a unique, totally-ordered version number while coordinating extensively with commit proxies to maintain consistent version assignment and provide the timing foundation for accurate component state management.
+## Phase 8: [Resolver Startup](../quick-reads/recovery/resolver-startup.md)
 
-## Phase 9: [Commit Proxy Startup](../quick-reads/recovery/proxy-startup.md)
+MVCC conflict detection starts fresh each epoch: one resolver per shard range in the recovered layout. Resolvers are pure derived state, so recreating them is cheap and leaves no continuity questions.
 
-The commit proxy startup phase establishes distributed components that provide horizontal scalability for transaction processing workloads while ensuring continued operation even when individual proxies fail. Recovery employs round-robin distribution to deploy configured proxy processes across nodes with coordination capabilities, providing each proxy with comprehensive configuration information including epoch details and director coordinates, while keeping them locked until the system layout phase transitions them to operational mode to prevent premature transaction processing.
+## Phase 9: [Transaction System Layout](../quick-reads/recovery/transaction-system-layout.md)
 
-## Phase 10: [Resolver Startup](../quick-reads/recovery/resolver-startup.md)
+Recovery assembles the coordination blueprint: the new-generation logs, the active materializers for every shard, the proxies, the resolvers, and the shard layout. The services named here are a complete statement of what should exist — which is exactly what worker reconciliation will enforce once the layout is durable. Workers created during this very attempt are included from recovery's own records, since they may not have advertised yet.
 
-The resolver startup phase handles the sophisticated challenge of preventing conflicting transactions from corrupting data by implementing Multi-Version Concurrency Control (MVCC) conflict detection with mathematical precision. The startup process transforms abstract resolver descriptors into operational processes through sophisticated range-to-storage-team mapping and tag-based log assignment algorithms, while resolvers reconstruct their historical MVCC state by processing transactions from assigned logs to build the conflict detection information required for accurate future conflict evaluation.
+## Phase 10: [Monitoring](../quick-reads/recovery/monitoring.md)
 
-## Phase 11: [Transaction System Layout](../quick-reads/recovery/transaction-system-layout.md)
+Every component is monitored before the final system transaction, so a failure during that transaction triggers fail-fast director shutdown and a fresh recovery rather than a wedged repair loop.
 
-The transaction system layout phase resolves the coordination challenge of isolated components by constructing the authoritative blueprint that enables distributed system components to locate and communicate with each other effectively. Recovery performs final validation of core components and constructs the complete coordination blueprint containing mappings of services to roles and key ranges to teams, preparing for the critical system transaction that will durably store this configuration.
+## Phase 11: [Persistence](../quick-reads/recovery/persistence.md)
 
-## Phase 12: [Monitoring](../quick-reads/recovery/monitoring.md)
+The new layout is durably stored through a system transaction — which doubles as an end-to-end proof that the freshly built pipeline can commit. Once it succeeds, the director transitions to normal operation and the coordinator broadcasts the new layout.
 
-The monitoring phase establishes comprehensive monitoring infrastructure that implements Bedrock's core fail-fast philosophy, covering sequencer, commit proxies, resolvers, logs, and the director with continuous operational validation while deliberately excluding storage servers that handle failures independently. **Critically, monitoring is established before the system transaction to ensure that any component failures during transaction processing trigger immediate fail-fast behavior rather than recovery stalls.**
+## After Recovery: Worker Reconciliation
 
-## Phase 13: [Persistence](../quick-reads/recovery/persistence.md)
-
-The persistence phase durably stores the new system configuration through a system transaction that validates the complete transaction processing pipeline while ensuring the configuration survives future failures and remains available for operational reference. **With monitoring already active, any resolver timeouts or component failures during this critical transaction will trigger proper director shutdown and fresh recovery startup, preventing the system from getting stuck in repair loops.** Once this transaction succeeds, the director transitions from recovery mode to normal operation, officially completing the transformation from system failure state to trusted operational infrastructure.
+The broadcast is the trigger for the second rule. Each node's Link forwards the durable layout to its foreman, and the foreman retires every worker it hosts that the layout does not reference: the previous generation's logs, whose data was replayed forward before the layout became durable, and any strays from interrupted attempts. Retirement stops the worker, deletes its directory, and removes its directory registration. A worker, for this purpose, is a directory with a valid manifest — shared-path deployments put the coordinator's raft state and the object storage root beside worker directories, and things the foreman cannot identify are not its to destroy.
 
 ## From Crisis to Confidence
 
-What began as a system in complete crisis has been systematically transformed into infrastructure that operators can trust completely. Recovery methodically rebuilt everything from verified foundations rather than attempting targeted repairs, creating a system where every component has undergone validation, every piece of data has been accounted for, and every coordination relationship has been established cleanly.
+What began as a system in crisis has been systematically rebuilt from verified foundations. Every component was validated, every recoverable transaction preserved through the conservative version vector, and every coordination relationship established cleanly rather than patched. The old infrastructure is gone — not lingering half-trusted, but replayed forward and reconciled away — and the new system's first committed transaction was the one that stored its own configuration.
 
-This comprehensive reconstruction delivers absolute confidence in system state integrity that targeted repair approaches struggle to provide. All recoverable data survived the process intact through conservative version determination and careful transaction preservation, ensuring applications can resume operation with no gaps in their transactional history. The cluster now stands ready with clean architectural foundations—storage servers know their responsibilities, logs contain verified histories, and monitoring oversees components constructed to work together rather than patched to coexist.
-
-This represents the fundamental value proposition: trading brief operational downtime for a system built from verified components with transparent operational state, providing the foundation for sustained, trustworthy distributed system operation.
+This is the fundamental value proposition: trading well under a second of downtime for a system built entirely from verified components, whose worker population and disk footprint stay constant no matter how many times it restarts.
 
 [^1]: FoundationDB's recovery approach is detailed in ["FoundationDB: A Distributed Unbundled Transactional Key Value Store"](https://www.foundationdb.org/files/fdb-paper.pdf) and implemented in Bedrock at `lib/bedrock/control_plane/director/recovery.ex`

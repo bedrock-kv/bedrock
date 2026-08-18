@@ -12,13 +12,13 @@ The Log system acts as the single source of truth for what transactions have bee
 
 ## Core Operations
 
-The Log system exposes a minimal interface with just a handful of essential operations. The `push` operation accepts a transaction and makes it durable at a specific version number, enforcing strict ordering by rejecting out-of-sequence transactions. The `pull` operation serves transaction ranges to storage servers and recovery processes, supporting both one-time queries and streaming subscriptions. Recovery operations allow logs to be locked during cluster recovery and rebuilt from other log servers when necessary.
+The Log system exposes a minimal interface with just a handful of essential operations. The `push` operation accepts a transaction, its predecessor version, and the commit proxy's known committed version (KCV). A log appends immediately when the predecessor matches its durable tip, parks a future predecessor link until the gap closes, and rejects a predecessor older than its tip. The KCV is a separate monotonic watermark, not transaction metadata: a newer valid KCV can advance downstream commitment gating even while its transaction is parked. The `pull` operation serves transaction ranges during recovery — that is its only remaining consumer. Materializers do not pull from the log: they stream their shard's slice of the transaction stream from the log's Demux (`get_shard_server/2` is the one discovery call a materializer makes against a log). Recovery operations allow logs to be locked during cluster recovery and rebuilt from other log servers when necessary.
 
 This simple contract enables the complex behaviors that follow, while keeping the interface clean enough that different storage engines can implement it in radically different ways.
 
 ## Version-Based Ordering
 
-Every transaction carries a version number that determines its position in the global transaction order. The logs enforce strict version ordering, rejecting any transaction that arrives out of sequence. This ordering is crucial because it enables storage servers to receive transactions in the exact same order across all replicas, ensuring that every storage server converges to the same state regardless of timing variations or processing delays.
+Every transaction carries a version number that determines its position in the global transaction order, and every push names the preceding committed version. Versions need not be numerically consecutive: the `{predecessor, commit}` links define the chain. Logs append and acknowledge only the connected prefix, parking future links until their predecessor arrives. When a gap closes, the log drains the newly connected chain in order and forwards every original encoded transaction binary to its Demux unchanged. This ordering is crucial because it enables storage servers to receive transactions in the exact same order across all replicas, ensuring that every storage server converges to the same state regardless of timing variations or processing delays.
 
 The version-based ordering also enables efficient conflict detection throughout the system. Since every transaction has a precise position in the global sequence, components like the Resolver can determine conflicts by comparing version numbers and accessed keys.
 
@@ -28,11 +28,13 @@ Bedrock runs multiple log servers, and every committed transaction is replicated
 
 The benefit of this model is that losing any single log server doesn't result in data loss. During recovery, the system can reconstruct the complete transaction history from any surviving log server. If one log server becomes temporarily unavailable, the entire commit process waits rather than proceeding with incomplete replication, ensuring that durability guarantees are never compromised.
 
-## Storage Server Integration
+## The Demux: Per-Shard Distribution and WAL Trimming
 
-Storage servers continuously pull new transactions from the log servers to keep their local data current, creating an eventually consistent relationship between the authoritative log and the data that serves read requests. The pulling process is designed to be efficient and resilient—storage servers can request specific transaction ranges to catch up quickly after being offline, and they can use long polling to receive new transactions with minimal latency.
+Each running log owns a Demux — a process tree that splits every appended transaction into per-shard slices and hands them to ShardServers. Shale does not pre-slice or rebuild transaction binaries; Demux is the sole slicing boundary. Each ShardServer is an anonymous child owned by exactly that Demux and discoverable only through its shard map. Replicated logs therefore have distinct processes and independent durability floors for the same logical shard. A ShardServer buffers its shard's recent slices in memory and, on deterministic version-time boundaries ("cuts") commanded by the Demux, persists them to object storage as chunk files. A cut only fires once the monotonically accumulated KCV has reached it, so chunks can never contain versions a recovery would discard. A KCV-only advance may release an existing pending cut, but it never advances transaction `high_water`; the next transaction delivery carries the held maximum into shard currency. Chunks are named for the last commit they contain, which lets a reader find the chunk covering any version with a single object-store listing call.
 
-This architecture allows the system to optimize reads and writes independently. Writes go through the fast log append path for immediate durability, while reads are served from local storage servers that have been updated asynchronously. The version-based consistency model ensures that readers see a coherent view of the data despite this temporal separation.
+Materializers are the Demux's consumers. Each materializer discovers the replica-local ShardServer through its selected log, then streams its shard — chunks for history, the buffer for recent data, seamlessly from any starting position — and receives version currency (`high_water` and the known committed version) on every reply, so idle shards stay current without any polling. Durability reports are tagged with the child pid and accepted only by its owning Demux. The log's WAL is trimmed behind that replica's minimum durable version confirmed by object storage: readers never hold the WAL back, and a materializer that falls behind simply reads further back on the chunk stream at its own expense.
+
+This architecture allows the system to optimize reads and writes independently. Writes go through the fast log append path for immediate durability, while reads are served from local materializers that follow their shard stream asynchronously. The version-based consistency model ensures that readers see a coherent view of the data despite this temporal separation.
 
 ## Recovery and System Restoration
 
@@ -55,6 +57,6 @@ The minimal contract means that different log servers can coexist in the same cl
 
 - **[Shale](../implementations/shale.md)**: Primary disk-based implementation of the Log interface
 - **[Commit Proxy](commit-proxy.md)**: Orchestrates transaction durability through Log persistence coordination
-- **[Storage](storage.md)**: Continuously pulls committed transactions from Log servers for local state updates
+- **[Storage](storage.md)**: Streams per-shard transactions from the log's Demux for local state updates
 - **[Director](../control-plane/director.md)**: Control plane component that manages Log recovery and infrastructure planning
 - **[Foreman](../infrastructure/foreman.md)**: Infrastructure component that creates and manages Log worker processes

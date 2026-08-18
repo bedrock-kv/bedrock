@@ -5,10 +5,13 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   """
 
   alias Bedrock.DataPlane.Log.Shale.Segment
+  alias Bedrock.DataPlane.Log.Shale.WalFormat
   alias Bedrock.DataPlane.Transaction
 
-  @wal_magic_number <<"BED0">>
-  @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
+  @spec read_previous_version(String.t()) ::
+          {:ok, Bedrock.version()}
+          | {:error, :unsupported_wal_format | :invalid_wal_format | File.posix()}
+  defdelegate read_previous_version(path), to: WalFormat, as: :previous_version
 
   @spec from_segments([Segment.t()], Bedrock.version()) ::
           {:ok, Enumerable.t(Transaction.encoded())} | {:error, :not_found}
@@ -38,13 +41,22 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
     end
   end
 
-  # Find segments starting from the first one that could contain transactions > target_version
-  defp find_segments_from_target(segments, target_version), do: find_valid_segments(segments, target_version, [])
+  # State keeps segments newest-first. Prepending only the relevant prefix
+  # produces the chronological view required by pull without reversing or
+  # loading the older tail.
+  defp find_segments_from_target(segments, target_version), do: find_segments_from_target(segments, target_version, [])
 
-  defp find_valid_segments([segment | rest], target_version, acc),
-    do: find_valid_segments(rest, target_version, [segment | acc])
+  defp find_segments_from_target(
+         [%Segment{previous_version: <<_::unsigned-big-64>> = previous_version} = segment | _],
+         target_version,
+         selected
+       )
+       when target_version >= previous_version, do: [segment | selected]
 
-  defp find_valid_segments([], _target_version, acc), do: Enum.reverse(acc)
+  defp find_segments_from_target([segment | rest], target_version, selected),
+    do: find_segments_from_target(rest, target_version, [segment | selected])
+
+  defp find_segments_from_target([], _target_version, selected), do: selected
 
   @spec from_list_of_transactions((-> [Transaction.encoded()] | nil)) :: Enumerable.t(Transaction.encoded())
   def from_list_of_transactions(transactions_fn) do
@@ -75,12 +87,11 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   def from_file!(path_to_file) do
     Stream.resource(
       fn ->
-        case File.read!(path_to_file) do
-          <<@wal_magic_number, bytes::binary>> ->
-            {4, bytes}
+        wal = File.read!(path_to_file)
 
-          other ->
-            {:error, {:invalid_wal_format, byte_size(other)}}
+        case WalFormat.split(wal) do
+          {:ok, format, entries} -> {format.header_size, entries}
+          {:error, reason} -> {:error, {reason, byte_size(wal)}}
         end
       end,
       fn
@@ -91,7 +102,7 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
          <<version_binary::binary-size(8), size_in_bytes::unsigned-big-32, payload::binary-size(size_in_bytes),
            crc32::unsigned-big-32, remaining_bytes::binary>>} ->
           cond do
-            @wal_eof_version == version_binary ->
+            WalFormat.eof_version?(version_binary) ->
               {:halt, nil}
 
             :erlang.crc32(payload) == crc32 ->

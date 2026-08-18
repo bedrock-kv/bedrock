@@ -17,7 +17,7 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 - **[Commit Proxy](architecture/data-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
 - **[Resolver](architecture/data-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
 - **[Log System](architecture/data-plane/log.md)**: Provides durable transaction storage with strict ordering
-- **[Storage (Basalt)](architecture/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
+- **[Storage (Olivine)](architecture/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
 
 > 💡 **Deep Dive Available**: Click on any component name above to access detailed technical documentation including APIs, implementation details, performance characteristics, and code references.
 
@@ -70,7 +70,7 @@ sequenceDiagram
         Note over CommitProxy, Sequencer: Step 4.2: Batch Formation and Version Assignment
         CommitProxy->>CommitProxy: add_transaction_to_batch()
         CommitProxy->>Sequencer: next_commit_version()
-        Sequencer-->>CommitProxy: {:ok, last_commit_version, commit_version}
+        Sequencer-->>CommitProxy: {:ok, last_commit_version, commit_version, known_committed_version}
         
         Note over CommitProxy, Resolver: Step 4.3: Conflict Resolution
         CommitProxy->>CommitProxy: prepare_for_resolution()
@@ -88,9 +88,9 @@ sequenceDiagram
         
         Note over CommitProxy, Log: Step 4.6: Durable Log Persistence
         par Push to all logs in parallel
-            CommitProxy->>Log: push(encoded_transaction, last_commit_version)
-            Log->>Log: validate transaction ordering
-            Log->>Log: make transaction durable
+            CommitProxy->>Log: push(encoded_transaction, last_commit_version, known_committed_version)
+            Log->>Log: append when predecessor reaches WAL tip
+            Log->>Log: fsync connected predecessor chain
             Log-->>CommitProxy: :ok
         end
         
@@ -106,10 +106,12 @@ sequenceDiagram
     TransactionBuilder-->>Client: {:ok, commit_version}
     deactivate TransactionBuilder
     
-    Note over Log, Storage: Background: Storage Pulls from Logs
-    Storage->>Log: pull(start_after_version)
-    Log-->>Storage: {:ok, [transactions]}
-    Storage->>Storage: apply transactions to local storage
+    Note over Log, Storage: Background: Storage Streams from the Log's Demux
+    Storage->>Log: get_shard_server(shard_id) — one-time discovery
+    Log-->>Storage: {:ok, shard_server}
+    Storage->>Log: ShardServer.pull(from_version) — chunks + buffer
+    Log-->>Storage: {:ok, [slices], %{high_water, kcv}}
+    Storage->>Storage: apply slices to local storage
 ```
 
 ## Component Deep Dives
@@ -245,8 +247,9 @@ This is the most complex phase involving multiple distributed components working
 1. Commit Proxy adds transaction to current batch
 2. When batch reaches finalization criteria (size or timeout):
    - Request commit version from Sequencer via `next_commit_version/1`
-   - Sequencer returns both `last_commit_version` and `commit_version`
-   - This maintains the Lamport clock version chain
+   - Sequencer returns `last_commit_version`, `commit_version`, and the `known_committed_version` (KCV)
+   - The `{last, current}` pair defines the Lamport predecessor chain; numeric gaps are valid, but every log appends only the connected prefix
+   - KCV is an independent monotonic watermark carried on every log push and accumulated with `max`, so downstream durability machinery (Demux chunk cuts, storage eviction) can gate on it even when a future transaction is parked
 
 **Key Code Locations**:
 
@@ -317,8 +320,9 @@ This is the most complex phase involving multiple distributed components working
 1. Build transaction for each log based on tag coverage
 2. Encode transactions for each log server
 3. Push transactions to ALL log servers in parallel
-4. Wait for acknowledgment from ALL log servers (ack sent only after WAL append + fsync)
-5. If any log fails, trigger recovery (fail-fast approach)
+4. Each log parks future predecessor links and drains the connected prefix in chain order
+5. Wait for acknowledgment from ALL log servers (ack sent only after that transaction's WAL append + fsync; Demux is asynchronous)
+6. If any log fails, trigger recovery (fail-fast approach)
 
 **Key Code Locations**:
 
@@ -367,21 +371,22 @@ This is the most complex phase involving multiple distributed components working
 
 ## Background Operations
 
-### Storage Updates from Logs
+### Storage Updates from the Demux
 
 **Purpose**: Eventually consistent application of committed transactions to storage servers.
 
 **Process**:
 
-1. Storage servers continuously pull from log servers
-2. Transactions are applied in version order
-3. Storage maintains multiple versions for MVCC reads
-4. Old versions are garbage collected based on minimum read version
+1. Each storage server streams its shard's slices from a log's Demux ShardServer — object-storage chunks for history, the in-memory buffer for recent data, one continuous stream
+2. Slices are applied in version order; empty "current through v" replies advance the server's version when its shard is idle
+3. Storage maintains multiple versions for MVCC reads, applying eagerly but persisting to disk only up to the known committed version
+4. Old versions leave memory through window advancement based on version-time lag
 
 **Key Code Locations**:
 
-- Storage pulling: `lib/bedrock/data_plane/storage/basalt/pulling.ex`
-- Log pulling: `lib/bedrock/data_plane/log.ex:98`
+- Storage streaming: `lib/bedrock/data_plane/materializer/olivine/streaming.ex`
+- Shard serving: `lib/bedrock/data_plane/demux/shard_server.ex`
+- Log pull (recovery-only): `lib/bedrock/data_plane/log.ex`
 
 ## Error Handling and Recovery
 

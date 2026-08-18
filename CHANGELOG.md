@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.6.0 — 2026-08-18
+
+- **Write-ahead logs now trim themselves.** Logs previously retained their
+  entire history in one untrimmable active segment, so recovery replay grew
+  with cluster age (minutes of copying on old clusters). WAL segments now roll
+  on the same deterministic version-time boundaries as chunk cuts, and a
+  consumer-driven durability floor — advanced only after object storage
+  confirms each chunk — physically recycles everything behind it. Recovery
+  replay is now bounded to roughly one cut interval (~5 seconds of
+  version-time) no matter how long the cluster has been running. Rollover is
+  transactional: a new segment is published only after its header and first
+  entry are durable, so a crash mid-roll can never lose the WAL tail.
+
+- **Materializers stream from the Demux; Basalt is removed.** Olivine now
+  pulls its shard's stream from a per-log-replica ShardServer — object-storage
+  chunks for history, the in-memory buffer for recent data, one continuous
+  stream — instead of drinking the whole WAL through a dedicated log-pulling
+  materializer. The `Bedrock.DataPlane.Materializer.Basalt` module tree is
+  gone. Version currency is fully event-driven: idle shards learn "you are
+  current through v" by subscription on the next push, never by timer, so
+  reads resolve in milliseconds where they previously could stall for seconds.
+
+- **Restarts recover reliably and converge.** Restart recovery — previously
+  broken end-to-end — now reuses existing materializers at their applied
+  positions, seeds resolvers and shard layouts from recovered state, tolerates
+  and prunes ghost directory entries left by dead nodes, remembers failed
+  locks across attempts, and retains stalled-attempt progress for in-process
+  retries. The durable transaction system layout is the single source of
+  truth for what exists: foremen retire workers the layout no longer
+  references, and late-joining nodes receive the current layout at
+  registration instead of waiting for the next recovery. A restarted cluster
+  converges in a couple of attempts and well under a second, regardless of
+  age.
+
+- **Serializable isolation is enforced against pruned history.** A
+  transaction whose read version predates the resolver's retained conflict
+  history is now aborted (`{:error, :aborted}` → retry) instead of silently
+  skipping conflict detection — the read-side half of the version-floor
+  design.
+
+- **Transactions have a real deadline.** `Repo.transact/2`'s `:timeout_in_ms`
+  is now enforced as one monotonic deadline across layout fetches, reads,
+  commits, retries, and nested transactions, and it defaults to 5 seconds
+  (pass `:infinity` to opt out). Previously, retryable failures could loop
+  indefinitely and a point read could wait forever on an unresponsive
+  builder. A terminal timeout surfaces the last retry reason and rolls back
+  the active transaction.
+
+- **The WAL lag limit is an epoch-fatal safety fuse.** The opt-in
+  `reject_pushes_above_lag_us` log option no longer returns retryable
+  backpressure. Once a version has been assigned and resolved, refusing its
+  WAL append invalidates the epoch — so crossing the limit returns
+  `{:error, {:recovery_required, {:wal_limit_exceeded, details}}}`, releases
+  all queued successors, and emits `[:bedrock, :log, :wal_limit_exceeded]`.
+  The unsound `[:bedrock, :log, :floor_lag_alarm]` event is removed;
+  `[:bedrock, :log, :trim]` remains as raw per-trim observability (floor,
+  tip, lag, segment counts).
+
+- **Legacy BED0 WALs remain readable.** Cold start derives a synthetic replay
+  cursor from the first retained transaction of pre-0.6 segments (new
+  segments are always written in the current format), and cold-start failures
+  now distinguish WAL corruption from I/O errors — transient resource
+  exhaustion retries with backoff instead of being misreported as a bad
+  replay cursor.
+
+- **Compaction never loses live writes.** Olivine compaction cutover now
+  restarts its stream from the compacted durable boundary, so transactions
+  ingested while compaction ran are re-delivered instead of vanishing until
+  the next recovery.
+
+- **Guides reflect the new data plane.** The durability-foundation, recovery,
+  data-plane, and async-persistence guides describe the shipped design —
+  KCV-gated cuts, Demux streaming, reconciliation, trimming — rather than its
+  history.
+
 ## 0.5.3 — 2026-08-15
 
 - **Shrink the hex package from 8.2MB to ~300KB.** The published tarball

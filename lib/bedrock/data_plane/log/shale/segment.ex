@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   """
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
+  alias Bedrock.DataPlane.Log.Shale.WalFormat
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
@@ -12,10 +13,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   @type t :: %__MODULE__{
           path: String.t(),
           min_version: Bedrock.version(),
+          previous_version: Bedrock.version(),
           transactions: nil | [Transaction.encoded()]
         }
   defstruct path: nil,
             min_version: nil,
+            previous_version: nil,
             transactions: nil
 
   @wal_prefix "wal_"
@@ -31,17 +34,28 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   @spec decode_file_name(String.t()) :: pos_integer()
   def decode_file_name(@wal_prefix <> log_number), do: String.to_integer(log_number, 32)
 
-  @spec allocate_from_recycler(SegmentRecycler.server(), String.t(), Bedrock.version()) ::
+  @spec allocate_from_recycler(
+          SegmentRecycler.server(),
+          String.t(),
+          Bedrock.version(),
+          Bedrock.version()
+        ) ::
           {:ok, t()} | {:error, :allocation_failed}
-  def allocate_from_recycler(segment_recycler, path, version) do
+  def allocate_from_recycler(segment_recycler, path, version, previous_version) do
     path_to_file = Path.join(path, encode_file_name(Version.to_integer(version)))
 
     case SegmentRecycler.check_out(segment_recycler, path_to_file) do
       :ok ->
+        # A freshly checked-out segment is KNOWN empty — `transactions: []`
+        # says so without ever reading the (preallocated, 64 MiB) file.
+        # `nil` is reserved for cold-start segments whose contents exist on
+        # disk but have not been decoded.
         {:ok,
          %__MODULE__{
            min_version: version,
-           path: path_to_file
+           previous_version: previous_version,
+           path: path_to_file,
+           transactions: []
          }}
 
       _ ->
@@ -49,9 +63,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
     end
   end
 
-  @spec allocate_from_recycler!(SegmentRecycler.server(), String.t(), Bedrock.version()) :: t()
-  def allocate_from_recycler!(segment_recycler, path, version) do
-    case allocate_from_recycler(segment_recycler, path, version) do
+  @spec allocate_from_recycler!(SegmentRecycler.server(), String.t(), Bedrock.version(), Bedrock.version()) :: t()
+  def allocate_from_recycler!(segment_recycler, path, version, previous_version) do
+    case allocate_from_recycler(segment_recycler, path, version, previous_version) do
       {:ok, segment} ->
         segment
 
@@ -64,20 +78,45 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   def return_to_recycler(segment, segment_recycler), do: SegmentRecycler.check_in(segment_recycler, segment.path)
 
   @doc """
-  Create a new segment from the given file path. We stat the file to get the
-  size, ensuring that it exists.
+  Create a new segment from the given file path.
+
+  The header read itself is the existence check — no `File.exists?/1`
+  precheck, no check-then-open race. Failures keep their nature: bad bytes
+  are `{:wal_format, path, reason}` and never retried as resource trouble;
+  open/read failures are `{:wal_io, path, posix}` with their real POSIX
+  cause, never mislabeled as corruption.
   """
-  @spec from_path(path_to_file :: String.t()) :: {:ok, t()} | {:error, :does_not_exist}
+  @spec from_path(path_to_file :: String.t()) ::
+          {:ok, t()}
+          | {:error, {:wal_format, String.t(), :unsupported_wal_format | :invalid_wal_format}}
+          | {:error, {:wal_io, String.t(), File.posix()}}
   def from_path(path_to_file) do
-    if File.exists?(path_to_file) do
-      {:ok,
-       %__MODULE__{
-         path: path_to_file,
-         min_version: path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer()
-       }}
-    else
-      {:error, :does_not_exist}
+    min_version = path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer()
+
+    case WalFormat.read(path_to_file) do
+      {:ok, %WalFormat{version: :bed0, first_version: ^min_version, previous_version: previous_version}} ->
+        {:ok, new(path_to_file, min_version, previous_version)}
+
+      {:ok, %WalFormat{version: :bed0}} ->
+        {:error, {:wal_format, path_to_file, :invalid_wal_format}}
+
+      {:ok, %WalFormat{version: :bed1, previous_version: previous_version}} ->
+        {:ok, new(path_to_file, min_version, previous_version)}
+
+      {:error, format} when format in [:unsupported_wal_format, :invalid_wal_format] ->
+        {:error, {:wal_format, path_to_file, format}}
+
+      {:error, posix} ->
+        {:error, {:wal_io, path_to_file, posix}}
     end
+  end
+
+  defp new(path, min_version, previous_version) do
+    %__MODULE__{
+      path: path,
+      min_version: min_version,
+      previous_version: previous_version
+    }
   end
 
   @spec ensure_transactions_are_loaded(t()) :: t()

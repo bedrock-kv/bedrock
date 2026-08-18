@@ -10,6 +10,13 @@ This glossary defines key terms and concepts used throughout the Bedrock distrib
 
 ## A
 
+### **Available After**
+
+The exclusive WAL cursor after which every retained transaction is available.
+Shale persists it as the `previous_version` in each segment header, so trimming
+and cold restart cannot erase the boundary needed by `Log.pull/3`. It is not the
+same as the first retained transaction.
+
 ### **ACID**
 
 **Atomicity, Consistency, Isolation, Durability** - The four fundamental properties of database transactions that Bedrock guarantees. All operations in a transaction either succeed together (atomicity), maintain data validity (consistency), appear isolated from other transactions (isolation), and survive system failures (durability).
@@ -17,10 +24,6 @@ This glossary defines key terms and concepts used throughout the Bedrock distrib
 ---
 
 ## B
-
-### **Basalt**
-
-A storage engine implementation that provides multi-version key-value storage with MVCC support and transaction log integration. This is one kind of [Storage](deep-dives/architecture/data-plane/storage.md) server implementation. See also: [Basalt implementation details](deep-dives/architecture/implementations/basalt.md).
 
 ### **Batch**
 
@@ -34,9 +37,21 @@ The strategy of processing multiple transactions together to amortize overhead c
 
 ## C
 
+### **Chunk**
+
+An immutable object-storage file holding one shard's transaction slices for a range of versions. Chunks are written by ShardServers on Demux-commanded cuts and are named for the last commit they contain, so a reader can find the chunk covering any version with a single next-key-after listing call. Because cuts are deterministic and gated on the known committed version, every replica produces byte-identical chunks.
+
 ### **Codec**
 
 A module responsible for encoding/decoding keys or values for storage and transmission. Examples: `TupleKeyCodec`, `BertValueCodec`.
+
+### **Currency**
+
+The high-water knowledge carried on every ShardServer pull reply: "here is your data" or "nothing for you, but you are current through version v." Busy shards learn it from slice pushes; idle shards learn it by subscription — a parked materializer asks its Demux once, and the Demux answers the moment its high-water advances. Currency is what lets a materializer for a quiet shard keep advancing its version (and serving fresh reads) without any timers or polling.
+
+### **Cut**
+
+A deterministic version-time boundary at which the Demux commands every ShardServer to persist its buffered slices as a chunk. Cuts are pure version arithmetic (fixed buckets of the cut interval) and fire only once the known committed version has reached them, so nothing that is not known-committed ever becomes durable in object storage. The WAL's active segment rolls on the same boundaries, so trimming can physically drop history at the cut cadence.
 
 ### **Cold Start**
 
@@ -69,6 +84,10 @@ The management layer consisting of Coordinators and Directors that handle cluste
 ### **Data Plane**
 
 The transaction processing layer consisting of Sequencers, Commit Proxies, Resolvers, Logs, and Storage servers that handle client transactions.
+
+### **Demux**
+
+The process tree owned by each running log that slices every pushed transaction by shard and routes the slices to anonymous, replica-local ShardServers. Its shard map is the only registry for those children. The Demux commands deterministic chunk cuts, tracks that log replica's minimum durable version that gates WAL trimming, and answers currency subscriptions so idle shards' materializers stay current without polling. It is the log's only data-plane consumer, and materializers' only data-plane source.
 
 ### **Director**
 
@@ -118,6 +137,10 @@ The distributed database architecture that Bedrock follows, separating control p
 
 The client-facing interface that manages transaction coordination and serves as the entry point for all client operations. See also: [Gateway implementation](deep-dives/architecture/infrastructure/gateway.md).
 
+### **Generation**
+
+One recovery's set of logs. Recovery does not repair old logs in place: it recruits a fresh generation, replays the surviving WAL tail into it, and lets [reconciliation](#reconciliation) retire the previous generation once the new layout is durable. Because the old WAL was trimmed in normal operation, the replay copies a few seconds of tail rather than the cluster's history.
+
 ---
 
 ## H
@@ -144,7 +167,7 @@ A contiguous segment of the key space, defined by start and end keys (e.g., `{"a
 
 ### **Known Committed Version**
 
-The highest version number confirmed as durably committed across all log servers, serving as the readable horizon for new transactions. Returned by read version requests to ensure consistent snapshots.
+The highest version number confirmed as durably committed across all log servers, serving as the readable horizon for new transactions. Returned by read version requests to ensure consistent snapshots, and piggybacked by commit proxies on every log push (FoundationDB tlog parity): downstream durability — chunk cuts in the Demux and window eviction in materializers — is gated on it, so nothing that is not known-committed ever becomes durable anywhere, and recovery rollback is pure pointer manipulation.
 
 ---
 
@@ -170,6 +193,10 @@ The component that provides durable, ordered transaction storage and serves as t
 
 ## M
 
+### **Materializer**
+
+The codebase's name for a [Storage](deep-dives/architecture/data-plane/storage.md) server: the component that materializes queryable, versioned key-value state for a single shard by streaming that shard's slices from a log's Demux. See also: [Olivine](#olivine), the materializer engine implementation.
+
 ### **Manifest**
 
 A configuration file that describes worker capabilities and system configuration for service discovery.
@@ -189,6 +216,10 @@ A concurrency control method that maintains multiple versions of each data item,
 ---
 
 ## O
+
+### **Olivine**
+
+The materializer engine implementation: a versioned page index over one shard's key range, fed by a single stream (snapshot, then chunks, then the ShardServer buffer). Applies eagerly for read currency but persists to disk only up to the known committed version, which makes recovery rollback a pure in-memory pointer discard. See also: [Olivine implementation details](deep-dives/architecture/implementations/olivine.md).
 
 ### **Optimistic Concurrency Control**
 
@@ -224,9 +255,13 @@ The guarantee that within a transaction, read operations immediately see the eff
 
 The process of restoring system state after failures, coordinated by the Director and involving state reconstruction from durable logs.
 
+### **Reconciliation**
+
+The single destruction path for workers, mirroring recovery as the single creation path. When a newly durable transaction system layout is broadcast, each foreman retires every worker it hosts that the layout does not reference: previous-generation logs and any strays left by interrupted recovery attempts. A worker, for this purpose, is a directory with a valid manifest; anything the foreman cannot identify is left alone.
+
 ### **Recovery Info**
 
-State information provided by components during recovery, including version numbers, durability status, and operational state.
+State information provided by components during recovery, including version numbers, durability status, and operational state. Logs report their oldest and newest versions; materializers report their durable version and shard assignment, which is how recovery reuses survivors.
 
 ### **Resolver**
 
@@ -252,9 +287,13 @@ An independent partition of data identified by range tags, enabling parallel pro
 
 The log storage engine implementation that provides durable, append-only transaction logging with strict version ordering. This is one kind of [Log](deep-dives/architecture/data-plane/log.md) server implementation. See also: [Shale implementation details](deep-dives/architecture/implementations/shale.md).
 
+### **ShardServer**
+
+An anonymous per-shard process owned by exactly one log's Demux. It buffers that replica's recent transaction slices, persists them as shared deterministic chunks on commanded cuts, and serves the shard's continuous stream to materializers — chunks for history, buffer for recent data, with version currency on every reply. Replicated logs own distinct ShardServers for the same logical shard and advance their WAL trim floors only from their own child's confirmations.
+
 ### **Storage**
 
-The component that serves read requests and maintains versioned key-value data by pulling committed transactions from logs. See also: [Storage implementation](deep-dives/architecture/data-plane/storage.md).
+The component that serves read requests and maintains versioned key-value data by streaming its shard's committed transactions from a log's Demux (called a [Materializer](#materializer) in the codebase). See also: [Storage implementation](deep-dives/architecture/data-plane/storage.md).
 
 ### **Storage Team**
 
@@ -286,7 +325,11 @@ A per-transaction process that manages the complete lifecycle of a single transa
 
 ### **Transaction System Layout**
 
-The blueprint that defines how all components in a Bedrock cluster connect and communicate during transaction processing. Contains component process IDs, key range assignments, service mappings, and operational status for the entire cluster. See also: [Transaction System Layout overview](quick-reads/transaction-system-layout.md).
+The blueprint that defines how all components in a Bedrock cluster connect and communicate during transaction processing. Contains component process IDs, key range assignments, service mappings, and operational status for the entire cluster. Once durable, it is also the single source of truth for what should exist: [reconciliation](#reconciliation) retires any worker the layout does not reference. See also: [Transaction System Layout overview](quick-reads/transaction-system-layout.md).
+
+### **Trim Floor**
+
+The version below which a log's WAL may be recycled. The floor is object-storage confirmation alone — the minimum cut every shard has confirmed durable in chunks — so readers never hold the WAL back. It is deliberately not persisted: on restart it regresses to what the on-disk segments define and re-derives from fresh confirmations.
 
 ---
 

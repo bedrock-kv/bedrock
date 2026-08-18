@@ -40,7 +40,7 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
   # Helper to assign multiple versions without reporting commits
   defp assign_versions(sequencer, count) do
     for _i <- 1..count do
-      {:ok, _last, commit} = Sequencer.next_commit_version(sequencer, @epoch)
+      {:ok, _last, commit, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
       commit
     end
   end
@@ -51,9 +51,9 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
       {:ok, sequencer} = start_sequencer(commit0)
 
       # Get three consecutive version assignments with chained pattern matching
-      assert {:ok, ^commit0, commit1} = Sequencer.next_commit_version(sequencer, @epoch)
-      assert {:ok, ^commit1, commit2} = Sequencer.next_commit_version(sequencer, @epoch)
-      assert {:ok, ^commit2, commit3} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^commit0, commit1, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^commit1, commit2, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^commit2, commit3, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
 
       # Verify Lamport clock property: each assignment advances the logical clock
       assert commit0 < commit1 < commit2 < commit3
@@ -64,9 +64,9 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
       {:ok, sequencer} = start_sequencer(commit0)
 
       # Assign versions 201, 202, 203 forming proper chains
-      assert {:ok, ^commit0, v1} = Sequencer.next_commit_version(sequencer, @epoch)
-      assert {:ok, ^v1, v2} = Sequencer.next_commit_version(sequencer, @epoch)
-      assert {:ok, ^v2, v3} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^commit0, v1, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^v1, v2, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^v2, v3, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
 
       # Simulate partial failures - only report v1 and v3 (gap at v2)
       assert :ok = Sequencer.report_successful_commit(sequencer, @epoch, v1)
@@ -76,7 +76,7 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
       assert {:ok, ^v3} = Sequencer.next_read_version(sequencer, @epoch)
 
       # New assignment should maintain proper chain from last assigned
-      assert {:ok, ^v3, next_commit} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^v3, next_commit, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
       assert Version.to_integer(next_commit) > Version.to_integer(v3)
 
       # Late-arriving commit for gap shouldn't affect read version (monotonic)
@@ -114,7 +114,7 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
       assert {:ok, ^reported_version2} = Sequencer.next_read_version(sequencer, @epoch)
 
       # Assignment counter continues from where it left off
-      assert {:ok, read_before_next, next_commit} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, read_before_next, next_commit, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
       assert Version.to_integer(read_before_next) >= Version.to_integer(reported_version2)
 
       last_version_int = Enum.max(version_ints)
@@ -130,7 +130,7 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
       tasks =
         for i <- 1..num_tasks do
           Task.async(fn ->
-            assert {:ok, last_commit, commit_version} = Sequencer.next_commit_version(sequencer, @epoch)
+            assert {:ok, last_commit, commit_version, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
             {i, last_commit, commit_version}
           end)
         end
@@ -165,7 +165,7 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
       {:ok, sequencer} = start_sequencer(commit0)
 
       assert {:ok, ^commit0} = Sequencer.next_read_version(sequencer, @epoch)
-      assert {:ok, ^commit0, commit1} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^commit0, commit1, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
       assert Version.to_integer(commit1) > Version.to_integer(commit0)
 
       # Report commit and verify monotonic advancement
@@ -177,7 +177,7 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
       commit0 = Version.from_integer(500)
       {:ok, sequencer} = start_sequencer(commit0)
 
-      assert {:ok, ^commit0, commit1} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^commit0, commit1, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
 
       # Report the same commit multiple times
       assert :ok = Sequencer.report_successful_commit(sequencer, @epoch, commit1)
@@ -186,7 +186,7 @@ defmodule Bedrock.DataPlane.Sequencer.LamportSemanticsTest do
 
       # Should have no ill effects on read version or next assignment
       assert {:ok, ^commit1} = Sequencer.next_read_version(sequencer, @epoch)
-      assert {:ok, ^commit1, commit2} = Sequencer.next_commit_version(sequencer, @epoch)
+      assert {:ok, ^commit1, commit2, _kcv} = Sequencer.next_commit_version(sequencer, @epoch)
       assert Version.to_integer(commit2) > Version.to_integer(commit1)
     end
   end

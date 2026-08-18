@@ -18,6 +18,7 @@ defmodule Bedrock.DataPlane.Log.Tracing do
         [:bedrock, :log, :recover_from],
         [:bedrock, :log, :push],
         [:bedrock, :log, :push_out_of_order],
+        [:bedrock, :log, :wal_limit_exceeded],
         [:bedrock, :log, :pull]
       ],
       &__MODULE__.handler/4,
@@ -44,11 +45,15 @@ defmodule Bedrock.DataPlane.Log.Tracing do
 
   def log_event(:lock_for_recovery, _, %{epoch: epoch}), do: info("Lock for recovery in epoch #{epoch}")
 
-  def log_event(:recover_from, _, %{source_log: :none}), do: info("Reset to initial version")
+  def log_event(:recover_from, _, %{source_logs: []}), do: info("Persist empty replay baseline")
 
-  def log_event(:recover_from, _, %{source_log: source_log, first_version: first_version, last_version: last_version}) do
+  def log_event(:recover_from, _, %{
+        source_logs: source_logs,
+        replay_after: replay_after,
+        last_inclusive: last_inclusive
+      }) do
     info(
-      "Recover from #{inspect(source_log)} with versions #{Version.to_string(first_version)} to #{Version.to_string(last_version)}"
+      "Recover from #{inspect(source_logs)} over (#{Version.to_string(replay_after)}, #{Version.to_string(last_inclusive)}]"
     )
   end
 
@@ -66,6 +71,20 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     )
   end
 
+  def log_event(:wal_limit_exceeded, %{lag_us: lag_us, limit_us: limit_us, pending_pushes: pending_pushes}, %{
+        floor: floor,
+        last_version: last_version,
+        commit_version: commit_version,
+        recovery_required: true
+      }) do
+    error(
+      "WAL safety limit exceeded; recovery required " <>
+        "(floor=#{Version.to_string(floor)}, tip=#{Version.to_string(last_version)}, " <>
+        "prospective=#{Version.to_string(commit_version)}, lag_us=#{lag_us}, " <>
+        "limit_us=#{limit_us}, pending_pushes=#{pending_pushes})"
+    )
+  end
+
   def log_event(:pull, _, %{from_version: from_version, opts: opts}),
     do: info("Pull transactions from version #{Version.to_string(from_version)} with options #{inspect(opts)}")
 
@@ -74,5 +93,12 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     cluster = Keyword.fetch!(metadata, :cluster)
     id = Keyword.fetch!(metadata, :id)
     Logger.info("Bedrock Log [#{cluster.name()}/#{id}]: #{message}")
+  end
+
+  defp error(message) do
+    metadata = Logger.metadata()
+    cluster = Keyword.fetch!(metadata, :cluster)
+    id = Keyword.fetch!(metadata, :id)
+    Logger.error("Bedrock Log [#{cluster.name()}/#{id}]: #{message}")
   end
 end

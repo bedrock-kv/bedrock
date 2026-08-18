@@ -77,21 +77,21 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
     end
 
     test "handles :recover_from event with no source" do
-      assert_log_contains(:recover_from, %{}, %{source_log: :none}, "Reset to initial version")
+      assert_log_contains(:recover_from, %{}, %{source_logs: []}, "Persist empty replay baseline")
     end
 
     test "handles :recover_from event with source log" do
       metadata = %{
-        source_log: :log_server_2,
-        first_version: Version.from_integer(100),
-        last_version: Version.from_integer(150)
+        source_logs: [:log_server_2],
+        replay_after: Version.from_integer(100),
+        last_inclusive: Version.from_integer(150)
       }
 
       assert_log_contains(
         :recover_from,
         %{},
         metadata,
-        "Recover from :log_server_2 with versions <0,0,0,0,0,0,0,100> to <0,0,0,0,0,0,0,150>"
+        "Recover from [:log_server_2] over (<0,0,0,0,0,0,0,100>, <0,0,0,0,0,0,0,150>]"
       )
     end
 
@@ -124,6 +124,33 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
         metadata,
         "Rejected out-of-order transaction: expected <0,0,0,0,0,0,0,205>, current <0,0,0,0,0,0,0,200>"
       )
+    end
+
+    test "logs a WAL limit crossing as a recovery-required error" do
+      floor = Version.from_integer(100)
+      last_version = Version.from_integer(200)
+      commit_version = Version.from_integer(300)
+
+      log =
+        capture_log(fn ->
+          Tracing.handler(
+            [:bedrock, :log, :wal_limit_exceeded],
+            %{lag_us: 200, limit_us: 150, pending_pushes: 2},
+            %{
+              floor: floor,
+              last_version: last_version,
+              commit_version: commit_version,
+              recovery_required: true
+            },
+            nil
+          )
+        end)
+
+      assert log =~ "WAL safety limit exceeded; recovery required"
+      assert log =~ "lag_us=200"
+      assert log =~ "limit_us=150"
+      assert log =~ "pending_pushes=2"
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
     end
 
     test "handles :pull event" do

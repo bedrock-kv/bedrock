@@ -82,8 +82,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     then(
       %State{
         lock_token: lock_token,
-        conflicts: Conflicts.new(),
-        oldest_version: last_version,
+        conflicts: Conflicts.new(last_version),
         last_version: last_version,
         waiting: %{},
         mode: :running,

@@ -24,6 +24,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       put_transaction_system_layout: 2,
       update_raft: 2,
       add_tsl_subscriber: 2,
+      replay_tsl_to: 2,
       remove_tsl_subscriber: 2,
       check_for_recovery_capability_changes: 1,
       update_recovery_capability_hash: 1
@@ -99,7 +100,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          supervisor_otp_name: cluster.otp_name(:sup),
          epoch: loaded_epoch,
          config: loaded_config,
-         transaction_system_layout: loaded_tsl,
+         old_transaction_system_layout: loaded_tsl,
+         transaction_system_layout: nil,
          raft:
            Raft.new(
              my_node,
@@ -133,7 +135,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @impl true
   def handle_call(:fetch_config, _from, t), do: reply(t, {:ok, t.config})
 
+  def handle_call(:fetch_transaction_system_layout, _from, %{transaction_system_layout: nil} = t),
+    do: reply(t, {:error, :unavailable})
+
   def handle_call(:fetch_transaction_system_layout, _from, t), do: reply(t, {:ok, t.transaction_system_layout})
+
+  @impl true
+  def handle_call(:fetch_service_directory, _from, t), do: reply(t, {:ok, t.service_directory})
 
   def handle_call({:register_services, services}, from, t) do
     caller_node = Node.self()
@@ -159,9 +167,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   def handle_call({:register_node_resources, client_pid, compact_services, capabilities}, from, t) do
-    # Always subscribe client for TSL updates (monitor to clean up on death)
+    # Always subscribe client for TSL updates (monitor to clean up on death),
+    # and replay the current layout so a late joiner learns it immediately
+    # instead of waiting for the next broadcast (i.e., the next recovery).
     Process.monitor(client_pid)
-    updated_state = add_tsl_subscriber(t, client_pid)
+
+    updated_state =
+      t
+      |> add_tsl_subscriber(client_pid)
+      |> replay_tsl_to(client_pid)
 
     # Expand compact services to full format
     caller_node = node(client_pid)

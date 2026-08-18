@@ -1,67 +1,55 @@
 # Log Recovery Planning
 
-**Determining what committed transaction data can be safely recovered from existing logs.**
+**Determining the common recoverable WAL range without confusing data with a cursor.**
 
-Log recovery planning analyzes surviving logs to identify which [transactions](../transactions.md) can be safely restored. This phase only runs for existing clusters with potentially valuable data—new clusters skip directly to clean infrastructure creation.
+Bedrock writes every committed transaction to every log. Recovery can proceed
+when a majority of the previous generation's logs can be locked. Those
+survivors report three distinct positions:
 
-## Core Strategy
+- `available_after`: an exclusive cursor; every retained transaction after it
+  is available from that WAL.
+- `last_inclusive`: the last transaction version present in the WAL (reported
+  as `last_version`).
+- `minimum_durable_version`: the transient object-storage durability
+  watermark, or `:unavailable` after restart.
 
-Bedrock stores every committed transaction on every [log](../../deep-dives/architecture/data-plane/log.md), creating natural redundancy. During recovery, some logs may be unavailable or contain different data ranges due to failures.
+`oldest_version` remains useful for inspection, but it names retained data and
+is never used as an exclusive pull cursor.
 
-The planning algorithm:
+## Common Range
 
-1. **Groups logs by shard** - Logs serving the same key ranges form analysis groups
-2. **Checks quorum requirements** - Each shard needs sufficient logs for data validation  
-3. **Finds common version range** - Identifies the latest version safely recoverable across all shards
-4. **Selects optimal logs** - Chooses log combinations maximizing recoverable data
-
-## Shard Analysis
-
-For each shard, recovery examines all possible combinations of available logs meeting quorum requirements:
-
-```text
-Shard Alpha: Logs 1, 2, 3 (requires 2 for quorum)
-- Logs 1 & 2 available with data through version 100
-- Log 3 unreachable
-- Result: Can recover through version 100 ✓
-```
-
-## Cross-Shard Consensus
-
-Individual shard analysis isn't enough. Recovery uses the **minimum version across all shards** as the global recovery baseline:
+Across the locked majority, planning computes:
 
 ```text
-Shard Alpha: Max recoverable version 100
-Shard Beta:  Max recoverable version 85  
-Shard Gamma: Max recoverable version 95
-Global recovery baseline: 85 (minimum)
+available_after = max(each survivor's available_after)
+last_inclusive  = min(each survivor's last_version)
+
+common range = (available_after, last_inclusive]
 ```
 
-This conservative approach ensures every recovered transaction achieved full cross-shard replication.
+The lower bound is deliberately exclusive. A survivor whose first retained
+transaction is version 10 can report `available_after = 9`; replay from 9 then
+includes version 10 exactly once. Versions may have arbitrary numeric gaps, so
+the cursor is persisted rather than derived by subtracting from the first
+transaction.
 
-## Data Maximization
+Planning separately takes the minimum available durability watermark. Log
+replay may advance its exclusive cursor to that point because object storage is
+durable through it. The watermark is an optimization, not the WAL's persisted
+availability contract.
 
-Recovery attempts to copy from all available logs within each shard, not just the minimum required. This provides more transaction history for [storage servers](../../deep-dives/architecture/data-plane/storage.md) that need to catch up during their own recovery.
+If the locked logs do not form a majority, or if the aggregated lower cursor is
+greater than the inclusive endpoint, recovery stalls with
+`:unable_to_meet_log_quorum`.
 
-## Failure Handling
+## Outputs
 
-If any shard cannot meet quorum requirements, recovery fails with `:unable_to_meet_log_quorum`. This prevents recovery from proceeding with insufficient data validation guarantees.
+- `survivor_log_ids`: the locked logs that can serve as replay sources.
+- `version_vector`: `{available_after, last_inclusive}`.
+- `durable_version`: the common `durable_through` optimization.
+- Fresh log vacancies for the next generation.
 
-## Algorithm Inputs and Outputs
-
-**Inputs:**
-
-- Previous system configuration (log assignments and ranges)
-- Current log status (availability and version ranges)  
-- Target system requirements (quorum parameters)
-
-**Outputs:**
-
-- `old_log_ids_to_copy` - Which logs to preserve data from
-- `version_vector` - Transaction range bounds for recovery
-
-## Next Phase
-
-Success leads to [vacancy creation](vacancy-creation.md), which uses the established version vector to plan the new system architecture.
+Success leads to [log recruitment](log-recruitment.md), followed by
+[log replay](log-replay.md).
 
 **Implementation**: `lib/bedrock/control_plane/director/recovery/log_recovery_planning_phase.ex`

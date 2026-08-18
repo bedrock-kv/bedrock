@@ -24,17 +24,17 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
 
   @spec trace_recover_from(
           source_logs :: [Log.ref()],
-          first_version :: Bedrock.version(),
-          last_version :: Bedrock.version()
+          replay_after :: Bedrock.version(),
+          last_inclusive :: Bedrock.version()
         ) :: :ok
-  def trace_recover_from(source_logs, first_version, last_version) do
+  def trace_recover_from(source_logs, replay_after, last_inclusive) do
     Telemetry.execute(
       [:bedrock, :log, :recover_from],
       %{},
       Map.merge(trace_metadata(), %{
         source_logs: source_logs,
-        first_version: first_version,
-        last_version: last_version
+        replay_after: replay_after,
+        last_inclusive: last_inclusive
       })
     )
   end
@@ -63,6 +63,27 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
     )
   end
 
+  @spec trace_wal_limit_exceeded(
+          floor :: Bedrock.version(),
+          last_version :: Bedrock.version(),
+          commit_version :: Bedrock.version(),
+          lag_us :: pos_integer(),
+          limit_us :: non_neg_integer(),
+          pending_pushes :: non_neg_integer()
+        ) :: :ok
+  def trace_wal_limit_exceeded(floor, last_version, commit_version, lag_us, limit_us, pending_pushes) do
+    Telemetry.execute(
+      [:bedrock, :log, :wal_limit_exceeded],
+      %{lag_us: lag_us, limit_us: limit_us, pending_pushes: pending_pushes},
+      Map.merge(trace_metadata(), %{
+        floor: floor,
+        last_version: last_version,
+        commit_version: commit_version,
+        recovery_required: true
+      })
+    )
+  end
+
   @spec trace_pull_transactions(from_version :: Bedrock.version(), opts :: Keyword.t()) :: :ok
   def trace_pull_transactions(from_version, opts) do
     Telemetry.execute(
@@ -71,6 +92,28 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
       Map.merge(trace_metadata(), %{
         from_version: from_version,
         opts: opts
+      })
+    )
+  end
+
+  @spec trace_trim(
+          floor :: Bedrock.version(),
+          last_version :: Bedrock.version(),
+          lag_us :: non_neg_integer(),
+          segments_recycled :: non_neg_integer(),
+          segments_retained :: non_neg_integer()
+        ) :: :ok
+  def trace_trim(floor, last_version, lag_us, segments_recycled, segments_retained) do
+    Telemetry.execute(
+      [:bedrock, :log, :trim],
+      %{
+        lag_us: lag_us,
+        segments_recycled: segments_recycled,
+        segments_retained: segments_retained
+      },
+      Map.merge(trace_metadata(), %{
+        floor: floor,
+        last_version: last_version
       })
     )
   end

@@ -23,7 +23,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullBoundaryTest do
     {:ok, pid} =
       GenServer.start_link(
         Server,
-        {cluster, otp_name, id, foreman, path, object_storage, true},
+        {cluster, otp_name, id, foreman, path, object_storage, true, nil},
         name: otp_name
       )
 

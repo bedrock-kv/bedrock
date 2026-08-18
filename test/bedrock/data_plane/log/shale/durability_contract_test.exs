@@ -27,7 +27,7 @@ defmodule Bedrock.DataPlane.Log.Shale.DurabilityContractTest do
       :ok
     end
 
-    assert {:ok, writer} = Writer.open(path, sync_fun: sync_fun)
+    assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: sync_fun)
     transaction = TransactionTestSupport.new_log_transaction(0, %{"k" => "v"})
 
     assert {:ok, updated_writer} = Writer.append(writer, transaction, Version.from_integer(0))
@@ -37,19 +37,19 @@ defmodule Bedrock.DataPlane.Log.Shale.DurabilityContractTest do
   end
 
   test "append returns error and keeps offsets when wal sync fails", %{path: path} do
-    assert {:ok, writer} = Writer.open(path, sync_fun: fn _fd -> {:error, :eio} end)
+    assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: fn _fd -> {:error, :eio} end)
 
     transaction = TransactionTestSupport.new_log_transaction(0, %{"k" => "v"})
 
     assert {:error, :eio} = Writer.append(writer, transaction, Version.from_integer(0))
-    assert writer.write_offset == 4
-    assert writer.bytes_remaining == 1004
+    assert writer.write_offset == 12
+    assert writer.bytes_remaining == 996
 
     assert :ok = Writer.close(writer)
   end
 
   test "push does not emit false success ack when wal sync fails", %{path: path} do
-    assert {:ok, writer} = Writer.open(path, sync_fun: fn _fd -> {:error, :eio} end)
+    assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: fn _fd -> {:error, :eio} end)
 
     state = %State{
       mode: :ready,
@@ -60,16 +60,10 @@ defmodule Bedrock.DataPlane.Log.Shale.DurabilityContractTest do
     }
 
     transaction = TransactionTestSupport.new_log_transaction(0, %{"k" => "v"})
-    caller = self()
-
-    ack_fn = fn result ->
-      send(caller, {:ack_result, result})
-      :ok
-    end
-
-    assert {:error, :eio} = Pushing.push(state, Version.from_integer(0), transaction, ack_fn)
-    assert_receive {:ack_result, {:error, :eio}}
-    refute_receive {:ack_result, :ok}, 20
+    # The transition carries no append event and exactly one reply — the
+    # error — so no false success acknowledgement can exist.
+    assert %{state: ^state, appended: [], replies: [{:tok, {:error, :eio}}], parked?: false} =
+             Pushing.push(state, Version.from_integer(0), transaction, :tok)
 
     assert :ok = Writer.close(writer)
   end

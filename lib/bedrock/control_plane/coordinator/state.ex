@@ -23,6 +23,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           supervisor_otp_name: atom(),
           last_durable_txn_id: Raft.transaction_id(),
           config: Config.t() | nil,
+          old_transaction_system_layout:
+            TransactionSystemLayout.t() | %{required(:logs) => TransactionSystemLayout.log_map()} | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           waiting_list: %{Raft.transaction_id() => pid()},
           service_directory: %{String.t() => {atom(), {atom(), node()}}},
@@ -41,6 +43,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             supervisor_otp_name: nil,
             last_durable_txn_id: nil,
             config: nil,
+            old_transaction_system_layout: nil,
             transaction_system_layout: nil,
             waiting_list: %{},
             service_directory: %{},
@@ -92,8 +95,19 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t()) ::
             State.t()
     def put_transaction_system_layout(t, transaction_system_layout) do
-      updated_state = %{t | transaction_system_layout: transaction_system_layout}
+      updated_state = %{
+        t
+        | old_transaction_system_layout: transaction_system_layout,
+          transaction_system_layout: transaction_system_layout
+      }
+
       broadcast_tsl_update(updated_state, transaction_system_layout)
+    end
+
+    @spec clear_transaction_system_layout(t :: State.t()) :: State.t()
+    def clear_transaction_system_layout(t) do
+      updated_state = %{t | transaction_system_layout: nil}
+      broadcast_tsl_update(updated_state, nil)
     end
 
     @spec put_service_directory(t :: State.t(), %{String.t() => {atom(), {atom(), node()}}}) ::
@@ -112,6 +126,25 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
     @spec remove_tsl_subscriber(t :: State.t(), subscriber :: pid()) :: State.t()
     def remove_tsl_subscriber(t, subscriber), do: %{t | tsl_subscribers: MapSet.delete(t.tsl_subscribers, subscriber)}
+
+    @doc """
+    Replays the current layout to one subscriber, if a layout exists.
+
+    Broadcasts only reach subscribers that existed when the layout was
+    published. A Link that registers after the layout stabilized would
+    otherwise keep a nil cache until the next recovery — its clients
+    unavailable and its foreman never handed the reconciliation trigger.
+    The message is identical to a live broadcast, so the subscriber's
+    handling is too. With no layout yet (bootstrap, mid-recovery) nothing
+    is sent: an incomplete layout is not a runtime layout.
+    """
+    @spec replay_tsl_to(t :: State.t(), subscriber :: pid()) :: State.t()
+    def replay_tsl_to(%{transaction_system_layout: nil} = t, _subscriber), do: t
+
+    def replay_tsl_to(t, subscriber) do
+      send(subscriber, {:tsl_updated, t.transaction_system_layout})
+      t
+    end
 
     @spec broadcast_tsl_update(t :: State.t(), tsl :: TransactionSystemLayout.t() | nil) :: State.t()
     def broadcast_tsl_update(t, tsl) do

@@ -50,6 +50,84 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
     Transaction.encode(transaction_map)
   end
 
+  describe "rollback_to/2" do
+    test "discards in-memory versions above the target — a pointer operation" do
+      db = create_test_database()
+      im = IndexManager.new()
+
+      v1 = Version.from_integer(1_000)
+      v2 = Version.from_integer(2_000)
+      v3 = Version.from_integer(3_000)
+
+      {im, db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "a", "1"}], v1)], db)
+      {im, db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "b", "2"}], v2)], db)
+      {im, _db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "c", "3"}], v3)], db)
+
+      rolled = IndexManager.rollback_to(im, v2)
+
+      assert rolled.current_version == v2
+      assert Enum.all?(rolled.versions, fn {v, _} -> v <= v2 end)
+
+      # The eviction queue must not carry discarded versions to disk
+      queue_versions = rolled.output_queue |> :queue.to_list() |> Enum.map(&elem(&1, 0))
+      assert Enum.all?(queue_versions, &(&1 <= v2))
+
+      # Reads above the rollback point are now honestly too new
+      assert {:error, :version_too_new} = IndexManager.page_for_key(rolled, "c", v3)
+      assert {:ok, _} = IndexManager.page_for_key(rolled, "b", v2)
+    end
+
+    test "rolling back between version entries lands on the newest surviving entry" do
+      db = create_test_database()
+      im = IndexManager.new()
+
+      v1 = Version.from_integer(1_000)
+      v3 = Version.from_integer(3_000)
+
+      {im, db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "a", "1"}], v1)], db)
+      {im, _db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "c", "3"}], v3)], db)
+
+      rolled = IndexManager.rollback_to(im, Version.from_integer(2_000))
+
+      assert rolled.current_version == v1
+    end
+
+    test "a rollback at or above the current version is a no-op" do
+      db = create_test_database()
+      im = IndexManager.new()
+      v1 = Version.from_integer(1_000)
+      {im, _db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "a", "1"}], v1)], db)
+
+      assert IndexManager.rollback_to(im, v1) == im
+      assert IndexManager.rollback_to(im, Version.from_integer(9_000)) == im
+    end
+  end
+
+  describe "advance_window/3 with an eviction cap" do
+    # Window lag is 5s of version-time; versions older than (current - 5s)
+    # are evictable — unless the known-committed cap holds them back.
+    test "the cap holds eviction below the known-committed version" do
+      db = create_test_database()
+      im = IndexManager.new()
+
+      old = Version.from_integer(1_000_000)
+      recent = Version.from_integer(20_000_000)
+
+      {im, db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "a", "1"}], old)], db)
+      {im, _db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "b", "2"}], recent)], db)
+
+      # Without a cap, the old version is beyond the lag window: evictable.
+      assert {:evict, _count, _im, _pages, eviction_version} =
+               IndexManager.advance_window(im, 10 * 1024 * 1024)
+
+      assert eviction_version == old
+
+      # With the known-committed version below it, nothing may become durable.
+      cap = Version.from_integer(500_000)
+      assert {:no_eviction, _} = IndexManager.advance_window(im, 10 * 1024 * 1024, cap)
+    end
+  end
+
   describe "basic functionality" do
     test "new/0 creates a new version manager" do
       assert %{

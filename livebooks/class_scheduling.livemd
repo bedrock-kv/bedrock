@@ -2,7 +2,7 @@
 
 ```elixir
 Mix.install([
-  {:bedrock, "~> 0.5"},
+  {:bedrock, "~> 0.6"},
   {:kino, "~> 0.16.0"},
 ])
 

@@ -13,19 +13,29 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
   alias Bedrock.DataPlane.Resolver.Tree
 
   @type t :: %__MODULE__{
-          versions: [{Bedrock.version(), MapSet.t(binary()), Tree.t() | nil}]
+          versions: [{Bedrock.version(), MapSet.t(binary()), Tree.t() | nil}],
+          oldest_version: Bedrock.version() | nil
         }
 
-  defstruct versions: []
+  defstruct versions: [], oldest_version: nil
 
   @doc """
-  Creates a new empty versioned conflicts structure.
+  Creates a new empty versioned conflicts structure with no floor: reads at
+  any version check cleanly against the (complete, empty) history.
   """
-  @spec new() :: %__MODULE__{
-          versions: []
-        }
+  @spec new() :: t()
   def new do
     %__MODULE__{versions: []}
+  end
+
+  @doc """
+  Creates a new empty versioned conflicts structure floored at
+  `oldest_version`: history before it is unknown (not empty), so reads below
+  it abort.
+  """
+  @spec new(Bedrock.version()) :: t()
+  def new(oldest_version) do
+    %__MODULE__{versions: [], oldest_version: oldest_version}
   end
 
   @doc """
@@ -48,8 +58,14 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
   @doc """
   Checks if any of the given conflicts overlap with existing conflicts
   at versions greater than the specified version.
+
+  Aborts outright when the version is below `oldest_version`: entries in that
+  range have been pruned, so absence of overlap proves nothing.
   """
   @spec check_conflicts(t(), [Bedrock.key_range()], Bedrock.version()) :: :ok | :abort
+  def check_conflicts(%__MODULE__{oldest_version: floor}, _conflicts, version)
+      when not is_nil(floor) and version < floor, do: :abort
+
   def check_conflicts(%__MODULE__{versions: versions}, conflicts, version) do
     {points, ranges} = separate_conflicts(conflicts)
     do_check_conflicts(versions, points, ranges, version, [])
@@ -115,12 +131,15 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
   end
 
   @doc """
-  Removes conflicts older than the specified version.
+  Removes conflicts older than the specified version and advances the floor
+  to it (monotonically), so reads below the pruned horizon abort instead of
+  checking against incomplete history.
   """
   @spec remove_old_conflicts(t(), Bedrock.version()) :: t()
-  def remove_old_conflicts(%__MODULE__{versions: versions} = conflicts, min_version) do
+  def remove_old_conflicts(%__MODULE__{versions: versions, oldest_version: floor} = conflicts, min_version) do
     new_versions = keep_recent_versions(versions, min_version, [])
-    %{conflicts | versions: new_versions}
+    new_floor = if is_nil(floor) or min_version > floor, do: min_version, else: floor
+    %{conflicts | versions: new_versions, oldest_version: new_floor}
   end
 
   # Keep this version and continue

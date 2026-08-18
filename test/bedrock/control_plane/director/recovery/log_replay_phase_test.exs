@@ -24,6 +24,52 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
     end
   end
 
+  describe "the replay copy range" do
+    defp attempt_with(durable_version, version_vector) do
+      recovery_attempt()
+      |> Map.put(:durable_version, durable_version)
+      |> Map.put(:version_vector, version_vector)
+      |> Map.put(:old_log_ids_to_copy, ["old_log"])
+      |> Map.put(:survivor_log_ids, ["old_log"])
+      |> Map.put(:logs, %{"new_log" => []})
+      |> Map.put(:service_pids, %{"old_log" => self(), "new_log" => self()})
+    end
+
+    defp context_capturing_copy_range(test_pid) do
+      %{
+        node_tracking: nil,
+        copy_log_data_fn: fn _new_id, _survivors, first, last, _pids ->
+          send(test_pid, {:copy_range, first, last})
+          {:ok, self()}
+        end
+      }
+    end
+
+    test "never starts below the source WAL's persisted availability cursor" do
+      # The durable floor regresses to zero on restart (it is not
+      # persisted), while a trimmed WAL persists its exclusive predecessor
+      # cursor. The copy starts at that cursor without skipping retained data.
+      available_after = Version.from_integer(5_000_000)
+      tip = Version.from_integer(9_000_000)
+
+      attempt = attempt_with(Version.zero(), {available_after, tip})
+      {_attempt, _next} = LogReplayPhase.execute(attempt, context_capturing_copy_range(self()))
+
+      assert_receive {:copy_range, ^available_after, ^tip}
+    end
+
+    test "skips the already-durable prefix when durable_through is ahead" do
+      available_after = Version.from_integer(5_000_000)
+      durable_through = Version.from_integer(7_000_000)
+      tip = Version.from_integer(9_000_000)
+
+      attempt = attempt_with(durable_through, {available_after, tip})
+      {_attempt, _next} = LogReplayPhase.execute(attempt, context_capturing_copy_range(self()))
+
+      assert_receive {:copy_range, ^durable_through, ^tip}
+    end
+  end
+
   describe "replay_old_logs_into_new_logs/5" do
     test "handles empty new log IDs" do
       new_log_ids = []
@@ -42,59 +88,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
 
       # With no new logs, should succeed immediately
       assert result == :ok
-    end
-
-    test "skips replay for retained survivor logs" do
-      test_pid = self()
-      survivor_log_ids = ["survivor"]
-      new_log_ids = ["survivor"]
-      version_vector = {Version.from_integer(0), Version.from_integer(10)}
-
-      recovery_attempt = %{service_pids: %{"survivor" => self()}}
-
-      copy_log_data_fn = fn _new_log_id, _survivor_pids, _first_version, _last_version, _service_pids ->
-        send(test_pid, :copy_called)
-        {:ok, self()}
-      end
-
-      assert :ok =
-               LogReplayPhase.replay_into_new_logs(
-                 survivor_log_ids,
-                 new_log_ids,
-                 version_vector,
-                 recovery_attempt,
-                 %{copy_log_data_fn: copy_log_data_fn}
-               )
-
-      refute_received :copy_called
-    end
-
-    test "replays only newly recruited logs when survivors are retained" do
-      test_pid = self()
-      survivor_pid = spawn(fn -> :ok end)
-      new_log_pid = spawn(fn -> :ok end)
-      survivor_log_ids = ["survivor"]
-      new_log_ids = ["survivor", "new-log"]
-      version_vector = {Version.from_integer(0), Version.from_integer(10)}
-
-      recovery_attempt = %{service_pids: %{"survivor" => survivor_pid, "new-log" => new_log_pid}}
-
-      copy_log_data_fn = fn new_log_id, survivor_pids, _first_version, _last_version, _service_pids ->
-        send(test_pid, {:copy_called, new_log_id, survivor_pids})
-        {:ok, new_log_pid}
-      end
-
-      assert :ok =
-               LogReplayPhase.replay_into_new_logs(
-                 survivor_log_ids,
-                 new_log_ids,
-                 version_vector,
-                 recovery_attempt,
-                 %{copy_log_data_fn: copy_log_data_fn}
-               )
-
-      assert_received {:copy_called, "new-log", [^survivor_pid]}
-      refute_received {:copy_called, "survivor", _}
     end
 
     # Note: Tests that call Log.recover_from are commented out since

@@ -11,6 +11,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
   alias Bedrock.DataPlane.Materializer.Telemetry
+  alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.WaitingList
   alias Bedrock.KeySelector
 
@@ -166,9 +167,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
   @spec notify_waiting_fetches(t(), ReadingContext.t(), Bedrock.version()) :: t()
   def notify_waiting_fetches(%__MODULE__{} = manager, context, applied_version) do
     {updated_waiting_fetches, waiting_entries} =
-      WaitingList.remove_all(
+      WaitingList.remove_all_less_than(
         manager.waiting_fetches,
-        applied_version
+        Version.increment(applied_version)
       )
 
     # Process waiting entries and collect spawned PIDs
@@ -188,22 +189,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Reading do
   @doc """
   Expires waiting fetches whose deadlines have elapsed and replies to them.
   """
-  @spec expire_waiting_fetches(t(), any()) :: t()
+  @spec expire_waiting_fetches(t(), term()) :: t()
   def expire_waiting_fetches(%__MODULE__{} = manager, error_response \\ {:error, :waiting_timeout}) do
-    {updated_waiting_fetches, expired_entries} = WaitingList.expire(manager.waiting_fetches)
+    {waiting_fetches, expired_entries} = WaitingList.expire(manager.waiting_fetches)
     WaitingList.reply_to_expired(expired_entries, error_response)
-    %{manager | waiting_fetches: updated_waiting_fetches}
-  end
-
-  @doc """
-  Returns the timeout until the next waiting fetch deadline, or nil when none exist.
-  """
-  @spec next_timeout(t()) :: pos_integer() | nil
-  def next_timeout(%__MODULE__{} = manager) do
-    case WaitingList.next_timeout(manager.waiting_fetches) do
-      :infinity -> nil
-      timeout -> max(1, timeout)
-    end
+    %{manager | waiting_fetches: waiting_fetches}
   end
 
   @doc """

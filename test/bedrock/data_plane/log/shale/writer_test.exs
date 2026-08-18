@@ -2,31 +2,35 @@ defmodule Bedrock.DataPlane.Log.Shale.WriterTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Log.Shale.Writer
+  alias Bedrock.DataPlane.Version
 
   @test_file "test_segment.log"
 
   setup do
     File.write!(@test_file, :binary.copy(<<0>>, 1024))
     on_exit(fn -> File.rm(@test_file) end)
-    {:ok, writer} = Writer.open(@test_file)
+    {:ok, writer} = Writer.open(@test_file, Version.zero())
     %{writer: writer}
   end
 
-  describe "open/1" do
+  describe "open/3" do
     test "successfully opens a file and initializes the writer struct" do
       # Use pattern matching to assert all fields and that fd is present
-      assert {:ok, %Writer{fd: fd, write_offset: 4, bytes_remaining: 1004, sync_fun: sync_fun}} =
-               Writer.open(@test_file)
+      previous_version = Version.from_integer(41)
+
+      assert {:ok, %Writer{fd: fd, write_offset: 12, bytes_remaining: 996, sync_fun: sync_fun}} =
+               Writer.open(@test_file, previous_version)
 
       assert fd
       assert is_function(sync_fun, 1)
+      assert {:ok, <<"BED1", ^previous_version::binary>>} = :file.pread(fd, 0, 12)
     end
 
     test "uses custom sync function from options" do
       sync_fun = fn _fd -> :ok end
 
       assert {:ok, %Writer{sync_fun: writer_sync_fun}} =
-               Writer.open(@test_file, sync_fun: sync_fun)
+               Writer.open(@test_file, Version.zero(), sync_fun: sync_fun)
 
       assert writer_sync_fun == sync_fun
     end
@@ -54,7 +58,7 @@ defmodule Bedrock.DataPlane.Log.Shale.WriterTest do
       commit_version = <<1::unsigned-big-64>>
 
       # Use pattern matching to assert the exact structure and values
-      assert {:ok, %Writer{write_offset: 24, bytes_remaining: 984}} =
+      assert {:ok, %Writer{write_offset: 32, bytes_remaining: 976}} =
                Writer.append(writer, transaction, commit_version)
     end
 
@@ -71,14 +75,14 @@ defmodule Bedrock.DataPlane.Log.Shale.WriterTest do
 
     test "returns sync error and does not advance offsets" do
       sync_fun = fn _fd -> {:error, :eio} end
-      assert {:ok, writer} = Writer.open(@test_file, sync_fun: sync_fun)
+      assert {:ok, writer} = Writer.open(@test_file, Version.zero(), sync_fun: sync_fun)
 
       transaction = <<1, 2, 3, 4>>
       commit_version = <<1::unsigned-big-64>>
 
       assert {:error, :eio} = Writer.append(writer, transaction, commit_version)
-      assert writer.write_offset == 4
-      assert writer.bytes_remaining == 1004
+      assert writer.write_offset == 12
+      assert writer.bytes_remaining == 996
       assert :ok = Writer.close(writer)
     end
   end

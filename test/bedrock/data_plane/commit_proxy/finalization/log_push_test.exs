@@ -277,7 +277,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log_server =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :disk_full})
           end
         end)
@@ -350,7 +350,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :disk_full})
           end
         end)
@@ -389,7 +389,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :timeout})
           end
         end)
@@ -427,7 +427,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :network_error})
           end
         end)
@@ -512,7 +512,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log1 =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :disk_full})
           end
         end)
@@ -520,7 +520,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log2 =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :timeout})
           end
         end)
@@ -559,7 +559,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :disk_full})
           end
         end)

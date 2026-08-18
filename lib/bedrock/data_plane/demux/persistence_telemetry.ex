@@ -28,6 +28,18 @@ defmodule Bedrock.DataPlane.Demux.PersistenceTelemetry do
     )
   end
 
+  @spec emit_floor_advanced(Bedrock.version(), non_neg_integer() | nil, non_neg_integer()) :: :ok
+  def emit_floor_advanced(min_durable_version, pinning_shard_id, active_shards) do
+    :telemetry.execute(
+      [:bedrock, :demux, :durability, :floor_advanced],
+      %{active_shards: active_shards},
+      %{
+        min_durable_version: min_durable_version,
+        pinning_shard_id: pinning_shard_id
+      }
+    )
+  end
+
   @spec emit_watermark_advanced(non_neg_integer(), Bedrock.version(), non_neg_integer()) :: :ok
   def emit_watermark_advanced(shard_id, durable_version, buffered_transactions) do
     :telemetry.execute(

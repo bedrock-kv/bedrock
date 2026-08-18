@@ -7,9 +7,15 @@
   "id": "bedrock-qzr.23",
   "labels": [],
   "parent": "bedrock-qzr",
+  "comments": [
+    {
+      "text": "Reopened for PR #133 review change: WAL limit crossing is not ordinary per-push backpressure after version assignment/resolution. Make it an explicit, loud recovery-required epoch failure; release queued callers; prove commit-proxy fail-fast/recovery signaling in tests.",
+      "timestamp": "2026-08-18T18:56:55Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Enforce WAL backpressure while draining queued future pushes",
   "type": "bug",
-  "updated_at": "2026-08-18T18:56:23Z"
+  "updated_at": "2026-08-18T18:56:55Z"
 }

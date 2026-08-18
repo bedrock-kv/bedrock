@@ -600,7 +600,6 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
           handler_id,
           [
             [:bedrock, :log, :trim],
-            [:bedrock, :log, :floor_lag_alarm],
             [:bedrock, :log, :wal_limit_exceeded]
           ],
           fn event, measurements, metadata, pid -> send(pid, {:telemetry, event, measurements, metadata}) end,
@@ -622,27 +621,6 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert measurements.segments_retained == 2
       assert measurements.lag_us == 15
       assert metadata.floor == Version.from_integer(15)
-    end
-
-    test "floor lag past the limit raises the alarm once per crossing", %{server: pid, path: path} do
-      attach_trim_telemetry("alarm")
-      seed_trimmable_segments(pid, path)
-
-      # Version-time tip far beyond the floor (> 40s of lag)
-      far_tip = Version.from_integer(50_000_000)
-      :sys.replace_state(pid, fn state -> %{state | last_version: far_tip} end)
-
-      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(15)})
-      :pong = GenServer.call(pid, :ping)
-
-      assert_receive {:telemetry, [:bedrock, :log, :floor_lag_alarm], measurements, _metadata}
-      assert measurements.lag_us > measurements.limit_us
-
-      # A second advance while still lagging does not re-alarm
-      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(16)})
-      :pong = GenServer.call(pid, :ping)
-
-      refute_received {:telemetry, [:bedrock, :log, :floor_lag_alarm], _, _}
     end
 
     test "crossing the configured WAL limit loudly requires recovery", %{server_opts: opts} do

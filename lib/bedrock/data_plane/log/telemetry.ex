@@ -117,21 +117,4 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
       })
     )
   end
-
-  @spec trace_floor_lag_alarm(
-          floor :: Bedrock.version(),
-          last_version :: Bedrock.version(),
-          lag_us :: non_neg_integer(),
-          limit_us :: non_neg_integer()
-        ) :: :ok
-  def trace_floor_lag_alarm(floor, last_version, lag_us, limit_us) do
-    Telemetry.execute(
-      [:bedrock, :log, :floor_lag_alarm],
-      %{lag_us: lag_us, limit_us: limit_us},
-      Map.merge(trace_metadata(), %{
-        floor: floor,
-        last_version: last_version
-      })
-    )
-  end
 end

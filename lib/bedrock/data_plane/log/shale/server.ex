@@ -37,12 +37,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @max_retry_delay_ms 30_000
   @max_retry_attempts 10
 
-  # Alarm when the trim floor lags the WAL tip by more than this much
-  # version-time (8 cut intervals). Growth is unbounded-with-alerting by
-  # default; reject_pushes_above_lag_us opts into an epoch-fatal safety
-  # fuse despite its legacy option name.
-  @floor_lag_alarm_us 40_000_000
-
   @doc false
   @spec child_spec(
           opts :: [
@@ -514,22 +508,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       :oldest_version,
       determine_oldest_transaction_version([t.active_segment | remaining_segments], available_after)
     )
-    |> check_floor_lag_alarm(trim_floor, lag_us)
-  end
-
-  # Alarm once per crossing; clears when the floor catches back up.
-  defp check_floor_lag_alarm(t, trim_floor, lag_us) do
-    cond do
-      lag_us > @floor_lag_alarm_us and not t.floor_lag_alarm_active ->
-        trace_floor_lag_alarm(trim_floor, t.last_version, lag_us, @floor_lag_alarm_us)
-        %{t | floor_lag_alarm_active: true}
-
-      lag_us <= @floor_lag_alarm_us and t.floor_lag_alarm_active ->
-        %{t | floor_lag_alarm_active: false}
-
-      true ->
-        t
-    end
   end
 
   # The optional WAL backpressure hard limit is enforced in Pushing,

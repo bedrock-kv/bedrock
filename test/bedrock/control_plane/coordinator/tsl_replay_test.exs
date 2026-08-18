@@ -5,6 +5,9 @@ defmodule Bedrock.ControlPlane.Coordinator.TslReplayTest do
   the layout was published; registration itself must replay the current
   snapshot, or a late-joining node keeps a nil TSL — clients stall and its
   foreman never receives the reconciliation trigger.
+
+  Recovery input is deliberately separate (bedrock-bkj). Bootstrap can only
+  reconstruct `%{logs: ...}`, which is enough for recovery but not for reads.
   """
   use ExUnit.Case, async: true
 
@@ -50,6 +53,29 @@ defmodule Bedrock.ControlPlane.Coordinator.TslReplayTest do
     assert {:noreply, _updated} = register(state)
 
     refute_receive {:tsl_updated, _}, 50
+  end
+
+  test "a recovery-only layout is not replayed as runnable" do
+    state =
+      follower_state(%{
+        old_transaction_system_layout: %{logs: %{"old-log" => []}},
+        transaction_system_layout: nil
+      })
+
+    assert {:noreply, _updated} = register(state)
+
+    refute_receive {:tsl_updated, _}, 50
+  end
+
+  test "fetch returns unavailable when no runnable layout exists" do
+    state =
+      follower_state(%{
+        old_transaction_system_layout: %{logs: %{"old-log" => []}},
+        transaction_system_layout: nil
+      })
+
+    assert {:reply, {:error, :unavailable}, ^state} =
+             Server.handle_call(:fetch_transaction_system_layout, {self(), make_ref()}, state)
   end
 
   test "duplicate registration is idempotent: one subscription, same snapshot each time" do

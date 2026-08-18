@@ -100,7 +100,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          supervisor_otp_name: cluster.otp_name(:sup),
          epoch: loaded_epoch,
          config: loaded_config,
-         transaction_system_layout: loaded_tsl,
+         old_transaction_system_layout: loaded_tsl,
+         transaction_system_layout: nil,
          raft:
            Raft.new(
              my_node,
@@ -133,6 +134,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   @impl true
   def handle_call(:fetch_config, _from, t), do: reply(t, {:ok, t.config})
+
+  def handle_call(:fetch_transaction_system_layout, _from, %{transaction_system_layout: nil} = t),
+    do: reply(t, {:error, :unavailable})
 
   def handle_call(:fetch_transaction_system_layout, _from, t), do: reply(t, {:ok, t.transaction_system_layout})
 

@@ -6,6 +6,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
       put_director: 2,
       put_config: 2,
       put_leader_startup_state: 2,
+      clear_transaction_system_layout: 1,
       convert_to_capability_map: 1
     ]
 
@@ -29,15 +30,16 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   def try_to_start_director(t) when t.leader_node == t.my_node and t.director == :unavailable do
     t = maybe_put_default_config(t)
 
-    trace_director_launch(t.epoch, t.transaction_system_layout)
+    trace_director_launch(t.epoch, t.old_transaction_system_layout)
 
     case start_director_with_monitoring(t) do
       {:ok, new_director} ->
         trace_director_changed(new_director)
-        # Clear cached TSL in all Links so user transactions get :unavailable during recovery
-        # instead of using the stale OLD TSL with dead PIDs
-        State.Changes.broadcast_tsl_update(t, nil)
-        put_director(t, new_director)
+        # The recovery source stays with the Coordinator, but Links must wait
+        # for the Director to publish the next runnable layout.
+        t
+        |> clear_transaction_system_layout()
+        |> put_director(new_director)
 
       {:error, reason} ->
         Logger.warning("Failed to start director: #{inspect(reason)}")
@@ -62,7 +64,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
             [
               cluster: t.cluster,
               config: t.config,
-              old_transaction_system_layout: t.transaction_system_layout,
+              old_transaction_system_layout: t.old_transaction_system_layout,
               epoch: t.epoch,
               coordinator: self(),
               services: t.service_directory,

@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-18T18:15:26Z",
+  "description": "The property 'directory prefixes are unique within same layer' is flaky: its static MockRepo.get stub checks 'key in sorted_paths -\u003e nil' before the created_dirs clause, so when the generator produces a parent alongside its child (e.g. [[f],[f,G]]), the just-created parent still reads as nonexistent during the child's parent check -\u003e :parent_directory_does_not_exist -\u003e flunk. Struck twice on stack CI (qzr19, qzr20) within 10 minutes. Fix: time-accurate stub that tracks repo.put(path) and answers get from the tracked set; add a deterministic parent-prefix regression test.",
+  "id": "bedrock-qzr.30",
+  "labels": [],
+  "parent": "bedrock-qzr",
+  "priority": 2,
+  "status": "open",
+  "title": "Flaky directory prefix-uniqueness property: static stub hides just-created parents",
+  "type": "bug",
+  "updated_at": "2026-08-18T18:15:26Z"
+}

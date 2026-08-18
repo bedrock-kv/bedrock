@@ -187,7 +187,113 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     end
   end
 
+  defmodule StubCoordinator do
+    @moduledoc false
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, :ok}
+
+    @impl true
+    def handle_call(:fetch_service_directory, _from, s), do: {:reply, {:ok, %{}}, s}
+
+    @impl true
+    def handle_cast(_msg, s), do: {:noreply, s}
+  end
+
+  defmodule StubMaterializer do
+    @moduledoc false
+    use GenServer
+
+    def start_link, do: GenServer.start_link(__MODULE__, :ok)
+
+    @impl true
+    def init(:ok), do: {:ok, :ok}
+
+    @impl true
+    def handle_call({:lock_for_recovery, _epoch}, _from, s) do
+      info = %{
+        kind: :materializer,
+        durable_version: Version.zero(),
+        oldest_durable_version: Version.zero()
+      }
+
+      {:reply, {:ok, self(), info}, s}
+    end
+  end
+
+  describe "do_recovery/1 retains the stalled attempt" do
+    test "a stall leaves the live state and the persisted config holding the same mutated attempt" do
+      {:ok, coordinator} = StubCoordinator.start_link()
+      {:ok, materializer} = StubMaterializer.start_link()
+
+      state =
+        %{
+          coordinator: coordinator,
+          lock_token: "test-lock-token",
+          # An advertised materializer: the locking phase locks it and
+          # records it into the attempt — a genuine phase mutation that
+          # must survive the later stall.
+          services: %{"mat-1" => {:materializer, materializer}}
+        }
+        |> create_test_state()
+        |> Recovery.setup_for_initial_recovery()
+
+      initial_attempt = state.recovery_attempt
+
+      result = capture_log_and_return(fn -> Recovery.do_recovery(state) end)
+
+      # The pipeline stalled (no log-capable services to recruit from), so
+      # the director stays in recovery with the attempt persisted…
+      assert result.state == :recovery
+      stalled_attempt = result.config.recovery_attempt
+      assert %RecoveryAttempt{} = stalled_attempt
+
+      # …and the LIVE attempt must be that same stalled attempt. Anything
+      # else discards the phases' accumulated observations (lock-failed
+      # ids, recruited services) on the next in-process retry.
+      assert result.recovery_attempt == stalled_attempt
+
+      # The phases genuinely mutated the attempt before stalling; adopting
+      # the stalled attempt is not a no-op. The locked materializer is the
+      # observable mutation.
+      refute stalled_attempt == initial_attempt
+      assert MapSet.member?(stalled_attempt.locked_service_ids, "mat-1")
+    end
+
+    defp capture_log_and_return(fun) do
+      holder = self()
+      capture_log(fn -> send(holder, {:result, fun.()}) end)
+
+      receive do
+        {:result, result} -> result
+      end
+    end
+  end
+
   describe "setup_for_subsequent_recovery/1" do
+    test "the retry increments the retained attempt and preserves cross-attempt memory" do
+      remembered = MapSet.new(["ghost-log-1", "ghost-log-2"])
+
+      state = %State{
+        recovery_attempt: %RecoveryAttempt{
+          cluster: TestCluster,
+          epoch: 1,
+          attempt: 3,
+          started_at: 12_345,
+          lock_failed_service_ids: remembered
+        },
+        config: %{},
+        services: %{}
+      }
+
+      assert %State{recovery_attempt: retried} = Recovery.setup_for_subsequent_recovery(state)
+      assert retried.attempt == 4
+      assert retried.lock_failed_service_ids == remembered
+    end
+
     test "increments attempt counter and resets state" do
       recovery_attempt = %RecoveryAttempt{
         cluster: TestCluster,

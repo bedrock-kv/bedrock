@@ -130,7 +130,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
 
+        # The live state adopts the stalled attempt too — the persisted
+        # config and the in-memory attempt must be the same logical
+        # attempt. The next in-process retry builds on it; leaving the
+        # older attempt in memory would discard the phases' accumulated
+        # observations (lock-failed ids, recruited services) and redo —
+        # or worse, repeat — that work every retry.
         t
+        |> Map.put(:recovery_attempt, stalled)
         |> Map.update!(:config, fn config ->
           Map.put(config, :recovery_attempt, stalled)
         end)

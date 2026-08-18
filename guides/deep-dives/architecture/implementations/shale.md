@@ -52,15 +52,17 @@ Shale maintains an in-memory index mapping version numbers to file locations. Th
 
 The index is built incrementally as transactions are written and can be reconstructed from disk files during recovery. For performance, frequently accessed entries are kept in memory, while the complete index can be persisted periodically.
 
-This approach balances memory usage with lookup performance. Storage servers typically pull transactions in sequential order, so the working set of index entries remains manageable even with millions of stored transactions.
+This approach balances memory usage with lookup performance. Recovery pulls proceed in sequential order, so the working set of index entries remains manageable even with millions of stored transactions.
 
 ## Transaction Serving
 
-When storage servers request transactions, Shale uses the version index to locate the requested data quickly. For sequential pulls, which are the common case, Shale can optimize by reading ahead and caching likely-to-be-requested transactions.
+Shale's `pull` interface serves transaction ranges from the WAL using the version index — but recovery is its only remaining consumer (a failed log rebuilding itself from a survivor). This implementation is in [`lib/bedrock/data_plane/log/shale/pulling.ex`](../../../lib/bedrock/data_plane/log/shale/pulling.ex).
 
-The serving process handles both small WAL entries and large segment references transparently. Clients receive the same interface regardless of how transactions are physically stored. This streaming implementation is in [`lib/bedrock/data_plane/log/shale/pulling.ex`](../../../lib/bedrock/data_plane/log/shale/pulling.ex).
+Materializers never pull the WAL. Each running Shale instance owns a Demux tree that slices every pushed transaction by shard and feeds per-shard ShardServers; materializers discover their ShardServer through the log (`get_shard_server/2`) and stream from it — object-storage chunks for history, the in-memory buffer for recent data. Every push to Shale carries the known committed version from the commit proxies, which Shale forwards (along with the transaction's own commit version) to its Demux; that watermark gates when buffered data may become durable in object storage.
 
-Long-running pull requests use streaming to avoid loading large result sets into memory. This enables storage servers to efficiently process transaction ranges without overwhelming Shale's memory usage.
+## WAL Trimming
+
+The WAL is not retained forever: once a shard's data is confirmed written to object storage, the corresponding segments can be recycled. The Demux commands deterministic version-time cuts, ShardServers confirm them after object storage acknowledges the chunk writes, and Shale trims segments strictly behind the confirmed minimum durable version — clamped to the WAL's own bounds, only while `:running`, and never touching a segment that straddles the floor. Trim telemetry reports the floor and its lag; growth is unbounded-with-alerting by default, with an opt-in hard limit that rejects pushes with `{:error, :wal_backpressure}`.
 
 ## Recovery Implementation
 
@@ -78,7 +80,7 @@ Shale's performance comes from several design decisions working together. Sequen
 
 Write performance is primarily limited by disk sync speed, which depends on the storage hardware's durability guarantees. SSDs with power-loss protection can achieve much higher performance than traditional drives because they can complete syncs faster.
 
-Read performance benefits from the sequential nature of most storage server requests. When servers pull transaction ranges, Shale can read large chunks efficiently and stream results without loading everything into memory.
+Read performance benefits from the sequential nature of recovery pulls. When a recovering log pulls transaction ranges, Shale can read large chunks efficiently and stream results without loading everything into memory.
 
 Memory usage is controlled by limiting index cache size and using streaming for large operations. This allows Shale to handle transaction logs that are much larger than available RAM.
 
@@ -102,7 +104,7 @@ The configuration system provides reasonable defaults while allowing operators t
 
 ## Integration with Bedrock
 
-Shale integrates with the broader Bedrock system through the Log interface. Commit proxies push transactions to Shale for durability. Storage servers pull transactions from Shale to update their local data. The main server coordination logic is in [`lib/bedrock/data_plane/log/shale/server.ex`](../../../lib/bedrock/data_plane/log/shale/server.ex).
+Shale integrates with the broader Bedrock system through the Log interface. Commit proxies push transactions to Shale for durability, piggybacking the known committed version on every push. Materializers stream their shard from Shale's Demux to update their local data. The main server coordination logic is in [`lib/bedrock/data_plane/log/shale/server.ex`](../../../lib/bedrock/data_plane/log/shale/server.ex).
 
 During recovery, the Director coordinates with Shale to ensure consistent state across the cluster. Shale provides recovery information about what transactions it has stored and can serve transactions to restore other failed components.
 
@@ -112,7 +114,7 @@ This integration allows Shale to focus on its core responsibility—durable tran
 
 - **[Log System](../data-plane/log.md)**: General log system concepts and interface
 - **[Commit Proxy](../data-plane/commit-proxy.md)**: Pushes committed transactions to Shale
-- **[Storage](../data-plane/storage.md)**: Pulls transactions from Shale for local updates
+- **[Storage](../data-plane/storage.md)**: Streams per-shard transactions from Shale's Demux for local updates
 - **[Director](../../control-plane/director.md)**: Control plane component that coordinates Shale recovery processes
 
 ## Code References

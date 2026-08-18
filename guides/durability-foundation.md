@@ -1,49 +1,111 @@
-# Durability Foundation (S3 + Async Persistence)
+# Durability Foundation
 
-This guide consolidates the foundational durability work in Bedrock:
+Every committed write in Bedrock ends up in three places, in order: a log's
+write-ahead log on disk, an object-storage chunk, and the materializers that
+serve reads. This guide walks through that journey, what keeps it safe at
+every step, and what happens when a node restarts.
 
-- durability profile contract and runtime enforcement modes;
-- S3-compatible object storage backend semantics;
-- non-blocking shard persistence with explicit durability watermarking;
-- WAL trim safety boundaries and recovery behavior;
-- telemetry and test gates for operators and maintainers.
+One rule governs the whole pipeline: **nothing becomes durable anywhere
+unless it is known to be committed.** The sequencer tracks the highest
+version confirmed on every required log — the known committed version — and
+commit proxies carry it on every push. Everything downstream that writes to
+disk waits for it. Because of that one rule, recovery never has to undo
+durable state: rolling back is pointer arithmetic, never disk surgery.
 
-## Foundation Scope
+## The Life of a Write
 
-The current foundation covers:
+**A transaction commits.** The commit proxy pushes it to every required log,
+and the client's commit is acknowledged only after each log has appended it
+to its WAL and fsynced. At this moment the write can survive a crash — but
+it lives only in the WALs.
 
-1. Additive durability profile API:
-   - `Bedrock.Durability.profile/1`
-   - `Bedrock.Durability.require/2`
-2. Additive runtime durability mode:
-   - `:relaxed` (warn + continue)
-   - `:strict` (fail startup on profile failures)
-3. S3-compatible `Bedrock.ObjectStorage.S3` backend:
-   - CRUD/list operations
-   - native conditional semantics (`If-None-Match`, `If-Match`)
-4. Bounded async persistence queue/worker in Demux shard flow.
-5. Durable watermark progression only after confirmed object-store writes.
-6. WAL trimming gated by confirmed monotonic durable watermark.
-7. Fail-fast corruption handling during object-backed replay.
-8. WAL commit acknowledgment only after append + fsync on required log replicas.
+**The log hands it to its Demux.** Each running log owns a Demux: a small
+process tree that takes every pushed transaction, slices its mutations by
+shard, and passes each slice to that shard's ShardServer, which holds it in
+memory. Heartbeat transactions carry no data and touch no shard; they exist
+to keep the version clock moving.
 
-## End-to-End Durability Flow
+**The Demux cuts, and shards flush.** Versions in Bedrock are microsecond
+timestamps, so "every five seconds" is just integer division: when a pushed
+version lands in a new five-second bucket, the previous bucket is done and
+becomes a candidate cut. The cut fires once the known committed version has
+reached it — never before — and every ShardServer then writes everything at
+or below the cut to object storage as a chunk. A chunk is named for the last
+commit it contains, which lets any reader find the chunk covering a given
+version with one cheap listing call. Because every replica sees the same
+versions and computes the same cuts, replicas produce byte-identical chunks,
+and "that file already exists" counts as a successful write.
 
-1. `Demux.Server.push/3` routes shard slices without blocking on object-store I/O.
-2. Each `ShardServer` enqueues flush batches to `PersistenceWorker`.
-3. Worker writes chunk objects to object storage.
-4. `ShardServer` advances its durable watermark only after confirmed write.
-5. `Demux.Server` computes cluster `min_durable_version`.
-6. Log WAL trimming advances only behind that confirmed minimum boundary.
+**The floor rises, and the WAL trims.** When a shard's chunk write is
+confirmed, the shard reports the cut itself as durable — a promise that
+everything it has ever seen at or below that version is safe. A shard with
+nothing buffered confirms instantly, so idle shards never hold things up; a
+Demux with no shards at all reports its last completed cut, so even a
+heartbeat-only log makes progress. The Demux takes the minimum across its
+shards and tells the log, and the log recycles every WAL segment that falls
+entirely below that floor. The active segment rolls to a fresh preallocated
+file on the same five-second boundaries the cuts use, so there is always a
+finished segment for the floor to catch — a log's disk footprint stays
+proportional to a few seconds of traffic, not to its lifetime.
 
-This preserves hot-path responsiveness while keeping durability and trim behavior
-explicit and monotonic.
+The commit acknowledgment never waits for any of this. Clients are
+acknowledged on WAL fsync; chunk writes and floor advancement happen behind
+the scenes, and the floor only ever moves forward.
 
-WAL commit ACK semantics are independent from async object persistence:
+## How Reads Stay Current
 
-- transaction commit ACK is gated by log WAL append + fsync;
-- object persistence and watermark advancement happen asynchronously afterward;
-- WAL trimming remains gated by confirmed durable watermark progression.
+Materializers — the processes that serve reads — never touch the WAL. Each
+one serves a single shard and lives on one continuous stream from its
+ShardServer: chunks for history, the in-memory buffer for recent data. The
+two regions always meet, because a buffered entry is only dropped once its
+chunk write is confirmed. A materializer that falls behind is not an
+emergency; it is simply further back on the stream, reading chunks, and the
+cost falls on it alone.
+
+Every pull reply carries currency: "here is your data" or "nothing for you,
+but you are current through version v." Idle shards learn that high-water
+mark by subscription, not by polling — a parked materializer asks its Demux
+once, and the Demux answers the moment it knows more. There are no timers
+anywhere in the read path: a read at any version a client can legally hold
+resolves purely from messages already in flight.
+
+Materializers apply what they receive immediately, so reads are fresh — but
+they only write to their own disk up to the known committed version. That
+is the same rule as the chunk cuts, applied one layer down, and it buys the
+same prize: a materializer's disk can never contain anything a recovery
+would take back.
+
+## What Happens on Restart
+
+When a node comes back, the coordinator elects a director and recovery
+rebuilds the transaction system from what survived. Three things make a
+restart cheap and safe:
+
+- **Logs are generational.** Each recovery recruits a fresh set of logs and
+  replays the surviving WALs into them. Because the old WAL was trimmed,
+  the replay copies only the untrimmed tail — a few seconds of
+  transactions — never the cluster's whole history. Everything older is
+  already in object-storage chunks.
+- **Materializers are reused.** Recovery locks every advertised
+  materializer, learns each one's shard and durable position, and hands the
+  survivors back their shards. A materializer resumes streaming from its
+  own applied position; one restored from an old snapshot just has more
+  stream to drink. Only a genuinely lost shard gets a fresh materializer,
+  which rebuilds from chunks.
+- **The layout is the source of truth for what exists.** When recovery
+  completes and its transaction system layout is durable, every foreman
+  compares the workers it hosts against the layout and retires the ones the
+  layout does not reference: previous-generation logs whose data was
+  replayed forward, and any strays left by interrupted recovery attempts.
+  Creation happens only through recovery; destruction happens only through
+  this reconciliation; nothing accretes.
+
+Recovery attempts themselves are pure functions of the coordinator's current
+service view, retried whenever the view changes. An attempt that fires
+before workers have registered fails in microseconds and leaves nothing
+behind; the next registration triggers the attempt that succeeds. A typical
+restart converges in two attempts and under a second, regardless of how old
+the cluster is.
 
 ## Runtime Guardrails
 
@@ -122,6 +184,15 @@ Persistence outcomes:
 - `[:bedrock, :demux, :persistence, :write, :ok]`
 - `[:bedrock, :demux, :persistence, :write, :error]`
 - `[:bedrock, :demux, :persistence, :watermark, :advanced]`
+
+Trim floor and WAL growth:
+
+- `[:bedrock, :demux, :durability, :floor_advanced]` — carries the shard
+  currently pinning the floor and the active shard count
+- `[:bedrock, :log, :trim]` — floor, lag, and segment counts on each trim
+- `[:bedrock, :log, :floor_lag_alarm]` — fires once per crossing when the
+  floor lags the WAL tip by more than eight cut intervals; pair with the
+  opt-in `reject_pushes_above_lag_us` hard limit for bounded growth
 
 ## Validation Gates
 

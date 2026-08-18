@@ -56,20 +56,34 @@ defmodule Bedrock.DataPlane.Log do
 
   This call will not return until the transaction has been made durable on the
   log, ensuring that the transactions that precede it are also durable.
+
+  ## Options
+
+    - `known_committed_version`: The highest version known to be committed
+      (fully replicated) at the time this push was prepared, piggybacked from
+      the sequencer. Downstream durability sinks (chunk flushes) gate on it
+      so that nothing not known-committed ever becomes durable.
   """
   @spec push(
           log_ref :: ref(),
           transaction :: Transaction.encoded(),
-          last_commit_version :: Bedrock.version()
+          last_commit_version :: Bedrock.version(),
+          opts :: [known_committed_version: Bedrock.version() | nil]
         ) ::
-          :ok | {:error, :tx_out_of_order | :locked | :unavailable}
-  def push(log, transaction, last_commit_version), do: call(log, {:push, transaction, last_commit_version}, :infinity)
+          :ok | {:error, :tx_out_of_order | :locked | :unavailable | :wal_backpressure}
+  def push(log, transaction, last_commit_version, opts \\ []) do
+    call(log, {:push, transaction, last_commit_version, opts[:known_committed_version]}, :infinity)
+  end
 
   @doc """
   Pull transactions from the log starting from a given version. Options allow
   specifying the maximum number of transactions to return, the last version
-  considered valid, whether the operation is recovery-related, subscriber
-  details to maintain state, and a timeout for the operation.
+  considered valid, whether the operation is recovery-related, and a timeout
+  for the operation.
+
+  Recovery is this call's only remaining consumer: materializers stream
+  their shard from the log's Demux (`get_shard_server/2`), not from the
+  log itself.
 
   Returns a list of transactions or an error indicating why the pull failed.
 
@@ -83,7 +97,6 @@ defmodule Bedrock.DataPlane.Log do
       - `last_version`: The last valid version for pulling transactions
         (inclusive).
       - `recovery`: Indicates if this pull is part of a recovery operation.
-      - `subscriber`: A tuple containing an ID and the last durable version.
       - `timeout_in_ms`: Timeout for the operation in milliseconds.
 
   ## Return Values:
@@ -94,7 +107,9 @@ defmodule Bedrock.DataPlane.Log do
     - `{:error, :invalid_from_version}`: The provided `from_version` is invalid.
     - `{:error, :invalid_last_version}`: The specified `last_version` is invalid.
     - `{:error, :version_too_new}`: The version specified is too recent.
-    - `{:error, :version_too_old}`: The version specified is too old.
+    - `{:error, {:version_too_old, floor}}`: The version specified is below
+      the WAL's trim floor; `floor` is the oldest version still available.
+      Consumers below it should catch up from object storage chunks.
     - `{:error, :version_not_found}`: The version cannot be found.
     - `{:error, :unavailable}`: Log is unavailable for operation.
   """
@@ -105,7 +120,7 @@ defmodule Bedrock.DataPlane.Log do
             limit: pos_integer(),
             last_version: Bedrock.version(),
             recovery: boolean(),
-            subscriber: {subscriber_id :: String.t(), last_durable_version :: Bedrock.version()},
+            willing_to_wait_in_ms: Bedrock.timeout_in_ms(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
         ) ::
@@ -116,11 +131,22 @@ defmodule Bedrock.DataPlane.Log do
           | {:error, :invalid_from_version}
           | {:error, :invalid_last_version}
           | {:error, :version_too_new}
-          | {:error, :version_too_old}
+          | {:error, {:version_too_old, floor :: Bedrock.version()}}
           | {:error, :version_not_found}
           | {:error, :unavailable}
   @type pull_error :: pull_errors()
   def pull(log, start_after, opts), do: call(log, {:pull, start_after, opts}, opts[:timeout_in_ms] || :infinity)
+
+  @doc """
+  Returns the Demux ShardServer for the given shard on this log.
+
+  This is a materializer's only data-plane contact with a log: a one-time
+  discovery call (repeated only on failover). All data then flows from the
+  ShardServer — chunks for history, buffer for recent transactions.
+  """
+  @spec get_shard_server(log :: ref(), shard_id :: non_neg_integer()) ::
+          {:ok, pid()} | {:error, term()}
+  def get_shard_server(log, shard_id), do: call(log, {:get_shard_server, shard_id}, 5_000)
 
   @doc """
   The initial transaction that is applied to a new log if the current version

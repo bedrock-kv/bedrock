@@ -12,13 +12,15 @@ defmodule Bedrock.DataPlane.Demux.ShardServer.State do
           object_storage: ObjectStorage.backend(),
           persistence_worker: pid(),
           chunk_reader: ChunkReader.t(),
-          version_gap: pos_integer(),
           buffer: [{Bedrock.version(), binary()}],
           waiting_list: WaitingList.t(),
           flush_in_progress: boolean(),
-          pending_flush_max_version: Bedrock.version() | nil,
+          pending_cuts: [Bedrock.version()],
+          pending_flush_cut: Bedrock.version() | nil,
           durable_version: Bedrock.version() | nil,
-          latest_version: Bedrock.version() | nil
+          latest_version: Bedrock.version() | nil,
+          high_water: Bedrock.version() | nil,
+          kcv: Bedrock.version() | nil
         }
 
   defstruct [
@@ -28,12 +30,14 @@ defmodule Bedrock.DataPlane.Demux.ShardServer.State do
     :object_storage,
     :persistence_worker,
     :chunk_reader,
-    :version_gap,
     buffer: [],
     waiting_list: %{},
     flush_in_progress: false,
-    pending_flush_max_version: nil,
+    pending_cuts: [],
+    pending_flush_cut: nil,
     durable_version: nil,
-    latest_version: nil
+    latest_version: nil,
+    high_water: nil,
+    kcv: nil
   ]
 end

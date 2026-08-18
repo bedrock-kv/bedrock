@@ -23,6 +23,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   alias Bedrock.Cluster
   alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Shale.DemuxControl
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
@@ -36,6 +37,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @max_retry_delay_ms 30_000
   @max_retry_attempts 10
 
+  # Alarm when the trim floor lags the WAL tip by more than this much
+  # version-time (8 cut intervals). Growth is unbounded-with-alerting by
+  # default; pass reject_pushes_above_lag_us to enforce a hard limit.
+  @floor_lag_alarm_us 40_000_000
+
   @doc false
   @spec child_spec(
           opts :: [
@@ -45,7 +51,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
             foreman: pid(),
             path: Path.t(),
             object_storage: module(),
-            start_unlocked: boolean()
+            start_unlocked: boolean(),
+            reject_pushes_above_lag_us: non_neg_integer()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -56,6 +63,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     path = Keyword.fetch!(opts, :path)
     object_storage = Keyword.fetch!(opts, :object_storage)
     start_unlocked = Keyword.get(opts, :start_unlocked, false)
+    reject_pushes_above_lag_us = Keyword.get(opts, :reject_pushes_above_lag_us)
 
     %{
       id: {__MODULE__, id},
@@ -70,7 +78,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
              foreman,
              path,
              object_storage,
-             start_unlocked
+             start_unlocked,
+             reject_pushes_above_lag_us
            },
            [name: otp_name]
          ]}
@@ -78,9 +87,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  @spec init({module(), atom(), Log.id(), pid(), Path.t(), module(), boolean()}) ::
+  @spec init({module(), atom(), Log.id(), pid(), Path.t(), module(), boolean(), non_neg_integer() | nil}) ::
           {:ok, State.t(), {:continue, :initialization}}
-  def init({cluster, otp_name, id, foreman, path, object_storage, start_unlocked}) do
+  def init({cluster, otp_name, id, foreman, path, object_storage, start_unlocked, reject_pushes_above_lag_us}) do
     initial_mode = if start_unlocked, do: :running, else: :locked
 
     {:ok,
@@ -93,6 +102,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
        otp_name: otp_name,
        foreman: foreman,
        object_storage: object_storage,
+       reject_pushes_above_lag_us: reject_pushes_above_lag_us,
        oldest_version: Version.zero(),
        last_version: Version.zero()
      }, {:continue, :initialization}}
@@ -154,7 +164,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  @spec handle_info(:timeout | :retry_initialization | {:min_durable_version, Bedrock.version()}, State.t()) ::
+  @spec handle_info(:timeout | :retry_initialization | {:min_durable_version, pid(), Bedrock.version()}, State.t()) ::
           {:noreply, State.t()} | {:noreply, State.t(), {:continue, :check_for_expired_pullers}}
   def handle_info(:timeout, t), do: noreply(t, continue: :check_for_expired_pullers)
 
@@ -175,11 +185,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  def handle_info({:min_durable_version, version}, t) do
+  def handle_info({:min_durable_version, demux, version}, %{mode: :running, demux: demux} = t) do
     t
     |> advance_min_durable_version(version)
     |> noreply()
   end
+
+  # Watermarks from a stale Demux incarnation (pid mismatch after a recovery
+  # reset) or outside :running are dropped; confirmations are re-derived from
+  # fresh flushes, so losing them is always safe.
+  def handle_info({:min_durable_version, _demux, _version}, t), do: noreply(t)
 
   @impl true
   @spec handle_call(
@@ -187,6 +202,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
           | {:lock_for_recovery, Bedrock.epoch()}
           | {:recover_from, [pid()], Bedrock.version(), Bedrock.version()}
           | {:push, binary(), Bedrock.version()}
+          | {:push, binary(), Bedrock.version(), Bedrock.version() | nil}
           | {:pull, Bedrock.version(), keyword()}
           | :ping,
           GenServer.from(),
@@ -218,18 +234,36 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t) do
-    with {:ok, transaction} <- Transaction.validate(transaction_bytes),
+  def handle_call({:push, transaction_bytes, expected_version, known_committed_version}, from, %State{} = t) do
+    with :ok <- check_wal_backpressure(t),
+         {:ok, transaction} <- Transaction.validate(transaction_bytes),
          :ok <- validate_has_shard_index(transaction),
          {:ok, t} <- push(t, expected_version, transaction, ack_fn(from)) do
-      # Push to Demux for distribution to ShardServers (async)
-      Demux.Server.push(t.demux, expected_version, transaction)
+      # Push to Demux for distribution to ShardServers (async). A locked
+      # log has no demux (its flush pipeline is quiesced); the WAL still
+      # appends, and recovery replays through a fresh demux.
+      #
+      # The demux gets the transaction's OWN commit version — never
+      # `expected_version`, which is the push protocol's gap-check argument
+      # (the PREVIOUS version). Forwarding the previous version would leave
+      # the demux's high-water — and every currency signal, cut boundary,
+      # and chunk name derived from it — one commit behind reality.
+      if t.demux do
+        Demux.Server.push(t.demux, Transaction.commit_version!(transaction), transaction, known_committed_version)
+      end
+
       noreply(t, continue: {:notify_waiting_pullers, expected_version, transaction})
     else
       {:wait, t} -> noreply(t, continue: :check_for_expired_pullers)
       {:error, _reason} = error -> reply(t, error, continue: :check_for_expired_pullers)
     end
   end
+
+  # Pushes without a known-committed watermark (older callers, tests): the
+  # WAL still appends, but cuts stay gated until a watermark arrives.
+  @impl true
+  def handle_call({:push, transaction_bytes, expected_version}, from, %State{} = t),
+    do: handle_call({:push, transaction_bytes, expected_version, nil}, from, t)
 
   @impl true
   def handle_call({:pull, from_version, opts}, from, t) do
@@ -365,18 +399,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  defp start_demux(t) do
-    case Demux.Server.start_link(
-           cluster: t.cluster,
-           object_storage: t.object_storage,
-           log: self()
-         ) do
-      {:ok, demux} -> {:ok, demux}
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  defp start_demux(t), do: DemuxControl.start(t)
 
   defp advance_min_durable_version(t, incoming_version) do
+    # The floor can never pass the WAL tip, whatever a confirmation claims.
+    incoming_version = min(incoming_version, t.last_version)
+
     min_durable_version =
       case t.min_durable_version do
         nil -> incoming_version
@@ -397,21 +425,66 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   defp trim_durable_segments(%{segments: []} = t), do: t
   defp trim_durable_segments(%{min_durable_version: nil} = t), do: t
 
+  # Only reachable in :running mode (the watermark handler is the sole
+  # caller and it gates on mode). Materializers never hold the WAL back:
+  # they catch up from object-storage chunks and snapshots, so the trim
+  # floor is object-storage confirmation alone (the Demux watermark).
   defp trim_durable_segments(t) do
+    trim_floor = t.min_durable_version
     segments_oldest_first = Enum.reverse(t.segments)
 
     {segments_to_trim_oldest_first, remaining_segments_oldest_first} =
-      Enum.split_while(segments_oldest_first, &segment_fully_durable?(&1, t.min_durable_version))
+      Enum.split_while(segments_oldest_first, &segment_fully_durable?(&1, trim_floor))
 
     Enum.each(segments_to_trim_oldest_first, fn segment ->
       :ok = Segment.return_to_recycler(segment, t.segment_recycler)
     end)
 
     remaining_segments = Enum.reverse(remaining_segments_oldest_first)
+    lag_us = Version.distance(t.last_version, trim_floor)
+
+    trace_trim(
+      trim_floor,
+      t.last_version,
+      lag_us,
+      length(segments_to_trim_oldest_first),
+      length(remaining_segments) + 1
+    )
 
     t
     |> Map.put(:segments, remaining_segments)
     |> Map.put(:oldest_version, determine_oldest_version(t.active_segment, remaining_segments))
+    |> check_floor_lag_alarm(trim_floor, lag_us)
+  end
+
+  # Alarm once per crossing; clears when the floor catches back up.
+  defp check_floor_lag_alarm(t, trim_floor, lag_us) do
+    cond do
+      lag_us > @floor_lag_alarm_us and not t.floor_lag_alarm_active ->
+        trace_floor_lag_alarm(trim_floor, t.last_version, lag_us, @floor_lag_alarm_us)
+        %{t | floor_lag_alarm_active: true}
+
+      lag_us <= @floor_lag_alarm_us and t.floor_lag_alarm_active ->
+        %{t | floor_lag_alarm_active: false}
+
+      true ->
+        t
+    end
+  end
+
+  # Optional hard limit: refuse new pushes while the trim floor lags the WAL
+  # tip by more than the configured version-time. Disabled (nil) by default —
+  # the documented posture is unbounded-with-alerting. A log with no floor
+  # yet (nothing confirmed) never rejects.
+  defp check_wal_backpressure(%{reject_pushes_above_lag_us: nil}), do: :ok
+  defp check_wal_backpressure(%{min_durable_version: nil}), do: :ok
+
+  defp check_wal_backpressure(t) do
+    if Version.distance(t.last_version, t.min_durable_version) > t.reject_pushes_above_lag_us do
+      {:error, :wal_backpressure}
+    else
+      :ok
+    end
   end
 
   defp segment_fully_durable?(segment, min_durable_version) do

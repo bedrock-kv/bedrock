@@ -33,15 +33,20 @@ Measurements include lag/backlog counts (`pending`, `scheduled`, `in_flight`,
 
 ## Follow-On Integration
 
-`ShardServer` now routes chunk flush work through `PersistenceWorker`:
+`ShardServer` routes chunk flush work through `PersistenceWorker`:
 
-1. `push/3` updates in-memory buffer and enqueues a flush batch when thresholds
-   are exceeded.
-2. Worker persists chunk payloads out-of-band.
-3. `ShardServer` advances durable watermark only after receiving
-   `{:flush_persisted, max_version}` confirmation.
+1. `push/4` only updates the in-memory buffer — ShardServers never decide
+   when to flush. The Demux commands `{:flush, cut_version}` on deterministic
+   version-time boundaries, gated on the known committed version.
+2. Worker persists chunk payloads out-of-band (at most one flush in flight
+   per shard; a flush that exhausts its retries crashes the ShardServer so
+   the linked Demux → log chain converts it into a recovery instead of a
+   silent wedge).
+3. `ShardServer` confirms the cut only after receiving
+   `{:flush_persisted, cut_version}` confirmation; buffered entries stay
+   pullable until then.
 
-This keeps `push/3` non-blocking while preserving explicit durability
+This keeps pushes non-blocking while preserving explicit durability
 watermark progression semantics.
 
 ## WAL Trim Safety Boundary

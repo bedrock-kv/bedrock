@@ -58,8 +58,8 @@ defmodule Bedrock.DataPlane.Demux.Durability do
   Activates a shard with an initial durable version.
 
   Called when the first transaction touches a shard. The shard starts
-  with `initial_version` as its durable version (typically the last_seen_version
-  at the time of activation).
+  with `initial_version` as its durable version (the last completed cut at
+  the time of activation — never a merely-buffered version).
 
   Returns `{:ok, updated_durability}` or `{:error, :already_active}` if shard
   is already being tracked.
@@ -135,6 +135,21 @@ defmodule Bedrock.DataPlane.Demux.Durability do
   end
 
   @doc """
+  Returns the minimum entry — `{version, shard_id}` — identifying WHICH shard
+  currently pins the floor (FDB's MinPoppedTag equivalent).
+
+  Returns `nil` if no shards are being tracked.
+  """
+  @spec min_entry(t()) :: {version(), shard_id()} | nil
+  def min_entry(%__MODULE__{version_index: index}) do
+    if :gb_sets.is_empty(index) do
+      nil
+    else
+      :gb_sets.smallest(index)
+    end
+  end
+
+  @doc """
   Returns the durable version for a specific shard.
 
   Returns `nil` if the shard is not being tracked.
@@ -168,25 +183,7 @@ defmodule Bedrock.DataPlane.Demux.Durability do
     Map.keys(versions)
   end
 
-  @doc """
-  Deactivates a shard, removing it from durability tracking.
-
-  This is typically used during cleanup or when a shard is no longer needed.
-  Returns the updated durability tracker.
-  """
-  @spec deactivate_shard(t(), shard_id()) :: t()
-  def deactivate_shard(%__MODULE__{} = durability, shard_id) do
-    case Map.fetch(durability.shard_versions, shard_id) do
-      :error ->
-        # Not tracked, nothing to do
-        durability
-
-      {:ok, version} ->
-        %{
-          durability
-          | shard_versions: Map.delete(durability.shard_versions, shard_id),
-            version_index: :gb_sets.delete_any({version, shard_id}, durability.version_index)
-        }
-    end
-  end
+  # Note: there is deliberately no deactivate_shard. Under commanded cuts an
+  # idle or drained shard confirms every cut instantly and cannot pin the
+  # floor, and the whole tracker is rebuilt with a fresh Demux at recovery.
 end

@@ -67,6 +67,40 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorkerTest do
     end
   end
 
+  describe "on_drop/2" do
+    test "invokes on_drop when retries are exhausted" do
+      test_pid = self()
+
+      {:ok, worker} =
+        start_supervised(
+          {PersistenceWorker,
+           max_retries: 2,
+           retry_base_backoff_ms: 1,
+           retry_tick_ms: 1,
+           perform: fn _payload -> {:error, :permanent} end,
+           on_drop: fn payload, reason -> send(test_pid, {:dropped, payload, reason}) end}
+        )
+
+      assert :ok = PersistenceWorker.enqueue(worker, :doomed_item)
+
+      assert_receive {:dropped, :doomed_item, :permanent}, 1_000
+    end
+
+    test "drops silently by default (no on_drop configured)" do
+      {:ok, worker} =
+        start_supervised(
+          {PersistenceWorker,
+           max_retries: 1, retry_base_backoff_ms: 1, retry_tick_ms: 1, perform: fn _payload -> {:error, :permanent} end}
+        )
+
+      assert :ok = PersistenceWorker.enqueue(worker, :doomed_item)
+
+      eventually(fn ->
+        PersistenceWorker.stats(worker) == %{pending: 0, scheduled: 0, in_flight: 0, lag: 0}
+      end)
+    end
+  end
+
   defp eventually(fun, retries \\ 40)
 
   defp eventually(fun, retries) when retries > 0 do

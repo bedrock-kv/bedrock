@@ -61,7 +61,10 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
           # If successful, should contain our modern transactions using pattern matching
           assert_any_version_present(txs, [1000, 2000])
 
-        {:error, error} when error in [:version_too_old, :version_too_new] ->
+        {:error, :version_too_new} ->
+          :ok
+
+        {:error, {:version_too_old, _floor}} ->
           :ok
 
         {:error, :not_found} ->
@@ -122,7 +125,10 @@ defmodule Bedrock.DataPlane.Log.WALFileOperationsTest do
           {:ok, txs} ->
             assert_all_versions_newer_than(txs, start_after)
 
-          {:error, error} when error in [:version_too_old, :version_too_new] ->
+          {:error, :version_too_new} ->
+            :ok
+
+          {:error, {:version_too_old, _floor}} ->
             :ok
 
           {:waiting_for, _} ->

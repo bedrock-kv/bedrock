@@ -56,6 +56,17 @@ defmodule Bedrock.ControlPlane.Coordinator do
   def fetch_config(coordinator, timeout \\ 5_000), do: call(coordinator, :fetch_config, timeout)
 
   @doc """
+  The current service directory: every worker advertised to the
+  coordinator, by id. The director refreshes its view from this at each
+  recovery attempt — workers register as they come up, and a directory
+  snapshot taken at director start goes stale immediately on a booting
+  node.
+  """
+  @spec fetch_service_directory(coordinator_ref :: ref(), timeout_ms :: timeout_in_ms()) ::
+          {:ok, %{String.t() => {atom(), {atom(), node()}}}} | {:error, :unavailable | :timeout}
+  def fetch_service_directory(coordinator, timeout \\ 5_000), do: call(coordinator, :fetch_service_directory, timeout)
+
+  @doc """
   Notify the coordinator of a config update.
 
   This is called by the Director during recovery to update the coordinator's

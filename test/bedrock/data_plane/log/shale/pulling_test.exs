@@ -53,7 +53,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PullingTest do
       # Test with a version that's older than oldest_version in the state
       # The state has oldest_version = 0, so we'll create a state with older version = 1 to test this properly
       older_state = %{state | oldest_version: Version.from_integer(1)}
-      assert {:error, :version_too_old} = Pulling.pull(older_state, Version.from_integer(0))
+      assert {:error, {:version_too_old, _floor}} = Pulling.pull(older_state, Version.from_integer(0))
     end
 
     test "returns transactions within version range", %{state: state} do

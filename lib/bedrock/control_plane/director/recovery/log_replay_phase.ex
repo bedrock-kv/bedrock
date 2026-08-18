@@ -38,10 +38,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
 
   @impl true
   def execute(recovery_attempt, context) do
-    # Only copy transactions from durable_version onwards (what storage actually needs)
-    # instead of copying from the beginning of the version vector
-    {_original_first, last_version} = recovery_attempt.version_vector
-    optimized_version_vector = {recovery_attempt.durable_version, last_version}
+    # Copy only what the new generation actually needs — but never ask a
+    # source for versions below what its WAL can supply. The durable floor
+    # skips the already-chunked prefix when it is ahead, but it regresses
+    # to zero on restart (it is not persisted), while a trimmed WAL begins
+    # at its oldest retained version: everything below the vector's first
+    # element is durable in object-storage chunks — that is the only way
+    # it got trimmed.
+    {oldest_available, last_version} = recovery_attempt.version_vector
+    first_version = max(recovery_attempt.durable_version, oldest_available)
+    optimized_version_vector = {first_version, last_version}
 
     # Get survivor log IDs - all logs that were successfully locked during recovery
     survivor_log_ids = Map.get(recovery_attempt, :survivor_log_ids, recovery_attempt.old_log_ids_to_copy)

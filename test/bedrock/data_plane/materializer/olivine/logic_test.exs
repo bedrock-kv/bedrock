@@ -136,17 +136,26 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
   end
 
   describe "unlock_after_recovery/3" do
-    test "basic unlock functionality", %{test_dir: test_dir} do
+    test "without a shard assignment the materializer unlocks static — no puller", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
       locked_state = %{state | mode: :locked, epoch: 1}
       layout = %{logs: %{}, services: %{}}
-      durable_version = 100
+      durable_version = Version.from_integer(100)
 
-      assert {:ok, %State{mode: :running} = unlocked_state} =
+      assert {:ok, %State{mode: :running, pull_task: nil}} =
                Logic.unlock_after_recovery(locked_state, durable_version, layout)
 
-      # A puller is installed so the materializer can catch up from the logs
-      assert unlocked_state.pull_task
+      Logic.shutdown(locked_state)
+    end
+
+    test "with a shard assignment the stream puller is installed", %{test_dir: test_dir} do
+      state = create_test_state(test_dir)
+      locked_state = %{state | mode: :locked, epoch: 1, shard_num: 1}
+      layout = %{logs: %{}, services: %{}}
+      durable_version = Version.from_integer(100)
+
+      assert {:ok, %State{mode: :running, pull_task: %Task{}} = unlocked_state} =
+               Logic.unlock_after_recovery(locked_state, durable_version, layout)
 
       Logic.shutdown(unlocked_state)
     end

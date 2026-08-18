@@ -30,7 +30,8 @@ defmodule Bedrock.DataPlane.Sequencer do
           Bedrock.epoch(),
           opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
         ) ::
-          {:ok, last_commit_version :: Bedrock.version(), next_commit_version :: Bedrock.version()}
+          {:ok, last_commit_version :: Bedrock.version(), next_commit_version :: Bedrock.version(),
+           known_committed_version :: Bedrock.version()}
           | {:error, :unavailable | :wrong_epoch}
   def next_commit_version(t, epoch, opts \\ []) do
     call(t, {:next_commit_version, epoch}, opts[:timeout_in_ms] || :infinity)

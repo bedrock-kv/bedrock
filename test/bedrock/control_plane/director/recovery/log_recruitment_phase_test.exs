@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
   import ExUnit.CaptureLog
 
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
+  alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -71,10 +72,179 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
       context = create_recovery_context(%{{:log, 1} => %{}}, available_services, lock_service_fn: lock_service_fn)
 
-      assert {%{logs: logs}, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase} =
+      assert {%{logs: logs}, LogReplayPhase} =
                LogRecruitmentPhase.execute(recovery_attempt, context)
 
       assert %{{:log, 2} => _, {:log, 3} => _} = logs
+    end
+
+    test "a candidate that fails to lock (ghost registration) is replaced, not a stall" do
+      # The directory can carry registrations from dead nodes — nothing on
+      # a dead node can deregister itself. Recruitment must treat a failed
+      # lock as 'this candidate is gone' and create a fresh worker instead
+      # of wedging every recovery attempt forever.
+      good_pid = spawn(fn -> Process.sleep(:infinity) end)
+      replacement_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt = %{
+        cluster: TestCluster,
+        epoch: 3,
+        logs: %{{:vacancy, 1} => %{}, {:vacancy, 2} => %{}},
+        transaction_services: %{},
+        service_pids: %{}
+      }
+
+      context =
+        create_recovery_context(
+          %{{:log, :old} => %{}},
+          %{
+            "ghost_log" => {:log, {:ghost_worker, :dead@nowhere}},
+            "good_log" => {:log, {:good_worker, :node1}}
+          },
+          node_capabilities: %{log: [:node1@host]},
+          create_worker_fn: fn _foreman, _id, :log, _opts -> {:ok, :replacement_ref} end,
+          worker_info_fn: fn {_ref, _node}, _facts, _opts ->
+            {:ok, %{id: "replacement", otp_name: :replacement_otp, kind: :log, pid: replacement_pid}}
+          end,
+          lock_service_fn: fn
+            {:log, {:ghost_worker, _}}, _epoch ->
+              {:error, :unavailable}
+
+            {:log, {:good_worker, _}}, _epoch ->
+              {:ok, good_pid, %{kind: :log, oldest_version: 0, last_version: 1}}
+
+            {:log, {:replacement_otp, _}}, _epoch ->
+              {:ok, replacement_pid, %{kind: :log, oldest_version: 0, last_version: 0}}
+          end
+        )
+
+      log =
+        capture_log(fn ->
+          assert {%{logs: logs, transaction_services: services}, LogReplayPhase} =
+                   LogRecruitmentPhase.execute(recovery_attempt, context)
+
+          # The ghost id is gone from the layout; the good candidate and a
+          # fresh replacement fill the two vacancies.
+          refute Map.has_key?(logs, "ghost_log")
+          assert Map.has_key?(logs, "good_log")
+          assert map_size(logs) == 2
+
+          refute Map.has_key?(services, "ghost_log")
+          assert %{"good_log" => %{status: {:up, ^good_pid}}} = services
+        end)
+
+      assert log =~ "replaced log candidates that failed to lock"
+    end
+
+    test "lock failures are recorded on the attempt so later attempts exclude them" do
+      good_pid = spawn(fn -> Process.sleep(:infinity) end)
+      replacement_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt = %{
+        cluster: TestCluster,
+        epoch: 3,
+        logs: %{{:vacancy, 1} => %{}, {:vacancy, 2} => %{}},
+        transaction_services: %{},
+        service_pids: %{},
+        lock_failed_service_ids: MapSet.new(["earlier_ghost"])
+      }
+
+      context =
+        create_recovery_context(
+          %{{:log, :old} => %{}},
+          %{
+            "ghost_log" => {:log, {:ghost_worker, :dead@nowhere}},
+            "good_log" => {:log, {:good_worker, :node1}}
+          },
+          node_capabilities: %{log: [:node1@host]},
+          create_worker_fn: fn _foreman, _id, :log, _opts -> {:ok, :replacement_ref} end,
+          worker_info_fn: fn {_ref, _node}, _facts, _opts ->
+            {:ok, %{id: "replacement", otp_name: :replacement_otp, kind: :log, pid: replacement_pid}}
+          end,
+          lock_service_fn: fn
+            {:log, {:ghost_worker, _}}, _epoch ->
+              {:error, :unavailable}
+
+            {:log, {:good_worker, _}}, _epoch ->
+              {:ok, good_pid, %{kind: :log, oldest_version: 0, last_version: 1}}
+
+            {:log, {:replacement_otp, _}}, _epoch ->
+              {:ok, replacement_pid, %{kind: :log, oldest_version: 0, last_version: 0}}
+          end
+        )
+
+      capture_log(fn ->
+        assert {%{lock_failed_service_ids: remembered}, LogReplayPhase} =
+                 LogRecruitmentPhase.execute(recovery_attempt, context)
+
+        # The new failure joins what earlier attempts already learned
+        assert MapSet.equal?(remembered, MapSet.new(["earlier_ghost", "ghost_log"]))
+      end)
+    end
+
+    test "replacing a lock-failed candidate with no log-capable nodes stalls, never crashes" do
+      # The capability view on a booting node can be momentarily empty
+      # (registration timing). Replacement must stall honestly with
+      # :insufficient_nodes — the next registration retriggers the attempt
+      # — not divide by zero in round-robin assignment.
+      recovery_attempt = %{
+        cluster: TestCluster,
+        epoch: 3,
+        logs: %{{:vacancy, 1} => %{}},
+        transaction_services: %{},
+        service_pids: %{}
+      }
+
+      context =
+        create_recovery_context(
+          %{{:log, :old} => %{}},
+          %{"ghost_log" => {:log, {:ghost_worker, :dead@nowhere}}},
+          node_capabilities: %{log: []},
+          lock_service_fn: fn {:log, {:ghost_worker, _}}, _epoch -> {:error, :unavailable} end
+        )
+
+      capture_log(fn ->
+        assert {_attempt, {:stalled, {:insufficient_nodes, 1, 0}}} =
+                 LogRecruitmentPhase.execute(recovery_attempt, context)
+      end)
+    end
+
+    test "workers created this attempt complete recruitment in the SAME attempt" do
+      # A just-created worker cannot be in the coordinator's directory yet
+      # (advertisement is async) — recruitment must lock it via the ref it
+      # already holds, never stall waiting to rediscover its own creation.
+      recovery_attempt = %{
+        cluster: TestCluster,
+        epoch: 1,
+        logs: %{{:vacancy, 1} => %{}},
+        transaction_services: %{},
+        service_pids: %{}
+      }
+
+      worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        create_recovery_context(
+          %{{:log, 1} => %{}},
+          # No candidates: the vacancy forces worker creation
+          %{},
+          node_capabilities: %{log: [:node1@host]},
+          create_worker_fn: fn _foreman, _id, :log, _opts -> {:ok, :new_log_ref} end,
+          worker_info_fn: fn {_ref, node}, _facts, _opts ->
+            {:ok, %{id: "new_log", otp_name: :new_log_otp, kind: :log, pid: worker_pid}}
+          end,
+          lock_service_fn: fn _service, _epoch ->
+            {:ok, worker_pid, %{kind: :log, oldest_version: 0, last_version: 1}}
+          end
+        )
+
+      assert {%{logs: logs, transaction_services: services}, LogReplayPhase} =
+               LogRecruitmentPhase.execute(recovery_attempt, context)
+
+      # The vacancy was filled by the new worker, and it is locked/tracked
+      assert map_size(logs) == 1
+      [new_id] = Map.keys(logs)
+      assert %{^new_id => %{status: {:up, ^worker_pid}}} = services
     end
   end
 

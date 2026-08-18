@@ -79,7 +79,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
     pid =
       spawn(fn ->
         receive do
-          {:"$gen_call", from, {:push, _transaction, _last_version}} ->
+          {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
             GenServer.reply(from, :ok)
         after
           5000 -> :timeout

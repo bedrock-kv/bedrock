@@ -462,11 +462,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
   Returns either {:no_eviction, updated_manager} or {:evict, evicted_count, updated_manager, collected_pages, eviction_version}.
   The collected_pages contain all modified pages from evicted versions for efficient persistence.
   """
-  @spec advance_window(t(), pos_integer()) ::
+  @spec advance_window(t(), pos_integer(), eviction_cap :: Bedrock.version() | nil) ::
           {:no_eviction, t()}
           | {:evict, non_neg_integer(), t(), [any()], Bedrock.version()}
-  def advance_window(index_manager, max_eviction_size_bytes) do
+  def advance_window(index_manager, max_eviction_size_bytes, eviction_cap \\ nil) do
     with {:ok, window_edge} <- get_window_edge(index_manager),
+         window_edge = cap_window_edge(window_edge, eviction_cap),
          {:ok, evicted_count, new_output_queue, collected_pages, eviction_version} <-
            determine_eviction_batch(index_manager, max_eviction_size_bytes, window_edge) do
       new_versions = split_versions(index_manager.versions, eviction_version, [])
@@ -475,6 +476,39 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
     else
       :no_eviction -> {:no_eviction, index_manager}
     end
+  end
+
+  # The known-committed clamp: nothing above the KCV may become durable, so
+  # the window edge — the point at which versions leave memory for disk —
+  # never passes it. In normal operation the KCV lags real time by one
+  # commit batch while the window lags by seconds, so the clamp is
+  # invisible; it only bites in the moments that matter.
+  defp cap_window_edge(window_edge, nil), do: window_edge
+  defp cap_window_edge(window_edge, eviction_cap), do: min(window_edge, eviction_cap)
+
+  @doc """
+  Rolls the in-memory state back to `version`: every version entry above it
+  is discarded, along with its pending evictions — a pointer operation.
+
+  Disk is untouched, and never needs to be: eviction is clamped to the
+  known-committed version, and a recovery version is always at or above the
+  known-committed version at the moment of the crash, so everything durable
+  survives every rollback. (Statistics such as `n_keys` are left as-is; the
+  data-file offset is not rewound, so orphaned bytes linger until the next
+  compaction.)
+  """
+  @spec rollback_to(t(), Bedrock.version()) :: t()
+  def rollback_to(%{current_version: current} = index_manager, version) when current <= version, do: index_manager
+
+  def rollback_to(index_manager, version) do
+    # Newest-first: drop entries above the target. The base (durable)
+    # entry is always at or below any legitimate rollback target, so the
+    # list can never empty — a crash here means corrupted state.
+    [{new_current, _} | _] = versions = Enum.drop_while(index_manager.versions, fn {v, _} -> v > version end)
+
+    output_queue = :queue.filter(fn {v, _, _, _} -> v <= version end, index_manager.output_queue)
+
+    %{index_manager | versions: versions, current_version: new_current, output_queue: output_queue}
   end
 
   defp split_versions([{version, _data} = entry | rest], target, kept_versions) when version >= target,

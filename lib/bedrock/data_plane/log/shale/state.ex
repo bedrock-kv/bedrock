@@ -38,6 +38,9 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
               {encoded_transaction :: Transaction.encoded(), ack_fn :: (:ok | {:error, term()} -> :ok)}
           },
           #
+          floor_lag_alarm_active: boolean(),
+          reject_pushes_above_lag_us: non_neg_integer() | nil,
+          #
           mode: mode(),
           oldest_version: Bedrock.version(),
           otp_name: Worker.otp_name(),
@@ -69,6 +72,9 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             segments: [],
             active_segment: nil,
             pending_pushes: %{},
+            #
+            floor_lag_alarm_active: false,
+            reject_pushes_above_lag_us: nil,
             #
             mode: :locked,
             oldest_version: nil,

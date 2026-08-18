@@ -125,7 +125,7 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
       assert_eventually(
         fn ->
           case ShardServer.pull(shard_server, Version.from_integer(900), timeout: 200, limit: 10) do
-            {:ok, txns} ->
+            {:ok, txns, _currency} ->
               versions = Enum.map(txns, fn {version, _slice} -> Version.to_integer(version) end)
               1_000 in versions and 1_200 in versions
 

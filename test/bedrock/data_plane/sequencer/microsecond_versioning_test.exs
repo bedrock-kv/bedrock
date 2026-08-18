@@ -28,7 +28,7 @@ defmodule Bedrock.DataPlane.Sequencer.MicrosecondVersioningTest do
 
   # Helper to get next commit version as integer
   defp next_commit_version_int({pid, epoch}) do
-    {:ok, _read, commit} = GenServer.call(pid, {:next_commit_version, epoch})
+    {:ok, _read, commit, _kcv} = GenServer.call(pid, {:next_commit_version, epoch})
     Version.to_integer(commit)
   end
 
@@ -87,7 +87,7 @@ defmodule Bedrock.DataPlane.Sequencer.MicrosecondVersioningTest do
       assert next_read_version_int({pid, epoch}) == 5000
 
       # Get a commit version
-      assert {:ok, _last, commit_v1} = GenServer.call(pid, {:next_commit_version, epoch})
+      assert {:ok, _last, commit_v1, _kcv} = GenServer.call(pid, {:next_commit_version, epoch})
 
       # Read version should still be baseline (commit not reported yet)
       assert next_read_version_int({pid, epoch}) == 5000

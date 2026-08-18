@@ -23,6 +23,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   # Larger batches during lulls when no reads are waiting
   @timeout_batch_count 50
 
+  # Ingest backpressure: above the high-water the ingest reply is withheld
+  # (the puller blocks); it is released once the queue drains below the
+  # release mark.
+  @ingest_high_water_count 1_000
+  @ingest_release_count 500
+
   @spec child_spec(opts :: keyword()) :: map()
   def child_spec(opts) do
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
@@ -107,6 +113,32 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     end
   end
 
+  # The puller hands over a batch and waits for :ok. While locked, the
+  # puller is being torn down: acknowledge and discard.
+  @impl true
+  def handle_call({:ingest, _encoded_transactions, _kcv}, _from, %State{mode: :locked} = t), do: reply(t, :ok)
+
+  def handle_call({:ingest, encoded_transactions, kcv}, from, %State{} = t) do
+    updated_intake_queue = IntakeQueue.add_transactions(t.intake_queue, encoded_transactions)
+    queue_size = IntakeQueue.size(updated_intake_queue)
+
+    t = %{
+      t
+      | intake_queue: updated_intake_queue,
+        known_committed_version: max_version(t.known_committed_version, kcv)
+    }
+
+    Telemetry.trace_transactions_queued(length(encoded_transactions), queue_size)
+
+    if queue_size >= @ingest_high_water_count do
+      # Backpressure: hold the reply until the queue drains. The puller
+      # cannot outrun the applier because the applier holds the reply.
+      noreply(%{t | pending_ingest: from}, continue: :process_transactions)
+    else
+      reply(t, :ok, continue: :process_transactions)
+    end
+  end
+
   @impl true
   def handle_call({:info, fact_names}, _from, %State{} = t), do: t |> Logic.info(fact_names) |> then(&reply(t, &1))
 
@@ -162,11 +194,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     case IntakeQueue.take_batch_by_count(t.intake_queue, @continuation_batch_count) do
       {[], nil, updated_intake_queue} ->
         # Queue empty, just wait for new transactions or timeout
-        updated_state = %{t | intake_queue: updated_intake_queue}
+        updated_state = maybe_release_ingest(%{t | intake_queue: updated_intake_queue})
         noreply(updated_state)
 
       {batch, _batch_last_version, updated_intake_queue} ->
-        updated_state = %{t | intake_queue: updated_intake_queue}
+        updated_state = maybe_release_ingest(%{t | intake_queue: updated_intake_queue})
         # Process small batch for responsiveness
         {:ok, state_with_txns, version} = Logic.apply_transactions(updated_state, batch)
         final_state = notify_waiting_fetches(state_with_txns, version)
@@ -217,6 +249,21 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     %{state | read_request_manager: updated_manager}
   end
 
+  defp maybe_release_ingest(%State{pending_ingest: nil} = t), do: t
+
+  defp maybe_release_ingest(%State{pending_ingest: from} = t) do
+    if IntakeQueue.size(t.intake_queue) < @ingest_release_count do
+      GenServer.reply(from, :ok)
+      %{t | pending_ingest: nil}
+    else
+      t
+    end
+  end
+
+  defp max_version(nil, version), do: version
+  defp max_version(version, nil), do: version
+  defp max_version(a, b), do: max(a, b)
+
   @impl true
   # Discard transactions when locked
   def handle_info({:apply_transactions, _encoded_transactions}, %State{mode: :locked} = t), do: noreply(t)
@@ -238,11 +285,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     case IntakeQueue.take_batch_by_count(t.intake_queue, @timeout_batch_count) do
       {[], nil, updated_intake_queue} ->
         # No transactions to process, advance window during this lull
-        updated_state = %{t | intake_queue: updated_intake_queue}
+        updated_state = maybe_release_ingest(%{t | intake_queue: updated_intake_queue})
         noreply(updated_state, continue: :advance_window)
 
       {batch, _batch_last_version, updated_intake_queue} ->
-        updated_state = %{t | intake_queue: updated_intake_queue}
+        updated_state = maybe_release_ingest(%{t | intake_queue: updated_intake_queue})
         # Process larger batch for throughput
         {:ok, state_with_txns, version} = Logic.apply_transactions(updated_state, batch)
         state_after_txns = notify_waiting_fetches(state_with_txns, version)
@@ -251,13 +298,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
         {:ok, final_state} = Logic.advance_window(state_after_txns)
         noreply(final_state, continue: :maybe_process_transactions)
     end
-  end
-
-  @impl true
-  def handle_info({:transactions_applied, version}, %State{} = t) do
-    t
-    |> notify_waiting_fetches(version)
-    |> noreply()
   end
 
   @impl true

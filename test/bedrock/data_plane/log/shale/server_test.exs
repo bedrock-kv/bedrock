@@ -174,6 +174,29 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       assert is_tuple(result)
     end
+
+    test "locking quiesces the flush pipeline: the demux tree dies and the floor resets", %{server: pid} do
+      %{demux: demux} = :sys.get_state(pid)
+      assert is_pid(demux)
+
+      # Materialize a shard server in the tree so the teardown has children
+      {:ok, shard_server} = GenServer.call(pid, {:get_shard_server, 777})
+
+      assert {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, 1})
+
+      state = :sys.get_state(pid)
+      assert state.demux == nil
+      assert state.min_durable_version == nil
+      refute Process.alive?(demux)
+      refute Process.alive?(shard_server)
+
+      # A push while locked still appends to the WAL without crashing on
+      # the missing demux
+      encoded_bytes = TransactionTestSupport.new_log_transaction(1, %{"k" => "v"})
+      result = GenServer.call(pid, {:push, encoded_bytes, Version.from_integer(1)}, 1000)
+      assert result == :ok or match?({:error, _}, result)
+      assert Process.alive?(pid)
+    end
   end
 
   describe "handle_call/3 - push operations" do
@@ -201,6 +224,24 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       result = GenServer.call(pid, {:push, encoded_bytes, expected_version}, 1000)
 
       assert result == :ok or match?({:error, _}, result)
+    end
+
+    test "forwards the transaction's own commit version to the demux, not the gap-check version", %{server: pid} do
+      # The push protocol's second element is the LAST version (gap
+      # detection). The demux's high-water must be the pushed transaction's
+      # own commit version — anything else leaves every downstream currency
+      # signal one commit behind reality.
+      make_running(pid, Version.zero())
+
+      v1 = Version.from_integer(100)
+      tx = TransactionTestSupport.new_log_transaction(v1, %{"k" => "v"})
+
+      :ok = GenServer.call(pid, {:push, tx, Version.zero(), v1}, 1000)
+
+      demux = demux_of(pid)
+      send(demux, {:currency_request, self(), nil})
+
+      assert_receive {:currency, ^v1, ^v1}, 1_000
     end
   end
 
@@ -289,9 +330,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert :pong = GenServer.call(pid, :ping)
     end
 
-    test "handles min_durable_version message and updates state", %{server: pid} do
+    test "handles min_durable_version message and updates state when running", %{server: pid} do
+      make_running(pid, Version.from_integer(1000))
+
       version = Version.from_integer(42)
-      send(pid, {:min_durable_version, version})
+      send(pid, {:min_durable_version, demux_of(pid), version})
 
       # Allow message to be processed
       :pong = GenServer.call(pid, :ping)
@@ -300,14 +343,47 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert state.min_durable_version == version
     end
 
+    test "ignores min_durable_version message unless running", %{server: pid} do
+      assert %State{mode: :locked} = :sys.get_state(pid)
+
+      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(42)})
+      :pong = GenServer.call(pid, :ping)
+
+      state = :sys.get_state(pid)
+      assert state.min_durable_version == nil
+    end
+
+    test "ignores min_durable_version from a stale demux incarnation", %{server: pid} do
+      make_running(pid, Version.from_integer(1000))
+
+      send(pid, {:min_durable_version, self(), Version.from_integer(42)})
+      :pong = GenServer.call(pid, :ping)
+
+      state = :sys.get_state(pid)
+      assert state.min_durable_version == nil
+    end
+
+    test "clamps min_durable_version to last_version", %{server: pid} do
+      last_version = Version.from_integer(50)
+      make_running(pid, last_version)
+
+      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(100)})
+      :pong = GenServer.call(pid, :ping)
+
+      state = :sys.get_state(pid)
+      assert state.min_durable_version == last_version
+    end
+
     test "exposes min_durable_version via info after receiving message", %{server: pid} do
+      make_running(pid, Version.from_integer(1000))
+
       # Initially unavailable
       assert {:ok, %{minimum_durable_version: :unavailable}} =
                GenServer.call(pid, {:info, [:minimum_durable_version]})
 
       # Send durability update
       version = Version.from_integer(100)
-      send(pid, {:min_durable_version, version})
+      send(pid, {:min_durable_version, demux_of(pid), version})
       :pong = GenServer.call(pid, :ping)
 
       # Now should return actual version
@@ -316,13 +392,15 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "does not regress min_durable_version when receiving an older watermark", %{server: pid} do
+      make_running(pid, Version.from_integer(1000))
+
       newer = Version.from_integer(200)
       older = Version.from_integer(100)
 
-      send(pid, {:min_durable_version, newer})
+      send(pid, {:min_durable_version, demux_of(pid), newer})
       :pong = GenServer.call(pid, :ping)
 
-      send(pid, {:min_durable_version, older})
+      send(pid, {:min_durable_version, demux_of(pid), older})
       :pong = GenServer.call(pid, :ping)
 
       state = :sys.get_state(pid)
@@ -350,7 +428,9 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       :sys.replace_state(pid, fn state ->
         %{
           state
-          | active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
+          | mode: :running,
+            last_version: v30,
+            active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
             segments: [
               %Segment{path: seg20_path, min_version: v20, transactions: [tx20]},
               %Segment{path: seg10_path, min_version: v10, transactions: [tx10]}
@@ -360,7 +440,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
         }
       end)
 
-      send(pid, {:min_durable_version, v15})
+      send(pid, {:min_durable_version, demux_of(pid), v15})
       :pong = GenServer.call(pid, :ping)
       state = :sys.get_state(pid)
 
@@ -369,6 +449,153 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       assert state.oldest_version == v20
       refute File.exists?(seg10_path)
       assert File.exists?(seg20_path)
+    end
+
+    test "never trims the active segment even when fully durable", %{server: pid, path: path} do
+      v10 = Version.from_integer(10)
+
+      tx10 = TransactionTestSupport.new_log_transaction(10, %{"k10" => "v10"})
+      seg10_path = Path.join(path, Segment.encode_file_name(10))
+      File.write!(seg10_path, <<0>>)
+
+      :sys.replace_state(pid, fn state ->
+        %{
+          state
+          | mode: :running,
+            last_version: v10,
+            active_segment: %Segment{path: seg10_path, min_version: v10, transactions: [tx10]},
+            segments: [],
+            oldest_version: v10,
+            min_durable_version: nil
+        }
+      end)
+
+      send(pid, {:min_durable_version, demux_of(pid), v10})
+      :pong = GenServer.call(pid, :ping)
+      state = :sys.get_state(pid)
+
+      assert state.min_durable_version == v10
+      assert state.active_segment.path == seg10_path
+      assert File.exists?(seg10_path)
+    end
+  end
+
+  defp seed_trimmable_segments(pid, path) do
+    v10 = Version.from_integer(10)
+    v20 = Version.from_integer(20)
+    v30 = Version.from_integer(30)
+
+    tx10 = TransactionTestSupport.new_log_transaction(10, %{"k10" => "v10"})
+    tx20 = TransactionTestSupport.new_log_transaction(20, %{"k20" => "v20"})
+    tx30 = TransactionTestSupport.new_log_transaction(30, %{"k30" => "v30"})
+
+    seg10_path = Path.join(path, Segment.encode_file_name(10))
+    seg20_path = Path.join(path, Segment.encode_file_name(20))
+    seg30_path = Path.join(path, Segment.encode_file_name(30))
+
+    File.write!(seg10_path, <<0>>)
+    File.write!(seg20_path, <<0>>)
+    File.write!(seg30_path, <<0>>)
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | mode: :running,
+          last_version: v30,
+          active_segment: %Segment{path: seg30_path, min_version: v30, transactions: [tx30]},
+          segments: [
+            %Segment{path: seg20_path, min_version: v20, transactions: [tx20]},
+            %Segment{path: seg10_path, min_version: v10, transactions: [tx10]}
+          ],
+          oldest_version: v10,
+          min_durable_version: nil
+      }
+    end)
+
+    %{v10: v10, v20: v20, v30: v30, seg10_path: seg10_path}
+  end
+
+  describe "trim telemetry and backpressure" do
+    setup %{server_opts: opts} do
+      pid = setup_server(opts)
+      on_exit(fn -> cleanup_server(pid) end)
+      {:ok, server: pid}
+    end
+
+    defp attach_trim_telemetry(test_name) do
+      test_pid = self()
+      handler_id = "trim-telemetry-#{test_name}-#{:erlang.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach_many(
+          handler_id,
+          [[:bedrock, :log, :trim], [:bedrock, :log, :floor_lag_alarm]],
+          fn event, measurements, metadata, pid -> send(pid, {:telemetry, event, measurements, metadata}) end,
+          test_pid
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+    end
+
+    test "trim emits floor, lag, and segment counts", %{server: pid, path: path} do
+      attach_trim_telemetry("trim")
+      %{v10: _v10} = seed_trimmable_segments(pid, path)
+
+      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(15)})
+      :pong = GenServer.call(pid, :ping)
+
+      assert_receive {:telemetry, [:bedrock, :log, :trim], measurements, metadata}
+      assert measurements.segments_recycled == 1
+      assert measurements.segments_retained == 2
+      assert measurements.lag_us == 15
+      assert metadata.floor == Version.from_integer(15)
+    end
+
+    test "floor lag past the limit raises the alarm once per crossing", %{server: pid, path: path} do
+      attach_trim_telemetry("alarm")
+      seed_trimmable_segments(pid, path)
+
+      # Version-time tip far beyond the floor (> 40s of lag)
+      far_tip = Version.from_integer(50_000_000)
+      :sys.replace_state(pid, fn state -> %{state | last_version: far_tip} end)
+
+      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(15)})
+      :pong = GenServer.call(pid, :ping)
+
+      assert_receive {:telemetry, [:bedrock, :log, :floor_lag_alarm], measurements, _metadata}
+      assert measurements.lag_us > measurements.limit_us
+
+      # A second advance while still lagging does not re-alarm
+      send(pid, {:min_durable_version, demux_of(pid), Version.from_integer(16)})
+      :pong = GenServer.call(pid, :ping)
+
+      refute_received {:telemetry, [:bedrock, :log, :floor_lag_alarm], _, _}
+    end
+
+    test "pushes are rejected past the configured lag limit", %{server_opts: opts} do
+      pid =
+        opts
+        |> Keyword.merge(
+          reject_pushes_above_lag_us: 1_000,
+          otp_name: :"backpressure_log_#{:rand.uniform(10_000)}",
+          id: "backpressure_log_#{:rand.uniform(10_000)}"
+        )
+        |> setup_server()
+
+      on_exit(fn -> cleanup_server(pid) end)
+
+      :sys.replace_state(pid, fn state ->
+        %{
+          state
+          | mode: :running,
+            last_version: Version.from_integer(5_000_000),
+            min_durable_version: Version.from_integer(10)
+        }
+      end)
+
+      encoded_bytes = TransactionTestSupport.new_log_transaction(5_000_001, %{"k" => "v"})
+
+      assert {:error, :wal_backpressure} = GenServer.call(pid, {:push, encoded_bytes, Version.from_integer(5_000_001)})
     end
   end
 
@@ -572,6 +799,12 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
   defp cleanup_server(pid) do
     if Process.alive?(pid), do: GenServer.stop(pid)
+  end
+
+  defp demux_of(pid), do: :sys.get_state(pid).demux
+
+  defp make_running(pid, last_version) do
+    :sys.replace_state(pid, fn state -> %{state | mode: :running, last_version: last_version} end)
   end
 
   defp eventually(assertion_fn, timeout \\ 1000) do

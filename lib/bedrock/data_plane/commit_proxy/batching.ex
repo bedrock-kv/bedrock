@@ -2,7 +2,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
   @moduledoc false
 
   import Bedrock.DataPlane.CommitProxy.Batch,
-    only: [new_batch: 3, add_transaction: 4, set_finalized_at: 2]
+    only: [new_batch: 4, add_transaction: 4, set_finalized_at: 2]
 
   import Bedrock.DataPlane.Sequencer, only: [next_commit_version: 2]
 
@@ -26,10 +26,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
 
   def single_transaction_batch(state, transaction, reply_fn) when is_binary(transaction) do
     case next_commit_version(state.sequencer, state.epoch) do
-      {:ok, last_commit_version, commit_version} ->
+      {:ok, last_commit_version, commit_version, known_committed_version} ->
         {:ok,
          timestamp()
-         |> new_batch(last_commit_version, commit_version)
+         |> new_batch(last_commit_version, commit_version, known_committed_version)
          |> add_transaction(transaction, reply_fn, nil)
          |> set_finalized_at(timestamp())}
 
@@ -41,8 +41,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
   @spec start_batch_if_needed(State.t()) :: State.t() | {:error, term()}
   def start_batch_if_needed(%{batch: nil} = t) do
     case next_commit_version(t.sequencer, t.epoch) do
-      {:ok, last_commit_version, commit_version} ->
-        %{t | batch: new_batch(timestamp(), last_commit_version, commit_version)}
+      {:ok, last_commit_version, commit_version, known_committed_version} ->
+        %{t | batch: new_batch(timestamp(), last_commit_version, commit_version, known_committed_version)}
 
       {:error, reason} ->
         {:error, {:sequencer_unavailable, reason}}

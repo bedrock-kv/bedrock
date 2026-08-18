@@ -1,11 +1,15 @@
 defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log.Shale.Recovery
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.Keys
+  alias Bedrock.ObjectStorage.LocalFilesystem
 
   @moduletag :tmp_dir
 
@@ -143,6 +147,47 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
                  version(1),
                  version(2)
                )
+    end
+  end
+
+  describe "recover_from/4 demux reset" do
+    setup %{tmp_dir: tmp_dir, state: state} do
+      backend = ObjectStorage.backend(LocalFilesystem, root: Path.join(tmp_dir, "object_storage"))
+      state = %{state | cluster: "test-cluster", object_storage: backend}
+      {:ok, state: state, backend: backend}
+    end
+
+    test "starts a fresh demux and resets the durability floor", %{state: state, backend: backend} do
+      {:ok, old_demux} =
+        Demux.Server.start_link(cluster: "test-cluster", object_storage: backend, log: self())
+
+      state = %{state | demux: old_demux, min_durable_version: version(123)}
+
+      assert {:ok, t} = Recovery.recover_from(state, [], version(1_000), version(1_000))
+
+      assert is_pid(t.demux)
+      assert t.demux != old_demux
+      assert Process.alive?(t.demux)
+      refute Process.alive?(old_demux)
+      assert t.min_durable_version == nil
+    end
+
+    test "replays transactions through the fresh demux", %{state: state} do
+      first_version = version(1)
+      last_version = version(2)
+
+      transactions = [
+        create_encoded_tx(first_version, %{"data" => "test1"}),
+        create_encoded_tx(last_version, %{"data" => "test2"})
+      ]
+
+      source_log = setup_mock_log(transactions)
+
+      assert {:ok, t} = Recovery.recover_from(state, [source_log], first_version, last_version)
+
+      # The replayed versions passed through the demux's push path: its
+      # bucket tracking has seen them (versions 1..2 land in bucket 0).
+      assert %{current_bucket: 0} = :sys.get_state(t.demux)
     end
   end
 

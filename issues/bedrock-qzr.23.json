@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-18T19:07:30Z",
+  "close_reason": "PR #133 now treats prospective WAL lag crossing as an epoch-fatal safety fuse, not retryable per-push backpressure. Shale returns a structured {:recovery_required, {:wal_limit_exceeded, details}} error, emits error-severity telemetry, preserves any fsynced prefix, and releases every queued successor. Commit finalization promotes the signal and the commit proxy explicitly stops so the Director monitor initiates coordinated recovery; application callers are released as aborted. Docs and tests cover direct/enqueue/drain crossings, multi-successor release, nil posture, telemetry, and commit-proxy termination. Commit 23d71aac; full local suite and remote CI green.",
   "created": "2026-08-15T21:34:23Z",
   "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nShale checks reject_pushes_above_lag_us once against the current last_version before Pushing. Future pushes can queue while last_version remains below the threshold. When the missing predecessor arrives, do_pending_pushes drains the entire queue without rechecking the prospective lag, advancing and growing the WAL arbitrarily beyond the configured hard limit.\n\nImpact:\nThe advertised bounded-growth mode does not actually bound a burst containing gaps or concurrent out-of-order delivery.\n\nAcceptance criteria:\n- Backpressure is enforced against each transaction's prospective commit version, including entries drained from pending_pushes.\n- A queued caller receives a clear error if its transaction cannot be admitted.\n- Queue draining leaves ordering state consistent and does not strand callers after rejection.\n- Tests enqueue a suffix beyond the limit, fill the gap, and prove the configured bound cannot be crossed.\n- Existing unbounded-with-alerting behavior remains unchanged when the hard limit is nil.",
   "id": "bedrock-qzr.23",
@@ -14,8 +16,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Enforce WAL backpressure while draining queued future pushes",
   "type": "bug",
-  "updated_at": "2026-08-18T18:56:55Z"
+  "updated_at": "2026-08-18T19:07:30Z"
 }

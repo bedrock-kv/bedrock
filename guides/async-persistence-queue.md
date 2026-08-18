@@ -35,14 +35,17 @@ Measurements include lag/backlog counts (`pending`, `scheduled`, `in_flight`,
 
 `ShardServer` routes chunk flush work through `PersistenceWorker`:
 
-1. `push/4` only updates the in-memory buffer — ShardServers never decide
+1. Every ShardServer is an anonymous child of one log replica's Demux; the
+   Demux's shard map is its only registry, so persistence confirmation is
+   replica-local even though deterministic chunk objects are shared.
+2. `push/4` only updates the in-memory buffer — ShardServers never decide
    when to flush. The Demux commands `{:flush, cut_version}` on deterministic
    version-time boundaries, gated on the known committed version.
-2. Worker persists chunk payloads out-of-band (at most one flush in flight
+3. Worker persists chunk payloads out-of-band (at most one flush in flight
    per shard; a flush that exhausts its retries crashes the ShardServer so
    the linked Demux → log chain converts it into a recovery instead of a
    silent wedge).
-3. `ShardServer` confirms the cut only after receiving
+4. `ShardServer` confirms the cut only after receiving
    `{:flush_persisted, cut_version}` confirmation; buffered entries stay
    pullable until then.
 

@@ -46,6 +46,13 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   more, and otherwise holds the interest and answers on its next push. The
   whole chain is event-driven — a reader is never waiting on a clock, only
   on messages that are already in flight.
+
+  ## Ownership
+
+  A ShardServer is anonymous and private to the process that starts it. In
+  production that caller is one log replica's Demux, whose shard map is the
+  only registry. `start_link/1` records the actual caller as the owner, so
+  durability and currency messages cannot be redirected through an option.
   """
 
   use GenServer
@@ -72,12 +79,11 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   @default_pull_limit 100
 
   @doc """
-  Starts a ShardServer for the given shard.
+  Starts an anonymous ShardServer for the given shard, owned by the caller.
 
   ## Options
 
   - `:shard_id` - Required. The shard ID this server handles.
-  - `:demux` - Required. PID of the Demux coordinator for durability reporting.
   - `:cluster` - Required. Cluster name for ObjectStorage paths.
   - `:object_storage` - Required. ObjectStorage backend.
   - `:persistence_queue_capacity` - Optional. Max queued flush batches (default: 1024).
@@ -87,20 +93,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
-    shard_id = Keyword.fetch!(opts, :shard_id)
-    GenServer.start_link(__MODULE__, opts, name: via_tuple(shard_id, opts[:registry]))
-  end
-
-  @doc """
-  Returns the via tuple for a ShardServer.
-  """
-  @spec via_tuple(shard_id(), atom() | nil) :: GenServer.name()
-  def via_tuple(shard_id, registry \\ nil) do
-    if registry do
-      {:via, Registry, {registry, {:shard_server, shard_id}}}
-    else
-      {:global, {__MODULE__, shard_id}}
-    end
+    owner = self()
+    GenServer.start_link(__MODULE__, Keyword.put(opts, :demux, owner))
   end
 
   @doc """
@@ -120,9 +114,9 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   durable and confirm.
 
   Called by Demux on deterministic bucket boundaries. This is a cast; the
-  confirmation arrives at the Demux as `{:durable, shard_id, cut_version}`
-  once persistence is confirmed (immediately, when nothing is buffered at or
-  below the cut).
+  confirmation arrives at the Demux tagged with this server's pid once
+  persistence is confirmed (immediately, when nothing is buffered at or below
+  the cut).
   """
   @spec flush(GenServer.server(), version()) :: :ok
   def flush(server, cut_version) do
@@ -551,7 +545,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   end
 
   defp report_durability(demux, shard_id, version) do
-    send(demux, {:durable, shard_id, version})
+    send(demux, {:durable, self(), shard_id, version})
   end
 
   defp notify_waiters(state, new_version) do

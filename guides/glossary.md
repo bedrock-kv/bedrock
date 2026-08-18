@@ -80,7 +80,7 @@ The transaction processing layer consisting of Sequencers, Commit Proxies, Resol
 
 ### **Demux**
 
-The process tree owned by each running log that slices every pushed transaction by shard and routes the slices to per-shard ShardServers. The Demux commands deterministic chunk cuts, tracks the minimum durable version that gates WAL trimming, and answers currency subscriptions so idle shards' materializers stay current without polling. It is the log's only data-plane consumer, and materializers' only data-plane source.
+The process tree owned by each running log that slices every pushed transaction by shard and routes the slices to anonymous, replica-local ShardServers. Its shard map is the only registry for those children. The Demux commands deterministic chunk cuts, tracks that log replica's minimum durable version that gates WAL trimming, and answers currency subscriptions so idle shards' materializers stay current without polling. It is the log's only data-plane consumer, and materializers' only data-plane source.
 
 ### **Director**
 
@@ -282,7 +282,7 @@ The log storage engine implementation that provides durable, append-only transac
 
 ### **ShardServer**
 
-The per-shard process in a log's Demux tree that buffers its shard's recent transaction slices, persists them as chunks on commanded cuts, and serves the shard's continuous stream to materializers — chunks for history, buffer for recent data, with version currency on every reply.
+An anonymous per-shard process owned by exactly one log's Demux. It buffers that replica's recent transaction slices, persists them as shared deterministic chunks on commanded cuts, and serves the shard's continuous stream to materializers — chunks for history, buffer for recent data, with version currency on every reply. Replicated logs own distinct ShardServers for the same logical shard and advance their WAL trim floors only from their own child's confirmations.
 
 ### **Storage**
 

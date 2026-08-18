@@ -14,11 +14,15 @@
     {
       "text": "PR review follow-up: consolidate the builder and deadline process-dictionary entries behind one Bedrock.Internal.Repo.TransactionContext key. Keep per-Repo isolation, preserve nested deadline inheritance and builder replacement across retries, and migrate tests away from raw Process.put/get calls.",
       "timestamp": "2026-08-18T22:31:33Z"
+    },
+    {
+      "text": "Review refactor TDD: RED transaction_context_test could not compile because no context abstraction existed. GREEN: TransactionContext now owns one process-dictionary key containing per-Repo builder/deadline structs; nested deadlines restore only the affected Repo entry; all Repo tests seed through accessors. Verification: 30 focused tests, 461 internal tests plus 42 properties, full suite 2,544 tests plus 158 properties and 13 doctests, format, Credo strict, and Dialyzer all pass.",
+      "timestamp": "2026-08-18T22:36:12Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Bound post-recovery reads and wake every readable Olivine waiter",
   "type": "bug",
-  "updated_at": "2026-08-18T22:31:33Z"
+  "updated_at": "2026-08-18T22:36:12Z"
 }

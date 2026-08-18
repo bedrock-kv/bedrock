@@ -113,6 +113,25 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec remove_tsl_subscriber(t :: State.t(), subscriber :: pid()) :: State.t()
     def remove_tsl_subscriber(t, subscriber), do: %{t | tsl_subscribers: MapSet.delete(t.tsl_subscribers, subscriber)}
 
+    @doc """
+    Replays the current layout to one subscriber, if a layout exists.
+
+    Broadcasts only reach subscribers that existed when the layout was
+    published. A Link that registers after the layout stabilized would
+    otherwise keep a nil cache until the next recovery — its clients
+    unavailable and its foreman never handed the reconciliation trigger.
+    The message is identical to a live broadcast, so the subscriber's
+    handling is too. With no layout yet (bootstrap, mid-recovery) nothing
+    is sent: an incomplete layout is not a runtime layout.
+    """
+    @spec replay_tsl_to(t :: State.t(), subscriber :: pid()) :: State.t()
+    def replay_tsl_to(%{transaction_system_layout: nil} = t, _subscriber), do: t
+
+    def replay_tsl_to(t, subscriber) do
+      send(subscriber, {:tsl_updated, t.transaction_system_layout})
+      t
+    end
+
     @spec broadcast_tsl_update(t :: State.t(), tsl :: TransactionSystemLayout.t() | nil) :: State.t()
     def broadcast_tsl_update(t, tsl) do
       for subscriber <- t.tsl_subscribers do

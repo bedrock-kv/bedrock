@@ -39,7 +39,9 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
     test "returns error when not in locked mode", %{state: state} do
       unlocked_state = %{state | mode: :running}
 
-      assert {:error, :lock_required} =
+      # Precondition failure returns the unchanged state: recovery exits
+      # are uniformly {:ok, state} | {:error, reason, state}.
+      assert {:error, :lock_required, ^unlocked_state} =
                Recovery.recover_from(
                  unlocked_state,
                  [:source],

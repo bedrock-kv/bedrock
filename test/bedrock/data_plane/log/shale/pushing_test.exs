@@ -11,6 +11,10 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
+  # Every push returns the same transition shape; these tests assert the
+  # effects as data (replies, append events, parking) rather than
+  # observing callbacks — Pushing performs no effects itself.
+  #
   # ExUnit owns the directory lifecycle: each test gets a fresh tmp_dir,
   # wiped before the test runs — so no teardown can race the linked
   # recycler still creating preallocated files.
@@ -28,55 +32,57 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
     %{dir: dir, recycler: recycler}
   end
 
-  describe "push/4 error conditions" do
+  describe "push/4 rejections" do
+    test "rejects while locked" do
+      state = %State{mode: :locked, last_version: Version.zero()}
+
+      assert %{state: ^state, appended: [], replies: [{:tok, {:error, :not_ready}}], parked?: false} =
+               Pushing.push(state, Version.zero(), <<1, 2, 3>>, :tok)
+    end
+
     test "rejects transaction that is too large" do
       state = %State{
-        mode: :ready,
+        mode: :running,
         last_version: Version.from_integer(0)
       }
 
       # Create a transaction larger than 10MB limit
       large_transaction = :binary.copy(<<0>>, 10_000_001)
-      ack_fn = fn _result -> :ok end
 
-      assert {:error, :tx_too_large} =
-               Pushing.push(state, Version.from_integer(1), large_transaction, ack_fn)
+      assert %{state: ^state, appended: [], replies: [{:tok, {:error, :tx_too_large}}], parked?: false} =
+               Pushing.push(state, Version.from_integer(1), large_transaction, :tok)
     end
 
     test "rejects out of order transaction with version less than last_version" do
       state = %State{
-        mode: :ready,
+        mode: :running,
         last_version: Version.from_integer(5),
         pending_pushes: %{}
       }
 
       transaction = TransactionTestSupport.new_log_transaction(3, %{"a" => "1"})
-      ack_fn = fn _result -> :ok end
 
       # Trying to push version 3 when last_version is 5
-      assert {:error, :tx_out_of_order} =
-               Pushing.push(state, Version.from_integer(3), transaction, ack_fn)
+      assert %{state: ^state, appended: [], replies: [{:tok, {:error, :tx_out_of_order}}], parked?: false} =
+               Pushing.push(state, Version.from_integer(3), transaction, :tok)
     end
 
-    test "waits for future transaction version" do
+    test "parks a future transaction version with its token, unreplied" do
       state = %State{
-        mode: :ready,
+        mode: :running,
         last_version: Version.from_integer(5),
         pending_pushes: %{}
       }
 
       transaction = TransactionTestSupport.new_log_transaction(10, %{"a" => "1"})
-      ack_fn = fn _result -> :ok end
 
-      # Trying to push version 10 when last_version is 5 should wait
-      assert {:wait, new_state} =
-               Pushing.push(state, Version.from_integer(10), transaction, ack_fn)
+      assert %{state: parked_state, appended: [], replies: [], parked?: true} =
+               Pushing.push(state, Version.from_integer(10), transaction, :tok)
 
-      # Transaction should be in pending pushes
-      assert Map.has_key?(new_state.pending_pushes, Version.from_integer(10))
+      assert {^transaction, :tok} = Map.fetch!(parked_state.pending_pushes, Version.from_integer(10))
     end
 
-    test "acknowledges sync failure as push error" do
+    test "a sync failure is an error reply with the caller's state intact" do
       path = Path.join(System.tmp_dir!(), "shale_push_sync_fail_#{System.unique_integer([:positive])}.log")
       File.write!(path, :binary.copy(<<0>>, 1024))
 
@@ -87,7 +93,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: fn _fd -> {:error, :eio} end)
 
       state = %State{
-        mode: :ready,
+        mode: :running,
         last_version: Version.from_integer(0),
         pending_pushes: %{},
         writer: writer,
@@ -95,17 +101,9 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       }
 
       transaction = TransactionTestSupport.new_log_transaction(0, %{"a" => "1"})
-      caller = self()
 
-      ack_fn = fn result ->
-        send(caller, {:ack_result, result})
-        :ok
-      end
-
-      assert {:error, :eio, ^state, []} =
-               Pushing.push(state, Version.from_integer(0), transaction, ack_fn)
-
-      assert_receive {:ack_result, {:error, :eio}}
+      assert %{state: ^state, appended: [], replies: [{:tok, {:error, :eio}}], parked?: false} =
+               Pushing.push(state, Version.from_integer(0), transaction, :tok)
 
       assert :ok = Writer.close(writer)
     end
@@ -114,9 +112,9 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   describe "draining queued pushes" do
     setup :recycler_in_tmp_dir
 
-    test "returns every appended transaction in predecessor-chain order", %{dir: dir, recycler: recycler} do
+    test "a drain returns every append event and reply in predecessor-chain order", %{dir: dir, recycler: recycler} do
       state = %State{
-        mode: :ready,
+        mode: :running,
         path: dir,
         segment_recycler: recycler,
         writer: nil,
@@ -126,34 +124,31 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
         pending_pushes: %{}
       }
 
+      v1 = Version.from_integer(1)
+      v2 = Version.from_integer(2)
       first = TransactionTestSupport.new_log_transaction(1, %{"first" => "1"})
       second = TransactionTestSupport.new_log_transaction(2, %{"second" => "2"})
-      caller = self()
 
-      assert {:wait, state} =
-               Pushing.push(state, Version.from_integer(1), second, fn result ->
-                 send(caller, {:ack, :second, result})
-                 :ok
-               end)
+      assert %{state: state, parked?: true, replies: []} =
+               Pushing.push(state, v1, second, :second_token)
 
-      refute_receive {:ack, :second, _}
+      assert %{
+               state: state,
+               appended: [{^v1, ^first}, {^v2, ^second}],
+               replies: [{:first_token, :ok}, {:second_token, :ok}],
+               parked?: false
+             } = Pushing.push(state, Version.zero(), first, :first_token)
 
-      assert {:ok, state, [^first, ^second]} =
-               Pushing.push(state, Version.zero(), first, fn result ->
-                 send(caller, {:ack, :first, result})
-                 :ok
-               end)
-
-      assert_receive {:ack, :first, :ok}
-      assert_receive {:ack, :second, :ok}
-      assert state.last_version == Version.from_integer(2)
+      assert state.last_version == v2
       assert state.pending_pushes == %{}
     end
 
-    test "retains the valid state and appended prefix when a queued append fails" do
+    test "a partial drain keeps the admitted prefix and reports the failure", ctx do
       path = Path.join(System.tmp_dir!(), "pushing_partial_#{System.unique_integer([:positive])}.log")
       File.write!(path, :binary.copy(<<0>>, 1_000_000))
       on_exit(fn -> File.rm(path) end)
+
+      _ = ctx
 
       {:ok, sync_count} = Agent.start_link(fn -> 0 end)
 
@@ -167,34 +162,181 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: sync_fun)
 
       state = %State{
-        mode: :ready,
+        mode: :running,
         last_version: Version.zero(),
         pending_pushes: %{},
         writer: writer,
         active_segment: %Segment{path: path, min_version: Version.zero(), transactions: []}
       }
 
+      v1 = Version.from_integer(1)
       first = TransactionTestSupport.new_log_transaction(1, %{"first" => "1"})
       second = TransactionTestSupport.new_log_transaction(2, %{"second" => "2"})
-      caller = self()
 
-      assert {:wait, state} =
-               Pushing.push(state, Version.from_integer(1), second, fn result ->
-                 send(caller, {:ack, :second, result})
-                 :ok
-               end)
+      assert %{state: state, parked?: true} = Pushing.push(state, v1, second, :second_token)
 
-      assert {:error, :eio, state, [^first]} =
-               Pushing.push(state, Version.zero(), first, fn result ->
-                 send(caller, {:ack, :first, result})
-                 :ok
-               end)
+      assert %{
+               state: state,
+               appended: [{^v1, ^first}],
+               replies: [{:first_token, :ok}, {:second_token, {:error, :eio}}],
+               parked?: false
+             } = Pushing.push(state, Version.zero(), first, :first_token)
 
-      assert_receive {:ack, :first, :ok}
-      assert_receive {:ack, :second, {:error, :eio}}
-      assert state.last_version == Version.from_integer(1)
+      assert state.last_version == v1
       assert state.pending_pushes == %{}
       assert :ok = Writer.close(state.writer)
+    end
+  end
+
+  describe "WAL safety limit bounds every prospective commit version" do
+    setup :recycler_in_tmp_dir
+
+    defp bounded_state(dir, recycler, limit, floor_int) do
+      %State{
+        mode: :running,
+        path: dir,
+        segment_recycler: recycler,
+        writer: nil,
+        active_segment: nil,
+        segments: [],
+        last_version: Version.from_integer(1_000),
+        available_after: Version.from_integer(1_000),
+        oldest_version: Version.from_integer(1_000),
+        reject_pushes_above_lag_us: limit,
+        min_durable_version: floor_int && Version.from_integer(floor_int),
+        pending_pushes: %{}
+      }
+    end
+
+    defp bp_tx(version_int), do: TransactionTestSupport.new_log_transaction(version_int, %{"k" => "v"})
+
+    defp assert_wal_limit_error(reason, expected) do
+      assert {:recovery_required, {:wal_limit_exceeded, details}} = reason
+
+      Enum.each(expected, fn {key, value} ->
+        assert Map.fetch!(details, key) == value
+      end)
+
+      reason
+    end
+
+    test "a direct push beyond the bound trips the recovery-required fuse before append",
+         %{dir: dir, recycler: recycler} do
+      state = bounded_state(dir, recycler, 1_000, 1_000)
+
+      assert %{state: after_state, appended: [], replies: [{:tok, {:error, reason}}], parked?: false} =
+               Pushing.push(state, Version.from_integer(1_000), bp_tx(2_001), :tok)
+
+      assert_wal_limit_error(reason,
+        commit_version: Version.from_integer(2_001),
+        min_durable_version: Version.from_integer(1_000),
+        last_version: Version.from_integer(1_000),
+        lag_us: 1_001,
+        limit_us: 1_000
+      )
+
+      assert after_state.last_version == Version.from_integer(1_000)
+    end
+
+    test "a future push beyond the bound signals recovery instead of entering the queue",
+         %{dir: dir, recycler: recycler} do
+      state = bounded_state(dir, recycler, 1_000, 1_000)
+
+      assert %{appended: [], replies: [{:tok, {:error, reason}}], parked?: false} =
+               Pushing.push(state, Version.from_integer(3_000), bp_tx(4_000), :tok)
+
+      assert_wal_limit_error(reason,
+        commit_version: Version.from_integer(4_000),
+        min_durable_version: Version.from_integer(1_000),
+        last_version: Version.from_integer(1_000),
+        lag_us: 3_000,
+        limit_us: 1_000
+      )
+    end
+
+    test "entries queued before the floor existed cannot cross the bound when the gap fills",
+         %{dir: dir, recycler: recycler} do
+      # No durable floor yet: the future push is admitted unchecked (the
+      # bound cannot be evaluated without a floor).
+      state = bounded_state(dir, recycler, 2_500, nil)
+
+      assert %{state: state, parked?: true} =
+               Pushing.push(state, Version.from_integer(3_000), bp_tx(5_000), :queued_token)
+
+      # The first confirmation establishes the floor. Filling the gap now
+      # admits the filler (2_000 <= 2_500 behind the floor) but must NOT
+      # blindly drain the queue past the bound: the queued transaction sits
+      # 4_000 behind the floor.
+      state = %{state | min_durable_version: Version.from_integer(1_000)}
+      filler = bp_tx(3_000)
+      v3000 = Version.from_integer(3_000)
+
+      assert %{
+               state: after_state,
+               appended: [{^v3000, ^filler}],
+               replies: [{:filler_token, :ok}, {:queued_token, {:error, reason}}],
+               parked?: false
+             } = Pushing.push(state, Version.from_integer(1_000), filler, :filler_token)
+
+      assert_wal_limit_error(reason,
+        commit_version: Version.from_integer(5_000),
+        min_durable_version: Version.from_integer(1_000),
+        last_version: Version.from_integer(3_000),
+        lag_us: 4_000,
+        limit_us: 2_500
+      )
+
+      # Ordering state stays consistent: the admitted prefix is the tip,
+      # the rejected suffix is gone, nobody is stranded.
+      assert after_state.last_version == v3000
+      assert after_state.pending_pushes == %{}
+    end
+
+    test "tripping the fuse releases every queued successor so recovery cannot strand callers",
+         %{dir: dir, recycler: recycler} do
+      state = bounded_state(dir, recycler, 2_500, nil)
+
+      assert %{state: state, parked?: true} =
+               Pushing.push(state, Version.from_integer(9_000), bp_tx(9_500), :queued_token_1)
+
+      assert %{state: state, parked?: true} =
+               Pushing.push(state, Version.from_integer(9_500), bp_tx(10_000), :queued_token_2)
+
+      state = %{state | min_durable_version: Version.from_integer(1_000)}
+
+      assert %{
+               state: after_state,
+               appended: [],
+               replies: [
+                 {:direct_token, {:error, reason}},
+                 {:queued_token_1, {:error, reason_1}},
+                 {:queued_token_2, {:error, reason_2}}
+               ],
+               parked?: false
+             } = Pushing.push(state, Version.from_integer(1_000), bp_tx(9_000), :direct_token)
+
+      assert_wal_limit_error(reason,
+        commit_version: Version.from_integer(9_000),
+        min_durable_version: Version.from_integer(1_000),
+        last_version: Version.from_integer(1_000),
+        lag_us: 8_000,
+        limit_us: 2_500
+      )
+
+      assert reason_1 == reason
+      assert reason_2 == reason
+      assert after_state.pending_pushes == %{}
+    end
+
+    test "with no hard limit, arbitrarily lagged pushes stay admitted", %{dir: dir, recycler: recycler} do
+      state = bounded_state(dir, recycler, nil, 1_000)
+      tx = bp_tx(10_000_000)
+      v = Version.from_integer(10_000_000)
+
+      assert %{state: state, appended: [{^v, ^tx}], replies: [{:tok, :ok}], parked?: false} =
+               Pushing.push(state, Version.from_integer(1_000), tx, :tok)
+
+      assert state.last_version == v
     end
   end
 
@@ -203,7 +345,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
     defp write!(state, version_int) do
       tx = TransactionTestSupport.new_log_transaction(version_int, %{"k" => "v"})
-      {:ok, state} = Pushing.write_encoded_transaction(state, tx)
+      {:ok, state, _event} = Pushing.append_transaction(state, tx)
       state
     end
 
@@ -211,7 +353,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       interval = Demux.Server.default_cut_interval_us()
 
       state = %State{
-        mode: :ready,
+        mode: :running,
         path: dir,
         segment_recycler: recycler,
         writer: nil,
@@ -265,7 +407,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
     defp state_with(dir, recycler, writer_opts) do
       %State{
-        mode: :ready,
+        mode: :running,
         path: dir,
         segment_recycler: recycler,
         writer: nil,
@@ -287,8 +429,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       {control, sync_fun} = controlled_sync()
 
       state = state_with(dir, recycler, sync_fun: sync_fun)
-      {:ok, state} = Pushing.write_encoded_transaction(state, tx(1_000))
-      {:ok, state} = Pushing.write_encoded_transaction(state, tx(2_000))
+      {:ok, state, _} = Pushing.append_transaction(state, tx(1_000))
+      {:ok, state, _} = Pushing.append_transaction(state, tx(2_000))
       predecessor = state.active_segment
       wal_files_before = wal_files(dir)
 
@@ -297,7 +439,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       Agent.update(control, &%{&1 | fail: true})
 
       assert {:error, :eio, failed_state} =
-               Pushing.write_encoded_transaction(state, tx(interval + 1))
+               Pushing.append_transaction(state, tx(interval + 1))
 
       # The predecessor is still the active segment — not in the
       # trim-eligible list — and no successor is represented as owned WAL
@@ -317,8 +459,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       Agent.update(control, &%{&1 | fail: false})
       Agent.update(control, &%{&1 | calls: 0})
 
-      assert {:ok, rolled_state} =
-               Pushing.write_encoded_transaction(failed_state, tx(interval + 1))
+      assert {:ok, rolled_state, _} =
+               Pushing.append_transaction(failed_state, tx(interval + 1))
 
       assert rolled_state.active_segment.min_version == Version.from_integer(interval + 1)
       assert [%{path: rolled_predecessor_path}] = rolled_state.segments
@@ -346,14 +488,14 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       end
 
       state = state_with(dir, recycler, pwrite_fun: pwrite_fun)
-      {:ok, state} = Pushing.write_encoded_transaction(state, tx(1_000))
+      {:ok, state, _} = Pushing.append_transaction(state, tx(1_000))
       predecessor = state.active_segment
       wal_files_before = wal_files(dir)
 
       Agent.update(control, fn _ -> true end)
 
       assert {:error, :enospc, failed_state} =
-               Pushing.write_encoded_transaction(state, tx(interval + 1))
+               Pushing.append_transaction(state, tx(interval + 1))
 
       assert failed_state.active_segment.path == predecessor.path
       assert failed_state.segments == []
@@ -363,8 +505,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
       Agent.update(control, fn _ -> false end)
 
-      assert {:ok, rolled_state} =
-               Pushing.write_encoded_transaction(failed_state, tx(interval + 1))
+      assert {:ok, rolled_state, _} =
+               Pushing.append_transaction(failed_state, tx(interval + 1))
 
       assert rolled_state.active_segment.min_version == Version.from_integer(interval + 1)
       assert [%{path: kept}] = rolled_state.segments
@@ -379,171 +521,17 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       state = state_with(dir, recycler, sync_fun: sync_fun)
       first = tx(1_000)
       second = tx(2_000)
-      {:ok, state} = Pushing.write_encoded_transaction(state, first)
-      {:ok, state} = Pushing.write_encoded_transaction(state, second)
+      {:ok, state, _} = Pushing.append_transaction(state, first)
+      {:ok, state, _} = Pushing.append_transaction(state, second)
 
       Agent.update(control, &%{&1 | fail: true})
-      assert {:error, :eio, _failed_state} = Pushing.write_encoded_transaction(state, tx(interval + 1))
+      assert {:error, :eio, _failed_state} = Pushing.append_transaction(state, tx(interval + 1))
 
       # What a cold start reads from disk is the predecessor alone, with
       # both transactions and its original replay cursor.
       assert {:ok, [segment]} = ColdStarting.reload_segments_at_path(dir)
       assert segment.previous_version == Version.from_integer(0)
       assert [^second, ^first] = Segment.transactions(segment)
-    end
-  end
-
-  describe "WAL safety limit bounds every prospective commit version" do
-    setup :recycler_in_tmp_dir
-
-    defp bounded_state(dir, recycler, limit, floor_int) do
-      %State{
-        mode: :running,
-        path: dir,
-        segment_recycler: recycler,
-        writer: nil,
-        active_segment: nil,
-        segments: [],
-        last_version: Version.from_integer(1_000),
-        available_after: Version.from_integer(1_000),
-        oldest_version: Version.from_integer(1_000),
-        reject_pushes_above_lag_us: limit,
-        min_durable_version: floor_int && Version.from_integer(floor_int),
-        pending_pushes: %{}
-      }
-    end
-
-    defp bp_tx(version_int), do: TransactionTestSupport.new_log_transaction(version_int, %{"k" => "v"})
-
-    defp ack_to(caller, tag) do
-      fn result ->
-        send(caller, {:ack, tag, result})
-        :ok
-      end
-    end
-
-    defp assert_wal_limit_error(reason, expected) do
-      assert {:recovery_required, {:wal_limit_exceeded, details}} = reason
-
-      Enum.each(expected, fn {key, value} ->
-        assert Map.fetch!(details, key) == value
-      end)
-
-      reason
-    end
-
-    test "a direct push beyond the bound trips the recovery-required fuse before append",
-         %{dir: dir, recycler: recycler} do
-      state = bounded_state(dir, recycler, 1_000, 1_000)
-      caller = self()
-
-      assert {:error, reason, after_state, []} =
-               Pushing.push(state, Version.from_integer(1_000), bp_tx(2_001), ack_to(caller, :direct))
-
-      assert_wal_limit_error(reason,
-        commit_version: Version.from_integer(2_001),
-        min_durable_version: Version.from_integer(1_000),
-        last_version: Version.from_integer(1_000),
-        lag_us: 1_001,
-        limit_us: 1_000
-      )
-
-      assert_receive {:ack, :direct, {:error, ^reason}}
-      assert after_state.last_version == Version.from_integer(1_000)
-    end
-
-    test "a future push beyond the bound signals recovery instead of entering the queue",
-         %{dir: dir, recycler: recycler} do
-      state = bounded_state(dir, recycler, 1_000, 1_000)
-
-      assert {:error, reason} =
-               Pushing.push(state, Version.from_integer(3_000), bp_tx(4_000), fn _ -> :ok end)
-
-      assert_wal_limit_error(reason,
-        commit_version: Version.from_integer(4_000),
-        min_durable_version: Version.from_integer(1_000),
-        last_version: Version.from_integer(1_000),
-        lag_us: 3_000,
-        limit_us: 1_000
-      )
-    end
-
-    test "entries queued before the floor existed cannot cross the bound when the gap fills",
-         %{dir: dir, recycler: recycler} do
-      # No durable floor yet: the future push is admitted unchecked (the
-      # bound cannot be evaluated without a floor).
-      state = bounded_state(dir, recycler, 2_500, nil)
-      caller = self()
-
-      assert {:wait, state} =
-               Pushing.push(state, Version.from_integer(3_000), bp_tx(5_000), ack_to(caller, :queued))
-
-      # The first confirmation establishes the floor. Filling the gap now
-      # admits the filler (2_000 <= 2_500 behind the floor) but must NOT
-      # blindly drain the queue past the bound: the queued transaction sits
-      # 4_000 behind the floor.
-      state = %{state | min_durable_version: Version.from_integer(1_000)}
-      filler = bp_tx(3_000)
-
-      assert {:error, reason, after_state, [^filler]} =
-               Pushing.push(state, Version.from_integer(1_000), filler, ack_to(caller, :filler))
-
-      assert_wal_limit_error(reason,
-        commit_version: Version.from_integer(5_000),
-        min_durable_version: Version.from_integer(1_000),
-        last_version: Version.from_integer(3_000),
-        lag_us: 4_000,
-        limit_us: 2_500
-      )
-
-      assert_receive {:ack, :filler, :ok}
-      assert_receive {:ack, :queued, {:error, ^reason}}
-
-      # Ordering state stays consistent: the admitted prefix is the tip,
-      # the rejected suffix is gone, nobody is stranded.
-      assert after_state.last_version == Version.from_integer(3_000)
-      assert after_state.pending_pushes == %{}
-    end
-
-    test "tripping the fuse releases every queued successor so recovery cannot strand callers",
-         %{dir: dir, recycler: recycler} do
-      state = bounded_state(dir, recycler, 2_500, nil)
-      caller = self()
-
-      assert {:wait, state} =
-               Pushing.push(state, Version.from_integer(9_000), bp_tx(9_500), ack_to(caller, :queued_1))
-
-      assert {:wait, state} =
-               Pushing.push(state, Version.from_integer(9_500), bp_tx(10_000), ack_to(caller, :queued_2))
-
-      state = %{state | min_durable_version: Version.from_integer(1_000)}
-
-      assert {:error, reason, after_state, []} =
-               Pushing.push(state, Version.from_integer(1_000), bp_tx(9_000), ack_to(caller, :direct))
-
-      assert_wal_limit_error(reason,
-        commit_version: Version.from_integer(9_000),
-        min_durable_version: Version.from_integer(1_000),
-        last_version: Version.from_integer(1_000),
-        lag_us: 8_000,
-        limit_us: 2_500
-      )
-
-      assert_receive {:ack, :direct, {:error, ^reason}}
-      assert_receive {:ack, :queued_1, {:error, ^reason}}
-      assert_receive {:ack, :queued_2, {:error, ^reason}}
-      assert after_state.pending_pushes == %{}
-    end
-
-    test "with no hard limit, arbitrarily lagged pushes stay admitted", %{dir: dir, recycler: recycler} do
-      state = bounded_state(dir, recycler, nil, 1_000)
-      caller = self()
-
-      assert {:ok, state, [_tx]} =
-               Pushing.push(state, Version.from_integer(1_000), bp_tx(10_000_000), ack_to(caller, :unbounded))
-
-      assert_receive {:ack, :unbounded, :ok}
-      assert state.last_version == Version.from_integer(10_000_000)
     end
   end
 
@@ -566,7 +554,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       assert {:ok, writer} = Writer.open(path, Version.zero())
 
       state = %State{
-        mode: :ready,
+        mode: :running,
         last_version: Version.from_integer(1_000),
         available_after: Version.zero(),
         oldest_version: Version.from_integer(1_000),
@@ -579,7 +567,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       }
 
       tx = TransactionTestSupport.new_log_transaction(2_000, %{"k" => "v"})
-      assert {:ok, state} = Pushing.write_encoded_transaction(state, tx)
+      assert {:ok, state, _event} = Pushing.append_transaction(state, tx)
 
       # Nonempty WAL (tip past the floor): oldest_version is retained.
       assert state.oldest_version == Version.from_integer(1_000)
@@ -594,7 +582,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       floor = Version.from_integer(5_000)
 
       state = %State{
-        mode: :ready,
+        mode: :running,
         path: dir,
         segment_recycler: recycler,
         writer: nil,
@@ -606,22 +594,22 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       }
 
       tx = TransactionTestSupport.new_log_transaction(6_000, %{"k" => "v"})
-      assert {:ok, state} = Pushing.write_encoded_transaction(state, tx)
+      assert {:ok, state, _event} = Pushing.append_transaction(state, tx)
 
       assert state.oldest_version == Version.from_integer(6_000)
       assert state.last_version == Version.from_integer(6_000)
 
       # And the next append keeps it: the WAL is no longer empty.
       tx2 = TransactionTestSupport.new_log_transaction(7_000, %{"k" => "v"})
-      assert {:ok, state} = Pushing.write_encoded_transaction(state, tx2)
+      assert {:ok, state, _event} = Pushing.append_transaction(state, tx2)
       assert state.oldest_version == Version.from_integer(6_000)
     end
   end
 
-  describe "write_encoded_transaction/2 error handling" do
-    test "raises when transaction version cannot be extracted" do
+  describe "append_transaction/2 error handling" do
+    test "an unversionable transaction is an error with the caller's state" do
       state = %State{
-        mode: :ready,
+        mode: :running,
         last_version: Version.from_integer(0),
         writer: nil,
         segment_recycler: nil
@@ -630,9 +618,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       # Malformed transaction that will fail version extraction
       malformed_transaction = <<0, 1, 2>>
 
-      assert_raise RuntimeError, ~r/Failed to extract version/, fn ->
-        Pushing.write_encoded_transaction(state, malformed_transaction)
-      end
+      assert {:error, _reason, ^state} = Pushing.append_transaction(state, malformed_transaction)
     end
   end
 end

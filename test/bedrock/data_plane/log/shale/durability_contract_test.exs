@@ -60,18 +60,10 @@ defmodule Bedrock.DataPlane.Log.Shale.DurabilityContractTest do
     }
 
     transaction = TransactionTestSupport.new_log_transaction(0, %{"k" => "v"})
-    caller = self()
-
-    ack_fn = fn result ->
-      send(caller, {:ack_result, result})
-      :ok
-    end
-
-    assert {:error, :eio, ^state, []} =
-             Pushing.push(state, Version.from_integer(0), transaction, ack_fn)
-
-    assert_receive {:ack_result, {:error, :eio}}
-    refute_receive {:ack_result, :ok}, 20
+    # The transition carries no append event and exactly one reply — the
+    # error — so no false success acknowledgement can exist.
+    assert %{state: ^state, appended: [], replies: [{:tok, {:error, :eio}}], parked?: false} =
+             Pushing.push(state, Version.from_integer(0), transaction, :tok)
 
     assert :ok = Writer.close(writer)
   end

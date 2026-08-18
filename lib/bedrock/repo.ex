@@ -17,7 +17,8 @@ defmodule Bedrock.Repo do
   ## Options
 
   - `:retry_limit` - Maximum number of retries on transaction conflicts (default: nil for unlimited)
-  - `:timeout_in_ms` - Transaction timeout in milliseconds
+  - `:timeout_in_ms` - End-to-end transaction timeout, including retries
+    (default: 5000; use `:infinity` to disable)
 
   ## Examples
 

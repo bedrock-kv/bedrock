@@ -2,6 +2,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.Internal.Repo
+  alias Bedrock.Internal.Repo.TransactionContext
 
   defmodule TestRepo do
     use Bedrock.Repo, cluster: MockCluster
@@ -17,7 +18,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       assert Repo.get(TestRepo, "test_key") == nil
     end
@@ -31,7 +32,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       assert Repo.get(TestRepo, "test_key") == "test_value"
     end
@@ -45,7 +46,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       {Repo, failed_txn, :retryable_failure, :unavailable} = catch_throw(Repo.get(TestRepo, "test_key"))
       assert failed_txn == txn
@@ -60,7 +61,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       {Repo, failed_txn, :retryable_failure, :timeout} = catch_throw(Repo.get(TestRepo, "test_key"))
       assert failed_txn == txn
@@ -75,7 +76,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       {module, failed_txn, type, reason, operation, key} = catch_throw(Repo.get(TestRepo, "test_key"))
       assert module == Repo
@@ -96,7 +97,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       {module, failed_txn, error_type, reason} = catch_throw(Repo.get(TestRepo, "specific_test_key"))
 
@@ -117,7 +118,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       selector = Bedrock.KeySelector.first_greater_than("test_key")
       assert Repo.select(TestRepo, selector) == nil
@@ -132,7 +133,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       selector = Bedrock.KeySelector.first_greater_than("test_key")
       assert Repo.select(TestRepo, selector) == nil
@@ -147,7 +148,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       selector = Bedrock.KeySelector.first_greater_than("test_key")
       assert Repo.select(TestRepo, selector) == {"resolved_key", "value"}
@@ -162,7 +163,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       selector = Bedrock.KeySelector.first_greater_than("test_key")
 
@@ -179,7 +180,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       selector = Bedrock.KeySelector.first_greater_than("test_key")
 
@@ -196,7 +197,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
           end
         end)
 
-      Process.put({:transaction, TestRepo}, txn)
+      TransactionContext.put_builder(TestRepo, txn)
 
       selector = Bedrock.KeySelector.first_greater_than("selector_test_key")
 
@@ -222,7 +223,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
             end
           end)
 
-        Process.put({:transaction, TestRepo}, txn)
+        TransactionContext.put_builder(TestRepo, txn)
 
         {module, failed_txn, error_type, reason} = catch_throw(Repo.get(TestRepo, "test_key"))
 
@@ -245,7 +246,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
             end
           end)
 
-        Process.put({:transaction, TestRepo}, txn)
+        TransactionContext.put_builder(TestRepo, txn)
 
         {module, failed_txn, type, reason, operation, key} = catch_throw(Repo.get(TestRepo, "test_key"))
         assert module == Repo

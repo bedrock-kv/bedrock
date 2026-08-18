@@ -3,14 +3,17 @@ defmodule Bedrock.Internal.Repo do
   import Bitwise
 
   alias Bedrock.Cluster.Link
+  alias Bedrock.Internal.Repo.TransactionContext
   alias Bedrock.Internal.TransactionBuilder
   alias Bedrock.KeySelector
+
+  @default_timeout_in_ms 5_000
 
   @type transaction :: pid()
   @type key :: term()
   @type value :: term()
 
-  defp txn(repo_module), do: Process.get({:transaction, repo_module})
+  defp txn(repo_module), do: TransactionContext.builder(repo_module)
   defp txn!(repo_module), do: txn(repo_module) || raise("No active transaction")
 
   @spec add_read_conflict_key(module(), key()) :: :ok
@@ -27,7 +30,7 @@ defmodule Bedrock.Internal.Repo do
   def get(repo_module, key, opts) do
     t = txn!(repo_module)
 
-    case GenServer.call(t, {:get, key, opts}, :infinity) do
+    case call_transaction(repo_module, t, {:get, key, opts}) do
       {:ok, value} ->
         value
 
@@ -49,7 +52,7 @@ defmodule Bedrock.Internal.Repo do
   def select(repo_module, %KeySelector{} = key_selector, opts) do
     t = txn!(repo_module)
 
-    case GenServer.call(t, {:get_key_selector, key_selector, opts}, :infinity) do
+    case call_transaction(repo_module, t, {:get_key_selector, key_selector, opts}) do
       {:ok, {_key, _value} = result} ->
         result
 
@@ -100,6 +103,7 @@ defmodule Bedrock.Internal.Repo do
 
     # Initial state tracks the current position in the range
     initial_state = %{
+      repo: repo_module,
       txn: txn,
       current_key: start_key,
       end_key: end_key,
@@ -153,7 +157,8 @@ defmodule Bedrock.Internal.Repo do
         limit -> min(batch_size, limit - state.items_returned)
       end
 
-    case GenServer.call(
+    case call_transaction(
+           state.repo,
            state.txn,
            {:get_range, state.current_key, state.end_key, effective_batch_size, state.txn_opts},
            timeout
@@ -210,6 +215,8 @@ defmodule Bedrock.Internal.Repo do
   ## Options
 
   - `:retry_limit` - Maximum number of retry attempts (default: unlimited)
+  - `:timeout_in_ms` - End-to-end transaction timeout, including retries
+    (default: 5000; use `:infinity` to disable)
   - `:transaction_system_layout` - Use a specific TSL instead of fetching from coordinator
   """
   @spec transact(cluster :: module(), repo :: module(), (-> result) | (module() -> result), opts :: keyword()) :: result
@@ -217,46 +224,55 @@ defmodule Bedrock.Internal.Repo do
   def transact(cluster, repo, fun, opts \\ []) do
     case txn(repo) do
       nil ->
-        run_new_transaction(cluster, repo, fun, {:transaction, repo}, opts)
+        run_new_transaction(cluster, repo, fun, opts)
 
       existing_txn ->
-        run_nested_transaction(repo, existing_txn, fun)
+        run_nested_transaction(repo, existing_txn, fun, opts)
     end
   end
 
-  defp run_new_transaction(cluster, repo, fun, tx_key, opts) do
+  defp run_new_transaction(cluster, repo, fun, opts) do
     retry_limit = Keyword.get(opts, :retry_limit)
     provided_tsl = Keyword.get(opts, :transaction_system_layout)
     link = if provided_tsl, do: nil, else: cluster.link!()
+    timeout_in_ms = Keyword.get(opts, :timeout_in_ms, @default_timeout_in_ms)
 
-    run_retryable_transaction(repo, fun, 0, retry_limit, fn ->
-      tsl = fetch_tsl_for_transaction(provided_tsl, link)
-      start_transaction_builder(tsl, tx_key)
+    TransactionContext.with_deadline(repo, timeout_in_ms, fn ->
+      run_retryable_transaction(repo, fun, 0, retry_limit, fn ->
+        tsl = fetch_tsl_for_transaction(repo, provided_tsl, link)
+        start_transaction_builder(tsl, repo)
+      end)
     end)
   after
-    Process.delete(tx_key)
+    TransactionContext.clear_builder(repo)
   end
 
-  defp run_nested_transaction(repo, txn, fun) do
-    run_retryable_transaction(repo, fun, 0, nil, fn ->
-      GenServer.call(txn, :nested_transaction, :infinity)
-      txn
+  defp run_nested_transaction(repo, txn, fun, opts) do
+    timeout_in_ms = Keyword.get(opts, :timeout_in_ms, @default_timeout_in_ms)
+
+    TransactionContext.with_deadline(repo, timeout_in_ms, fn ->
+      run_retryable_transaction(repo, fun, 0, nil, fn ->
+        call_transaction(repo, txn, :nested_transaction)
+        txn
+      end)
     end)
   end
 
-  defp fetch_tsl_for_transaction(nil, link) do
-    case Link.fetch_transaction_system_layout(link) do
+  defp fetch_tsl_for_transaction(repo, nil, link) do
+    case Link.fetch_transaction_system_layout(link,
+           timeout_in_ms: TransactionContext.remaining_timeout!(repo, :timeout)
+         ) do
       {:ok, tsl} -> tsl
       {:error, reason} -> throw({__MODULE__, nil, :retryable_failure, reason})
     end
   end
 
-  defp fetch_tsl_for_transaction(tsl, _link), do: tsl
+  defp fetch_tsl_for_transaction(_repo, tsl, _link), do: tsl
 
-  defp start_transaction_builder(tsl, tx_key) do
+  defp start_transaction_builder(tsl, repo) do
     case TransactionBuilder.start_link(transaction_system_layout: tsl) do
       {:ok, txn} ->
-        Process.put(tx_key, txn)
+        TransactionContext.put_builder(repo, txn)
         txn
 
       {:error, reason} ->
@@ -265,12 +281,13 @@ defmodule Bedrock.Internal.Repo do
   end
 
   defp run_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn) do
+    TransactionContext.remaining_timeout!(repo, :timeout)
     run_transaction(repo, restart_fn.(), fun)
   catch
     {__MODULE__, failed_txn, :retryable_failure, reason} ->
       try_to_rollback(failed_txn)
       enforce_retry_limit(retry_count, retry_limit, reason)
-      wait_befor_retry(retry_count)
+      wait_before_retry(repo, retry_count, reason)
       run_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn)
 
     {__MODULE__, :rollback, reason} ->
@@ -289,18 +306,21 @@ defmodule Bedrock.Internal.Repo do
       {:arity, 1} -> fun.(repo)
       {:arity, 0} -> fun.()
     end
-    |> then(&try_to_commit(txn, &1))
+    |> then(&try_to_commit(repo, txn, &1))
   rescue
     exception ->
       try_to_rollback(txn)
       reraise exception, __STACKTRACE__
   end
 
-  defp wait_befor_retry(retry_count) do
+  defp wait_before_retry(repo, retry_count, last_reason) do
     base_delay = 1 <<< retry_count
     jitter = :rand.uniform(3)
     wait_time_in_ms = min(base_delay + jitter, 1000)
-    Process.sleep(wait_time_in_ms)
+    remaining = TransactionContext.remaining_timeout!(repo, last_reason)
+
+    Process.sleep(min_timeout(wait_time_in_ms, remaining))
+    TransactionContext.remaining_timeout!(repo, last_reason)
   end
 
   defp enforce_retry_limit(_retry_count, nil, _reason), do: :ok
@@ -311,8 +331,8 @@ defmodule Bedrock.Internal.Repo do
           "Transaction retry limit exceeded after #{retry_limit} attempts. Last error: #{inspect(reason)}"
   end
 
-  defp try_to_commit(txn, result) do
-    case GenServer.call(txn, :commit) do
+  defp try_to_commit(repo, txn, result) do
+    case call_transaction(repo, txn, :commit) do
       :ok -> result
       {:ok, _commit_version} -> result
       {:error, reason} -> throw({__MODULE__, txn, :retryable_failure, reason})
@@ -321,4 +341,21 @@ defmodule Bedrock.Internal.Repo do
 
   defp try_to_rollback(nil), do: :ok
   defp try_to_rollback(txn), do: GenServer.cast(txn, :rollback)
+
+  defp call_transaction(repo, txn, message, timeout \\ :transaction_deadline) do
+    timeout = bounded_timeout(repo, timeout)
+    GenServer.call(txn, message, timeout)
+  catch
+    :exit, {:timeout, _} -> throw({__MODULE__, txn, :retryable_failure, :timeout})
+  end
+
+  defp bounded_timeout(repo, :transaction_deadline), do: TransactionContext.remaining_timeout!(repo, :timeout)
+
+  defp bounded_timeout(repo, timeout) do
+    min_timeout(timeout, TransactionContext.remaining_timeout!(repo, :timeout))
+  end
+
+  defp min_timeout(:infinity, timeout), do: timeout
+  defp min_timeout(timeout, :infinity), do: timeout
+  defp min_timeout(a, b), do: min(a, b)
 end

@@ -10,6 +10,7 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.Internal.Repo
+  alias Bedrock.Internal.Repo.TransactionContext
 
   defmodule TestRepo do
     use Bedrock.Repo, cluster: MockCluster
@@ -61,7 +62,7 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
   describe "get/3 with snapshot: true" do
     test "returns same value as get/2 with snapshot option" do
       {:ok, tx} = MockTransaction.start_link(%{"test_key" => "test_value"})
-      Process.put({:transaction, TestRepo}, tx)
+      TransactionContext.put_builder(TestRepo, tx)
 
       regular_result = Repo.get(TestRepo, "test_key")
       snapshot_result = Repo.get(TestRepo, "test_key", snapshot: true)
@@ -72,13 +73,13 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
 
     test "returns nil for non-existent keys" do
       {:ok, tx} = MockTransaction.start_link(%{})
-      Process.put({:transaction, TestRepo}, tx)
+      TransactionContext.put_builder(TestRepo, tx)
       assert Repo.get(TestRepo, "non_existent", snapshot: true) == nil
     end
 
     test "works with multiple keys" do
       {:ok, tx} = MockTransaction.start_link(%{"key1" => "value1", "key2" => "value2"})
-      Process.put({:transaction, TestRepo}, tx)
+      TransactionContext.put_builder(TestRepo, tx)
 
       assert Repo.get(TestRepo, "key1", snapshot: true) == "value1"
       assert Repo.get(TestRepo, "key2", snapshot: true) == "value2"
@@ -100,7 +101,7 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
     end
 
     test "returns consistent results across multiple calls", %{tx: tx, expected_results: expected} do
-      Process.put({:transaction, TestRepo}, tx)
+      TransactionContext.put_builder(TestRepo, tx)
       result1 = TestRepo |> Repo.get_range("key", "key4", snapshot: true) |> Enum.to_list()
       result2 = TestRepo |> Repo.get_range("key", "key4", snapshot: true) |> Enum.to_list()
 
@@ -109,13 +110,13 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
     end
 
     test "works with batch_size parameter", %{tx: tx, expected_results: expected} do
-      Process.put({:transaction, TestRepo}, tx)
+      TransactionContext.put_builder(TestRepo, tx)
       results = TestRepo |> Repo.get_range("key", "key4", batch_size: 2, snapshot: true) |> Enum.to_list()
       assert results == expected
     end
 
     test "supports stream operations and early halting", %{tx: tx} do
-      Process.put({:transaction, TestRepo}, tx)
+      TransactionContext.put_builder(TestRepo, tx)
       # Test early halting
       [first_result] = TestRepo |> Repo.get_range("key", "key4", snapshot: true) |> Enum.take(1)
       assert first_result == {"key1", "value1"}
@@ -131,7 +132,7 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
     end
 
     test "handles empty ranges", %{tx: tx} do
-      Process.put({:transaction, TestRepo}, tx)
+      TransactionContext.put_builder(TestRepo, tx)
       empty_result = TestRepo |> Repo.get_range("nonexistent", "nonexistent1", snapshot: true) |> Enum.to_list()
       assert empty_result == []
 
@@ -143,7 +144,7 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
   describe "integration and error handling" do
     test "snapshot reads work alongside regular operations and handle errors gracefully" do
       {:ok, tx} = MockTransaction.start_link(%{"test" => "data"})
-      Process.put({:transaction, TestRepo}, tx)
+      TransactionContext.put_builder(TestRepo, tx)
 
       # Mix regular operations with snapshot operations
       Repo.put(TestRepo, "new_key", "new_value")
@@ -151,7 +152,7 @@ defmodule Bedrock.Internal.Repo.SnapshotTest do
 
       # Test error handling with empty transaction
       {:ok, empty_tx} = MockTransaction.start_link(%{})
-      Process.put({:transaction, TestRepo}, empty_tx)
+      TransactionContext.put_builder(TestRepo, empty_tx)
       assert Repo.get(TestRepo, "any_key", snapshot: true) == nil
 
       empty_range_results = TestRepo |> Repo.get_range("start", "end", snapshot: true) |> Enum.to_list()

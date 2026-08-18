@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-18T22:45:34Z",
+  "close_reason": "PR #139 merged; follow-up TSL publication bug split into a new ticket.",
   "created": "2026-08-18T22:00:19Z",
   "description": "Olivine waitlists reads whose requested version is ahead of current_version, but batch application wakes only the exact batch-end version. A waiter for an intermediate version remains stranded after current_version advances past it. On develop, the waitlist deadline returned by WaitingList.insert is also ignored; the expiration behavior from main commit 81ef5213 / PR #73 is absent. Repo point reads call their TransactionBuilder with infinity and retry retryable storage failures without an end-to-end deadline, so a stranded or unavailable read appears to hang forever. Implement via TDD: wake every waiter at or below the applied version while preserving future waiters; schedule and expire idle waiters with a terminal timeout; add a configurable default 5-second transaction deadline measured once with monotonic time and preserved across retries/nested work, bounding calls and retry sleeps by remaining time; terminate the active builder cleanly and surface a clear timeout with the last retry reason. Preserve the current Demux streaming and ingestion backpressure behavior.",
   "id": "bedrock-qj1",
@@ -29,7 +31,7 @@
     }
   ],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Bound post-recovery reads and wake every readable Olivine waiter",
   "type": "bug",
   "updated_at": "2026-08-18T22:45:34Z"

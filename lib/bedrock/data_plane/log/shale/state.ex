@@ -31,6 +31,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           #
           last_version: Bedrock.version(),
           writer: Writer.t() | nil,
+          writer_opts: keyword(),
           active_segment: Segment.t() | nil,
           segments: [Segment.t()],
           pending_pushes: %{
@@ -70,6 +71,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             #
             last_version: nil,
             writer: nil,
+            writer_opts: [],
             segments: [],
             active_segment: nil,
             pending_pushes: %{},

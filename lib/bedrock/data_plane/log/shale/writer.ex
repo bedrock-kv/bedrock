@@ -5,7 +5,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
 
   alias Bedrock.DataPlane.Transaction
 
-  defstruct [:fd, :write_offset, :bytes_remaining, :sync_fun]
+  defstruct [:fd, :write_offset, :bytes_remaining, :sync_fun, :pwrite_fun]
 
   @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
   @eof_marker <<@wal_eof_version::binary, 0::unsigned-big-32, 0::unsigned-big-32>>
@@ -21,26 +21,29 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
           fd: File.file_descriptor(),
           write_offset: pos_integer(),
           bytes_remaining: pos_integer(),
-          sync_fun: (File.file_descriptor() -> :ok | {:error, File.posix()})
+          sync_fun: (File.file_descriptor() -> :ok | {:error, File.posix()}),
+          pwrite_fun: (File.file_descriptor(), non_neg_integer(), iodata() -> :ok | {:error, File.posix()})
         }
 
   @spec open(path_to_file :: String.t(), previous_version :: Bedrock.version(), opts :: keyword()) ::
           {:ok, t()} | {:error, File.posix()}
   def open(path_to_file, previous_version, opts \\ []) do
     sync_fun = Keyword.get(opts, :sync_fun, &:file.sync/1)
+    pwrite_fun = Keyword.get(opts, :pwrite_fun, &:file.pwrite/3)
     empty_segment_header = <<@wal_magic_number, previous_version::binary-size(8), @eof_marker>>
 
     with {:ok, stat} <- File.stat(path_to_file),
          {:ok, fd} <- File.open(path_to_file, [:write, :read, :raw, :binary]) do
       # Write header - close fd on failure to avoid leak
-      case :file.pwrite(fd, 0, empty_segment_header) do
+      case pwrite_fun.(fd, 0, empty_segment_header) do
         :ok ->
           {:ok,
            %__MODULE__{
              fd: fd,
              write_offset: @header_size,
              bytes_remaining: stat.size - @header_size - 16,
-             sync_fun: sync_fun
+             sync_fun: sync_fun,
+             pwrite_fun: pwrite_fun
            }}
 
         {:error, reason} ->
@@ -76,7 +79,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
     >>
 
     writer.fd
-    |> :file.pwrite(writer.write_offset, [log_entry, @eof_marker])
+    |> writer.pwrite_fun.(writer.write_offset, [log_entry, @eof_marker])
     |> case do
       :ok ->
         case writer.sync_fun.(writer.fd) do

@@ -371,12 +371,17 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @spec monotonic_now() :: integer()
   def monotonic_now, do: :erlang.monotonic_time(:millisecond)
 
-  # Initialization with resource exhaustion detection
+  # Transactional cold start: validate the existing WAL set FIRST — it
+  # needs no started resources — then acquire the recycler and demux.
+  # Every attempt owns what it starts: a failure after acquisition tears
+  # the acquired resources down synchronously before returning, so a
+  # retrying server never accumulates stray recyclers or demuxes.
   defp do_initialization(t) do
-    with {:ok, recycler_pid} <- start_segment_recycler(t.path),
-         {:ok, {available_after, oldest_version, last_version, active_segment, segments}} <-
-           load_or_create_segments(t.path, recycler_pid),
-         {:ok, demux} <- start_demux(t) do
+    with {:ok, wal_snapshot} <- load_or_create_segments(t),
+         {:ok, recycler_pid} <- start_segment_recycler(t.path),
+         {:ok, demux} <- start_demux_or_release_recycler(t, recycler_pid) do
+      {available_after, oldest_version, last_version, active_segment, segments} = wal_snapshot
+
       {:ok,
        t
        |> Map.put(:available_after, available_after)
@@ -389,6 +394,20 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
+  # Normalize demux acquisition into one transactional step for the caller:
+  # success transfers both resources into State; failure releases the staged
+  # recycler before returning the classified error.
+  defp start_demux_or_release_recycler(t, recycler_pid) do
+    case start_demux(t) do
+      {:ok, demux} ->
+        {:ok, demux}
+
+      {:error, reason} ->
+        :ok = stop_owned_recycler(recycler_pid)
+        classify_resource_error(reason)
+    end
+  end
+
   defp start_segment_recycler(path) do
     case SegmentRecycler.start_link(
            path: path,
@@ -396,19 +415,28 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
            max_available: 3,
            segment_size: 64 * 1024 * 1024
          ) do
-      {:ok, pid} ->
-        {:ok, pid}
-
-      {:error, reason} when reason in [:emfile, :enfile, :enomem] ->
-        {:error, {:resource_exhausted, reason}}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, pid} -> {:ok, pid}
+      {:error, reason} -> classify_resource_error(reason)
     end
   end
 
-  defp load_or_create_segments(path, _recycler_pid) do
-    case reload_segments_at_path(path) do
+  defp classify_resource_error(reason) when reason in [:emfile, :enfile, :enomem],
+    do: {:error, {:resource_exhausted, reason}}
+
+  defp classify_resource_error(reason), do: {:error, reason}
+
+  defp stop_owned_recycler(pid) do
+    Process.unlink(pid)
+    GenServer.stop(pid, :shutdown, 5_000)
+    :ok
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp load_or_create_segments(t) do
+    loader = t.segment_loader || (&reload_segments_at_path/1)
+
+    case loader.(t.path) do
       {:ok, []} ->
         {:ok, {Version.zero(), Version.zero(), Version.zero(), nil, []}}
 
@@ -419,14 +447,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
         oldest_version = determine_oldest_transaction_version([active_segment | segments], available_after)
         {:ok, {available_after, oldest_version, last_version, active_segment, segments}}
 
-      {:error, {:unable_to_list_segments, reason}} when reason in [:emfile, :enfile, :enomem] ->
+      {:error, {:wal_io, _path, reason}} when reason in [:emfile, :enfile, :enomem] ->
+        # Transient resource exhaustion: the caller retries with backoff.
         {:error, {:resource_exhausted, reason}}
 
-      {:error, {:unable_to_list_segments, reason}} ->
-        raise "Unable to read WAL segment files from path: #{path}. Error: #{inspect(reason)}. Check directory permissions and filesystem health."
+      {:error, {:wal_io, path, reason}} ->
+        raise "WAL I/O failure at #{path}: #{inspect(reason)}. Check directory permissions and filesystem health."
 
-      {:error, {format_error, segment_path}} when format_error in [:unsupported_wal_format, :invalid_wal_format] ->
-        raise "Unable to establish WAL replay cursor for #{segment_path}: #{format_error}"
+      {:error, {:wal_format, path, reason}} ->
+        raise "Unable to establish WAL replay cursor for #{path}: #{reason}"
     end
   end
 

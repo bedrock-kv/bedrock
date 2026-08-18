@@ -718,7 +718,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       {GenServer, :start_link, [module, init_args, gen_opts]} = spec.start
       {:ok, pid} = GenServer.start_link(module, init_args, gen_opts)
 
-      assert_receive {:EXIT, ^pid, :path_is_not_a_directory}, 2000
+      # A missing directory is a WAL I/O failure with its POSIX cause —
+      # cold start validates the WAL set before acquiring any resources.
+      assert_receive {:EXIT, ^pid, {%RuntimeError{message: message}, _stack}}, 2000
+      assert message =~ "WAL I/O failure"
+      assert message =~ "enoent"
 
       refute Process.alive?(pid)
     end

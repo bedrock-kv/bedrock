@@ -23,6 +23,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.ReadingTest do
 
   defp v1, do: Version.from_integer(1)
   defp v2, do: Version.from_integer(2)
+  defp v3, do: Version.from_integer(3)
+  defp v4, do: Version.from_integer(4)
 
   defp apply_mutations(index_manager, database, version, mutations) do
     transaction = Transaction.encode(%{commit_version: version, mutations: mutations})
@@ -299,6 +301,39 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.ReadingTest do
   end
 
   describe "notify_waiting_fetches/3" do
+    test "delivers waiters for every version made readable by a batch", %{
+      manager: manager,
+      context: context,
+      index_manager: index_manager,
+      database: database
+    } do
+      test_pid = self()
+
+      {manager, :ok} =
+        Reading.handle_get(manager, context, "key1", v2(),
+          wait_ms: 5_000,
+          reply_fn: fn result -> send(test_pid, {:readable, result}) end
+        )
+
+      {manager, :ok} =
+        Reading.handle_get(manager, context, "key1", v4(),
+          wait_ms: 5_000,
+          reply_fn: fn result -> send(test_pid, {:future, result}) end
+        )
+
+      {index_manager, database} =
+        apply_mutations(index_manager, database, v2(), [{:set, "key4", "value4"}])
+
+      {index_manager, database} = apply_mutations(index_manager, database, v3(), [])
+      context_at_v3 = ReadingContext.new(index_manager, database)
+      notified_manager = Reading.notify_waiting_fetches(manager, context_at_v3, v3())
+
+      assert_receive {:readable, {:ok, "value1"}}
+      refute_receive {:future, _}
+      refute Map.has_key?(notified_manager.waiting_fetches, v2())
+      assert Map.has_key?(notified_manager.waiting_fetches, v4())
+    end
+
     test "delivers results for all four waitlisted request shapes once the version is applied", %{
       manager: manager,
       context: context,

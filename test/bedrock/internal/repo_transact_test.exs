@@ -14,12 +14,13 @@ defmodule Bedrock.Internal.RepoTransactTest do
     deterministically without any cluster infrastructure.
 
   - For the nested-transaction and cast APIs, a scripted stub GenServer (or
-    `self()`) is seeded into the process dictionary under the
-    `{:transaction, repo}` key, so exact call/cast messages can be asserted.
+    `self()`) is seeded through the transaction-context API, so exact
+    call/cast messages can be asserted.
   """
   use ExUnit.Case, async: true
 
   alias Bedrock.Internal.Repo
+  alias Bedrock.Internal.Repo.TransactionContext
 
   defmodule TestRepo do
     use Bedrock.Repo, cluster: MockCluster
@@ -76,6 +77,11 @@ defmodule Bedrock.Internal.RepoTransactTest do
       {:reply, reply, {rest, test_pid}}
     end
 
+    def handle_call({:get, key, opts}, _from, {[], test_pid} = state) do
+      send(test_pid, {:txn_call, {:get, key, opts}})
+      {:noreply, state}
+    end
+
     @impl true
     def handle_cast(msg, {_, test_pid} = state) do
       send(test_pid, {:txn_cast, msg})
@@ -85,12 +91,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
 
   @minimal_tsl %{epoch: 1, proxies: []}
 
-  defp seed_txn(pid), do: Process.put({:transaction, TestRepo}, pid)
-
-  setup do
-    on_exit(fn -> Process.delete({:transaction, TestRepo}) end)
-    :ok
-  end
+  defp seed_txn(pid), do: TransactionContext.put_builder(TestRepo, pid)
 
   describe "cast-based transaction API" do
     test "add_read_conflict_key sends the exact cast to the transaction" do
@@ -201,7 +202,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
       result = Repo.transact(NoCluster, TestRepo, fn -> :computed_result end, transaction_system_layout: @minimal_tsl)
 
       assert result == :computed_result
-      assert Process.get({:transaction, TestRepo}) == nil
+      assert TransactionContext.builder(TestRepo) == nil
     end
 
     test "passes the repo module to an arity-1 function" do
@@ -211,14 +212,14 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert result == {:got_repo, TestRepo}
     end
 
-    test "makes the transaction pid visible in the process dictionary while running" do
+    test "makes the builder visible through the transaction context while running" do
       txn_during =
-        Repo.transact(NoCluster, TestRepo, fn -> Process.get({:transaction, TestRepo}) end,
+        Repo.transact(NoCluster, TestRepo, fn -> TransactionContext.builder(TestRepo) end,
           transaction_system_layout: @minimal_tsl
         )
 
       assert is_pid(txn_during)
-      assert Process.get({:transaction, TestRepo}) == nil
+      assert TransactionContext.builder(TestRepo) == nil
     end
 
     test "rolls back and reraises when the function raises" do
@@ -230,7 +231,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
         )
       end
 
-      assert Process.get({:transaction, TestRepo}) == nil
+      assert TransactionContext.builder(TestRepo) == nil
     end
 
     test "Repo.rollback inside the function returns {:error, reason}" do
@@ -242,7 +243,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
         )
 
       assert result == {:error, :user_requested}
-      assert Process.get({:transaction, TestRepo}) == nil
+      assert TransactionContext.builder(TestRepo) == nil
     end
 
     test "raises after exhausting the retry limit when commit keeps failing" do
@@ -269,7 +270,41 @@ defmodule Bedrock.Internal.RepoTransactTest do
 
       # Initial attempt + 2 retries, each in a fresh TransactionBuilder.
       assert :counters.get(attempts, 1) == 3
-      assert Process.get({:transaction, TestRepo}) == nil
+      assert TransactionContext.builder(TestRepo) == nil
+    end
+
+    test "a transaction deadline bounds retries without resetting" do
+      started_at = System.monotonic_time(:millisecond)
+
+      assert_raise RuntimeError,
+                   "Transaction timed out after 30ms. Last error: :unavailable",
+                   fn ->
+                     Repo.transact(DeadLinkCluster, TestRepo, fn -> :never_runs end, timeout_in_ms: 30)
+                   end
+
+      assert System.monotonic_time(:millisecond) - started_at < 500
+      assert TransactionContext.builder(TestRepo) == nil
+    end
+
+    test "the deadline is inherited by nested transaction work" do
+      assert_raise RuntimeError,
+                   "Transaction timed out after 20ms. Last error: :timeout",
+                   fn ->
+                     Repo.transact(
+                       NoCluster,
+                       TestRepo,
+                       fn ->
+                         Repo.transact(NoCluster, TestRepo, fn ->
+                           Process.sleep(30)
+                           :too_late
+                         end)
+                       end,
+                       transaction_system_layout: @minimal_tsl,
+                       timeout_in_ms: 20
+                     )
+                   end
+
+      assert TransactionContext.builder(TestRepo) == nil
     end
   end
 
@@ -283,7 +318,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
                      Repo.transact(DeadLinkCluster, TestRepo, fn -> :never_runs end, retry_limit: 1)
                    end
 
-      assert Process.get({:transaction, TestRepo}) == nil
+      assert TransactionContext.builder(TestRepo) == nil
     end
 
     test "retries a failed layout fetch and succeeds on the second attempt" do
@@ -309,11 +344,32 @@ defmodule Bedrock.Internal.RepoTransactTest do
 
       assert result == :eventually_committed
       assert_received :second_fetch
-      assert Process.get({:transaction, TestRepo}) == nil
+      assert TransactionContext.builder(TestRepo) == nil
     end
   end
 
   describe "transact/4 nested transactions" do
+    test "a client read call cannot wait forever for an unresponsive transaction builder" do
+      {:ok, txn} = ScriptedTxn.start_link([])
+      seed_txn(txn)
+
+      assert_raise RuntimeError,
+                   "Transaction timed out after 20ms. Last error: :timeout",
+                   fn ->
+                     Repo.transact(
+                       NoCluster,
+                       TestRepo,
+                       fn -> Repo.get(TestRepo, "stuck") end,
+                       timeout_in_ms: 20
+                     )
+                   end
+
+      assert_received {:txn_call, :nested_transaction}
+      assert_received {:txn_call, {:get, "stuck", []}}
+      assert_receive {:txn_cast, :rollback}
+      assert TransactionContext.builder(TestRepo) == txn
+    end
+
     test "reuses the existing transaction and commits locally" do
       {:ok, txn} = ScriptedTxn.start_link([:ok])
       seed_txn(txn)
@@ -324,7 +380,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert_received {:txn_call, :nested_transaction}
       assert_received {:txn_call, :commit}
       # The outer transaction is still active.
-      assert Process.get({:transaction, TestRepo}) == txn
+      assert TransactionContext.builder(TestRepo) == txn
     end
 
     test "returns the result when nested commit reports a version" do
@@ -385,7 +441,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert_receive {:txn_cast, :rollback}
       refute_received {:txn_call, :commit}
       # The outer transaction remains active for the caller.
-      assert Process.get({:transaction, TestRepo}) == txn
+      assert TransactionContext.builder(TestRepo) == txn
     end
 
     test "a non-retryable operation error rolls back and raises with operation context" do

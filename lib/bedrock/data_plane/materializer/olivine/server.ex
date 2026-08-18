@@ -68,7 +68,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     # Set operation context metadata for this request
     Telemetry.trace_metadata(%{operation: :get, key: key})
 
-    fetch_opts = Keyword.put(opts, :reply_fn, reply_fn_for(from))
+    fetch_opts = opts |> Keyword.put(:reply_fn, reply_fn_for(from)) |> Keyword.put_new(:wait_ms, 1_000)
     context = Reading.ReadingContext.new(t.index_manager, t.database)
 
     {updated_manager, result} =
@@ -77,10 +77,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
         context,
         key,
         version,
-        Keyword.put_new(fetch_opts, :wait_ms, 1_000)
+        fetch_opts
       )
 
     updated_state = %{t | read_request_manager: updated_manager}
+    schedule_waiter_expiration(t.read_request_manager, updated_manager, fetch_opts[:wait_ms])
 
     case result do
       :ok -> noreply(updated_state, continue: :maybe_process_transactions)
@@ -92,7 +93,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     # Set operation context metadata for this request
     Telemetry.trace_metadata(%{operation: :get_range, key: {start_key, end_key}})
 
-    fetch_opts = Keyword.put(opts, :reply_fn, reply_fn_for(from))
+    fetch_opts = opts |> Keyword.put(:reply_fn, reply_fn_for(from)) |> Keyword.put_new(:wait_ms, 1_000)
     context = Reading.ReadingContext.new(t.index_manager, t.database)
 
     {updated_manager, result} =
@@ -102,10 +103,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
         start_key,
         end_key,
         version,
-        Keyword.put_new(fetch_opts, :wait_ms, 1_000)
+        fetch_opts
       )
 
     updated_state = %{t | read_request_manager: updated_manager}
+    schedule_waiter_expiration(t.read_request_manager, updated_manager, fetch_opts[:wait_ms])
 
     case result do
       :ok -> noreply(updated_state, continue: :maybe_process_transactions)
@@ -310,6 +312,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   end
 
   @impl true
+  def handle_info(:expire_waiting_fetches, %State{} = t) do
+    updated_manager = Reading.expire_waiting_fetches(t.read_request_manager)
+    noreply(%{t | read_request_manager: updated_manager})
+  end
+
+  @impl true
   def handle_info({:DOWN, _ref, :process, pid, _reason}, %State{} = t) do
     updated_manager = Reading.remove_active_task(t.read_request_manager, pid)
     updated_state = %{t | read_request_manager: updated_manager}
@@ -476,6 +484,17 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   def terminate(_reason, _state), do: :ok
 
   defp reply_fn_for(from), do: fn result -> GenServer.reply(from, result) end
+
+  defp schedule_waiter_expiration(previous_manager, updated_manager, wait_ms)
+       when is_integer(wait_ms) and wait_ms > 0 do
+    if previous_manager.waiting_fetches != updated_manager.waiting_fetches do
+      Process.send_after(self(), :expire_waiting_fetches, wait_ms)
+    end
+
+    :ok
+  end
+
+  defp schedule_waiter_expiration(_previous_manager, _updated_manager, _wait_ms), do: :ok
 
   # Calculate min/max key bounds from page_map
   defp calculate_key_bounds_from_pages(page_map) when map_size(page_map) == 0, do: {<<0xFF, 0xFF>>, <<>>}

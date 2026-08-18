@@ -84,10 +84,114 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
         :ok
       end
 
-      assert {:error, :eio} = Pushing.push(state, Version.from_integer(0), transaction, ack_fn)
+      assert {:error, :eio, ^state, []} =
+               Pushing.push(state, Version.from_integer(0), transaction, ack_fn)
+
       assert_receive {:ack_result, {:error, :eio}}
 
       assert :ok = Writer.close(writer)
+    end
+  end
+
+  describe "draining queued pushes" do
+    setup do
+      dir = Path.join(System.tmp_dir!(), "pushing_drain_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+
+      {:ok, recycler} =
+        SegmentRecycler.start_link(
+          path: dir,
+          min_available: 2,
+          max_available: 4,
+          segment_size: 1_000_000
+        )
+
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      %{dir: dir, recycler: recycler}
+    end
+
+    test "returns every appended transaction in predecessor-chain order", %{dir: dir, recycler: recycler} do
+      state = %State{
+        mode: :ready,
+        path: dir,
+        segment_recycler: recycler,
+        writer: nil,
+        active_segment: nil,
+        segments: [],
+        last_version: Version.zero(),
+        pending_pushes: %{}
+      }
+
+      first = TransactionTestSupport.new_log_transaction(1, %{"first" => "1"})
+      second = TransactionTestSupport.new_log_transaction(2, %{"second" => "2"})
+      caller = self()
+
+      assert {:wait, state} =
+               Pushing.push(state, Version.from_integer(1), second, fn result ->
+                 send(caller, {:ack, :second, result})
+                 :ok
+               end)
+
+      refute_receive {:ack, :second, _}
+
+      assert {:ok, state, [^first, ^second]} =
+               Pushing.push(state, Version.zero(), first, fn result ->
+                 send(caller, {:ack, :first, result})
+                 :ok
+               end)
+
+      assert_receive {:ack, :first, :ok}
+      assert_receive {:ack, :second, :ok}
+      assert state.last_version == Version.from_integer(2)
+      assert state.pending_pushes == %{}
+    end
+
+    test "retains the valid state and appended prefix when a queued append fails" do
+      path = Path.join(System.tmp_dir!(), "pushing_partial_#{System.unique_integer([:positive])}.log")
+      File.write!(path, :binary.copy(<<0>>, 1_000_000))
+      on_exit(fn -> File.rm(path) end)
+
+      {:ok, sync_count} = Agent.start_link(fn -> 0 end)
+
+      sync_fun = fn _fd ->
+        Agent.get_and_update(sync_count, fn
+          0 -> {:ok, 1}
+          count -> {{:error, :eio}, count + 1}
+        end)
+      end
+
+      assert {:ok, writer} = Writer.open(path, sync_fun: sync_fun)
+
+      state = %State{
+        mode: :ready,
+        last_version: Version.zero(),
+        pending_pushes: %{},
+        writer: writer,
+        active_segment: %Segment{path: path, min_version: Version.zero(), transactions: []}
+      }
+
+      first = TransactionTestSupport.new_log_transaction(1, %{"first" => "1"})
+      second = TransactionTestSupport.new_log_transaction(2, %{"second" => "2"})
+      caller = self()
+
+      assert {:wait, state} =
+               Pushing.push(state, Version.from_integer(1), second, fn result ->
+                 send(caller, {:ack, :second, result})
+                 :ok
+               end)
+
+      assert {:error, :eio, state, [^first]} =
+               Pushing.push(state, Version.zero(), first, fn result ->
+                 send(caller, {:ack, :first, result})
+                 :ok
+               end)
+
+      assert_receive {:ack, :first, :ok}
+      assert_receive {:ack, :second, {:error, :eio}}
+      assert state.last_version == Version.from_integer(1)
+      assert state.pending_pushes == %{}
+      assert :ok = Writer.close(state.writer)
     end
   end
 

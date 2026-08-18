@@ -38,13 +38,13 @@ During normal operation, the manifest is updated periodically to reflect the cur
 
 ## Transaction Storage Process
 
-When a transaction arrives for storage, Shale first validates that its version number follows the expected sequence. Out-of-order transactions are rejected immediately because they would break the version ordering that the rest of the system depends on.
+When a transaction arrives for storage, Shale compares the push's predecessor version with the durable WAL tip. A matching predecessor appends immediately; a future predecessor link is parked; an older one is rejected. Commit versions may contain numeric gaps, so correctness comes from following the explicit predecessor chain rather than incrementing a version. When a missing predecessor arrives, Shale appends and acknowledges the entire newly connected chain in order.
 
 For transactions that fit within the WAL size limit, Shale appends them directly to the current WAL file. The transaction data is written with a header containing the version, timestamp, and checksum, followed by the encoded transaction payload. This logic is implemented in [`lib/bedrock/data_plane/log/shale/writer.ex`](../../../lib/bedrock/data_plane/log/shale/writer.ex).
 
 Large transactions follow a different path. Shale allocates a segment file, writes the transaction data there, and then writes a reference entry in the WAL. This keeps the WAL compact while ensuring that all transactions, regardless of size, are recorded in version order. Segment management is handled in [`lib/bedrock/data_plane/log/shale/segment.ex`](../../../lib/bedrock/data_plane/log/shale/segment.ex).
 
-After writing transaction data, Shale forces a disk sync to ensure durability before acknowledging the write. This is the critical step that guarantees committed transactions survive system failures.
+After writing transaction data, Shale forces a disk sync to ensure durability before acknowledging the write. Each successfully appended original encoded binary is then handed unchanged to Demux in predecessor-chain order; Demux alone slices it by shard. Demux delivery remains asynchronous and reconstructible from the WAL, so the client acknowledgment never waits for slicing or object storage.
 
 ## Index Management
 
@@ -58,7 +58,7 @@ This approach balances memory usage with lookup performance. Recovery pulls proc
 
 Shale's `pull` interface serves transaction ranges from the WAL using the version index — but recovery is its only remaining consumer (a failed log rebuilding itself from a survivor). This implementation is in [`lib/bedrock/data_plane/log/shale/pulling.ex`](../../../lib/bedrock/data_plane/log/shale/pulling.ex).
 
-Materializers never pull the WAL. Each running Shale instance owns a Demux tree that slices every pushed transaction by shard and feeds per-shard ShardServers; materializers discover their ShardServer through the log (`get_shard_server/2`) and stream from it — object-storage chunks for history, the in-memory buffer for recent data. Every push to Shale carries the known committed version from the commit proxies, which Shale forwards (along with the transaction's own commit version) to its Demux; that watermark gates when buffered data may become durable in object storage.
+Materializers never pull the WAL. Each running Shale instance owns a Demux tree that slices every WAL-appended transaction by shard and feeds per-shard ShardServers; materializers discover their ShardServer through the log (`get_shard_server/2`) and stream from it — object-storage chunks for history, the in-memory buffer for recent data. Every push to Shale carries the KCV from the commit proxies. Immediately appended transactions piggyback it normally. If a future transaction is parked, Shale independently advances Demux's KCV with `max` while leaving transaction `high_water` unchanged; when the chain later drains, Demux's held maximum flows through normal shard currency. No queued transaction stores a private KCV because KCV is a global monotonic watermark, not per-entry metadata.
 
 ## WAL Trimming
 
@@ -104,7 +104,7 @@ The configuration system provides reasonable defaults while allowing operators t
 
 ## Integration with Bedrock
 
-Shale integrates with the broader Bedrock system through the Log interface. Commit proxies push transactions to Shale for durability, piggybacking the known committed version on every push. Materializers stream their shard from Shale's Demux to update their local data. The main server coordination logic is in [`lib/bedrock/data_plane/log/shale/server.ex`](../../../lib/bedrock/data_plane/log/shale/server.ex).
+Shale integrates with the broader Bedrock system through the Log interface. Commit proxies push predecessor-linked transactions to Shale for WAL durability and carry the independent KCV on every push. `Pushing` owns chain scheduling and appends, `Server` forwards every appended binary, and Demux owns slicing and KCV accumulation. Materializers stream their shard from Shale's Demux to update their local data. The main server coordination logic is in [`lib/bedrock/data_plane/log/shale/server.ex`](../../../lib/bedrock/data_plane/log/shale/server.ex).
 
 During recovery, the Director coordinates with Shale to ensure consistent state across the cluster. Shale provides recovery information about what transactions it has stored and can serve transactions to restore other failed components.
 

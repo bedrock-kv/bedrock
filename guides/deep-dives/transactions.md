@@ -89,8 +89,8 @@ sequenceDiagram
         Note over CommitProxy, Log: Step 4.6: Durable Log Persistence
         par Push to all logs in parallel
             CommitProxy->>Log: push(encoded_transaction, last_commit_version, known_committed_version)
-            Log->>Log: validate transaction ordering
-            Log->>Log: make transaction durable
+            Log->>Log: append when predecessor reaches WAL tip
+            Log->>Log: fsync connected predecessor chain
             Log-->>CommitProxy: :ok
         end
         
@@ -248,7 +248,8 @@ This is the most complex phase involving multiple distributed components working
 2. When batch reaches finalization criteria (size or timeout):
    - Request commit version from Sequencer via `next_commit_version/1`
    - Sequencer returns `last_commit_version`, `commit_version`, and the `known_committed_version` (KCV)
-   - The `{last, current}` pair maintains the Lamport clock version chain; the KCV is piggybacked on every log push so downstream durability machinery (Demux chunk cuts, storage eviction) can gate on it
+   - The `{last, current}` pair defines the Lamport predecessor chain; numeric gaps are valid, but every log appends only the connected prefix
+   - KCV is an independent monotonic watermark carried on every log push and accumulated with `max`, so downstream durability machinery (Demux chunk cuts, storage eviction) can gate on it even when a future transaction is parked
 
 **Key Code Locations**:
 
@@ -319,8 +320,9 @@ This is the most complex phase involving multiple distributed components working
 1. Build transaction for each log based on tag coverage
 2. Encode transactions for each log server
 3. Push transactions to ALL log servers in parallel
-4. Wait for acknowledgment from ALL log servers (ack sent only after WAL append + fsync)
-5. If any log fails, trigger recovery (fail-fast approach)
+4. Each log parks future predecessor links and drains the connected prefix in chain order
+5. Wait for acknowledgment from ALL log servers (ack sent only after that transaction's WAL append + fsync; Demux is asynchronous)
+6. If any log fails, trigger recovery (fail-fast approach)
 
 **Key Code Locations**:
 

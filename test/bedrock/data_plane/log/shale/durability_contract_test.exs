@@ -67,7 +67,9 @@ defmodule Bedrock.DataPlane.Log.Shale.DurabilityContractTest do
       :ok
     end
 
-    assert {:error, :eio} = Pushing.push(state, Version.from_integer(0), transaction, ack_fn)
+    assert {:error, :eio, ^state, []} =
+             Pushing.push(state, Version.from_integer(0), transaction, ack_fn)
+
     assert_receive {:ack_result, {:error, :eio}}
     refute_receive {:ack_result, :ok}, 20
 

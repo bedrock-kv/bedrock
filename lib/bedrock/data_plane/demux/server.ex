@@ -26,11 +26,14 @@ defmodule Bedrock.DataPlane.Demux.Server do
 
   ## Known-committed gating
 
-  A cut fires only once the known-committed version — piggybacked by commit
-  proxies on every push — has reached it. Nothing not known-committed ever
-  becomes durable, so chunks can never contain versions a recovery would
-  discard, and recovery needs no chunk cleanup: the uncommitted tail lives
-  only in ShardServer buffers, which die with the Demux tree.
+  A cut fires only once the known-committed version (KCV) has reached it.
+  KCV is accumulated monotonically with `max`; it usually arrives on a push,
+  but can advance independently while Shale is waiting for a transaction's
+  predecessor. Such an advance can release a pending cut but never changes
+  transaction high-water. Nothing not known-committed ever becomes durable,
+  so chunks can never contain versions a recovery would discard, and recovery
+  needs no chunk cleanup: the uncommitted tail lives only in ShardServer
+  buffers, which die with the Demux tree.
 
   ## Durability Tracking
 
@@ -134,6 +137,17 @@ defmodule Bedrock.DataPlane.Demux.Server do
   end
 
   @doc """
+  Advances the known-committed watermark independently of transaction delivery.
+
+  The update is monotonic and does not change transaction high-water. It can
+  release a deterministic cut that was already waiting for commitment.
+  """
+  @spec advance_known_committed_version(GenServer.server(), version()) :: :ok
+  def advance_known_committed_version(server, version) do
+    GenServer.cast(server, {:advance_known_committed_version, version})
+  end
+
+  @doc """
   Gets the ShardServer for a given shard.
 
   Called by materializers to discover their ShardServer for pulling.
@@ -191,6 +205,12 @@ defmodule Bedrock.DataPlane.Demux.Server do
       {:ok, state} -> {:noreply, state}
       {:error, reason, state} -> {:stop, {:push_failed, reason}, state}
     end
+  end
+
+  @impl true
+  def handle_cast({:advance_known_committed_version, version}, state) do
+    state = state |> note_known_committed(version) |> maybe_fire_pending_cut()
+    {:noreply, state}
   end
 
   @impl true

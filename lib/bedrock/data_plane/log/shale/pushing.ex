@@ -9,12 +9,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
+  @type appended_transactions :: [Transaction.encoded()]
+  @type append_error :: {:error, term(), State.t(), appended_transactions()}
+
   @spec push(
           t :: State.t(),
           expected_version :: Bedrock.version(),
           encoded_transaction :: Transaction.encoded(),
           ack_fn :: (:ok | {:error, term()} -> :ok)
-        ) :: {:ok | :wait, State.t()} | {:error, :tx_out_of_order} | {:error, :tx_too_large}
+        ) ::
+          {:ok, State.t(), appended_transactions()}
+          | {:wait, State.t()}
+          | append_error()
+          | {:error, :not_ready | :tx_out_of_order | :tx_too_large}
   def push(%{mode: :locked}, _, _, _) do
     {:error, :not_ready}
   end
@@ -28,11 +35,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       {:ok, t} ->
         trace_push_transaction(encoded_transaction)
         :ok = ack_fn.(:ok)
-        do_pending_pushes(t)
+        do_pending_pushes(t, [encoded_transaction])
 
-      {:error, reason} ->
+      {:error, reason, t} ->
         :ok = ack_fn.({:error, reason})
-        {:error, reason}
+        {:error, reason, t, []}
     end
   end
 
@@ -46,13 +53,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   end
 
   @spec do_pending_pushes(State.t()) ::
-          {:ok | :wait, State.t()} | {:error, :tx_out_of_order} | {:error, :tx_too_large}
-  def do_pending_pushes(t) do
+          {:ok, State.t(), appended_transactions()} | append_error()
+  def do_pending_pushes(t), do: do_pending_pushes(t, [])
+
+  defp do_pending_pushes(t, appended) do
     next_expected_version = t.last_version
 
     case Map.pop(t.pending_pushes, next_expected_version) do
       {nil, _} ->
-        {:ok, t}
+        {:ok, t, Enum.reverse(appended)}
 
       {{encoded_transaction, ack_fn}, pending_pushes} ->
         t_with_updated_pending = %{t | pending_pushes: pending_pushes}
@@ -61,17 +70,17 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
           {:ok, new_t} ->
             trace_push_transaction(encoded_transaction)
             :ok = ack_fn.(:ok)
-            do_pending_pushes(new_t)
+            do_pending_pushes(new_t, [encoded_transaction | appended])
 
-          {:error, reason} ->
+          {:error, reason, error_t} ->
             :ok = ack_fn.({:error, reason})
-            {:error, reason}
+            {:error, reason, error_t, Enum.reverse(appended)}
         end
     end
   end
 
   @spec write_encoded_transaction(State.t(), Transaction.encoded()) ::
-          {:ok, State.t()} | {:error, term()}
+          {:ok, State.t()} | {:error, term(), State.t()}
   def write_encoded_transaction(t, encoded_transaction) when is_nil(t.writer) do
     version =
       case Transaction.commit_version(encoded_transaction) do
@@ -82,22 +91,27 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
           raise "Failed to extract version: #{inspect(reason)}"
       end
 
-    with {:ok, new_segment} <-
-           Segment.allocate_from_recycler(
-             t.segment_recycler,
-             t.path,
-             version
-           ),
-         {:ok, new_writer} <- Writer.open(new_segment.path) do
-      write_encoded_transaction(
-        %{
-          t
-          | writer: new_writer,
-            active_segment: new_segment,
-            segments: if(t.active_segment, do: [t.active_segment | t.segments], else: t.segments)
-        },
-        encoded_transaction
-      )
+    case Segment.allocate_from_recycler(t.segment_recycler, t.path, version) do
+      {:ok, new_segment} ->
+        case Writer.open(new_segment.path) do
+          {:ok, new_writer} ->
+            write_encoded_transaction(
+              %{
+                t
+                | writer: new_writer,
+                  active_segment: new_segment,
+                  segments: if(t.active_segment, do: [t.active_segment | t.segments], else: t.segments)
+              },
+              encoded_transaction
+            )
+
+          {:error, reason} ->
+            :ok = Segment.return_to_recycler(new_segment, t.segment_recycler)
+            {:error, reason, t}
+        end
+
+      {:error, reason} ->
+        {:error, reason, t}
     end
   end
 
@@ -112,15 +126,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
           # from version zero. Rolling per cut bucket keeps oldest_version
           # chasing the trim floor, which bounds recovery replay to the
           # untrimmed tail. A roll is a rename from the preallocated pool.
-          with :ok <- Writer.close(t.writer) do
-            write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
+          case Writer.close(t.writer) do
+            :ok -> write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
+            {:error, reason} -> {:error, reason, t}
           end
         else
           append_encoded_transaction(t, encoded_transaction, version)
         end
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, reason, t}
     end
   end
 
@@ -142,12 +157,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
         {:ok, %{t | writer: writer, last_version: version, active_segment: updated_active_segment}}
 
       {:error, :segment_full} ->
-        with :ok <- Writer.close(t.writer) do
-          write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
+        case Writer.close(t.writer) do
+          :ok -> write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
+          {:error, reason} -> {:error, reason, t}
         end
 
-      {:error, _reason} = error ->
-        error
+      {:error, reason} ->
+        {:error, reason, t}
     end
   end
 

@@ -5,12 +5,16 @@ write-ahead log on disk, an object-storage chunk, and the materializers that
 serve reads. This guide walks through that journey, what keeps it safe at
 every step, and what happens when a node restarts.
 
-One rule governs the whole pipeline: **nothing becomes durable anywhere
-unless it is known to be committed.** The sequencer tracks the highest
-version confirmed on every required log — the known committed version — and
-commit proxies carry it on every push. Everything downstream that writes to
-disk waits for it. Because of that one rule, recovery never has to undo
-durable state: rolling back is pointer arithmetic, never disk surgery.
+One rule governs the pipeline beyond the replicated WAL: **nothing enters
+object-storage or materializer durability unless it is known to be
+committed.** A WAL may contain the uncommitted tail needed to decide recovery.
+The sequencer tracks the highest version confirmed on every required log —
+the known committed version (KCV) — and commit proxies carry it on every
+push. KCV accumulates independently with `max`; it is not metadata owned by
+one transaction. Everything downstream that writes durable derived state
+waits for it. Because of that rule, recovery never has to undo chunks or
+materializer state: rolling back the WAL tail is pointer arithmetic, never
+object-store surgery.
 
 ## The Life of a Write
 
@@ -19,14 +23,17 @@ and the client's commit is acknowledged only after each log has appended it
 to its WAL and fsynced. At this moment the write can survive a crash — but
 it lives only in the WALs.
 
-**The log hands it to its Demux.** Each running log owns a Demux: a small
-process tree that takes every pushed transaction, slices its mutations by
-shard, and passes each slice to that shard's ShardServer, which holds it in
-memory. Every log replica owns its own anonymous ShardServer for each shard it
-touches; the child is discoverable only through that log's Demux map. Two log
-replicas carrying the same logical shard therefore share neither a process nor
-a durability confirmation. Heartbeat transactions carry no data and touch no
-shard; they exist to keep the version clock moving.
+**The log hands it to its Demux.** Pushes name their predecessor, so a future
+link waits until the durable WAL prefix reaches it. When the gap closes, the
+log appends the connected chain and hands every original encoded binary to
+Demux in chain order; Demux performs the only per-shard slicing. A newer KCV
+can advance Demux independently while a transaction waits, without claiming
+that the transaction `high_water` advanced. Every log replica owns its own
+anonymous ShardServer for each shard it touches; the child is discoverable
+only through that log's Demux map. Two log replicas carrying the same logical
+shard therefore share neither a process nor a durability confirmation.
+Heartbeat transactions carry no data and touch no shard; they exist to keep
+the version clock moving.
 
 **The Demux cuts, and shards flush.** Versions in Bedrock are microsecond
 timestamps, so "every five seconds" is just integer division: when a pushed

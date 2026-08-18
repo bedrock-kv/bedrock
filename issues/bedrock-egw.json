@@ -6,9 +6,15 @@
   "description": "Current develop rejects all valid BED0 Shale WAL segments after the BED1 replay-cursor format change, preventing restart of existing 0.5.3 data. Add clean format-version handling with explicit pattern matching. For validated, non-empty BED0 WALs, derive the compatibility cursor as first retained commit version minus one (zero remains zero), keep BED1 writes unchanged, and fail closed where a legacy cursor cannot be derived. Develop with tests first and cover mixed/edge cases.",
   "id": "bedrock-egw",
   "labels": [],
+  "comments": [
+    {
+      "text": "TDD evidence: initial compatibility tests failed at compile because WalFormat did not exist; after implementing format parsing, 17 focused tests passed. Mixed BED0-\u003eBED1 restart/replay then failed with transaction_not_after_cursor (900 emitted before 41), exposing newest-first segment traversal on the wire. Added a performance-contract test that failed by loading an irrelevant older segment. Cursor-aware newest-first selection now emits only the relevant prefix chronologically; 31 focused tests pass.",
+      "timestamp": "2026-08-18T19:51:57Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Read legacy BED0 WALs via synthetic exclusive cursor",
   "type": "bug",
-  "updated_at": "2026-08-18T19:38:40Z"
+  "updated_at": "2026-08-18T19:51:57Z"
 }

@@ -169,8 +169,22 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   # GenServer callbacks
 
+  @known_options ~w[
+    shard_id demux cluster object_storage
+    persistence_queue_capacity persistence_max_retries
+    persistence_retry_backoff_ms persistence_retry_tick_ms
+  ]a
+
   @impl true
   def init(opts) do
+    # Refuse unknown options at startup. A silently-ignored option lets
+    # configuration written against a removed protocol keep "working" and
+    # fail far away as an inscrutable timeout.
+    case Keyword.keys(opts) -- @known_options do
+      [] -> :ok
+      unknown -> raise ArgumentError, "unknown ShardServer options: #{inspect(unknown)}"
+    end
+
     shard_id = Keyword.fetch!(opts, :shard_id)
     demux = Keyword.fetch!(opts, :demux)
     cluster = Keyword.fetch!(opts, :cluster)

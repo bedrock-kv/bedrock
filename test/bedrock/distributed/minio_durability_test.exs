@@ -1,4 +1,21 @@
 defmodule Bedrock.Distributed.MinioDurabilityTest do
+  @moduledoc """
+  The distributed durability gate, against a real MinIO backend
+  (bedrock-qzr.20).
+
+  Exercises the Demux cut protocol end to end: cuts are deterministic
+  version-bucket boundaries, a cut candidate fires only once the
+  known-committed version reaches it, every shard's confirmed cut is its
+  floor contribution, and the global watermark is the minimum over shards.
+  Chunks written through a demux's lifetime replay from object storage
+  after a restart, and a transient write failure heals through the
+  persistence worker's retry without losing the cut.
+
+  Run with:
+
+      BEDROCK_INCLUDE_DISTRIBUTED=1 mix test --include distributed \\
+        test/bedrock/distributed/minio_durability_test.exs
+  """
   use ExUnit.Case, async: false
 
   alias Bedrock.DataPlane.Demux.Server
@@ -11,6 +28,11 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
   alias Bedrock.Test.Minio
 
   @moduletag :distributed
+
+  # Small version-time buckets so test versions (microsecond integers in
+  # the low thousands) cross cut boundaries; the default five-second
+  # interval would never be crossed and no cut would ever fire.
+  @cut_interval_us 100
 
   if System.get_env("BEDROCK_MINIO_AVAILABLE") != "1" do
     @moduletag skip: "MinIO not available"
@@ -84,56 +106,84 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
     {:ok, backend: backend, shard_base: shard_base}
   end
 
-  test "3-shard durability watermark advances and survives demux restart", %{
+  test "3-shard durability watermark advances behind KCV and survives demux restart", %{
     backend: backend,
     shard_base: shard_base
   } do
     {:ok, demux} = start_demux(backend)
-    shards = [shard_base + 11, shard_base + 22, shard_base + 33]
+    [shard_a, shard_b, shard_c] = shards = [shard_base + 11, shard_base + 22, shard_base + 33]
 
-    for shard <- shards do
-      push_txn(demux, shard, 1_000)
-      push_txn(demux, shard, 1_200)
-    end
+    # Bucket 10 (interval 100): one transaction per shard, in global commit
+    # order, KCV trailing one commit behind — the shape the commit proxies
+    # produce.
+    push_txn(demux, shard_a, 1_010, nil)
+    push_txn(demux, shard_b, 1_020, 1_010)
+    push_txn(demux, shard_c, 1_030, 1_020)
 
-    assert_eventually(fn ->
-      Server.min_durable_version(demux) == Version.from_integer(1_000)
-    end)
+    # Crossing into bucket 12 proposes the cut at 1_199 — a CANDIDATE only.
+    # The KCV (1_030) has not reached it: nothing may become durable.
+    push_txn(demux, shard_a, 1_210, 1_030)
+    Process.sleep(100)
 
-    # Advance one shard first: global min should remain bounded by slower shards.
-    push_txn(demux, hd(shards), 1_400)
-    Process.sleep(25)
-    assert Server.min_durable_version(demux) == Version.from_integer(1_000)
+    # Shards exist but nothing is confirmed: the floor is honestly zero.
+    premature = Server.min_durable_version(demux)
 
-    # Advance remaining shards and verify global watermark moves forward.
-    push_txn(demux, Enum.at(shards, 1), 1_400)
-    push_txn(demux, Enum.at(shards, 2), 1_400)
+    assert premature == Version.zero(),
+           "cut advanced before the known-committed version reached it: #{inspect(premature)}"
 
-    assert_eventually(fn ->
-      Server.min_durable_version(demux) == Version.from_integer(1_200)
-    end)
+    # The KCV passes the cut: it fires, every shard flushes its bucket-10
+    # data and confirms, and the global minimum is the confirmed cut.
+    push_txn(demux, shard_b, 1_220, 1_210)
 
-    # Simulate demux restart and verify persisted replay from object storage.
+    assert_eventually(
+      fn -> Server.min_durable_version(demux) == Version.from_integer(1_199) end,
+      3_000,
+      fn -> "watermark did not reach 1_199; at #{inspect(Server.min_durable_version(demux))}" end
+    )
+
+    # Next bucket, same discipline: the candidate at 1_299 waits for the KCV…
+    push_txn(demux, shard_c, 1_230, 1_220)
+    push_txn(demux, shard_a, 1_310, 1_230)
+    Process.sleep(100)
+
+    assert Server.min_durable_version(demux) == Version.from_integer(1_199),
+           "cut advanced before the known-committed version reached it"
+
+    # …and moves the watermark forward once the KCV passes it.
+    push_txn(demux, shard_b, 1_320, 1_310)
+
+    assert_eventually(
+      fn -> Server.min_durable_version(demux) == Version.from_integer(1_299) end,
+      3_000,
+      fn -> "watermark did not reach 1_299; at #{inspect(Server.min_durable_version(demux))}" end
+    )
+
+    # Restart: a fresh demux over the same object storage replays every
+    # flushed transaction from MinIO chunks.
     Process.exit(demux, :kill)
     Process.sleep(50)
 
     {:ok, demux_after_restart} = start_demux(backend)
 
+    expected_by_shard = %{shard_a => [1_010, 1_210], shard_b => [1_020, 1_220], shard_c => [1_030, 1_230]}
+
     for shard <- shards do
       {:ok, shard_server} = Server.get_shard_server(demux_after_restart, shard)
+      expected = Map.fetch!(expected_by_shard, shard)
 
       assert_eventually(
         fn ->
           case ShardServer.pull(shard_server, Version.from_integer(900), timeout: 200, limit: 10) do
             {:ok, txns, _currency} ->
               versions = Enum.map(txns, fn {version, _slice} -> Version.to_integer(version) end)
-              1_000 in versions and 1_200 in versions
+              Enum.all?(expected, &(&1 in versions))
 
             _ ->
               false
           end
         end,
-        8_000
+        8_000,
+        fn -> "shard #{shard} did not replay #{inspect(expected)} from MinIO chunks" end
       )
     end
   end
@@ -144,28 +194,35 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
   } do
     {:ok, failures} = Agent.start_link(fn -> 0 end)
     on_exit(fn -> if Process.alive?(failures), do: Agent.stop(failures) end)
-    shard_ids = [shard_base + 11, shard_base + 22, shard_base + 33]
-    shard_with_partition = Enum.at(shard_ids, 1)
+    [shard_a, shard_b, shard_c] = [shard_base + 11, shard_base + 22, shard_base + 33]
 
     flaky_backend =
       ObjectStorage.backend(FlakyS3Proxy,
         delegate_backend: backend,
-        fail_shard_tag: Keys.shard_tag(shard_with_partition),
+        fail_shard_tag: Keys.shard_tag(shard_b),
         failures: failures
       )
 
     {:ok, demux} = start_demux(flaky_backend)
 
-    for shard <- shard_ids do
-      push_txn(demux, shard, 1_000)
-      push_txn(demux, shard, 1_200)
-    end
+    push_txn(demux, shard_a, 1_010, nil)
+    push_txn(demux, shard_b, 1_020, 1_010)
+    push_txn(demux, shard_c, 1_030, 1_020)
 
-    assert_eventually(fn ->
-      Server.min_durable_version(demux) == Version.from_integer(1_000)
-    end)
+    # Fire the cut at 1_199: shard B's first chunk write fails once, the
+    # persistence worker retries, and the confirmed cut still reaches the
+    # global minimum — the partition cost latency, never durability.
+    push_txn(demux, shard_a, 1_210, 1_030)
+    push_txn(demux, shard_b, 1_220, 1_210)
 
-    assert_eventually(fn -> Agent.get(failures, & &1) >= 1 end)
+    assert_eventually(
+      fn -> Server.min_durable_version(demux) == Version.from_integer(1_199) end,
+      5_000,
+      fn -> "watermark did not heal to 1_199; at #{inspect(Server.min_durable_version(demux))}" end
+    )
+
+    assert Agent.get(failures, & &1) >= 1,
+           "the flaky backend never failed a write: the retry path was not exercised"
   end
 
   defp start_demux(backend) do
@@ -175,8 +232,8 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
          cluster: "distributed-test-cluster",
          object_storage: backend,
          log: self(),
+         cut_interval_us: @cut_interval_us,
          shard_server_opts: [
-           version_gap: 100,
            persistence_retry_backoff_ms: 1,
            persistence_retry_tick_ms: 1
          ]},
@@ -186,8 +243,9 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
     {:ok, start_supervised!(child_spec)}
   end
 
-  defp push_txn(demux, shard_id, version_int) do
+  defp push_txn(demux, shard_id, version_int, kcv_int) do
     version = Version.from_integer(version_int)
+    kcv = if kcv_int, do: Version.from_integer(kcv_int)
 
     txn =
       Transaction.encode(%{
@@ -196,23 +254,23 @@ defmodule Bedrock.Distributed.MinioDurabilityTest do
         commit_version: version
       })
 
-    :ok = Server.push(demux, version, txn)
+    :ok = Server.push(demux, version, txn, kcv)
   end
 
-  defp assert_eventually(fun, timeout_ms \\ 3_000) do
+  defp assert_eventually(fun, timeout_ms, describe_fn) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    eventually_loop(fun, deadline)
+    eventually_loop(fun, deadline, describe_fn)
   end
 
-  defp eventually_loop(fun, deadline) do
+  defp eventually_loop(fun, deadline, describe_fn) do
     if fun.() do
       :ok
     else
       if System.monotonic_time(:millisecond) < deadline do
         Process.sleep(25)
-        eventually_loop(fun, deadline)
+        eventually_loop(fun, deadline, describe_fn)
       else
-        flunk("condition not met before timeout")
+        flunk(describe_fn.())
       end
     end
   end

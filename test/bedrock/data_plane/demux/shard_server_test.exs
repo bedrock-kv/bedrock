@@ -121,6 +121,24 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert %{demux: demux} = :sys.get_state(pid)
       assert demux == self()
     end
+
+    test "rejects unknown options loudly", %{backend: backend} do
+      # A silently-ignored option is how a test suite rots: configuration
+      # written against a removed protocol keeps "passing" its setup and
+      # fails later as an inscrutable timeout. Startup is the place to
+      # refuse.
+      Process.flag(:trap_exit, true)
+
+      assert {:error, {%ArgumentError{message: message}, _stack}} =
+               ShardServer.start_link(
+                 shard_id: 99,
+                 cluster: "test",
+                 object_storage: backend,
+                 version_gap: 100
+               )
+
+      assert message =~ "version_gap"
+    end
   end
 
   describe "push/3" do

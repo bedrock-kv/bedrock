@@ -335,7 +335,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       {:ok, resolver} = FakeResolver.start_link([])
 
-      # Create a fake log that NEVER acknowledges (always fails)
+      # Simulate a log tripping its epoch-fatal WAL safety fuse.
       defmodule FailingLog do
         @moduledoc false
         use GenServer
@@ -344,10 +344,23 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
         def init(state), do: {:ok, state}
 
-        # This log immediately fails all push attempts to simulate log failure
-        def handle_call({:push, _transaction, _last_commit_version, _kcv}, _from, state) do
-          # Immediately return an error to simulate log failure
-          {:reply, {:error, :log_unavailable}, state}
+        def handle_call({:push, transaction, _last_commit_version, _kcv}, _from, state) do
+          {:ok, commit_version} = Transaction.commit_version(transaction)
+          floor = Bedrock.DataPlane.Version.zero()
+          lag_us = Bedrock.DataPlane.Version.distance(commit_version, floor)
+
+          reason =
+            {:recovery_required,
+             {:wal_limit_exceeded,
+              %{
+                commit_version: commit_version,
+                min_durable_version: floor,
+                last_version: floor,
+                lag_us: lag_us,
+                limit_us: 0
+              }}}
+
+          {:reply, {:error, reason}, state}
         end
       end
 
@@ -391,7 +404,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       {:ok, commit_proxy: commit_proxy, failing_log: failing_log}
     end
 
-    test "commit proxy dies when logs fail to acknowledge and cancels all waiting batches", %{
+    test "WAL safety fuse explicitly terminates the commit proxy for Director recovery", %{
       commit_proxy: commit_proxy
     } do
       # Monitor the commit proxy to detect when it dies
@@ -430,8 +443,14 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
           # Wait for the commit proxy to detect log failure and die
           receive do
             {:DOWN, ^commit_proxy_ref, :process, ^commit_proxy, reason} ->
-              # Verify the commit proxy died due to insufficient acknowledgments
-              assert reason == {:log_failures, [{"failing_log", :log_unavailable}]}
+              assert {:recovery_required,
+                      {:log_failures,
+                       [
+                         {"failing_log", {:recovery_required, {:wal_limit_exceeded, details}}}
+                       ]}} = reason
+
+              assert details.limit_us == 0
+              assert details.lag_us > 0
           after
             15_000 ->
               flunk("Commit proxy should have died due to log acknowledgment failure")

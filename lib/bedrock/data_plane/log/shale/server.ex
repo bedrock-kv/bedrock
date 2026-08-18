@@ -39,7 +39,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   # Alarm when the trim floor lags the WAL tip by more than this much
   # version-time (8 cut intervals). Growth is unbounded-with-alerting by
-  # default; pass reject_pushes_above_lag_us to enforce a hard limit.
+  # default; reject_pushes_above_lag_us opts into an epoch-fatal safety
+  # fuse despite its legacy option name.
   @floor_lag_alarm_us 40_000_000
 
   @doc false
@@ -237,8 +238,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   @impl true
   def handle_call({:push, transaction_bytes, expected_version, known_committed_version}, from, %State{} = t) do
-    with :ok <- check_wal_backpressure(t),
-         {:ok, transaction} <- Transaction.validate(transaction_bytes),
+    with {:ok, transaction} <- Transaction.validate(transaction_bytes),
          :ok <- validate_has_shard_index(transaction) do
       case push(t, expected_version, transaction, ack_fn(from)) do
         {:ok, t, appended_transactions} ->
@@ -509,20 +509,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  # Optional hard limit: refuse new pushes while the trim floor lags the WAL
-  # tip by more than the configured version-time. Disabled (nil) by default —
-  # the documented posture is unbounded-with-alerting. A log with no floor
-  # yet (nothing confirmed) never rejects.
-  defp check_wal_backpressure(%{reject_pushes_above_lag_us: nil}), do: :ok
-  defp check_wal_backpressure(%{min_durable_version: nil}), do: :ok
-
-  defp check_wal_backpressure(t) do
-    if Version.distance(t.last_version, t.min_durable_version) > t.reject_pushes_above_lag_us do
-      {:error, :wal_backpressure}
-    else
-      :ok
-    end
-  end
+  # The optional WAL backpressure hard limit is enforced in Pushing,
+  # against each transaction's own prospective commit version — including
+  # entries drained from the pending queue.
 
   defp segment_fully_durable?(segment, min_durable_version) do
     loaded_segment = Segment.ensure_transactions_are_loaded(segment)

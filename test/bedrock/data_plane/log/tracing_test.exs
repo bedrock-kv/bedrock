@@ -126,6 +126,33 @@ defmodule Bedrock.DataPlane.Log.TracingTest do
       )
     end
 
+    test "logs a WAL limit crossing as a recovery-required error" do
+      floor = Version.from_integer(100)
+      last_version = Version.from_integer(200)
+      commit_version = Version.from_integer(300)
+
+      log =
+        capture_log(fn ->
+          Tracing.handler(
+            [:bedrock, :log, :wal_limit_exceeded],
+            %{lag_us: 200, limit_us: 150, pending_pushes: 2},
+            %{
+              floor: floor,
+              last_version: last_version,
+              commit_version: commit_version,
+              recovery_required: true
+            },
+            nil
+          )
+        end)
+
+      assert log =~ "WAL safety limit exceeded; recovery required"
+      assert log =~ "lag_us=200"
+      assert log =~ "limit_us=150"
+      assert log =~ "pending_pushes=2"
+      assert log =~ "Bedrock Log [test_cluster/test_log_1]"
+    end
+
     test "handles :pull event" do
       metadata = %{
         from_version: Version.from_integer(100),

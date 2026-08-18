@@ -63,7 +63,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                                   timeout: Bedrock.timeout_in_ms(),
                                   async_stream_fn: async_stream_fn()
                                 ] ->
-                                  :ok | {:error, log_push_error()})
+                                  :ok | {:error, log_push_error() | recovery_required_error()})
 
   @type log_push_single_fn() :: (ServiceDescriptor.t(), binary(), Bedrock.version() ->
                                    :ok | {:error, :unavailable})
@@ -93,10 +93,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           | {:insufficient_acknowledgments, non_neg_integer(), non_neg_integer(), [{Log.id(), term()}]}
           | :log_push_failed
 
+  @type recovery_required_error() :: {:recovery_required, log_push_error()}
+
   @type finalization_error() ::
           resolution_error()
           | storage_coverage_error()
           | log_push_error()
+          | recovery_required_error()
 
   # ============================================================================
   # Data Structures
@@ -909,7 +912,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   ## Returns
     - `:ok` if acknowledgements have been received from ALL log servers.
     - `{:error, log_push_error()}` if any log has not successfully acknowledged the
-       push within the timeout period or other errors occur.
+      push within the timeout period or another non-fatal error occurs.
+    - `{:error, recovery_required_error()}` if a log reports that the current
+      transaction-system epoch cannot safely continue.
   """
   @spec push_transaction_to_logs_direct(
           last_commit_version :: Bedrock.version(),
@@ -921,7 +926,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             log_push_fn: (pid() | {atom(), node()}, binary(), Bedrock.version() -> :ok | {:error, term()}),
             timeout: non_neg_integer()
           ]
-        ) :: :ok | {:error, log_push_error()}
+        ) :: :ok | {:error, log_push_error() | recovery_required_error()}
   def push_transaction_to_logs_direct(last_commit_version, transactions_by_log, _commit_version, opts) do
     log_services = Keyword.fetch!(opts, :log_services)
     async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
@@ -979,13 +984,30 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         :ok
 
       {:error, errors} ->
-        {:error, {:log_failures, errors}}
+        classify_log_failures(errors)
 
       {count, errors} when count < required_acknowledgments ->
         {:error, {:insufficient_acknowledgments, count, required_acknowledgments, errors}}
 
       _other ->
         {:error, :log_push_failed}
+    end
+  end
+
+  # A log can refuse a version only before the global commit point, but the
+  # sequencer and resolvers have already incorporated that scheduled version.
+  # Promote the log's signal to an explicit epoch-fatal reason so the commit
+  # proxy stops and its Director monitor starts coordinated recovery.
+  defp classify_log_failures(errors) do
+    log_failures = {:log_failures, errors}
+
+    if Enum.any?(errors, fn
+         {_log_id, {:recovery_required, _reason}} -> true
+         _error -> false
+       end) do
+      {:error, {:recovery_required, log_failures}}
+    else
+      {:error, log_failures}
     end
   end
 

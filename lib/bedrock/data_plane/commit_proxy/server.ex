@@ -196,8 +196,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
   @impl true
-  @spec handle_info(:timeout | {:routing_data_update, RoutingData.t()}, State.t()) ::
-          {:noreply, State.t(), timeout()}
+  @spec handle_info(
+          :timeout
+          | {:routing_data_update, RoutingData.t()}
+          | {:finalization_failed, term()}
+          | {:DOWN, reference(), :process, pid(), term()},
+          State.t()
+        ) ::
+          {:noreply, State.t()}
+          | {:noreply, State.t(), timeout()}
+          | {:stop, term(), State.t()}
   def handle_info(:timeout, %{batch: nil, mode: :running} = t) do
     empty_transaction = Transaction.empty_transaction()
 
@@ -237,6 +245,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     {:stop, :normal, t}
   end
 
+  # A failed finalization cannot be treated as an isolated transaction
+  # abort. Version assignment and conflict resolution have already mutated
+  # epoch-local state, and some required logs may have fsynced the batch.
+  # Stop explicitly so the Director's component monitor initiates recovery.
+  def handle_info({:finalization_failed, reason}, t), do: stop(t, reason)
+
   def handle_info(_msg, t) do
     {:noreply, t}
   end
@@ -265,7 +279,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           send(server_pid, {:routing_data_update, updated_routing_data})
 
         {:error, reason} ->
-          exit(reason)
+          send(server_pid, {:finalization_failed, reason})
       end
     end)
   end

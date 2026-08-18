@@ -18,6 +18,7 @@ defmodule Bedrock.DataPlane.Log.Tracing do
         [:bedrock, :log, :recover_from],
         [:bedrock, :log, :push],
         [:bedrock, :log, :push_out_of_order],
+        [:bedrock, :log, :wal_limit_exceeded],
         [:bedrock, :log, :pull]
       ],
       &__MODULE__.handler/4,
@@ -70,6 +71,20 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     )
   end
 
+  def log_event(:wal_limit_exceeded, %{lag_us: lag_us, limit_us: limit_us, pending_pushes: pending_pushes}, %{
+        floor: floor,
+        last_version: last_version,
+        commit_version: commit_version,
+        recovery_required: true
+      }) do
+    error(
+      "WAL safety limit exceeded; recovery required " <>
+        "(floor=#{Version.to_string(floor)}, tip=#{Version.to_string(last_version)}, " <>
+        "prospective=#{Version.to_string(commit_version)}, lag_us=#{lag_us}, " <>
+        "limit_us=#{limit_us}, pending_pushes=#{pending_pushes})"
+    )
+  end
+
   def log_event(:pull, _, %{from_version: from_version, opts: opts}),
     do: info("Pull transactions from version #{Version.to_string(from_version)} with options #{inspect(opts)}")
 
@@ -78,5 +93,12 @@ defmodule Bedrock.DataPlane.Log.Tracing do
     cluster = Keyword.fetch!(metadata, :cluster)
     id = Keyword.fetch!(metadata, :id)
     Logger.info("Bedrock Log [#{cluster.name()}/#{id}]: #{message}")
+  end
+
+  defp error(message) do
+    metadata = Logger.metadata()
+    cluster = Keyword.fetch!(metadata, :cluster)
+    id = Keyword.fetch!(metadata, :id)
+    Logger.error("Bedrock Log [#{cluster.name()}/#{id}]: #{message}")
   end
 end

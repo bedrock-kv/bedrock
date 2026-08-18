@@ -73,8 +73,8 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsEdgeCaseTest do
 
   defp create_wal_file_with_entry(tmp_dir, filename, entry_data) do
     wal_file = Path.join(tmp_dir, filename)
-    magic = <<"BED0">>
-    File.write!(wal_file, magic <> entry_data)
+    header = <<"BED1", 0::unsigned-big-64>>
+    File.write!(wal_file, header <> entry_data)
     wal_file
   end
 

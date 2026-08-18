@@ -15,7 +15,7 @@ defmodule Bedrock do
   @type key_value :: {key(), value()}
 
   @type version :: Bedrock.DataPlane.Version.t()
-  @type version_vector :: {oldest :: version(), newest :: version()}
+  @type version_vector :: {available_after :: version(), last_inclusive :: version()}
 
   @type transaction :: binary()
 

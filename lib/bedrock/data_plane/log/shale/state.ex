@@ -42,6 +42,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           reject_pushes_above_lag_us: non_neg_integer() | nil,
           #
           mode: mode(),
+          available_after: Bedrock.version(),
           oldest_version: Bedrock.version(),
           otp_name: Worker.otp_name(),
           params: %{
@@ -77,6 +78,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             reject_pushes_above_lag_us: nil,
             #
             mode: :locked,
+            available_after: <<0::unsigned-big-64>>,
             oldest_version: nil,
             otp_name: nil,
             pending_transactions: %{},

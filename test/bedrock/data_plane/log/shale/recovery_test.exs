@@ -5,10 +5,10 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
   alias Bedrock.DataPlane.Log.Shale.Recovery
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
+  alias Bedrock.DataPlane.Log.Shale.TransactionStreams
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
-  alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
 
   @moduletag :tmp_dir
@@ -27,6 +27,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       active_segment: nil,
       segments: [],
       writer: nil,
+      available_after: version(0),
       oldest_version: version(0),
       last_version: version(0)
     }
@@ -50,7 +51,13 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
     test "successfully recovers with no transactions (empty source list)", %{state: state} do
       expected_version = version(1)
 
-      assert {:ok, %{mode: :running, oldest_version: ^expected_version, last_version: ^expected_version}} =
+      assert {:ok,
+              %{
+                mode: :running,
+                available_after: ^expected_version,
+                oldest_version: ^expected_version,
+                last_version: ^expected_version
+              }} =
                Recovery.recover_from(
                  state,
                  [],
@@ -63,7 +70,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       source_log = setup_mock_log([])
       expected_version = version(1)
 
-      assert {:ok, %{mode: :running, oldest_version: ^expected_version, last_version: ^expected_version}} =
+      assert {:ok, %{mode: :running, available_after: ^expected_version, last_version: ^expected_version}} =
                Recovery.recover_from(
                  state,
                  [source_log],
@@ -77,7 +84,15 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       # version ranges but had no segments loaded, causing :not_found errors
       v = version(5)
 
-      assert {:ok, %{mode: :running, oldest_version: ^v, last_version: ^v, active_segment: segment, writer: writer}} =
+      assert {:ok,
+              %{
+                mode: :running,
+                available_after: ^v,
+                oldest_version: ^v,
+                last_version: ^v,
+                active_segment: segment,
+                writer: nil
+              }} =
                Recovery.recover_from(
                  state,
                  [],
@@ -86,12 +101,14 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
                )
 
       assert segment
-      assert writer
+      assert segment.previous_version == v
+      assert {:ok, ^v} = TransactionStreams.read_previous_version(segment.path)
     end
 
-    test "successfully recovers with valid transactions", %{state: state} do
-      first_version = version(1)
-      last_version = version(2)
+    test "copies real transactions byte-for-byte across version gaps", %{state: state} do
+      replay_after = version(1)
+      first_version = version(2)
+      last_version = version(10_000)
 
       transactions = [
         create_encoded_tx(first_version, %{"data" => "test1"}),
@@ -100,19 +117,63 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
 
       source_log = setup_mock_log(transactions)
 
-      assert {:ok, %{mode: :running, oldest_version: ^first_version, last_version: ^last_version}} =
+      assert {:ok,
+              %{
+                mode: :running,
+                available_after: ^replay_after,
+                last_version: ^last_version,
+                active_segment: active_segment
+              } = recovered} =
                Recovery.recover_from(
                  state,
                  [source_log],
-                 first_version,
+                 replay_after,
                  last_version
                )
+
+      assert recovered.oldest_version == first_version
+      assert Enum.reverse(active_segment.transactions) == transactions
+      assert active_segment.previous_version == replay_after
+    end
+
+    test "copies a single retained transaction after the exclusive cursor", %{state: state} do
+      replay_after = version(41)
+      last_inclusive = version(1_000)
+      transaction = create_encoded_tx(last_inclusive, %{"only" => "transaction"})
+      source_log = setup_mock_log([transaction])
+
+      assert {:ok, recovered} =
+               Recovery.recover_from(state, [source_log], replay_after, last_inclusive)
+
+      assert recovered.available_after == replay_after
+      assert recovered.last_version == last_inclusive
+      assert recovered.active_segment.transactions == [transaction]
+    end
+
+    test "does not report success when a source stops before the endpoint", %{state: state} do
+      replay_after = version(1)
+      last_inclusive = version(10)
+      partial_version = version(5)
+      partial = create_encoded_tx(partial_version, %{"partial" => "data"})
+      last = create_encoded_tx(last_inclusive, %{"last" => "data"})
+      source_log = setup_paged_mock_log([[partial], []])
+
+      assert {:error, {:incomplete_replay, ^partial_version, ^last_inclusive}, failed_state} =
+               Recovery.recover_from(state, [source_log], replay_after, last_inclusive)
+
+      assert failed_state.mode == :locked
+      assert failed_state.writer == nil
+      assert failed_state.last_version == partial_version
+
+      complete_source = setup_mock_log([partial, last])
+      assert {:ok, recovered} = Recovery.recover_from(failed_state, [complete_source], replay_after, last_inclusive)
+      assert Enum.reverse(recovered.active_segment.transactions) == [partial, last]
     end
 
     test "handles unavailable source log", %{state: state} do
       source_log = setup_failing_mock_log(:unavailable)
 
-      assert {:error, {:source_log_unavailable, ^source_log}} =
+      assert {:error, {:source_log_unavailable, ^source_log}, %{mode: :locked}} =
                Recovery.recover_from(
                  state,
                  [source_log],
@@ -140,7 +201,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       source1 = setup_failing_mock_log(:unavailable)
       source2 = setup_failing_mock_log(:unavailable)
 
-      assert {:error, {:source_log_unavailable, _}} =
+      assert {:error, {:source_log_unavailable, _}, %{mode: :locked}} =
                Recovery.recover_from(
                  state,
                  [source1, source2],
@@ -173,8 +234,9 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
     end
 
     test "replays transactions through the fresh demux", %{state: state} do
-      first_version = version(1)
-      last_version = version(2)
+      replay_after = version(1)
+      first_version = version(2)
+      last_version = version(3)
 
       transactions = [
         create_encoded_tx(first_version, %{"data" => "test1"}),
@@ -183,7 +245,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
 
       source_log = setup_mock_log(transactions)
 
-      assert {:ok, t} = Recovery.recover_from(state, [source_log], first_version, last_version)
+      assert {:ok, t} = Recovery.recover_from(state, [source_log], replay_after, last_version)
 
       # The replayed versions passed through the demux's push path: its
       # bucket tracking has seen them (versions 1..2 land in bucket 0).
@@ -197,19 +259,16 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       v = version(10)
       source_log = setup_mock_log([])
 
-      assert {:ok, %{oldest_version: ^v, last_version: ^v}} =
-               Recovery.pull_transactions(
-                 state,
-                 source_log,
-                 v,
-                 v
-               )
+      positioned_state = %{state | available_after: v, oldest_version: v, last_version: v}
+
+      assert {:ok, ^positioned_state} =
+               Recovery.pull_transactions(positioned_state, source_log, v, v)
     end
 
     test "handles invalid transaction data", %{state: state} do
       source_log = setup_mock_log(["invalid"])
 
-      assert {:error, :invalid_transaction} =
+      assert {:error, :invalid_transaction, ^state} =
                Recovery.pull_transactions(
                  state,
                  source_log,
@@ -244,6 +303,22 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       end
     end)
   end
+
+  defp setup_paged_mock_log(pages) do
+    spawn_link(fn -> serve_pages(pages) end)
+  end
+
+  defp serve_pages([page | remaining]) do
+    receive do
+      {:"$gen_call", {from, ref}, {:pull, _version, _opts}} ->
+        send(from, {ref, {:ok, page}})
+        serve_pages(remaining)
+    after
+      500 -> :timeout
+    end
+  end
+
+  defp serve_pages([]), do: :ok
 
   defp setup_failing_mock_log(error) do
     spawn_link(fn ->

@@ -24,17 +24,17 @@ defmodule Bedrock.DataPlane.Log.Telemetry do
 
   @spec trace_recover_from(
           source_logs :: [Log.ref()],
-          first_version :: Bedrock.version(),
-          last_version :: Bedrock.version()
+          replay_after :: Bedrock.version(),
+          last_inclusive :: Bedrock.version()
         ) :: :ok
-  def trace_recover_from(source_logs, first_version, last_version) do
+  def trace_recover_from(source_logs, replay_after, last_inclusive) do
     Telemetry.execute(
       [:bedrock, :log, :recover_from],
       %{},
       Map.merge(trace_metadata(), %{
         source_logs: source_logs,
-        first_version: first_version,
-        last_version: last_version
+        replay_after: replay_after,
+        last_inclusive: last_inclusive
       })
     )
   end

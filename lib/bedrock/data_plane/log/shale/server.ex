@@ -103,6 +103,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
        foreman: foreman,
        object_storage: object_storage,
        reject_pushes_above_lag_us: reject_pushes_above_lag_us,
+       available_after: Version.zero(),
        oldest_version: Version.zero(),
        last_version: Version.zero()
      }, {:continue, :initialization}}
@@ -224,11 +225,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  def handle_call({:recover_from, source_logs, first_version, last_version}, {_director, _}, t) do
-    trace_recover_from(source_logs, first_version, last_version)
+  def handle_call({:recover_from, source_logs, replay_after, last_inclusive}, {_director, _}, t) do
+    trace_recover_from(source_logs, replay_after, last_inclusive)
 
-    case recover_from(t, source_logs, first_version, last_version) do
+    case recover_from(t, source_logs, replay_after, last_inclusive) do
       {:ok, t} -> reply(t, {:ok, self()})
+      {:error, reason, t} -> reply(t, {:error, {:failed_to_recover, reason}})
       {:error, reason} -> reply(t, {:error, {:failed_to_recover, reason}})
     end
   end
@@ -372,11 +374,12 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   # Initialization with resource exhaustion detection
   defp do_initialization(t) do
     with {:ok, recycler_pid} <- start_segment_recycler(t.path),
-         {:ok, {oldest_version, last_version, active_segment, segments}} <-
+         {:ok, {available_after, oldest_version, last_version, active_segment, segments}} <-
            load_or_create_segments(t.path, recycler_pid),
          {:ok, demux} <- start_demux(t) do
       {:ok,
        t
+       |> Map.put(:available_after, available_after)
        |> Map.put(:oldest_version, oldest_version)
        |> Map.put(:last_version, last_version)
        |> Map.put(:active_segment, active_segment)
@@ -404,30 +407,26 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  defp load_or_create_segments(path, recycler_pid) do
+  defp load_or_create_segments(path, _recycler_pid) do
     case reload_segments_at_path(path) do
       {:ok, []} ->
-        case Segment.allocate_from_recycler(recycler_pid, path, Version.zero()) do
-          {:ok, new_segment} ->
-            {:ok, {Version.zero(), Version.zero(), new_segment, []}}
-
-          {:error, :allocation_failed} ->
-            # Segment allocation can fail due to resource exhaustion (emfile/enfile)
-            # or because the recycler is unavailable. Treat as recoverable.
-            {:error, {:resource_exhausted, :allocation_failed}}
-        end
+        {:ok, {Version.zero(), Version.zero(), Version.zero(), nil, []}}
 
       {:ok, [active_segment | segments]} ->
         active_segment = Segment.ensure_transactions_are_loaded(active_segment)
-        last_version = Segment.last_version(active_segment)
-        oldest_version = Enum.min([active_segment.min_version | Enum.map(segments, & &1.min_version)])
-        {:ok, {oldest_version, last_version, active_segment, segments}}
+        last_version = Segment.last_version(active_segment) || active_segment.previous_version
+        available_after = List.last([active_segment | segments]).previous_version
+        oldest_version = determine_oldest_transaction_version([active_segment | segments], available_after)
+        {:ok, {available_after, oldest_version, last_version, active_segment, segments}}
 
       {:error, {:unable_to_list_segments, reason}} when reason in [:emfile, :enfile, :enomem] ->
         {:error, {:resource_exhausted, reason}}
 
       {:error, {:unable_to_list_segments, reason}} ->
         raise "Unable to read WAL segment files from path: #{path}. Error: #{inspect(reason)}. Check directory permissions and filesystem health."
+
+      {:error, {format_error, segment_path}} when format_error in [:unsupported_wal_format, :invalid_wal_format] ->
+        raise "Unable to establish WAL replay cursor for #{segment_path}: #{format_error}"
     end
   end
 
@@ -483,9 +482,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
       length(remaining_segments) + 1
     )
 
+    available_after = determine_available_after(t.active_segment, remaining_segments)
+
     t
     |> Map.put(:segments, remaining_segments)
-    |> Map.put(:oldest_version, determine_oldest_version(t.active_segment, remaining_segments))
+    |> Map.put(:available_after, available_after)
+    |> Map.put(
+      :oldest_version,
+      determine_oldest_transaction_version([t.active_segment | remaining_segments], available_after)
+    )
     |> check_floor_lag_alarm(trim_floor, lag_us)
   end
 
@@ -528,13 +533,28 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  defp determine_oldest_version(nil, []), do: Version.zero()
+  defp determine_available_after(nil, []), do: Version.zero()
 
-  defp determine_oldest_version(active_segment, segments) do
+  defp determine_available_after(active_segment, segments) do
     [active_segment | segments]
     |> Enum.reject(&is_nil/1)
-    |> Enum.map(&Segment.oldest_version/1)
-    |> Enum.min()
+    |> List.last()
+    |> Map.fetch!(:previous_version)
+  end
+
+  defp determine_oldest_transaction_version(segments, available_after) do
+    segments
+    |> Enum.reverse()
+    |> Enum.find_value(fn segment ->
+      segment
+      |> Segment.transactions()
+      |> List.last()
+      |> case do
+        nil -> nil
+        transaction -> Transaction.commit_version!(transaction)
+      end
+    end)
+    |> Kernel.||(available_after)
   end
 
   defp handle_resource_exhaustion(t, reason) do

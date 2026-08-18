@@ -125,22 +125,7 @@ defmodule Bedrock.Directory.PropertyTest do
         <<n::32>>
       end
 
-      # Use keyspace-aware stubs
-      stub(MockRepo, :get, fn _keyspace, key ->
-        cond do
-          # Version not initialized
-          key == ["version"] -> nil
-          # Directory doesn't exist yet
-          key in sorted_paths -> nil
-          # Root directory always exists
-          key == [] -> {<<>>, ""}
-          # Parent exists
-          MapSet.member?(created_dirs, key) -> {<<0, 1>>, ""}
-          true -> nil
-        end
-      end)
-
-      stub(MockRepo, :put, fn %Keyspace{}, _key, _value -> :ok end)
+      stub_repo_with_time_accurate_directory_state()
 
       layer = Directory.root(MockRepo, next_prefix_fn: next_prefix_fn)
 
@@ -176,6 +161,53 @@ defmodule Bedrock.Directory.PropertyTest do
       expected_creations = created_dirs |> MapSet.delete([]) |> MapSet.size()
       assert length(successful_nodes) == expected_creations
     end
+  end
+
+  test "a parent created in the same batch is visible to its child" do
+    # The deterministic pin for what the property above only sometimes
+    # generates: a parent-prefix pair like [["f"], ["f", "G"]]. With a
+    # stub that is not time-accurate, the just-created parent still reads
+    # as nonexistent during the child's parent check and creation fails
+    # with :parent_directory_does_not_exist.
+    stub_repo_with_time_accurate_directory_state()
+
+    prefix_counter = :counters.new(1, [])
+
+    next_prefix_fn = fn ->
+      n = :counters.get(prefix_counter, 1)
+      :counters.add(prefix_counter, 1, 1)
+      <<n::32>>
+    end
+
+    layer = Directory.root(MockRepo, next_prefix_fn: next_prefix_fn)
+
+    assert {:ok, _parent} = Directory.create(layer, ["f"])
+    assert {:ok, _child} = Directory.create(layer, ["f", "G"])
+  end
+
+  # A time-accurate repo stub: a directory exists exactly when it has been
+  # written. The get answers come from the set of paths actually put so
+  # far — never from a precomputed list, which would hide a parent created
+  # earlier in the same run behind "doesn't exist yet".
+  defp stub_repo_with_time_accurate_directory_state do
+    Process.put(:created_directory_paths, MapSet.new([[]]))
+
+    stub(MockRepo, :get, fn _keyspace, key ->
+      cond do
+        # Version not initialized
+        key == ["version"] -> nil
+        # Root directory always exists
+        key == [] -> {<<>>, ""}
+        # Anything written exists from that moment on
+        MapSet.member?(Process.get(:created_directory_paths), key) -> {<<0, 1>>, ""}
+        true -> nil
+      end
+    end)
+
+    stub(MockRepo, :put, fn %Keyspace{}, key, _value ->
+      Process.put(:created_directory_paths, MapSet.put(Process.get(:created_directory_paths), key))
+      :ok
+    end)
   end
 
   property "directory operations preserve metadata" do

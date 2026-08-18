@@ -33,7 +33,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
       end)
 
     available_resolver_nodes = Map.get(context.node_capabilities, :coordination, [])
-    {_first_version, last_committed_version} = recovery_attempt.version_vector
+    {_available_after, last_committed_version} = recovery_attempt.version_vector
 
     resolver_context = %{
       resolvers: recovery_attempt.resolvers,

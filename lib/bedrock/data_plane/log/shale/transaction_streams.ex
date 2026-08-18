@@ -7,8 +7,36 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Transaction
 
-  @wal_magic_number <<"BED0">>
+  @wal_magic_number <<"BED1">>
   @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
+
+  @spec read_previous_version(String.t()) ::
+          {:ok, Bedrock.version()}
+          | {:error, :unsupported_wal_format | :invalid_wal_format | File.posix()}
+  def read_previous_version(path_to_file) do
+    with {:ok, fd} <- File.open(path_to_file, [:read, :raw, :binary]) do
+      result =
+        case :file.pread(fd, 0, 12) do
+          {:ok, <<@wal_magic_number, previous_version::binary-size(8)>>} ->
+            {:ok, previous_version}
+
+          {:ok, <<"BED0", _::binary>>} ->
+            {:error, :unsupported_wal_format}
+
+          {:ok, _} ->
+            {:error, :invalid_wal_format}
+
+          :eof ->
+            {:error, :invalid_wal_format}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      :ok = File.close(fd)
+      result
+    end
+  end
 
   @spec from_segments([Segment.t()], Bedrock.version()) ::
           {:ok, Enumerable.t(Transaction.encoded())} | {:error, :not_found}
@@ -76,8 +104,8 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
     Stream.resource(
       fn ->
         case File.read!(path_to_file) do
-          <<@wal_magic_number, bytes::binary>> ->
-            {4, bytes}
+          <<@wal_magic_number, _previous_version::binary-size(8), bytes::binary>> ->
+            {12, bytes}
 
           other ->
             {:error, {:invalid_wal_format, byte_size(other)}}

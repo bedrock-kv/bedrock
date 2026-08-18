@@ -7,6 +7,7 @@ defmodule Bedrock.DataPlane.Log.Shale.FactsTest do
   @test_state %State{
     id: "test_id",
     otp_name: :test_otp,
+    available_after: 0,
     oldest_version: 1,
     last_version: 10
   }
@@ -17,6 +18,7 @@ defmodule Bedrock.DataPlane.Log.Shale.FactsTest do
       assert {:ok, :log} = Facts.info(@test_state, :kind)
       assert {:ok, :test_otp} = Facts.info(@test_state, :otp_name)
       assert {:ok, :unavailable} = Facts.info(@test_state, :minimum_durable_version)
+      assert {:ok, 0} = Facts.info(@test_state, :available_after)
       assert {:ok, 1} = Facts.info(@test_state, :oldest_version)
       assert {:ok, 10} = Facts.info(@test_state, :last_version)
     end
@@ -52,6 +54,7 @@ defmodule Bedrock.DataPlane.Log.Shale.FactsTest do
         :id,
         :kind,
         :minimum_durable_version,
+        :available_after,
         :oldest_version,
         :last_version,
         :otp_name,

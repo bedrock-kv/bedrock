@@ -52,7 +52,13 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
     :ok = :file.write(fd, :binary.copy(<<0>>, 100_000))
     :ok = File.close(fd)
 
-    {:ok, writer} = Writer.open(file_path)
+    previous_version =
+      case version_data_pairs do
+        [{first_version, _} | _] -> Version.from_integer(max(first_version - 1, 0))
+        [] -> Version.zero()
+      end
+
+    {:ok, writer} = Writer.open(file_path, previous_version)
 
     {final_writer, version_map} =
       Enum.reduce(version_data_pairs, {writer, %{}}, fn {version_int, data}, {acc_writer, acc_map} ->
@@ -78,9 +84,12 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
   @spec read_transaction_by_version(String.t(), Version.t()) ::
           {:ok, Transaction.encoded()} | {:error, :not_found} | {:error, term()}
   def read_transaction_by_version(file_path, target_version) do
+    # A segment carries its replay cursor: previous_version is part of the
+    # contract, not an optional detail.
     segment = %Segment{
       path: file_path,
       min_version: Version.from_integer(0),
+      previous_version: Version.zero(),
       transactions: nil
     }
 

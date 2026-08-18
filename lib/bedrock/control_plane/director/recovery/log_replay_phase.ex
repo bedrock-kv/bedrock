@@ -38,16 +38,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
 
   @impl true
   def execute(recovery_attempt, context) do
-    # Copy only what the new generation actually needs — but never ask a
-    # source for versions below what its WAL can supply. The durable floor
-    # skips the already-chunked prefix when it is ahead, but it regresses
-    # to zero on restart (it is not persisted), while a trimmed WAL begins
-    # at its oldest retained version: everything below the vector's first
-    # element is durable in object-storage chunks — that is the only way
-    # it got trimmed.
-    {oldest_available, last_version} = recovery_attempt.version_vector
-    first_version = max(recovery_attempt.durable_version, oldest_available)
-    optimized_version_vector = {first_version, last_version}
+    # Both lower bounds are exclusive cursors: object storage is durable
+    # through `durable_through`, while every surviving WAL is complete after
+    # `available_after`. Their maximum therefore remains an exclusive cursor.
+    {available_after, last_inclusive} = recovery_attempt.version_vector
+    durable_through = recovery_attempt.durable_version
+    replay_after = max(durable_through, available_after)
+    replay_range = {replay_after, last_inclusive}
 
     # Get survivor log IDs - all logs that were successfully locked during recovery
     survivor_log_ids = Map.get(recovery_attempt, :survivor_log_ids, recovery_attempt.old_log_ids_to_copy)
@@ -55,7 +52,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
     survivor_log_ids
     |> replay_into_new_logs(
       Map.keys(recovery_attempt.logs),
-      optimized_version_vector,
+      replay_range,
       recovery_attempt,
       context
     )
@@ -90,7 +87,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   def replay_into_new_logs(
         survivor_log_ids,
         new_log_ids,
-        {first_version, last_version},
+        {replay_after, last_inclusive},
         recovery_attempt,
         context \\ %{}
       ) do
@@ -105,7 +102,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
     |> Task.async_stream(
       fn new_log_id ->
         new_log_id
-        |> copy_log_data_fn.(survivor_pids, first_version, last_version, service_pids)
+        |> copy_log_data_fn.(survivor_pids, replay_after, last_inclusive, service_pids)
         |> then(&{new_log_id, &1})
       end,
       ordered: false,
@@ -154,16 +151,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   @spec copy_log_data(
           new_log_id :: Log.id(),
           survivor_pids :: [pid()],
-          first_version :: Bedrock.version(),
-          last_version :: Bedrock.version(),
+          replay_after :: Bedrock.version(),
+          last_inclusive :: Bedrock.version(),
           service_pids :: %{Log.id() => pid()}
         ) :: {:ok, pid()} | {:error, term()}
-  def copy_log_data(new_log_id, survivor_pids, first_version, last_version, service_pids) do
+  def copy_log_data(new_log_id, survivor_pids, replay_after, last_inclusive, service_pids) do
     Log.recover_from(
       Map.fetch!(service_pids, new_log_id),
       survivor_pids,
-      first_version,
-      last_version
+      replay_after,
+      last_inclusive
     )
   end
 

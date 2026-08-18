@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-18T19:38:33Z",
+  "description": "Current develop rejects all valid BED0 Shale WAL segments after the BED1 replay-cursor format change, preventing restart of existing 0.5.3 data. Add clean format-version handling with explicit pattern matching. For validated, non-empty BED0 WALs, derive the compatibility cursor as first retained commit version minus one (zero remains zero), keep BED1 writes unchanged, and fail closed where a legacy cursor cannot be derived. Develop with tests first and cover mixed/edge cases.",
+  "id": "bedrock-egw",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Read legacy BED0 WALs via synthetic exclusive cursor",
+  "type": "bug",
+  "updated_at": "2026-08-18T19:38:33Z"
+}

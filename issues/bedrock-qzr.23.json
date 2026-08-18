@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-18T17:01:13Z",
+  "close_reason": "Admission moved into Pushing's append choke point: admit(t, commit_version) checks distance(version, min_durable_version) \u003c= reject_pushes_above_lag_us for direct appends AND drained pending entries; also checked at enqueue for early errors. On rejection all queued successors (strictly later versions, equally inadmissible, gap unfillable) are acked {:error, :wal_backpressure} and cleared — no stranding. Gated to mode :running so recovery replay is never refused; nil limit/floor unchanged. Server pre-check removed as subsumed. Tests cover the floor-arrives-after-enqueue drain scenario, enqueue/direct rejection, successor flush, nil-limit posture. PR #126 stacked on #125 (commit 000da395).",
   "created": "2026-08-15T21:34:23Z",
   "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nShale checks reject_pushes_above_lag_us once against the current last_version before Pushing. Future pushes can queue while last_version remains below the threshold. When the missing predecessor arrives, do_pending_pushes drains the entire queue without rechecking the prospective lag, advancing and growing the WAL arbitrarily beyond the configured hard limit.\n\nImpact:\nThe advertised bounded-growth mode does not actually bound a burst containing gaps or concurrent out-of-order delivery.\n\nAcceptance criteria:\n- Backpressure is enforced against each transaction's prospective commit version, including entries drained from pending_pushes.\n- A queued caller receives a clear error if its transaction cannot be admitted.\n- Queue draining leaves ordering state consistent and does not strand callers after rejection.\n- Tests enqueue a suffix beyond the limit, fill the gap, and prove the configured bound cannot be crossed.\n- Existing unbounded-with-alerting behavior remains unchanged when the hard limit is nil.",
   "id": "bedrock-qzr.23",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Enforce WAL backpressure while draining queued future pushes",
   "type": "bug",
-  "updated_at": "2026-08-15T21:34:23Z"
+  "updated_at": "2026-08-18T17:01:13Z"
 }

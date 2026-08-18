@@ -8,6 +8,16 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsEdgeCaseTest do
   @moduletag :tmp_dir
 
   describe "TransactionStreams.from_file!/1" do
+    test "streams transactions from a BED0 segment", %{tmp_dir: tmp_dir} do
+      transaction = TransactionTestSupport.new_log_transaction(41, %{"key" => "value"})
+      entry = create_entry(transaction, Version.from_integer(41))
+      wal_file = Path.join(tmp_dir, "legacy.wal")
+      eof_marker = <<0xFFFFFFFFFFFFFFFF::unsigned-big-64, 0::unsigned-big-32, 0::unsigned-big-32>>
+      File.write!(wal_file, <<"BED0", entry::binary, eof_marker::binary>>)
+
+      assert [^transaction] = wal_file |> TransactionStreams.from_file!() |> Enum.to_list()
+    end
+
     test "gracefully handles files with corrupted CRC32 checksums", %{tmp_dir: tmp_dir} do
       # Create a WAL file with invalid CRC32 to trigger corruption handling
       transaction = TransactionTestSupport.new_log_transaction(1, %{"key" => "value"})
@@ -86,6 +96,13 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreamsEdgeCaseTest do
 
     <<version_binary::binary-size(8), size_in_bytes::unsigned-big-32, transaction::binary,
       wrong_crc32::unsigned-big-32>>
+  end
+
+  defp create_entry(transaction, version) do
+    size_in_bytes = byte_size(transaction)
+    crc32 = :erlang.crc32(transaction)
+
+    <<version::binary, size_in_bytes::unsigned-big-32, transaction::binary, crc32::unsigned-big-32>>
   end
 
   defp create_truncated_entry do

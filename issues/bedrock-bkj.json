@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-18T22:45:48Z",
+  "description": "Coordinator bootstrap reconstructs only %{logs: ...} for Director recovery, but stores it in the live transaction_system_layout slot. Late-Link replay then publishes that partial map as runnable cluster state; Repo starts a TransactionBuilder and ReadVersions crashes on missing :epoch. Separate recovery-source layout from the currently runnable TSL. Runtime fetch/replay must return unavailable while recovery is active, Director must retain the old/log-only input, and publishing a completed TSL must atomically refresh both the live layout and the next recovery source. Cover bootstrap/mid-recovery late registration and live-layout publication via TDD.",
+  "id": "bedrock-bkj",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Do not publish bootstrap recovery hints as runnable TSLs",
+  "type": "bug",
+  "updated_at": "2026-08-18T22:45:48Z"
+}

@@ -7,6 +7,12 @@
   "id": "bedrock-qzr.27",
   "labels": [],
   "parent": "bedrock-qzr",
+  "comments": [
+    {
+      "text": "Reopened for PR #136 review cleanup: flatten do_initialization/1 so its with clauses are normalized transactional steps; move demux failure cleanup/classification behind an acquisition helper instead of nesting case inside with.",
+      "timestamp": "2026-08-18T19:11:45Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Make Shale WAL cold start transactional and preserve I/O errors",

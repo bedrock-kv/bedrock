@@ -45,11 +45,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
 
     case SegmentRecycler.check_out(segment_recycler, path_to_file) do
       :ok ->
+        # A freshly checked-out segment is KNOWN empty — `transactions: []`
+        # says so without ever reading the (preallocated, 64 MiB) file.
+        # `nil` is reserved for cold-start segments whose contents exist on
+        # disk but have not been decoded.
         {:ok,
          %__MODULE__{
            min_version: version,
            previous_version: previous_version,
-           path: path_to_file
+           path: path_to_file,
+           transactions: []
          }}
 
       _ ->

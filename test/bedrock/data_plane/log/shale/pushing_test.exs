@@ -393,6 +393,113 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
     end
   end
 
+  describe "WAL backpressure bounds every prospective commit version" do
+    setup :recycler_in_tmp_dir
+
+    defp bounded_state(dir, recycler, limit, floor_int) do
+      %State{
+        mode: :running,
+        path: dir,
+        segment_recycler: recycler,
+        writer: nil,
+        active_segment: nil,
+        segments: [],
+        last_version: Version.from_integer(1_000),
+        available_after: Version.from_integer(1_000),
+        oldest_version: Version.from_integer(1_000),
+        reject_pushes_above_lag_us: limit,
+        min_durable_version: floor_int && Version.from_integer(floor_int),
+        pending_pushes: %{}
+      }
+    end
+
+    defp bp_tx(version_int), do: TransactionTestSupport.new_log_transaction(version_int, %{"k" => "v"})
+
+    defp ack_to(caller, tag) do
+      fn result ->
+        send(caller, {:ack, tag, result})
+        :ok
+      end
+    end
+
+    test "a direct push whose commit version exceeds the bound is rejected", %{dir: dir, recycler: recycler} do
+      state = bounded_state(dir, recycler, 1_000, 1_000)
+      caller = self()
+
+      assert {:error, :wal_backpressure, after_state, []} =
+               Pushing.push(state, Version.from_integer(1_000), bp_tx(2_001), ack_to(caller, :direct))
+
+      assert_receive {:ack, :direct, {:error, :wal_backpressure}}
+      assert after_state.last_version == Version.from_integer(1_000)
+    end
+
+    test "a future push whose commit version exceeds the bound is rejected at enqueue",
+         %{dir: dir, recycler: recycler} do
+      state = bounded_state(dir, recycler, 1_000, 1_000)
+
+      assert {:error, :wal_backpressure} =
+               Pushing.push(state, Version.from_integer(3_000), bp_tx(4_000), fn _ -> :ok end)
+    end
+
+    test "entries queued before the floor existed cannot cross the bound when the gap fills",
+         %{dir: dir, recycler: recycler} do
+      # No durable floor yet: the future push is admitted unchecked (the
+      # bound cannot be evaluated without a floor).
+      state = bounded_state(dir, recycler, 2_500, nil)
+      caller = self()
+
+      assert {:wait, state} =
+               Pushing.push(state, Version.from_integer(3_000), bp_tx(5_000), ack_to(caller, :queued))
+
+      # The first confirmation establishes the floor. Filling the gap now
+      # admits the filler (2_000 <= 2_500 behind the floor) but must NOT
+      # blindly drain the queue past the bound: the queued transaction sits
+      # 4_000 behind the floor.
+      state = %{state | min_durable_version: Version.from_integer(1_000)}
+      filler = bp_tx(3_000)
+
+      assert {:error, :wal_backpressure, after_state, [^filler]} =
+               Pushing.push(state, Version.from_integer(1_000), filler, ack_to(caller, :filler))
+
+      assert_receive {:ack, :filler, :ok}
+      assert_receive {:ack, :queued, {:error, :wal_backpressure}}
+
+      # Ordering state stays consistent: the admitted prefix is the tip,
+      # the rejected suffix is gone, nobody is stranded.
+      assert after_state.last_version == Version.from_integer(3_000)
+      assert after_state.pending_pushes == %{}
+    end
+
+    test "rejecting a direct push also rejects queued successors instead of stranding them",
+         %{dir: dir, recycler: recycler} do
+      state = bounded_state(dir, recycler, 2_500, nil)
+      caller = self()
+
+      assert {:wait, state} =
+               Pushing.push(state, Version.from_integer(9_000), bp_tx(9_500), ack_to(caller, :queued))
+
+      state = %{state | min_durable_version: Version.from_integer(1_000)}
+
+      assert {:error, :wal_backpressure, after_state, []} =
+               Pushing.push(state, Version.from_integer(1_000), bp_tx(9_000), ack_to(caller, :direct))
+
+      assert_receive {:ack, :direct, {:error, :wal_backpressure}}
+      assert_receive {:ack, :queued, {:error, :wal_backpressure}}
+      assert after_state.pending_pushes == %{}
+    end
+
+    test "with no hard limit, arbitrarily lagged pushes stay admitted", %{dir: dir, recycler: recycler} do
+      state = bounded_state(dir, recycler, nil, 1_000)
+      caller = self()
+
+      assert {:ok, state, [_tx]} =
+               Pushing.push(state, Version.from_integer(1_000), bp_tx(10_000_000), ack_to(caller, :unbounded))
+
+      assert_receive {:ack, :unbounded, :ok}
+      assert state.last_version == Version.from_integer(10_000_000)
+    end
+  end
+
   describe "appends decide emptiness from state, never by reading segments" do
     setup :recycler_in_tmp_dir
 

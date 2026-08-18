@@ -37,6 +37,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
         :ok = ack_fn.(:ok)
         do_pending_pushes(t, [encoded_transaction])
 
+      {:error, :wal_backpressure = reason, t} ->
+        # Queued successors carry even later commit versions, so none of
+        # them can be admitted either — and with this push rejected, the
+        # gap in front of them can never fill. Reject them all rather
+        # than strand their callers.
+        :ok = ack_fn.({:error, reason})
+        {:error, reason, reject_pending_pushes(t, reason), []}
+
       {:error, reason, t} ->
         :ok = ack_fn.({:error, reason})
         {:error, reason, t, []}
@@ -44,7 +52,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   end
 
   def push(t, expected_version, encoded_transaction, ack_fn) when expected_version > t.last_version do
-    {:wait, Map.update!(t, :pending_pushes, &Map.put(&1, expected_version, {encoded_transaction, ack_fn}))}
+    case admit(t, commit_version_or_nil(encoded_transaction)) do
+      :ok ->
+        {:wait, Map.update!(t, :pending_pushes, &Map.put(&1, expected_version, {encoded_transaction, ack_fn}))}
+
+      {:error, _reason} = error ->
+        error
+    end
   end
 
   def push(t, expected_version, _, _) do
@@ -72,6 +86,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
             :ok = ack_fn.(:ok)
             do_pending_pushes(new_t, [encoded_transaction | appended])
 
+          {:error, :wal_backpressure = reason, error_t} ->
+            # Everything still queued has a later commit version and is
+            # equally inadmissible: reject the lot, leaving the admitted
+            # prefix as the tip and no caller stranded.
+            :ok = ack_fn.({:error, reason})
+            {:error, reason, reject_pending_pushes(error_t, reason), Enum.reverse(appended)}
+
           {:error, reason, error_t} ->
             :ok = ack_fn.({:error, reason})
             {:error, reason, error_t, Enum.reverse(appended)}
@@ -93,37 +114,40 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
     previous_version = t.last_version
 
-    case Segment.allocate_from_recycler(t.segment_recycler, t.path, version, previous_version) do
-      {:ok, new_segment} ->
-        stage_successor_and_append(t, new_segment, encoded_transaction, version)
-
-      {:error, reason} ->
-        {:error, reason, t}
+    with :ok <- admit(t, version),
+         {:ok, new_segment} <-
+           Segment.allocate_from_recycler(t.segment_recycler, t.path, version, previous_version) do
+      stage_successor_and_append(t, new_segment, encoded_transaction, version)
+    else
+      {:error, reason} -> {:error, reason, t}
     end
   end
 
   def write_encoded_transaction(t, encoded_transaction) do
-    case Transaction.commit_version(encoded_transaction) do
-      {:ok, version} ->
-        if crosses_cut_boundary?(t.active_segment, version) do
-          # Roll on the cut cadence, not just on byte size: the active
-          # segment is trim-immune, so a low-traffic log that never fills a
-          # segment would otherwise hold its entire history in one
-          # untrimmable file — and every recovery would copy that history
-          # from version zero. Rolling per cut bucket gives trimming a
-          # successor header whose persisted predecessor keeps
-          # `available_after` chasing the untrimmed tail. A roll is a rename
-          # from the preallocated pool.
-          case Writer.close(t.writer) do
-            :ok -> write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
-            {:error, reason} -> {:error, reason, t}
-          end
-        else
-          append_encoded_transaction(t, encoded_transaction, version)
-        end
+    with {:ok, version} <- Transaction.commit_version(encoded_transaction),
+         :ok <- admit(t, version) do
+      maybe_roll_and_append(t, encoded_transaction, version)
+    else
+      {:error, reason} -> {:error, reason, t}
+    end
+  end
 
-      {:error, reason} ->
-        {:error, reason, t}
+  defp maybe_roll_and_append(t, encoded_transaction, version) do
+    if crosses_cut_boundary?(t.active_segment, version) do
+      # Roll on the cut cadence, not just on byte size: the active
+      # segment is trim-immune, so a low-traffic log that never fills a
+      # segment would otherwise hold its entire history in one
+      # untrimmable file — and every recovery would copy that history
+      # from version zero. Rolling per cut bucket gives trimming a
+      # successor header whose persisted predecessor keeps
+      # `available_after` chasing the untrimmed tail. A roll is a rename
+      # from the preallocated pool.
+      case Writer.close(t.writer) do
+        :ok -> write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
+        {:error, reason} -> {:error, reason, t}
+      end
+    else
+      append_encoded_transaction(t, encoded_transaction, version)
     end
   end
 
@@ -216,6 +240,38 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   # to every fresh or rolled segment.
   defp oldest_after_append(t, appended_version) do
     if t.last_version == t.available_after, do: appended_version, else: t.oldest_version
+  end
+
+  # The optional hard limit, enforced against each transaction's own
+  # prospective commit version — for direct appends AND entries drained
+  # from the pending queue (which may have been admitted unchecked while
+  # no durable floor existed yet). Only running logs are subject to it:
+  # recovery replay copies already-committed history and must never be
+  # refused. Disabled (nil limit) is the documented
+  # unbounded-with-alerting posture; a log with no confirmed floor has
+  # nothing to measure against.
+  @spec admit(State.t(), Bedrock.version() | nil) :: :ok | {:error, :wal_backpressure}
+  defp admit(%{mode: :running, reject_pushes_above_lag_us: limit, min_durable_version: floor}, version)
+       when not is_nil(limit) and not is_nil(floor) and not is_nil(version) do
+    if Version.distance(version, floor) > limit do
+      {:error, :wal_backpressure}
+    else
+      :ok
+    end
+  end
+
+  defp admit(_t, _version), do: :ok
+
+  defp commit_version_or_nil(encoded_transaction) do
+    case Transaction.commit_version(encoded_transaction) do
+      {:ok, version} -> version
+      {:error, _} -> nil
+    end
+  end
+
+  defp reject_pending_pushes(%{pending_pushes: pending} = t, reason) do
+    Enum.each(pending, fn {_expected, {_transaction, ack_fn}} -> :ok = ack_fn.({:error, reason}) end)
+    %{t | pending_pushes: %{}}
   end
 
   @spec update_segment_transaction_cache(Segment.t(), Transaction.encoded()) :: Segment.t()

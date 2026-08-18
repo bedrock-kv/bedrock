@@ -393,6 +393,77 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
     end
   end
 
+  describe "appends decide emptiness from state, never by reading segments" do
+    setup :recycler_in_tmp_dir
+
+    test "a recycler-allocated segment is known empty without touching the file", %{dir: dir, recycler: recycler} do
+      assert {:ok, segment} =
+               Segment.allocate_from_recycler(recycler, dir, Version.from_integer(1_000), Version.zero())
+
+      assert segment.transactions == []
+    end
+
+    test "an append never loads segment contents to decide emptiness", %{dir: dir} do
+      # The active segment's transaction cache is unloaded and its path
+      # does not exist: any attempt to read the file to answer "is the
+      # WAL empty?" raises instead of costing a silent 64 MiB read.
+      path = Path.join(dir, "wal_real_segment")
+      File.write!(path, :binary.copy(<<0>>, 1024))
+      assert {:ok, writer} = Writer.open(path, Version.zero())
+
+      state = %State{
+        mode: :ready,
+        last_version: Version.from_integer(1_000),
+        available_after: Version.zero(),
+        oldest_version: Version.from_integer(1_000),
+        writer: writer,
+        active_segment: %Segment{
+          path: Path.join(dir, "does_not_exist"),
+          min_version: Version.from_integer(1_000),
+          transactions: nil
+        }
+      }
+
+      tx = TransactionTestSupport.new_log_transaction(2_000, %{"k" => "v"})
+      assert {:ok, state} = Pushing.write_encoded_transaction(state, tx)
+
+      # Nonempty WAL (tip past the floor): oldest_version is retained.
+      assert state.oldest_version == Version.from_integer(1_000)
+      assert state.last_version == Version.from_integer(2_000)
+      assert :ok = Writer.close(state.writer)
+    end
+
+    test "the first append to an empty WAL initializes oldest_version from the cursor invariant",
+         %{dir: dir, recycler: recycler} do
+      # Empty retained WAL: the tip sits exactly on the persisted
+      # exclusive floor (last_version == available_after).
+      floor = Version.from_integer(5_000)
+
+      state = %State{
+        mode: :ready,
+        path: dir,
+        segment_recycler: recycler,
+        writer: nil,
+        active_segment: nil,
+        segments: [],
+        last_version: floor,
+        available_after: floor,
+        oldest_version: floor
+      }
+
+      tx = TransactionTestSupport.new_log_transaction(6_000, %{"k" => "v"})
+      assert {:ok, state} = Pushing.write_encoded_transaction(state, tx)
+
+      assert state.oldest_version == Version.from_integer(6_000)
+      assert state.last_version == Version.from_integer(6_000)
+
+      # And the next append keeps it: the WAL is no longer empty.
+      tx2 = TransactionTestSupport.new_log_transaction(7_000, %{"k" => "v"})
+      assert {:ok, state} = Pushing.write_encoded_transaction(state, tx2)
+      assert state.oldest_version == Version.from_integer(6_000)
+    end
+  end
+
   describe "write_encoded_transaction/2 error handling" do
     test "raises when transaction version cannot be extracted" do
       state = %State{

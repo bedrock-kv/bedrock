@@ -148,7 +148,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
          t
          | writer: new_writer,
            last_version: version,
-           oldest_version: if(wal_has_transactions?(t), do: t.oldest_version, else: version),
+           oldest_version: oldest_after_append(t, version),
            active_segment: update_segment_transaction_cache(new_segment, encoded_transaction),
            segments: if(t.active_segment, do: [t.active_segment | t.segments], else: t.segments)
        }}
@@ -183,20 +183,17 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   end
 
   defp append_encoded_transaction(t, encoded_transaction, version) do
-    had_transactions? = wal_has_transactions?(t)
-
     case Writer.append(t.writer, encoded_transaction, version) do
       {:ok, writer} ->
         # Update the active segment's transaction cache to keep it coherent with disk
         updated_active_segment = update_segment_transaction_cache(t.active_segment, encoded_transaction)
-        oldest_version = if had_transactions?, do: t.oldest_version, else: version
 
         {:ok,
          %{
            t
            | writer: writer,
              last_version: version,
-             oldest_version: oldest_version,
+             oldest_version: oldest_after_append(t, version),
              active_segment: updated_active_segment
          }}
 
@@ -211,10 +208,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
     end
   end
 
-  defp wal_has_transactions?(t) do
-    [t.active_segment | t.segments]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.any?(fn segment -> Segment.transactions(segment) != [] end)
+  # Whether the retained WAL holds any transaction is a fact the cursors
+  # already state: `available_after` is the persisted exclusive floor, and
+  # the tip sits exactly on it (`last_version == available_after`) exactly
+  # when nothing is retained. Reading segment contents to answer this —
+  # the old way — cost a synchronous 64 MiB file read on the first append
+  # to every fresh or rolled segment.
+  defp oldest_after_append(t, appended_version) do
+    if t.last_version == t.available_after, do: appended_version, else: t.oldest_version
   end
 
   @spec update_segment_transaction_cache(Segment.t(), Transaction.encoded()) :: Segment.t()

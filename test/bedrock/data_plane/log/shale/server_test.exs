@@ -642,10 +642,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "pushes are rejected past the configured lag limit", %{server_opts: opts} do
+      # A second server needs its own segment directory: two recyclers
+      # sharing one directory rename the same preallocated files out from
+      # under each other, occasionally killing this server mid-setup.
+      own_path = Path.join(opts[:path], "backpressure_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(own_path)
+
       pid =
         opts
         |> Keyword.merge(
           reject_pushes_above_lag_us: 1_000,
+          path: own_path,
           otp_name: :"backpressure_log_#{:rand.uniform(10_000)}",
           id: "backpressure_log_#{:rand.uniform(10_000)}"
         )

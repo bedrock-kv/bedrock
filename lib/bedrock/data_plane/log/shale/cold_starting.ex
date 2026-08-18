@@ -5,8 +5,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
 
   @spec reload_segments_at_path(segment_dir :: String.t()) ::
           {:ok, [Segment.t()]}
-          | {:error, {:unable_to_list_segments, File.posix()}}
-          | {:error, {:unsupported_wal_format | :invalid_wal_format, String.t()}}
+          | {:error, {:wal_format, String.t(), :unsupported_wal_format | :invalid_wal_format}}
+          | {:error, {:wal_io, String.t(), File.posix()}}
   def reload_segments_at_path(segment_dir) do
     segment_dir
     |> File.ls()
@@ -27,7 +27,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
         end
 
       {:error, posix} ->
-        {:error, {:unable_to_list_segments, posix}}
+        {:error, {:wal_io, segment_dir, posix}}
     end
   end
 end

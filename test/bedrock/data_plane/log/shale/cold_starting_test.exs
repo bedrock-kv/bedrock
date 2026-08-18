@@ -43,14 +43,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
       assert {:ok, [%Segment{min_version: ^version_1}]} = ColdStarting.reload_segments_at_path(@segment_dir)
     end
 
-    test "returns error with POSIX reason when unable to list directory" do
-      # Use a path that doesn't exist or can't be read
+    test "an unlistable directory is a WAL I/O error carrying the path and POSIX cause" do
       non_existent_path = "/non/existent/path/that/should/not/exist"
 
-      assert {:error, {:unable_to_list_segments, posix}} =
+      assert {:error, {:wal_io, ^non_existent_path, :enoent}} =
                ColdStarting.reload_segments_at_path(non_existent_path)
-
-      assert posix == :enoent
     end
 
     test "handles empty directory" do
@@ -62,8 +59,24 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStartingTest do
       path = Path.join(@segment_dir, Segment.encode_file_name(1))
       File.write!(path, <<"BED0", 0::128>>)
 
-      assert {:error, {:unsupported_wal_format, ^path}} =
+      assert {:error, {:wal_format, ^path, :unsupported_wal_format}} =
                ColdStarting.reload_segments_at_path(@segment_dir)
+    end
+
+    test "malformed bytes are a format error, never an I/O error" do
+      path = Path.join(@segment_dir, Segment.encode_file_name(1))
+      File.write!(path, "definitely not a WAL segment")
+
+      assert {:error, {:wal_format, ^path, :invalid_wal_format}} =
+               ColdStarting.reload_segments_at_path(@segment_dir)
+    end
+  end
+
+  describe "Segment.from_path/1 error classification" do
+    test "a missing file is a WAL I/O error with its POSIX cause, not format corruption" do
+      path = Path.join(@segment_dir, Segment.encode_file_name(7))
+
+      assert {:error, {:wal_io, ^path, :enoent}} = Segment.from_path(path)
     end
   end
 

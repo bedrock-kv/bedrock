@@ -77,25 +77,33 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   def return_to_recycler(segment, segment_recycler), do: SegmentRecycler.check_in(segment_recycler, segment.path)
 
   @doc """
-  Create a new segment from the given file path. We stat the file to get the
-  size, ensuring that it exists.
+  Create a new segment from the given file path.
+
+  The header read itself is the existence check — no `File.exists?/1`
+  precheck, no check-then-open race. Failures keep their nature: bad bytes
+  are `{:wal_format, path, reason}` and never retried as resource trouble;
+  open/read failures are `{:wal_io, path, posix}` with their real POSIX
+  cause, never mislabeled as corruption.
   """
   @spec from_path(path_to_file :: String.t()) ::
           {:ok, t()}
-          | {:error, :does_not_exist | {:unsupported_wal_format, String.t()} | {:invalid_wal_format, String.t()}}
+          | {:error, {:wal_format, String.t(), :unsupported_wal_format | :invalid_wal_format}}
+          | {:error, {:wal_io, String.t(), File.posix()}}
   def from_path(path_to_file) do
-    with true <- File.exists?(path_to_file),
-         {:ok, previous_version} <- TransactionStreams.read_previous_version(path_to_file) do
-      {:ok,
-       %__MODULE__{
-         path: path_to_file,
-         min_version: path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer(),
-         previous_version: previous_version
-       }}
-    else
-      false -> {:error, :does_not_exist}
-      {:error, :unsupported_wal_format} -> {:error, {:unsupported_wal_format, path_to_file}}
-      {:error, _reason} -> {:error, {:invalid_wal_format, path_to_file}}
+    case TransactionStreams.read_previous_version(path_to_file) do
+      {:ok, previous_version} ->
+        {:ok,
+         %__MODULE__{
+           path: path_to_file,
+           min_version: path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer(),
+           previous_version: previous_version
+         }}
+
+      {:error, format} when format in [:unsupported_wal_format, :invalid_wal_format] ->
+        {:error, {:wal_format, path_to_file, format}}
+
+      {:error, posix} ->
+        {:error, {:wal_io, path_to_file, posix}}
     end
   end
 

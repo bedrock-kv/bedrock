@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-17T19:33:00Z",
@@ -8,7 +8,7 @@
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Make Shale WAL cold start transactional and preserve I/O errors",
   "type": "bug",
   "updated_at": "2026-08-18T19:11:45Z"

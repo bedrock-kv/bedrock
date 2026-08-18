@@ -22,11 +22,15 @@
     {
       "text": "New reproduced failure: coordinator bootstrap places the recovery-only %{logs: ...} hint in transaction_system_layout; late-Link replay then publishes it as a runnable TSL, and TransactionBuilder crashes on missing :epoch. Fix at the producer/lifecycle boundary by separating old_transaction_system_layout from the live runtime layout and clearing/broadcasting nil while recovery is active.",
       "timestamp": "2026-08-18T22:44:08Z"
+    },
+    {
+      "text": "Correction: PR #139 was already merged before the logs-only TSL failure was reported. This coordinator lifecycle regression will land under a separate follow-up ticket and PR.",
+      "timestamp": "2026-08-18T22:45:34Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Bound post-recovery reads and wake every readable Olivine waiter",
   "type": "bug",
-  "updated_at": "2026-08-18T22:44:08Z"
+  "updated_at": "2026-08-18T22:45:34Z"
 }

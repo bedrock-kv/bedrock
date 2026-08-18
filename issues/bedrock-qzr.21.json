@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-18T17:06:38Z",
+  "close_reason": "do_recovery's stalled branch now Map.put(:recovery_attempt, stalled) on the live state alongside persisting it into config — in-memory and persisted attempt are the same logical attempt; retries build on it, preserving lock_failed_service_ids and all phase observations. Tested via real pipeline with stub coordinator + stub locked materializer (mutation retained through stall; red pre-fix) plus a setup_for_subsequent_recovery preservation pin. PR #127 stacked on #126 (commit 564e6fa9).",
   "created": "2026-08-15T21:34:23Z",
   "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nWhen recovery stalls, do_recovery stores the returned stalled attempt only in config.recovery_attempt. It leaves Director state.recovery_attempt unchanged. The next service-registration retry calls setup_for_subsequent_recovery against that older in-memory attempt, losing phase mutations such as lock_failed_service_ids, recruited services, and other accumulated observations.\n\nImpact:\nThe qzr.14 promise that failed locks are remembered across attempts does not hold for normal in-process retries. Recovery can repeatedly select ghosts, redo recruitment, and accumulate stray workers.\n\nAcceptance criteria:\n- The live Director state adopts the stalled RecoveryAttempt before returning.\n- The persisted config and live recovery_attempt reference the same logical attempt state.\n- Subsequent retries increment the retained attempt while preserving lock_failed_service_ids and other intended cross-attempt fields.\n- Tests drive do_recovery through a mutating phase followed by a stall, trigger an in-process retry, and prove the mutations remain.\n- Restart-from-persisted-config behavior remains covered.",
   "id": "bedrock-qzr.21",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Retain stalled RecoveryAttempt state for subsequent in-process retries",
   "type": "bug",
-  "updated_at": "2026-08-15T21:34:23Z"
+  "updated_at": "2026-08-18T17:06:38Z"
 }

@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Demux
+  alias Bedrock.DataPlane.Log.Shale.ColdStarting
   alias Bedrock.DataPlane.Log.Shale.Pushing
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
@@ -9,6 +10,23 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.TransactionTestSupport
+
+  # ExUnit owns the directory lifecycle: each test gets a fresh tmp_dir,
+  # wiped before the test runs — so no teardown can race the linked
+  # recycler still creating preallocated files.
+  @moduletag :tmp_dir
+
+  defp recycler_in_tmp_dir(%{tmp_dir: dir}) do
+    {:ok, recycler} =
+      SegmentRecycler.start_link(
+        path: dir,
+        min_available: 2,
+        max_available: 4,
+        segment_size: 1_000_000
+      )
+
+    %{dir: dir, recycler: recycler}
+  end
 
   describe "push/4 error conditions" do
     test "rejects transaction that is too large" do
@@ -94,22 +112,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   end
 
   describe "draining queued pushes" do
-    setup do
-      dir = Path.join(System.tmp_dir!(), "pushing_drain_#{System.unique_integer([:positive])}")
-      File.mkdir_p!(dir)
-
-      {:ok, recycler} =
-        SegmentRecycler.start_link(
-          path: dir,
-          min_available: 2,
-          max_available: 4,
-          segment_size: 1_000_000
-        )
-
-      on_exit(fn -> File.rm_rf!(dir) end)
-
-      %{dir: dir, recycler: recycler}
-    end
+    setup :recycler_in_tmp_dir
 
     test "returns every appended transaction in predecessor-chain order", %{dir: dir, recycler: recycler} do
       state = %State{
@@ -196,22 +199,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   end
 
   describe "segment rolling on cut boundaries" do
-    setup do
-      dir = Path.join(System.tmp_dir!(), "pushing_roll_#{System.unique_integer([:positive])}")
-      File.mkdir_p!(dir)
-
-      {:ok, recycler} =
-        SegmentRecycler.start_link(
-          path: dir,
-          min_available: 2,
-          max_available: 4,
-          segment_size: 1_000_000
-        )
-
-      on_exit(fn -> File.rm_rf!(dir) end)
-
-      %{dir: dir, recycler: recycler}
-    end
+    setup :recycler_in_tmp_dir
 
     defp write!(state, version_int) do
       tx = TransactionTestSupport.new_log_transaction(version_int, %{"k" => "v"})
@@ -253,6 +241,155 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       state = write!(state, 4 * interval + 1)
       assert length(state.segments) == 2
       assert state.active_segment.min_version == Version.from_integer(4 * interval + 1)
+    end
+  end
+
+  describe "rollover publishes only after the successor cursor is durable" do
+    setup :recycler_in_tmp_dir
+
+    # A sync_fun that succeeds until armed, then fails with :eio until
+    # disarmed. Also counts every call so the single-barrier criterion can
+    # be asserted.
+    defp controlled_sync do
+      {:ok, control} = Agent.start_link(fn -> %{fail: false, calls: 0} end)
+
+      sync_fun = fn _fd ->
+        Agent.get_and_update(control, fn state ->
+          result = if state.fail, do: {:error, :eio}, else: :ok
+          {result, %{state | calls: state.calls + 1}}
+        end)
+      end
+
+      {control, sync_fun}
+    end
+
+    defp state_with(dir, recycler, writer_opts) do
+      %State{
+        mode: :ready,
+        path: dir,
+        segment_recycler: recycler,
+        writer: nil,
+        active_segment: nil,
+        segments: [],
+        last_version: Version.from_integer(0),
+        oldest_version: nil,
+        writer_opts: writer_opts
+      }
+    end
+
+    defp tx(version_int), do: TransactionTestSupport.new_log_transaction(version_int, %{"k" => "v"})
+
+    defp wal_files(dir), do: dir |> File.ls!() |> Enum.filter(&String.starts_with?(&1, "wal_"))
+
+    test "a failed first-append sync on a rolled successor leaves the predecessor active and trim-immune",
+         %{dir: dir, recycler: recycler} do
+      interval = Demux.Server.default_cut_interval_us()
+      {control, sync_fun} = controlled_sync()
+
+      state = state_with(dir, recycler, sync_fun: sync_fun)
+      {:ok, state} = Pushing.write_encoded_transaction(state, tx(1_000))
+      {:ok, state} = Pushing.write_encoded_transaction(state, tx(2_000))
+      predecessor = state.active_segment
+      wal_files_before = wal_files(dir)
+
+      # The roll happens with the predecessor's writer already closed, so
+      # the state entering the staged path carries writer: nil.
+      Agent.update(control, &%{&1 | fail: true})
+
+      assert {:error, :eio, failed_state} =
+               Pushing.write_encoded_transaction(state, tx(interval + 1))
+
+      # The predecessor is still the active segment — not in the
+      # trim-eligible list — and no successor is represented as owned WAL
+      # state. A watermark processed now has nothing to recycle and no
+      # successor to advance available_after from.
+      assert failed_state.active_segment.path == predecessor.path
+      assert failed_state.segments == []
+      assert failed_state.writer == nil
+      assert failed_state.last_version == Version.from_integer(2_000)
+      assert failed_state.oldest_version == Version.from_integer(1_000)
+
+      # The failed successor file was recycled back to the preallocated
+      # pool: the WAL namespace holds exactly the files it held before.
+      assert wal_files(dir) == wal_files_before
+
+      # A subsequent valid push retries the roll and succeeds.
+      Agent.update(control, &%{&1 | fail: false})
+      Agent.update(control, &%{&1 | calls: 0})
+
+      assert {:ok, rolled_state} =
+               Pushing.write_encoded_transaction(failed_state, tx(interval + 1))
+
+      assert rolled_state.active_segment.min_version == Version.from_integer(interval + 1)
+      assert [%{path: rolled_predecessor_path}] = rolled_state.segments
+      assert rolled_predecessor_path == predecessor.path
+      assert rolled_state.last_version == Version.from_integer(interval + 1)
+
+      # Header plus first entry share one sync barrier: the successful
+      # roll issued exactly one sync.
+      assert Agent.get(control, & &1.calls) == 1
+    end
+
+    test "a failed first-append pwrite on a rolled successor leaves the predecessor active",
+         %{dir: dir, recycler: recycler} do
+      interval = Demux.Server.default_cut_interval_us()
+      {:ok, control} = Agent.start_link(fn -> false end)
+
+      # Fail only entry pwrites (offset > 0) while armed; the header write
+      # at offset 0 succeeds, so the failure lands on the first append.
+      pwrite_fun = fn fd, offset, data ->
+        if Agent.get(control, & &1) and offset > 0 do
+          {:error, :enospc}
+        else
+          :file.pwrite(fd, offset, data)
+        end
+      end
+
+      state = state_with(dir, recycler, pwrite_fun: pwrite_fun)
+      {:ok, state} = Pushing.write_encoded_transaction(state, tx(1_000))
+      predecessor = state.active_segment
+      wal_files_before = wal_files(dir)
+
+      Agent.update(control, fn _ -> true end)
+
+      assert {:error, :enospc, failed_state} =
+               Pushing.write_encoded_transaction(state, tx(interval + 1))
+
+      assert failed_state.active_segment.path == predecessor.path
+      assert failed_state.segments == []
+      assert failed_state.writer == nil
+      assert failed_state.last_version == Version.from_integer(1_000)
+      assert wal_files(dir) == wal_files_before
+
+      Agent.update(control, fn _ -> false end)
+
+      assert {:ok, rolled_state} =
+               Pushing.write_encoded_transaction(failed_state, tx(interval + 1))
+
+      assert rolled_state.active_segment.min_version == Version.from_integer(interval + 1)
+      assert [%{path: kept}] = rolled_state.segments
+      assert kept == predecessor.path
+    end
+
+    test "cold restart after a failed roll reconstructs the retained predecessor cursor and transactions",
+         %{dir: dir, recycler: recycler} do
+      interval = Demux.Server.default_cut_interval_us()
+      {control, sync_fun} = controlled_sync()
+
+      state = state_with(dir, recycler, sync_fun: sync_fun)
+      first = tx(1_000)
+      second = tx(2_000)
+      {:ok, state} = Pushing.write_encoded_transaction(state, first)
+      {:ok, state} = Pushing.write_encoded_transaction(state, second)
+
+      Agent.update(control, &%{&1 | fail: true})
+      assert {:error, :eio, _failed_state} = Pushing.write_encoded_transaction(state, tx(interval + 1))
+
+      # What a cold start reads from disk is the predecessor alone, with
+      # both transactions and its original replay cursor.
+      assert {:ok, [segment]} = ColdStarting.reload_segments_at_path(dir)
+      assert segment.previous_version == Version.from_integer(0)
+      assert [^second, ^first] = Segment.transactions(segment)
     end
   end
 

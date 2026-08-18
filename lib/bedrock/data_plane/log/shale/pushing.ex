@@ -95,22 +95,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
     case Segment.allocate_from_recycler(t.segment_recycler, t.path, version, previous_version) do
       {:ok, new_segment} ->
-        case Writer.open(new_segment.path, previous_version) do
-          {:ok, new_writer} ->
-            write_encoded_transaction(
-              %{
-                t
-                | writer: new_writer,
-                  active_segment: new_segment,
-                  segments: if(t.active_segment, do: [t.active_segment | t.segments], else: t.segments)
-              },
-              encoded_transaction
-            )
-
-          {:error, reason} ->
-            :ok = Segment.return_to_recycler(new_segment, t.segment_recycler)
-            {:error, reason, t}
-        end
+        stage_successor_and_append(t, new_segment, encoded_transaction, version)
 
       {:error, reason} ->
         {:error, reason, t}
@@ -139,6 +124,51 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
       {:error, reason} ->
         {:error, reason, t}
+    end
+  end
+
+  # The successor exists only in local variables until its header and
+  # first entry have survived one successful sync — Writer.append is that
+  # barrier for both. Only then does ownership transfer: successor becomes
+  # the active segment and the predecessor moves to the trim-eligible
+  # list, as a single state transition. On any failure the staged
+  # successor is closed and recycled, and the caller's state comes back
+  # untouched: the predecessor stays active (trim-immune, still owning
+  # the durable previous_version boundary) with writer: nil, ready for a
+  # later retry. Without the staging, a durability watermark arriving
+  # after a failed roll could recycle the predecessor against a successor
+  # cursor that was never made durable.
+  @spec stage_successor_and_append(State.t(), Segment.t(), Transaction.encoded(), Bedrock.version()) ::
+          {:ok, State.t()} | {:error, term(), State.t()}
+  defp stage_successor_and_append(t, new_segment, encoded_transaction, version) do
+    with {:ok, new_writer} <- Writer.open(new_segment.path, new_segment.previous_version, t.writer_opts),
+         {:ok, new_writer} <- first_append_or_close(new_writer, encoded_transaction, version) do
+      {:ok,
+       %{
+         t
+         | writer: new_writer,
+           last_version: version,
+           oldest_version: if(wal_has_transactions?(t), do: t.oldest_version, else: version),
+           active_segment: update_segment_transaction_cache(new_segment, encoded_transaction),
+           segments: if(t.active_segment, do: [t.active_segment | t.segments], else: t.segments)
+       }}
+    else
+      {:error, reason} ->
+        :ok = Segment.return_to_recycler(new_segment, t.segment_recycler)
+        {:error, reason, t}
+    end
+  end
+
+  # The staged writer is closed at the point of its failure, so the shared
+  # failure path above only has to recycle the staged segment.
+  defp first_append_or_close(writer, encoded_transaction, version) do
+    case Writer.append(writer, encoded_transaction, version) do
+      {:ok, writer} ->
+        {:ok, writer}
+
+      {:error, reason} ->
+        _ = Writer.close(writer)
+        {:error, reason}
     end
   end
 

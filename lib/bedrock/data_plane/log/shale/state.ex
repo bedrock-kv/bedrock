@@ -39,7 +39,6 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             Bedrock.version() => {encoded_transaction :: Transaction.encoded(), reply_token :: term()}
           },
           #
-          floor_lag_alarm_active: boolean(),
           reject_pushes_above_lag_us: non_neg_integer() | nil,
           #
           mode: mode(),
@@ -77,7 +76,6 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             active_segment: nil,
             pending_pushes: %{},
             #
-            floor_lag_alarm_active: false,
             reject_pushes_above_lag_us: nil,
             #
             mode: :locked,

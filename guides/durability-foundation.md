@@ -209,15 +209,15 @@ Trim floor and WAL growth:
 
 - `[:bedrock, :demux, :durability, :floor_advanced]` — carries the shard
   currently pinning the floor and the active shard count
-- `[:bedrock, :log, :trim]` — floor, lag, and segment counts on each trim
-- `[:bedrock, :log, :floor_lag_alarm]` — fires once per crossing when the
-  floor lags the WAL tip by more than eight cut intervals; pair with the
-  opt-in `reject_pushes_above_lag_us` safety fuse for bounded version-time
-  growth
+- `[:bedrock, :log, :trim]` — raw observability on each trim: floor, WAL
+  tip, lag, and retained/recycled segment counts. Shale reports these facts
+  and does not judge them — alerting thresholds and admission policy belong
+  to the operator (or a future ratekeeper), not to a single log.
 - `[:bedrock, :log, :wal_limit_exceeded]` — an error-severity, recovery-required
-  signal carrying the floor, WAL tip, refused prospective version, lag, limit,
-  and queued count. Crossing the limit invalidates the current epoch; it is not
-  an instruction to retry the assigned version chain in place.
+  signal from the opt-in `reject_pushes_above_lag_us` safety fuse, carrying the
+  floor, WAL tip, refused prospective version, lag, limit, and queued count.
+  Crossing the limit invalidates the current epoch; it is not an instruction to
+  retry the assigned version chain in place.
 
 ## Validation Gates
 

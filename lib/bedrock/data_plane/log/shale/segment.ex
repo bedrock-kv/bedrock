@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
   """
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.TransactionStreams
+  alias Bedrock.DataPlane.Log.Shale.WalFormat
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
@@ -90,14 +91,17 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
           | {:error, {:wal_format, String.t(), :unsupported_wal_format | :invalid_wal_format}}
           | {:error, {:wal_io, String.t(), File.posix()}}
   def from_path(path_to_file) do
-    case TransactionStreams.read_previous_version(path_to_file) do
-      {:ok, previous_version} ->
-        {:ok,
-         %__MODULE__{
-           path: path_to_file,
-           min_version: path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer(),
-           previous_version: previous_version
-         }}
+    min_version = path_to_file |> Path.basename() |> decode_file_name() |> Version.from_integer()
+
+    case WalFormat.read(path_to_file) do
+      {:ok, %WalFormat{version: :bed0, first_version: ^min_version, previous_version: previous_version}} ->
+        {:ok, new(path_to_file, min_version, previous_version)}
+
+      {:ok, %WalFormat{version: :bed0}} ->
+        {:error, {:wal_format, path_to_file, :invalid_wal_format}}
+
+      {:ok, %WalFormat{version: :bed1, previous_version: previous_version}} ->
+        {:ok, new(path_to_file, min_version, previous_version)}
 
       {:error, format} when format in [:unsupported_wal_format, :invalid_wal_format] ->
         {:error, {:wal_format, path_to_file, format}}
@@ -105,6 +109,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
       {:error, posix} ->
         {:error, {:wal_io, path_to_file, posix}}
     end
+  end
+
+  defp new(path, min_version, previous_version) do
+    %__MODULE__{
+      path: path,
+      min_version: min_version,
+      previous_version: previous_version
+    }
   end
 
   @spec ensure_transactions_are_loaded(t()) :: t()

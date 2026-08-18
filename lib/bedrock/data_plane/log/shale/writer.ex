@@ -3,14 +3,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
   A struct that represents a writer for a segment.
   """
 
+  alias Bedrock.DataPlane.Log.Shale.WalFormat
   alias Bedrock.DataPlane.Transaction
 
   defstruct [:fd, :write_offset, :bytes_remaining, :sync_fun, :pwrite_fun]
-
-  @wal_eof_version <<0xFFFFFFFFFFFFFFFF::unsigned-big-64>>
-  @eof_marker <<@wal_eof_version::binary, 0::unsigned-big-32, 0::unsigned-big-32>>
-  @wal_magic_number <<"BED1">>
-  @header_size 12
 
   @typedoc """
   A `Writer` is a handle to a segment that can be used to write transcations
@@ -30,18 +26,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
   def open(path_to_file, previous_version, opts \\ []) do
     sync_fun = Keyword.get(opts, :sync_fun, &:file.sync/1)
     pwrite_fun = Keyword.get(opts, :pwrite_fun, &:file.pwrite/3)
-    empty_segment_header = <<@wal_magic_number, previous_version::binary-size(8), @eof_marker>>
+    empty_segment = WalFormat.empty_segment(previous_version)
+    header_size = WalFormat.current_header_size()
 
     with {:ok, stat} <- File.stat(path_to_file),
          {:ok, fd} <- File.open(path_to_file, [:write, :read, :raw, :binary]) do
       # Write header - close fd on failure to avoid leak
-      case pwrite_fun.(fd, 0, empty_segment_header) do
+      case pwrite_fun.(fd, 0, empty_segment) do
         :ok ->
           {:ok,
            %__MODULE__{
              fd: fd,
-             write_offset: @header_size,
-             bytes_remaining: stat.size - @header_size - 16,
+             write_offset: header_size,
+             bytes_remaining: stat.size - header_size - byte_size(WalFormat.eof_marker()),
              sync_fun: sync_fun,
              pwrite_fun: pwrite_fun
            }}
@@ -79,7 +76,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Writer do
     >>
 
     writer.fd
-    |> writer.pwrite_fun.(writer.write_offset, [log_entry, @eof_marker])
+    |> writer.pwrite_fun.(writer.write_offset, [log_entry, WalFormat.eof_marker()])
     |> case do
       :ok ->
         case writer.sync_fun.(writer.fd) do

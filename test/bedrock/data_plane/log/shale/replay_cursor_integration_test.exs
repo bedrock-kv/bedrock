@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
   alias Bedrock.Cluster
   alias Bedrock.DataPlane.Demux.Server, as: Demux
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.Server, as: Shale
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
@@ -11,6 +12,42 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   @moduletag :tmp_dir
+
+  test "a legacy BED0 source rolls forward to BED1 and replays its first retained transaction", %{tmp_dir: tmp_dir} do
+    backend = object_storage(tmp_dir)
+    source_path = Path.join(tmp_dir, "legacy-source")
+    destination_path = Path.join(tmp_dir, "legacy-destination")
+    first_version = Version.from_integer(41)
+    legacy_last_version = Version.from_integer(500)
+    last_inclusive = Version.from_integer(900)
+    first = transaction(first_version, "legacy-first")
+    legacy_last = transaction(legacy_last_version, "legacy-last")
+    current = transaction(last_inclusive, "current")
+
+    write_legacy_wal(source_path, [{first_version, first}, {legacy_last_version, legacy_last}])
+    {source, source_id} = start_restartable_log("legacy-source", source_path, backend, true)
+    assert :ok = Log.push(source, current, legacy_last_version)
+    assert :ok = stop_supervised({Shale, source_id})
+
+    {source, ^source_id} =
+      start_restartable_log("legacy-source-restart", source_path, backend, false, source_id)
+
+    destination = start_log("legacy-destination", destination_path, backend, false)
+    expected_cursor = Version.from_integer(40)
+
+    assert {:ok,
+            %{
+              available_after: ^expected_cursor,
+              oldest_version: ^first_version,
+              last_version: ^last_inclusive
+            }} = Log.info(source, [:available_after, :oldest_version, :last_version])
+
+    assert {:ok, ^destination} =
+             Log.recover_from(destination, [source], expected_cursor, last_inclusive)
+
+    assert {:ok, [^first, ^legacy_last, ^current]} =
+             Log.pull(destination, expected_cursor, last_version: last_inclusive)
+  end
 
   test "untrimmed recovery copies widely gapped transactions exactly once", %{tmp_dir: tmp_dir} do
     backend = object_storage(tmp_dir)
@@ -119,6 +156,20 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
     root = Path.join(tmp_dir, "objects")
     File.mkdir_p!(root)
     ObjectStorage.backend(LocalFilesystem, root: root)
+  end
+
+  defp write_legacy_wal(path, [{first_version, _} | _] = transactions) do
+    File.mkdir_p!(path)
+    wal_path = Path.join(path, Segment.encode_file_name(Version.to_integer(first_version)))
+
+    entries =
+      Enum.map(transactions, fn {version, transaction} ->
+        <<version::binary, byte_size(transaction)::unsigned-big-32, transaction::binary,
+          :erlang.crc32(transaction)::unsigned-big-32>>
+      end)
+
+    eof_marker = <<0xFFFFFFFFFFFFFFFF::unsigned-big-64, 0::unsigned-big-32, 0::unsigned-big-32>>
+    File.write!(wal_path, ["BED0", entries, eof_marker])
   end
 
   defp start_log(label, wal_path, object_storage, start_unlocked) do

@@ -29,8 +29,11 @@ the header before acknowledging. Thus an older segment cannot become
 trim-eligible before its successor durably records the exact predecessor
 cursor. An empty recovery range explicitly fsyncs the header by itself.
 
-Headers that predate `BED1` do not contain enough information to reconstruct a
-trimmed exclusive range. Startup rejects them instead of guessing a cursor.
+Cold start also reads non-empty legacy `BED0` segments. Because versions are
+unsigned integers, one less than the first retained version is an unambiguous
+synthetic exclusive cursor; version zero remains zero. Empty `BED0` segments
+have no first retained version from which to derive that cursor and fail closed.
+All newly written segments use `BED1`.
 
 ## Ordered Appends
 

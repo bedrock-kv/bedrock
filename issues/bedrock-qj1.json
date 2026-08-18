@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-18T22:00:19Z",
@@ -13,7 +13,7 @@
     }
   ],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "Bound post-recovery reads and wake every readable Olivine waiter",
   "type": "bug",
   "updated_at": "2026-08-18T22:31:33Z"

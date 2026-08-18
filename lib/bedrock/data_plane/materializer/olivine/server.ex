@@ -118,6 +118,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   @impl true
   def handle_call({:ingest, _encoded_transactions, _kcv}, _from, %State{mode: :locked} = t), do: reply(t, :ok)
 
+  # Only the current puller may feed the stream. A superseded puller —
+  # torn down at compaction cutover or recovery unlock — may have died
+  # with an ingest call already in this mailbox; applying that batch
+  # would graft a stale suffix, with a gap beneath it, onto the rewound
+  # index. Acknowledge and discard. (With no puller at all, direct
+  # ingest is the static unit-test configuration and is accepted.)
+  def handle_call({:ingest, _encoded_transactions, _kcv}, {caller, _}, %State{pull_task: %Task{pid: pid}} = t)
+      when caller !== pid, do: reply(t, :ok)
+
   def handle_call({:ingest, encoded_transactions, kcv}, from, %State{} = t) do
     updated_intake_queue = IntakeQueue.add_transactions(t.intake_queue, encoded_transactions)
     queue_size = IntakeQueue.size(updated_intake_queue)
@@ -317,6 +326,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     # Get file paths from old database
     alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
 
+    # The cutover rewinds the index to the durable snapshot, so the
+    # running puller's position (and any batch it has in flight) is
+    # meaningless. Stop it first — releasing a backpressure-parked ingest
+    # reply on the way — and rejoin the stream at the durable boundary
+    # once the new state is built. The stream re-delivers everything
+    # ingested during compaction; nothing is lost and nothing special
+    # remembers it.
+    t = Logic.stop_pulling(t)
+
     {data_db, index_db} = t.database
     data_path = data_db.file_name
     idx_path = index_db.file_name
@@ -415,10 +433,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     # Optionally upload snapshot to ObjectStorage (async, fire-and-forget)
     Logic.maybe_upload_snapshot(new_state, data_path, idx_path, durable_version)
 
-    # Resume normal operation
-    # The puller will automatically fetch transactions from durable_version + 1
-    # and rebuild the buffer through normal transaction processing
-    noreply(new_state)
+    # Resume: a fresh puller joins the stream at the durable boundary and
+    # re-delivers everything after it through the normal apply path.
+    noreply(Logic.resume_pulling_from(new_state, durable_version))
   end
 
   @impl true

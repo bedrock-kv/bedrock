@@ -378,25 +378,33 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   # retrying server never accumulates stray recyclers or demuxes.
   defp do_initialization(t) do
     with {:ok, wal_snapshot} <- load_or_create_segments(t),
-         {:ok, recycler_pid} <- start_segment_recycler(t.path) do
-      case start_demux(t) do
-        {:ok, demux} ->
-          {available_after, oldest_version, last_version, active_segment, segments} = wal_snapshot
+         {:ok, recycler_pid} <- start_segment_recycler(t.path),
+         {:ok, demux} <- start_demux_or_release_recycler(t, recycler_pid) do
+      {available_after, oldest_version, last_version, active_segment, segments} = wal_snapshot
 
-          {:ok,
-           t
-           |> Map.put(:available_after, available_after)
-           |> Map.put(:oldest_version, oldest_version)
-           |> Map.put(:last_version, last_version)
-           |> Map.put(:active_segment, active_segment)
-           |> Map.put(:segments, segments)
-           |> Map.put(:segment_recycler, recycler_pid)
-           |> Map.put(:demux, demux)}
+      {:ok,
+       t
+       |> Map.put(:available_after, available_after)
+       |> Map.put(:oldest_version, oldest_version)
+       |> Map.put(:last_version, last_version)
+       |> Map.put(:active_segment, active_segment)
+       |> Map.put(:segments, segments)
+       |> Map.put(:segment_recycler, recycler_pid)
+       |> Map.put(:demux, demux)}
+    end
+  end
 
-        {:error, reason} ->
-          :ok = stop_owned_recycler(recycler_pid)
-          classify_resource_error(reason)
-      end
+  # Normalize demux acquisition into one transactional step for the caller:
+  # success transfers both resources into State; failure releases the staged
+  # recycler before returning the classified error.
+  defp start_demux_or_release_recycler(t, recycler_pid) do
+    case start_demux(t) do
+      {:ok, demux} ->
+        {:ok, demux}
+
+      {:error, reason} ->
+        :ok = stop_owned_recycler(recycler_pid)
+        classify_resource_error(reason)
     end
   end
 

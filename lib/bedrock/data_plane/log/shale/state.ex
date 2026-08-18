@@ -36,8 +36,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           active_segment: Segment.t() | nil,
           segments: [Segment.t()],
           pending_pushes: %{
-            Bedrock.version() =>
-              {encoded_transaction :: Transaction.encoded(), ack_fn :: (:ok | {:error, term()} -> :ok)}
+            Bedrock.version() => {encoded_transaction :: Transaction.encoded(), reply_token :: term()}
           },
           #
           floor_lag_alarm_active: boolean(),

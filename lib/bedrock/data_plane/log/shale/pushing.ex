@@ -1,5 +1,27 @@
 defmodule Bedrock.DataPlane.Log.Shale.Pushing do
-  @moduledoc false
+  @moduledoc """
+  Predecessor scheduling and WAL appends, expressed as one uniform
+  transition.
+
+  This module owns WAL and resource state only. It never replies to a
+  caller, never forwards to the Demux, and never notifies a puller — every
+  `push/4` returns the same transition shape, and `Shale.Server` interprets
+  it exactly once:
+
+    * `state` — the resulting WAL state.
+    * `appended` — the append events, in predecessor-chain order. Each is
+      `{version, encoded_transaction}` (the exact bytes written), which is
+      everything Demux delivery and puller notification need.
+    * `replies` — ordered `{token, result}` instructions. Tokens are the
+      opaque values callers were parked or presented with; this module never
+      looks inside them and never invokes anything.
+    * `parked?` — whether the current request was stored to wait for its
+      predecessor (no reply owed yet).
+
+  The tuple-arity protocol this replaces encoded *whether replies had
+  already been sent* in the shape of the return value; the server had to
+  know which shapes had which side effects. Now the effects are data.
+  """
   import Bedrock.DataPlane.Log.Telemetry
 
   alias Bedrock.DataPlane.Demux
@@ -9,8 +31,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
-  @type appended_transactions :: [Transaction.encoded()]
-  @type append_error :: {:error, term(), State.t(), appended_transactions()}
+  @type append_event :: {Bedrock.version(), Transaction.encoded()}
+  @type reply_token :: term()
+  @type reply_instruction :: {reply_token(), :ok | {:error, term()}}
+  @type transition :: %{
+          state: State.t(),
+          appended: [append_event()],
+          replies: [reply_instruction()],
+          parked?: boolean()
+        }
   @type wal_limit_error ::
           {:recovery_required,
            {:wal_limit_exceeded,
@@ -22,123 +51,148 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
               limit_us: non_neg_integer()
             }}}
 
-  @spec push(
-          t :: State.t(),
-          expected_version :: Bedrock.version(),
-          encoded_transaction :: Transaction.encoded(),
-          ack_fn :: (:ok | {:error, term()} -> :ok)
-        ) ::
-          {:ok, State.t(), appended_transactions()}
-          | {:wait, State.t()}
-          | append_error()
-          | {:error, :not_ready | :tx_out_of_order | :tx_too_large}
-  def push(%{mode: :locked}, _, _, _) do
-    {:error, :not_ready}
-  end
+  @doc """
+  Schedules one live push and returns the resulting transition.
 
-  def push(_, _, encoded_transaction, _ack_fn) when byte_size(encoded_transaction) > 10_000_000 do
-    {:error, :tx_too_large}
-  end
+  Covers immediate success, parking behind a missing predecessor, rejection
+  (locked, oversized, stale, backpressured), ordered multi-entry drains of
+  the pending queue, and partial-drain failure — all in the same shape.
+  """
+  @spec push(State.t(), expected_version :: Bedrock.version(), Transaction.encoded(), reply_token()) ::
+          transition()
+  def push(%{mode: :locked} = t, _, _, token), do: rejection(t, token, :not_ready)
 
-  def push(t, expected_version, encoded_transaction, ack_fn) when expected_version == t.last_version do
-    case write_encoded_transaction(t, encoded_transaction) do
-      {:ok, t} ->
+  def push(t, _, encoded_transaction, token) when byte_size(encoded_transaction) > 10_000_000,
+    do: rejection(t, token, :tx_too_large)
+
+  def push(t, expected_version, encoded_transaction, token) when expected_version == t.last_version do
+    case append_transaction(t, encoded_transaction) do
+      {:ok, t, event} ->
         trace_push_transaction(encoded_transaction)
-        :ok = ack_fn.(:ok)
-        do_pending_pushes(t, [encoded_transaction])
+        drain(t, [event], [{token, :ok}])
 
       {:error, {:recovery_required, {:wal_limit_exceeded, _}} = reason, t} ->
         # Version assignment and resolution have already scheduled this
         # link for commit. Refusing its WAL append invalidates the epoch;
         # release every successor so the commit proxies can fail fast and
         # the Director can recover instead of leaving callers stranded.
-        :ok = ack_fn.({:error, reason})
-        {:error, reason, reject_pending_pushes(t, reason), []}
+        {t, flushed} = reject_all_pending(t, reason)
+        %{state: t, appended: [], replies: [{token, {:error, reason}} | flushed], parked?: false}
 
       {:error, reason, t} ->
-        :ok = ack_fn.({:error, reason})
-        {:error, reason, t, []}
+        rejection(t, token, reason)
     end
   end
 
-  def push(t, expected_version, encoded_transaction, ack_fn) when expected_version > t.last_version do
+  def push(t, expected_version, encoded_transaction, token) when expected_version > t.last_version do
     case admit(t, commit_version_or_nil(encoded_transaction)) do
       :ok ->
-        {:wait, Map.update!(t, :pending_pushes, &Map.put(&1, expected_version, {encoded_transaction, ack_fn}))}
+        parked =
+          Map.update!(t, :pending_pushes, &Map.put(&1, expected_version, {encoded_transaction, token}))
 
-      {:error, _reason} = error ->
-        error
+        %{state: parked, appended: [], replies: [], parked?: true}
+
+      {:error, reason} ->
+        rejection(t, token, reason)
     end
   end
 
-  def push(t, expected_version, _, _) do
+  def push(t, expected_version, _, token) do
     trace_push_out_of_order(expected_version, t.last_version)
-    {:error, :tx_out_of_order}
+    rejection(t, token, :tx_out_of_order)
   end
 
-  @spec do_pending_pushes(State.t()) ::
-          {:ok, State.t(), appended_transactions()} | append_error()
-  def do_pending_pushes(t), do: do_pending_pushes(t, [])
+  defp rejection(t, token, reason), do: %{state: t, appended: [], replies: [{token, {:error, reason}}], parked?: false}
 
-  defp do_pending_pushes(t, appended) do
-    next_expected_version = t.last_version
-
-    case Map.pop(t.pending_pushes, next_expected_version) do
+  # Drains the pending queue along the predecessor chain. A drained entry
+  # that fails to append gets its error reply; on backpressure the rest of
+  # the queue (all later versions, equally inadmissible, gap now
+  # unfillable) is rejected too, while other errors leave the remaining
+  # entries parked — the admitted prefix is the tip either way.
+  defp drain(t, appended, replies) do
+    case Map.pop(t.pending_pushes, t.last_version) do
       {nil, _} ->
-        {:ok, t, Enum.reverse(appended)}
+        %{state: t, appended: Enum.reverse(appended), replies: Enum.reverse(replies), parked?: false}
 
-      {{encoded_transaction, ack_fn}, pending_pushes} ->
-        t_with_updated_pending = %{t | pending_pushes: pending_pushes}
+      {{encoded_transaction, token}, pending_pushes} ->
+        t = %{t | pending_pushes: pending_pushes}
 
-        case write_encoded_transaction(t_with_updated_pending, encoded_transaction) do
-          {:ok, new_t} ->
+        case append_transaction(t, encoded_transaction) do
+          {:ok, t, event} ->
             trace_push_transaction(encoded_transaction)
-            :ok = ack_fn.(:ok)
-            do_pending_pushes(new_t, [encoded_transaction | appended])
+            drain(t, [event | appended], [{token, :ok} | replies])
 
-          {:error, {:recovery_required, {:wal_limit_exceeded, _}} = reason, error_t} ->
+          {:error, {:recovery_required, {:wal_limit_exceeded, _}} = reason, t} ->
             # The admitted prefix remains the durable tip. The failed link
             # makes every queued successor unusable in this epoch, so wake
             # all of their callers and let coordinated recovery decide the
             # committed prefix.
-            :ok = ack_fn.({:error, reason})
-            {:error, reason, reject_pending_pushes(error_t, reason), Enum.reverse(appended)}
+            {t, flushed} = reject_all_pending(t, reason)
 
-          {:error, reason, error_t} ->
-            :ok = ack_fn.({:error, reason})
-            {:error, reason, error_t, Enum.reverse(appended)}
+            %{
+              state: t,
+              appended: Enum.reverse(appended),
+              replies: Enum.reverse([{token, {:error, reason}} | replies], flushed),
+              parked?: false
+            }
+
+          {:error, reason, t} ->
+            %{
+              state: t,
+              appended: Enum.reverse(appended),
+              replies: Enum.reverse([{token, {:error, reason}} | replies]),
+              parked?: false
+            }
         end
     end
   end
 
-  @spec write_encoded_transaction(State.t(), Transaction.encoded()) ::
-          {:ok, State.t()} | {:error, term(), State.t()}
-  def write_encoded_transaction(t, encoded_transaction) when is_nil(t.writer) do
-    version =
-      case Transaction.commit_version(encoded_transaction) do
-        {:ok, version} ->
-          version
+  defp reject_all_pending(t, reason) do
+    flushed = Enum.map(t.pending_pushes, fn {_expected, {_transaction, token}} -> {token, {:error, reason}} end)
+    {%{t | pending_pushes: %{}}, flushed}
+  end
 
-        {:error, reason} ->
-          raise "Failed to extract version: #{inspect(reason)}"
-      end
+  @doc """
+  The single-entry, effect-free WAL append primitive.
 
-    previous_version = t.last_version
+  Appends one encoded transaction — allocating or rolling segments as
+  needed — and returns the new state with the append event, or the error
+  with the caller's state intact. The WAL acknowledgement boundary is here:
+  a returned event means the bytes and their sync completed. No caller
+  reply, no Demux cast, no puller notification.
 
+  Recovery replays through this directly: its source stream is already
+  validated and strictly ordered, so it needs the append, not the
+  scheduler.
+  """
+  @spec append_transaction(State.t(), Transaction.encoded()) ::
+          {:ok, State.t(), append_event()} | {:error, term(), State.t()}
+  def append_transaction(t, encoded_transaction) do
+    case Transaction.commit_version(encoded_transaction) do
+      {:ok, version} ->
+        case do_append(t, encoded_transaction, version) do
+          {:ok, t} -> {:ok, t, {version, encoded_transaction}}
+          {:error, reason, t} -> {:error, reason, t}
+        end
+
+      {:error, reason} ->
+        {:error, reason, t}
+    end
+  end
+
+  defp do_append(t, encoded_transaction, version) when is_nil(t.writer) do
     with :ok <- admit(t, version),
          {:ok, new_segment} <-
-           Segment.allocate_from_recycler(t.segment_recycler, t.path, version, previous_version) do
+           Segment.allocate_from_recycler(t.segment_recycler, t.path, version, t.last_version) do
       stage_successor_and_append(t, new_segment, encoded_transaction, version)
     else
       {:error, reason} -> {:error, reason, t}
     end
   end
 
-  def write_encoded_transaction(t, encoded_transaction) do
-    with {:ok, version} <- Transaction.commit_version(encoded_transaction),
-         :ok <- admit(t, version) do
-      maybe_roll_and_append(t, encoded_transaction, version)
-    else
+  defp do_append(t, encoded_transaction, version) do
+    case admit(t, version) do
+      :ok -> maybe_roll_and_append(t, encoded_transaction, version)
       {:error, reason} -> {:error, reason, t}
     end
   end
@@ -154,7 +208,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       # `available_after` chasing the untrimmed tail. A roll is a rename
       # from the preallocated pool.
       case Writer.close(t.writer) do
-        :ok -> write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
+        :ok -> do_append(%{t | writer: nil}, encoded_transaction, version)
         {:error, reason} -> {:error, reason, t}
       end
     else
@@ -234,7 +288,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
 
       {:error, :segment_full} ->
         case Writer.close(t.writer) do
-          :ok -> write_encoded_transaction(%{t | writer: nil}, encoded_transaction)
+          :ok -> do_append(%{t | writer: nil}, encoded_transaction, version)
           {:error, reason} -> {:error, reason, t}
         end
 
@@ -301,11 +355,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       {:ok, version} -> version
       {:error, _} -> nil
     end
-  end
-
-  defp reject_pending_pushes(%{pending_pushes: pending} = t, reason) do
-    Enum.each(pending, fn {_expected, {_transaction, ack_fn}} -> :ok = ack_fn.({:error, reason}) end)
-    %{t | pending_pushes: %{}}
   end
 
   @spec update_segment_transaction_cache(Segment.t(), Transaction.encoded()) :: Segment.t()

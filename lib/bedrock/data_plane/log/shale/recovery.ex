@@ -6,7 +6,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   available survivor, appends each source binary unchanged, and lets the fresh
   destination Demux perform normal shard slicing.
   """
-  import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
+  import Bedrock.DataPlane.Log.Shale.Pushing, only: [append_transaction: 2]
 
   alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log
@@ -23,13 +23,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
           replay_after :: Bedrock.version(),
           last_inclusive :: Bedrock.version()
         ) ::
-          {:ok, State.t()}
-          | {:error, :lock_required}
-          | {:error, {:source_log_unavailable, log_ref :: Log.ref()}}
-          | {:error, :no_source_logs_available}
-          | {:error, {:incomplete_replay, Bedrock.version(), Bedrock.version()}}
-          | {:error, term(), State.t()}
-  def recover_from(t, _, _, _) when t.mode != :locked, do: {:error, :lock_required}
+          {:ok, State.t()} | {:error, term(), State.t()}
+  def recover_from(t, _, _, _) when t.mode != :locked, do: {:error, :lock_required, t}
 
   def recover_from(t, _source_logs, replay_after, last_inclusive) when replay_after > last_inclusive,
     do: {:error, :invalid_version_range, t}
@@ -145,11 +140,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
           replay_after :: Bedrock.version(),
           last_inclusive :: Bedrock.version()
         ) ::
-          {:ok, State.t()}
-          | Log.pull_errors()
-          | {:error, {:source_log_unavailable, log_ref :: Log.ref()}}
-          | {:error, :no_source_logs_available}
-          | {:error, term(), State.t()}
+          {:ok, State.t()} | {:error, term(), State.t()}
 
   def pull_transactions_from_sources(t, [], _replay_after, _last_inclusive), do: {:error, :no_source_logs_available, t}
 
@@ -194,10 +185,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
           replay_after :: Bedrock.version(),
           last_inclusive :: Bedrock.version()
         ) ::
-          {:ok, State.t()}
-          | Log.pull_errors()
-          | {:error, {:source_log_unavailable, log_ref :: Log.ref()}}
-          | {:error, term(), State.t()}
+          {:ok, State.t()} | {:error, term(), State.t()}
   def pull_transactions(t, _, replay_after, last_inclusive) when replay_after == last_inclusive, do: {:ok, t}
 
   def pull_transactions(t, log_ref, replay_after, last_inclusive) do
@@ -259,17 +247,20 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
           State.t()
         ) ::
           {:cont, {Bedrock.version(), State.t()}} | {:halt, {:error, term(), State.t()}}
-  defp handle_valid_transaction_bytes(bytes, version, cursor, t) do
+  defp handle_valid_transaction_bytes(bytes, version, _cursor, t) do
+    # The source stream is already validated and strictly ordered
+    # (process_versioned_transaction), so replay uses the effect-free
+    # append primitive directly — no predecessor scheduling, no parking,
+    # no acknowledgement plumbing.
     with {:ok, _transaction} <- Transaction.decode(bytes),
-         {:ok, t, [^bytes]} <- push(t, cursor, bytes, fn _ -> :ok end) do
+         {:ok, t, {^version, _}} <- append_transaction(t, bytes) do
       # Replay routes through the fresh Demux so the replayed range re-enters
       # the chunk pipeline and re-confirms deterministically.
       push_to_demux(t, version, bytes)
       {:cont, {version, t}}
     else
-      {:wait, t} -> {:halt, {:error, :tx_out_of_order, t}}
       {:error, :invalid_format} -> {:halt, {:error, :invalid_transaction, t}}
-      {:error, reason, t, _appended_transactions} -> {:halt, {:error, reason, t}}
+      {:error, reason, t} -> {:halt, {:error, reason, t}}
       {:error, reason} -> {:halt, {:error, reason, t}}
     end
   end
@@ -292,10 +283,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     end)
   end
 
+  # Parked pushes hold opaque caller tokens (GenServer froms), not
+  # closures; recovery runs inside the server process, so replying to
+  # them here is the server replying.
   @spec abort_all_pending_pushes(State.t()) :: State.t()
   def abort_all_pending_pushes(%{pending_pushes: pending_pushes} = t) do
-    Enum.each(pending_pushes, fn {_version, {_transaction, ack_fn}} ->
-      :ok = ack_fn.({:error, :not_ready})
+    Enum.each(pending_pushes, fn {_version, {_transaction, from}} ->
+      :ok = GenServer.reply(from, {:error, :not_ready})
     end)
 
     %{t | pending_pushes: %{}}

@@ -113,7 +113,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @impl true
   @spec handle_continue(
           :initialization
-          | {:notify_waiting_pullers, Bedrock.version(), Transaction.encoded()}
+          | {:notify_appended, [{Bedrock.version(), Transaction.encoded()}]}
           | :check_for_expired_pullers
           | :wait_for_next_puller_deadline,
           State.t()
@@ -135,12 +135,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   end
 
   @impl true
-  def handle_continue({:notify_waiting_pullers, version, transaction}, t) do
+  def handle_continue({:notify_appended, events}, t) do
+    # Wake pullers from the authoritative append events themselves — each
+    # event carries its own version and bytes, in predecessor-chain order.
     t
-    |> Map.update!(
-      :waiting_pullers,
-      &notify_waiting_pullers(&1, version, transaction)
-    )
+    |> Map.update!(:waiting_pullers, fn waiting_pullers ->
+      Enum.reduce(events, waiting_pullers, fn {version, transaction}, acc ->
+        notify_waiting_pullers(acc, version, transaction)
+      end)
+    end)
     |> noreply(continue: :check_for_expired_pullers)
   end
 
@@ -232,7 +235,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     case recover_from(t, source_logs, replay_after, last_inclusive) do
       {:ok, t} -> reply(t, {:ok, self()})
       {:error, reason, t} -> reply(t, {:error, {:failed_to_recover, reason}})
-      {:error, reason} -> reply(t, {:error, {:failed_to_recover, reason}})
     end
   end
 
@@ -240,20 +242,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:push, transaction_bytes, expected_version, known_committed_version}, from, %State{} = t) do
     with {:ok, transaction} <- Transaction.validate(transaction_bytes),
          :ok <- validate_has_shard_index(transaction) do
-      case push(t, expected_version, transaction, ack_fn(from)) do
-        {:ok, t, appended_transactions} ->
-          finish_push(t, appended_transactions, known_committed_version, expected_version, transaction)
-
-        {:wait, t} ->
-          advance_demux_kcv(t.demux, known_committed_version)
-          noreply(t, continue: :check_for_expired_pullers)
-
-        {:error, _reason, t, appended_transactions} ->
-          finish_push(t, appended_transactions, known_committed_version, expected_version, transaction)
-
-        {:error, _reason} = error ->
-          reply(t, error, continue: :check_for_expired_pullers)
-      end
+      t
+      |> push(expected_version, transaction, from)
+      |> apply_push_transition(known_committed_version)
     else
       {:error, _reason} = error -> reply(t, error, continue: :check_for_expired_pullers)
     end
@@ -325,30 +316,36 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  # Pushing owns predecessor scheduling and WAL appends; the Server owns the
-  # corresponding live Demux delivery. The binaries returned here are the
-  # exact ref-counted inputs written to the WAL, already in predecessor-chain
-  # order, so forwarding neither slices nor copies them.
-  defp finish_push(t, appended_transactions, known_committed_version, expected_version, transaction) do
-    forward_appended_transactions(t.demux, appended_transactions, known_committed_version)
+  # The Server is the sole owner of live effects, applied exactly once
+  # from the transition Pushing returned: every caller reply is issued
+  # here (tokens are the callers' `from`s), every append event forwards
+  # to the Demux in predecessor-chain order, and puller notification runs
+  # from those same authoritative events. The binaries in the events are
+  # the exact ref-counted inputs written to the WAL, so forwarding
+  # neither slices nor copies them.
+  defp apply_push_transition(
+         %{state: t, appended: appended, replies: replies, parked?: parked?},
+         known_committed_version
+       ) do
+    Enum.each(replies, fn {from, result} -> GenServer.reply(from, result) end)
+    forward_appended_transactions(t.demux, appended, known_committed_version)
 
-    if appended_transactions == [] do
+    # A parked push carries commit evidence even though nothing appended:
+    # the known-committed version still advances the Demux's cut gate.
+    if parked?, do: advance_demux_kcv(t.demux, known_committed_version)
+
+    if appended == [] do
       noreply(t, continue: :check_for_expired_pullers)
     else
-      noreply(t, continue: {:notify_waiting_pullers, expected_version, transaction})
+      noreply(t, continue: {:notify_appended, appended})
     end
   end
 
-  defp forward_appended_transactions(nil, _transactions, _known_committed_version), do: :ok
+  defp forward_appended_transactions(nil, _events, _known_committed_version), do: :ok
 
-  defp forward_appended_transactions(demux, transactions, known_committed_version) do
-    Enum.each(transactions, fn transaction ->
-      Demux.Server.push(
-        demux,
-        Transaction.commit_version!(transaction),
-        transaction,
-        known_committed_version
-      )
+  defp forward_appended_transactions(demux, events, known_committed_version) do
+    Enum.each(events, fn {version, transaction} ->
+      Demux.Server.push(demux, version, transaction, known_committed_version)
     end)
   end
 
@@ -361,9 +358,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   @spec check_running(term()) :: {:error, :unavailable}
   def check_running(_t), do: {:error, :unavailable}
-
-  @spec ack_fn(GenServer.from()) :: (:ok | {:error, term()} -> :ok)
-  def ack_fn(from), do: fn result -> GenServer.reply(from, result) end
 
   @spec reply_to_fn(GenServer.from()) :: (term() -> :ok)
   def reply_to_fn(from), do: &GenServer.reply(from, &1)

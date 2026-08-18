@@ -239,7 +239,7 @@ defmodule Bedrock.DataPlane.Log do
           replay_after :: Bedrock.version(),
           last_inclusive :: Bedrock.version()
         ) ::
-          {:ok, pid()} | {:error, :unavailable}
+          {:ok, pid()} | {:error, {:failed_to_recover, term()}} | {:error, :unavailable}
   def recover_from(log, source_logs, replay_after, last_inclusive),
     do: call(log, {:recover_from, normalize_source_logs(source_logs), replay_after, last_inclusive}, :infinity)
 

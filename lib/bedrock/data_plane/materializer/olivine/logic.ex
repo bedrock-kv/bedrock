@@ -200,11 +200,29 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   # to drink.
   defp resume_position(t), do: t.index_manager.current_version
 
+  @doc """
+  Restarts the stream from a rewind point.
+
+  Compaction cutover rewinds the index to the durable snapshot, which makes
+  the running puller's position meaningless — the same situation recovery
+  handles at unlock, resolved the same way: stop the puller and rejoin the
+  stream at the boundary. The stream re-delivers everything after it; no
+  suffix bookkeeping, no special path.
+  """
+  @spec resume_pulling_from(State.t(), Bedrock.version()) :: State.t()
+  def resume_pulling_from(t, start_after) do
+    t
+    |> stop_pulling()
+    |> start_pulling_from(start_after)
+  end
+
   # Without a shard assignment there is no stream to join: the materializer
   # is static, fed only through direct ingest (unit-test configurations).
   # Production materializers always receive their shard from the director.
+  # Without pull sources (never unlocked into a layout), likewise.
   @spec start_pulling_from(State.t(), Bedrock.version()) :: State.t()
   defp start_pulling_from(%{shard_num: nil} = t, _start_after), do: t
+  defp start_pulling_from(%{pull_sources: nil} = t, _start_after), do: t
 
   defp start_pulling_from(%{shard_num: shard_num, pull_sources: {logs, services}} = t, start_after) do
     # The stream puller: everything — history, recent data, and version

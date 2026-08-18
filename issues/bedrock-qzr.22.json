@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-18T17:10:33Z",
+  "close_reason": "register_node_resources now pipes add_tsl_subscriber |\u003e replay_tsl_to(client): the new subscriber immediately receives {:tsl_updated, tsl} — the identical message a broadcast sends — so Link caches and forwards to the local Foreman, which reconciles stale workers without waiting for another recovery. Nil layout replays nothing (bootstrap never exposed). Duplicate/reconnect/leader-change registration idempotent (set subscription, same snapshot, reconciliation no-op). Handler-level tests on a follower coordinator, red pre-fix. PR #128 stacked on #127 (commit cf355224).",
   "created": "2026-08-15T21:34:23Z",
   "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nregister_node_resources monitors and adds the Link as a TSL subscriber but does not send the coordinator's current layout. TSL delivery happens only on a future put_transaction_system_layout broadcast. A Link or node that starts after the stable layout was published retains a nil cached TSL, and its Foreman never receives the reconciliation trigger.\n\nImpact:\nClients using Link can remain unavailable until another recovery, while restarted nodes retain obsolete workers indefinitely despite the branch's durable-layout-is-what-exists guarantee.\n\nAcceptance criteria:\n- Successful registration or subscription delivers a valid current TSL snapshot when one exists.\n- Bootstrap or incomplete TSL state is not exposed as a valid runtime layout.\n- Link updates its cache and forwards the snapshot to the local Foreman exactly as it does for later broadcasts.\n- Tests cover a Link and Foreman joining after a layout is already stable, reconciling stale workers without another layout change.\n- Reconnect, leader change, duplicate registration, and no-current-layout cases are idempotent and safe.",
   "id": "bedrock-qzr.22",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Replay the current TSL to late Link subscribers and reconcile Foreman",
   "type": "bug",
-  "updated_at": "2026-08-15T21:34:23Z"
+  "updated_at": "2026-08-18T17:10:33Z"
 }

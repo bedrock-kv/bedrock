@@ -84,9 +84,12 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
   @spec read_transaction_by_version(String.t(), Version.t()) ::
           {:ok, Transaction.encoded()} | {:error, :not_found} | {:error, term()}
   def read_transaction_by_version(file_path, target_version) do
+    # A segment carries its replay cursor: previous_version is part of the
+    # contract, not an optional detail.
     segment = %Segment{
       path: file_path,
       min_version: Version.from_integer(0),
+      previous_version: Version.zero(),
       transactions: nil
     }
 

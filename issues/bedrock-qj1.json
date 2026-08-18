@@ -10,6 +10,10 @@
     {
       "text": "TDD evidence: RED reproduced (1) an intermediate-version waiter left queued after a batch advanced beyond it, (2) an idle waitlisted read that never received a terminal reply, (3) retry loops that outlived their configured transaction timeout, (4) nested work that reset the timeout, and (5) a point read blocked forever on an unresponsive TransactionBuilder. GREEN: 71 focused tests; 734 subsystem tests plus 65 properties; full suite 2,541 tests, 158 properties, 13 doctests; format, Credo strict, and Dialyzer all pass. Design: Olivine wakes every waiter at or below the applied version and independently expires parked reads; Repo measures one monotonic deadline per outer transaction and caps layout fetches, builder calls, range batches, commits, and retry sleeps without changing Demux ordering or backpressure.",
       "timestamp": "2026-08-18T22:16:03Z"
+    },
+    {
+      "text": "PR review follow-up: consolidate the builder and deadline process-dictionary entries behind one Bedrock.Internal.Repo.TransactionContext key. Keep per-Repo isolation, preserve nested deadline inheritance and builder replacement across retries, and migrate tests away from raw Process.put/get calls.",
+      "timestamp": "2026-08-18T22:31:33Z"
     }
   ],
   "priority": 1,

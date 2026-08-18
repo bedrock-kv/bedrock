@@ -18,6 +18,10 @@
     {
       "text": "Review refactor TDD: RED transaction_context_test could not compile because no context abstraction existed. GREEN: TransactionContext now owns one process-dictionary key containing per-Repo builder/deadline structs; nested deadlines restore only the affected Repo entry; all Repo tests seed through accessors. Verification: 30 focused tests, 461 internal tests plus 42 properties, full suite 2,544 tests plus 158 properties and 13 doctests, format, Credo strict, and Dialyzer all pass.",
       "timestamp": "2026-08-18T22:36:12Z"
+    },
+    {
+      "text": "New reproduced failure: coordinator bootstrap places the recovery-only %{logs: ...} hint in transaction_system_layout; late-Link replay then publishes it as a runnable TSL, and TransactionBuilder crashes on missing :epoch. Fix at the producer/lifecycle boundary by separating old_transaction_system_layout from the live runtime layout and clearing/broadcasting nil while recovery is active.",
+      "timestamp": "2026-08-18T22:44:08Z"
     }
   ],
   "priority": 1,

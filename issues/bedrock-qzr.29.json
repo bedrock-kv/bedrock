@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-18T17:31:05Z",
+  "close_reason": "Removed @floor_lag_alarm_us, floor_lag_alarm_active state, check_floor_lag_alarm, trace_floor_lag_alarm and the [:bedrock, :log, :floor_lag_alarm] event, alarm test, and guide bullet. [:bedrock, :log, :trim] raw telemetry and reject_pushes_above_lag_us hard limit unchanged; push/pull/recovery/durability semantics unchanged. PR #132 stacked on #131 (commit 2b7310e4).",
   "created": "2026-08-18T15:54:49Z",
   "description": "Problem\n\nShale currently owns a fixed 40-second floor-lag threshold, an edge-triggered floor_lag_alarm_active state bit, and the [:bedrock, :log, :floor_lag_alarm] event. This is not a sound backpressure mechanism: version-time lag is not a capacity measure, the check only runs when the durability floor advances and therefore misses a truly stalled floor, and a single log cannot make the cluster-wide admission decision.\n\nThe log service should persist and forward transactions, trim durable WAL segments, and report raw facts. Backpressure policy belongs to a future Ratekeeper service that can aggregate pressure across the active log set and control admission upstream.\n\nScope\n\n- Remove the floor-lag threshold constant and floor_lag_alarm_active state.\n- Remove the alarm transition check and [:bedrock, :log, :floor_lag_alarm] emitter.\n- Remove alarm-specific tests and documentation.\n- Preserve [:bedrock, :log, :trim] unchanged as raw observability: floor, WAL tip, lag, and retained/recycled segment counts.\n- Do not introduce a replacement threshold, alarm state machine, or rate-control policy in Shale. Proper WAL byte and disk-pressure metrics plus admission control are future Ratekeeper work.\n\nAcceptance criteria\n\n- Shale contains no floor-lag alarm threshold or alarm lifecycle state.\n- WAL trimming and its raw trim telemetry retain their existing behavior.\n- Log push, pull, recovery, and durability semantics are unchanged.\n- Guides describe the raw trim event without presenting a Shale-local alarm as backpressure.\n- Focused Shale tests and the full default test suite pass.",
   "id": "bedrock-qzr.29",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Remove Shale-owned floor-lag alarm",
   "type": "task",
-  "updated_at": "2026-08-18T15:54:49Z"
+  "updated_at": "2026-08-18T17:31:05Z"
 }

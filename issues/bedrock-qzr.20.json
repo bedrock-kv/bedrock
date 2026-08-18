@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-18T16:50:24Z",
+  "close_reason": "Distributed suite rewritten for the cut/KCV protocol: cut_interval_us: 100, global-order pushes with trailing monotonic KCV, KCV-gate assertions at two consecutive cuts, staged watermark advance (zero -\u003e 1199 -\u003e 1299), restart replay from MinIO chunks per shard, flaky-backend retry heal with fail-path assertion. version_gap removed; ShardServer.init now rejects unknown options with ArgumentError (unit-tested) so stale configuration fails at startup instead of rotting into timeouts. Documented command passes reliably. PR #124 stacked on #123 (commit 1589e24c).",
   "created": "2026-08-15T21:34:22Z",
   "description": "Review finding from worktree-qzr2-wal-trim.\n\nProblem:\nThe documented distributed durability command currently fails both tests. The test still passes the removed ShardServer version_gap option and calls Demux.push without a known-committed version. Under the new Demux cut protocol, the default five-second cut is never crossed by versions 1000 to 1400 and a nil KCV prevents any pending cut from firing.\n\nFailing command:\nBEDROCK_INCLUDE_DISTRIBUTED=1 mix test --include distributed test/bedrock/distributed/minio_durability_test.exs\n\nObserved result:\n2 tests, 2 failures, both condition timeouts.\n\nAcceptance criteria:\n- Distributed tests configure cut_interval_us on Demux and supply realistic monotonic KCV values.\n- Tests still exercise multi-shard minimum durability, restart replay from MinIO, and transient write retry.\n- Assertions prove no cut advances before KCV reaches it.\n- The documented command passes reliably from a clean checkout with MinIO available.\n- Remove obsolete version_gap configuration and add guard coverage so future protocol changes cannot silently turn the suite into timeout-only failures.",
   "id": "bedrock-qzr.20",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 1,
-  "status": "open",
+  "status": "closed",
   "title": "Repair the distributed MinIO durability gate for cut and KCV semantics",
   "type": "bug",
-  "updated_at": "2026-08-15T21:34:22Z"
+  "updated_at": "2026-08-18T16:50:24Z"
 }

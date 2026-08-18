@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-18T18:24:50Z",
+  "close_reason": "Property stub made time-accurate: MockRepo.put records the written path, MockRepo.get answers from the recorded set — a parent generated alongside its child exists from the moment it is created instead of being hidden by the static 'key in sorted_paths -\u003e nil' clause. Deterministic parent-prefix regression test pins the [[f],[f,G]] shape every run. Landed at the stack bottom (worktree-qzr18-replay-cursor, commit 1d430003) and the whole stack restacked on it.",
   "created": "2026-08-18T18:15:26Z",
   "description": "The property 'directory prefixes are unique within same layer' is flaky: its static MockRepo.get stub checks 'key in sorted_paths -\u003e nil' before the created_dirs clause, so when the generator produces a parent alongside its child (e.g. [[f],[f,G]]), the just-created parent still reads as nonexistent during the child's parent check -\u003e :parent_directory_does_not_exist -\u003e flunk. Struck twice on stack CI (qzr19, qzr20) within 10 minutes. Fix: time-accurate stub that tracks repo.put(path) and answers get from the tracked set; add a deterministic parent-prefix regression test.",
   "id": "bedrock-qzr.30",
   "labels": [],
   "parent": "bedrock-qzr",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Flaky directory prefix-uniqueness property: static stub hides just-created parents",
   "type": "bug",
-  "updated_at": "2026-08-18T18:15:26Z"
+  "updated_at": "2026-08-18T18:24:50Z"
 }

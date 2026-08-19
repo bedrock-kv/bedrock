@@ -234,20 +234,21 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     maybe_set_empty_transaction_timeout(%{t | batch: nil})
   end
 
-  def handle_info({:routing_data_update, updated_routing_data}, %{mode: :running} = t) do
-    noreply(%{t | routing_data: updated_routing_data}, timeout: t.empty_transaction_timeout_ms)
-  end
-
   def handle_info({:routing_data_update, updated_routing_data}, t) do
-    noreply(%{t | routing_data: updated_routing_data})
-  end
-
-  def handle_info({:metadata_updates, window}, %{mode: :running} = t) do
-    noreply(apply_metadata_window(t, window), timeout: t.empty_transaction_timeout_ms)
+    noreply_resuming_cadence(%{t | routing_data: updated_routing_data})
   end
 
   def handle_info({:metadata_updates, window}, t) do
-    noreply(apply_metadata_window(t, window))
+    noreply_resuming_cadence(apply_metadata_window(t, window))
+  end
+
+  # A sharded finalization task reports its batch's committed metadata
+  # (already filtered by the merged GLOBAL abort set). It is re-sent to the
+  # resolvers as a confirmation on every subsequent call until their windows
+  # ack past its version (see apply_metadata_window/2). Tasks race to this
+  # mailbox, so insert in version order.
+  def handle_info({:metadata_deferred, version, mutations}, t) do
+    noreply_resuming_cadence(add_deferred_metadata(t, version, mutations))
   end
 
   def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
@@ -274,7 +275,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       sequencer: sequencer,
       resolver_layout: resolver_layout,
       routing_data: routing_data,
-      metadata: %{version: applied_metadata_version}
+      metadata: %{version: applied_metadata_version},
+      deferred_metadata: deferred_metadata
     } = state
 
     Task.start_link(fn ->
@@ -289,7 +291,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
              # the metadata version this proxy has confirmed applying - the
              # resolver keys its progress and differential windows off this.
              metadata_ack: {server_pid, applied_metadata_version},
-             metadata_merge_fn: fn window -> send(server_pid, {:metadata_updates, window}) end
+             metadata_merge_fn: fn window -> send(server_pid, {:metadata_updates, window}) end,
+             # Deferred-metadata confirmations for sharded resolvers: committed
+             # metadata from earlier batches, re-sent until acked via windows.
+             metadata_confirms: deferred_metadata,
+             metadata_deferred_fn: fn version, mutations ->
+               send(server_pid, {:metadata_deferred, version, mutations})
+             end
            ) do
         {:ok, _n_aborts, _n_oks, updated_routing_data} ->
           send(server_pid, {:routing_data_update, updated_routing_data})
@@ -334,7 +342,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     # windows keep this monotone.
     version = if metadata.version == nil or to_version > metadata.version, do: to_version, else: metadata.version
 
-    %{t | metadata: %{metadata | version: version}}
+    # A window covering a deferred version proves every resolver folded that
+    # confirmation in (in sharded mode the merged to_version is the MINIMUM
+    # settled version across resolvers) - stop re-sending it.
+    deferred_metadata = Enum.drop_while(t.deferred_metadata, fn {v, _mutations} -> v <= version end)
+
+    %{t | metadata: %{metadata | version: version}, deferred_metadata: deferred_metadata}
+  end
+
+  @spec add_deferred_metadata(State.t(), Bedrock.version(), [term()]) :: State.t()
+  defp add_deferred_metadata(t, version, mutations) do
+    {earlier, later} = Enum.split_while(t.deferred_metadata, fn {v, _} -> v < version end)
+    %{t | deferred_metadata: earlier ++ [{version, mutations} | later]}
   end
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()
@@ -347,6 +366,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     do: noreply(t, timeout: t.empty_transaction_timeout_ms)
 
   defp maybe_set_empty_transaction_timeout(t), do: noreply(t)
+
+  # Info messages cancel any pending GenServer timeout, so restore the right
+  # cadence: an OPEN batch is waiting on a zero timeout to flush (losing it
+  # would strand the batch - and its blocked callers - until the next
+  # message), otherwise resume the empty-transaction heartbeat.
+  @spec noreply_resuming_cadence(State.t()) :: {:noreply, State.t(), timeout()} | {:noreply, State.t()}
+  defp noreply_resuming_cadence(%{mode: :running, batch: nil} = t),
+    do: noreply(t, timeout: t.empty_transaction_timeout_ms)
+
+  defp noreply_resuming_cadence(%{mode: :running} = t), do: noreply(t, timeout: 0)
+  defp noreply_resuming_cadence(t), do: noreply(t)
 
   @spec abort_current_batch(State.t()) :: :ok
   defp abort_current_batch(%{batch: nil}), do: :ok

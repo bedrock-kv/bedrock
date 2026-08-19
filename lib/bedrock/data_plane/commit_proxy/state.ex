@@ -21,7 +21,8 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
           mode: mode(),
           lock_token: binary(),
           routing_data: RoutingData.t() | nil,
-          metadata: Metadata.t()
+          metadata: Metadata.t(),
+          deferred_metadata: [{Bedrock.version(), [term()]}]
         }
   defstruct cluster: nil,
             director: nil,
@@ -35,5 +36,9 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
             mode: :locked,
             lock_token: nil,
             routing_data: nil,
-            metadata: %Metadata{}
+            metadata: %Metadata{},
+            # Committed metadata from sharded batches (version-ascending),
+            # re-sent as confirmations on every resolver call until the
+            # resolvers' windows show it was folded in (ack >= version).
+            deferred_metadata: []
 end

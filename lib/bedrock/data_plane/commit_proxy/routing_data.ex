@@ -239,5 +239,38 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     end
   end
 
+  # Mirrors Metadata's clear_range semantics: delete every known entry whose
+  # full system key falls in [start_key, end_key). Recovery rewrites use this
+  # to drop stale shard/log entries before re-writing the current layout.
+  defp apply_mutation({:clear_range, start_key, end_key}, routing_data) do
+    routing_data
+    |> clear_shards_in_range(start_key, end_key)
+    |> clear_logs_in_range(start_key, end_key)
+  end
+
   defp apply_mutation(_mutation, routing_data), do: routing_data
+
+  defp clear_shards_in_range(%__MODULE__{shard_table: table} = routing_data, start_key, end_key) do
+    for {shard_end_key, _tag} <- :ets.tab2list(table),
+        full_key = SystemKeys.shard_key(shard_end_key),
+        full_key >= start_key and full_key < end_key do
+      :ets.delete(table, shard_end_key)
+    end
+
+    routing_data
+  end
+
+  defp clear_logs_in_range(%__MODULE__{log_map: log_map} = routing_data, start_key, end_key) do
+    log_map
+    |> Map.values()
+    |> Enum.filter(fn log_id ->
+      full_key = SystemKeys.layout_log(log_id)
+      full_key >= start_key and full_key < end_key
+    end)
+    |> Enum.reduce(routing_data, fn log_id, routing_data ->
+      routing_data
+      |> remove_log(log_id)
+      |> delete_log_service(log_id)
+    end)
+  end
 end

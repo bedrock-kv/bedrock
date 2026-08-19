@@ -479,12 +479,102 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
     test "ignores unsupported mutation types" do
       routing_data = RoutingData.new_empty()
 
-      # clear_range not supported
-      updates = [{100, [{:clear_range, "start", "end"}]}]
+      # atomic ops are not routing-relevant
+      updates = [{100, [{:atomic, :add, "key", <<1>>}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
       assert updated == routing_data
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "clear_range removes shard entries whose full key falls in range" do
+      routing_data = RoutingData.new_empty()
+      RoutingData.insert_shard(routing_data, "a", 1)
+      RoutingData.insert_shard(routing_data, "m", 2)
+      RoutingData.insert_shard(routing_data, "z", 3)
+
+      # Clear [shard_key("a"), shard_key("z")) - end is exclusive, so "z" survives
+      updates = [{100, [{:clear_range, SystemKeys.shard_key("a"), SystemKeys.shard_key("z")}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert :ets.tab2list(updated.shard_table) == [{"z", 3}]
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "clear_range over the shard_keys prefix removes all shard entries" do
+      routing_data = RoutingData.new_empty()
+      RoutingData.insert_shard(routing_data, "m", 1)
+      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 2)
+
+      {start_key, end_key} = Bedrock.KeyRange.from_prefix(SystemKeys.shard_keys_prefix())
+      updates = [{100, [{:clear_range, start_key, end_key}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert :ets.tab2list(updated.shard_table) == []
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "clear_range removes layout_log entries in range, reindexing log_map and dropping services" do
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_log("log-a")
+        |> RoutingData.insert_log("log-b")
+        |> RoutingData.insert_log("log-c")
+        |> RoutingData.put_log_service("log-a", {:log_a, :n1@host})
+        |> RoutingData.put_log_service("log-b", {:log_b, :n2@host})
+
+      # Clear [layout_log("log-a"), layout_log("log-c")) - "log-c" survives
+      updates = [{100, [{:clear_range, SystemKeys.layout_log("log-a"), SystemKeys.layout_log("log-c")}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert updated.log_map == %{0 => "log-c"}
+      assert updated.log_services == %{}
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "clear_range outside routing families leaves routing data unchanged" do
+      routing_data = RoutingData.new_empty()
+      RoutingData.insert_shard(routing_data, "m", 1)
+      routing_data = RoutingData.insert_log(routing_data, "log-1")
+
+      updates = [{100, [{:clear_range, "user/a", "user/z"}]}]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert :ets.tab2list(updated.shard_table) == [{"m", 1}]
+      assert updated.log_map == %{0 => "log-1"}
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "recovery-style rewrite: clear_range then sets shrinks 3 shards to 2" do
+      routing_data = RoutingData.new_empty()
+      RoutingData.insert_shard(routing_data, "g", 1)
+      RoutingData.insert_shard(routing_data, "p", 2)
+      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 3)
+
+      {start_key, end_key} = Bedrock.KeyRange.from_prefix(SystemKeys.shard_keys_prefix())
+
+      updates = [
+        {100,
+         [
+           {:clear_range, start_key, end_key},
+           {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(10, "")},
+           {:set, SystemKeys.shard_key(<<0xFF, 0xFF>>), Values.encode_shard_key_entry(11, "m")}
+         ]}
+      ]
+
+      updated = RoutingData.apply_mutations(routing_data, updates)
+
+      assert :ets.tab2list(updated.shard_table) == [{"m", 10}, {<<0xFF, 0xFF>>, 11}]
 
       RoutingData.cleanup(routing_data)
     end

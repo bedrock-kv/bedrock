@@ -35,7 +35,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
 
   ## Selective Service Unlocking
 
-  Commit proxies are unlocked via `CommitProxy.recover_from/5` with lock token and TSL.
+  Commit proxies are unlocked via `CommitProxy.recover_from/5` with the lock token,
+  sequencer, resolver layout, and a plain routing snapshot.
   Other components (sequencer, resolvers, logs) transition automatically when
   system transaction completes.
 

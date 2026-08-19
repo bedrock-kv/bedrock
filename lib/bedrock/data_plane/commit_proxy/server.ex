@@ -11,7 +11,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   ## Lifecycle
 
   1. **Initialization**: Starts in `:locked` mode, waiting for recovery completion
-  2. **Recovery**: Director calls `recover_from/3` to provide transaction system layout and unlock
+  2. **Recovery**: Director calls `recover_from/5` to provide the routing snapshot and unlock
   3. **Transaction Processing**: Accepts `:commit` calls, batches transactions, and finalizes
   4. **Empty Transaction Timeout**: Creates empty transactions during quiet periods to advance read versions
 
@@ -78,7 +78,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     epoch = opts[:epoch] || raise "Missing :epoch option"
     lock_token = opts[:lock_token] || raise "Missing :lock_token option"
     instance = opts[:instance] || raise "Missing :instance option"
-    # sequencer and resolver_layout can be nil at startup - set via recover_from/3
+    # sequencer and resolver_layout can be nil at startup - set via recover_from/5
     sequencer = opts[:sequencer]
     resolver_layout = opts[:resolver_layout]
     max_latency_in_ms = opts[:max_latency_in_ms] || 4

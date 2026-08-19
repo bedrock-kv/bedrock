@@ -5,12 +5,13 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   Encapsulates all information needed to route mutations to logs:
   - `shard_table` - ETS ordered_set for key → tag ceiling search
   - `log_map` - Map of index → log_id for golden ratio routing
-  - `log_services` - Map of log_id → {otp_name, node} for contacting logs
+  - `log_services` - Map of log_id → pid or {otp_name, node} for contacting logs
   - `replication_factor` - Number of logs per mutation
 
   ## Lifecycle
 
   - `new_empty/0` - Creates empty routing data for dynamic population
+  - `from_snapshot/1` - Builds routing data from a plain snapshot at unlock
   - `cleanup/1` - Deletes the ETS table when the commit proxy terminates
 
   ## Shard Updates
@@ -33,7 +34,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   @type t :: %__MODULE__{
           shard_table: :ets.table(),
           log_map: %{non_neg_integer() => Log.id()},
-          log_services: %{Log.id() => {atom(), node()}},
+          log_services: %{Log.id() => {atom(), node()} | pid()},
           replication_factor: pos_integer()
         }
 

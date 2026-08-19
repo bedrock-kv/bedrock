@@ -16,7 +16,7 @@ defmodule Bedrock.DataPlane.CommitProxy do
 
   The component uses a fail-fast recovery model where unrecoverable errors trigger
   process exit and Director-coordinated recovery. Commit Proxies start in locked mode
-  and require explicit unlocking through `recover_from/3` before accepting transaction
+  and require explicit unlocking through `recover_from/5` before accepting transaction
   commits, ensuring proper coordination during cluster recovery scenarios.
 
   """

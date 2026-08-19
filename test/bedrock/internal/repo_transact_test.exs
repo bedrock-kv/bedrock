@@ -89,6 +89,21 @@ defmodule Bedrock.Internal.RepoTransactTest do
     end
   end
 
+  # A commit proxy that rejects every transaction with a permanent client error.
+  defmodule RejectingProxy do
+    @moduledoc false
+    use GenServer
+
+    def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({:commit, _epoch, _tx}, _from, state),
+      do: {:reply, {:error, {:key_out_of_range, <<0xFF, 0xFF>>}}, state}
+  end
+
   @minimal_tsl %{epoch: 1, proxies: []}
 
   defp seed_txn(pid), do: TransactionContext.put_builder(TestRepo, pid)
@@ -243,6 +258,30 @@ defmodule Bedrock.Internal.RepoTransactTest do
         )
 
       assert result == {:error, :user_requested}
+      assert TransactionContext.builder(TestRepo) == nil
+    end
+
+    test "surfaces key_out_of_range immediately instead of retrying" do
+      # A commit proxy that rejects the transaction with a permanent client
+      # error: transact must surface it on the first attempt - retrying a
+      # deterministic rejection would only burn the transaction deadline.
+      proxy = start_supervised!({RejectingProxy, []})
+      attempts = :counters.new(1, [])
+
+      result =
+        Repo.transact(
+          NoCluster,
+          TestRepo,
+          fn ->
+            :counters.add(attempts, 1, 1)
+            Repo.put(TestRepo, "key", "value")
+          end,
+          transaction_system_layout: %{epoch: 1, proxies: [proxy]},
+          retry_limit: 3
+        )
+
+      assert result == {:error, {:key_out_of_range, <<0xFF, 0xFF>>}}
+      assert :counters.get(attempts, 1) == 1
       assert TransactionContext.builder(TestRepo) == nil
     end
 

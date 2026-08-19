@@ -1058,6 +1058,26 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       })
     end
 
+    # Rewrites the MUTATIONS section with a garbage-opcode payload under a
+    # valid CRC: the section opens cleanly and the lazy decode raises
+    # mid-stream — the failure mode ingress validation must contain.
+    defp corrupt_mutation_payload(<<header::binary-size(8), sections::binary>>),
+      do: header <> corrupt_mutations_section(sections)
+
+    defp corrupt_mutations_section(
+           <<0x01, size::unsigned-big-24, _crc::unsigned-big-32, _payload::binary-size(size), rest::binary>>
+         ) do
+      payload = :binary.copy(<<0xEE>>, max(size, 1))
+      crc = :erlang.crc32(<<0x01, byte_size(payload)::unsigned-big-24, payload::binary>>)
+      <<0x01, byte_size(payload)::unsigned-big-24, crc::unsigned-big-32, payload::binary>> <> rest
+    end
+
+    defp corrupt_mutations_section(
+           <<tag, size::unsigned-big-24, crc::unsigned-big-32, payload::binary-size(size), rest::binary>>
+         ) do
+      <<tag, size::unsigned-big-24, crc::unsigned-big-32, payload::binary>> <> corrupt_mutations_section(rest)
+    end
+
     test "rejects a set at the end of the keyspace without touching the sequencer", %{commit_proxy: proxy} do
       eok = Bedrock.end_of_keyspace()
       tx = encode_mutations([{:set, eok, "v"}])
@@ -1101,24 +1121,50 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       assert {:error, {:key_out_of_range, ^key}} = GenServer.call(proxy, {:commit, 1, tx})
     end
 
+    test "rejects an atomic op keyed past the end of the keyspace", %{commit_proxy: proxy} do
+      key = Bedrock.end_of_keyspace() <> <<0x01>>
+      tx = encode_mutations([{:atomic, :add, key, <<1::64-little>>}])
+
+      assert {:error, {:key_out_of_range, ^key}} = GenServer.call(proxy, {:commit, 1, tx})
+    end
+
+    test "accepts a long key that sorts below the end of the keyspace", %{commit_proxy: proxy} do
+      # <<0xFF, 0xFE, ...>> is longer than the boundary but sorts below it;
+      # it must reach version assignment (killing the proxy at the atom
+      # sequencer), not be rejected at ingress.
+      ref = Process.monitor(proxy)
+      tx = encode_mutations([{:set, <<0xFF, 0xFE, 0xFF, 0xFF>>, "v"}])
+
+      assert {:error, :abort} = GenServer.call(proxy, {:commit, 1, tx})
+      assert_receive {:DOWN, ^ref, :process, _, {:sequencer_unavailable, _}}
+    end
+
+    test "rejects a transaction whose mutation payload is corrupt without crashing", %{commit_proxy: proxy} do
+      # A valid mutation-section header over a garbage payload: the lazy
+      # decode raises mid-stream. Ingress must catch it and reject just this
+      # transaction; the proxy stays alive.
+      valid = encode_mutations([{:set, "k", "v"}])
+      corrupt = corrupt_mutation_payload(valid)
+
+      assert {:error, :invalid_transaction} = GenServer.call(proxy, {:commit, 1, corrupt})
+      assert Process.alive?(proxy)
+    end
+
     test "in-range mutations pass validation and reach version assignment", %{commit_proxy: proxy} do
       # System keys below the boundary and a clear_range ending exactly AT the
-      # boundary (exclusive end) are legal; with the atom sequencer the proxy
-      # exits at version assignment - past validation - so callers see :abort.
+      # boundary (exclusive end) are legal. The proxy must die at VERSION
+      # ASSIGNMENT (the atom sequencer) - proving these passed validation -
+      # not anywhere inside the validation pass.
+      ref = Process.monitor(proxy)
+
       tx =
         encode_mutations([
           {:set, <<0xFF, "/system/ok">>, "v"},
           {:clear_range, "a", Bedrock.end_of_keyspace()}
         ])
 
-      result =
-        try do
-          GenServer.call(proxy, {:commit, 1, tx})
-        catch
-          :exit, _ -> {:error, :abort}
-        end
-
-      assert result == {:error, :abort}
+      assert {:error, :abort} = GenServer.call(proxy, {:commit, 1, tx})
+      assert_receive {:DOWN, ^ref, :process, _, {:sequencer_unavailable, _}}
     end
   end
 

@@ -171,6 +171,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       when is_binary(transaction) do
     case first_key_out_of_range(transaction) do
       nil -> accept_commit(transaction, from, t)
+      :invalid_transaction -> reply(t, {:error, :invalid_transaction})
       key -> reply(t, {:error, {:key_out_of_range, key}})
     end
   end
@@ -203,31 +204,39 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  # Finalization routes every mutation to a shard; a key at or past the end
-  # of the keyspace has no shard, and by the time routing discovers that the
-  # batch has already consumed a commit version and recorded conflicts, so
-  # the whole batch fails and the proxy stops into recovery. Rejecting the
-  # transaction at ingress makes an unroutable key cost one commit, not an
-  # epoch. clear_range ends are exclusive, so an end AT the boundary is legal.
-  @spec first_key_out_of_range(Transaction.encoded()) :: Bedrock.key() | nil
+  # Keys at or past the end of the keyspace belong to no shard. Before this
+  # check, finalization silently routed such single-key mutations into the
+  # LAST shard (the system shard) via the router's ceiling fallback, and a
+  # clear_range starting past the last boundary failed the whole batch -
+  # after it had consumed a commit version - stopping the proxy into
+  # director recovery. Rejecting at ingress costs the one offending commit.
+  # clear_range ends are exclusive, so an end AT the boundary is legal.
+  #
+  # Returns nil when valid, the offending key, or :invalid_transaction when
+  # the mutation section decodes but its payload is corrupt (the decode
+  # stream raises lazily; unguarded, that would crash the proxy here).
+  @spec first_key_out_of_range(Transaction.encoded()) :: Bedrock.key() | :invalid_transaction | nil
   defp first_key_out_of_range(transaction) do
     case Transaction.mutations(transaction) do
       {:ok, mutations} -> Enum.find_value(mutations, &mutation_key_out_of_range/1)
-      {:error, _} -> nil
+      {:error, :section_not_found} -> nil
+      {:error, _} -> :invalid_transaction
     end
+  rescue
+    _ -> :invalid_transaction
   end
 
-  defp mutation_key_out_of_range({:set, key, _value}), do: unrangeable(key)
-  defp mutation_key_out_of_range({:clear, key}), do: unrangeable(key)
-  defp mutation_key_out_of_range({:atomic, _op, key, _value}), do: unrangeable(key)
+  defp mutation_key_out_of_range({:set, key, _value}), do: key_past_end_of_keyspace(key)
+  defp mutation_key_out_of_range({:clear, key}), do: key_past_end_of_keyspace(key)
+  defp mutation_key_out_of_range({:atomic, _op, key, _value}), do: key_past_end_of_keyspace(key)
 
   defp mutation_key_out_of_range({:clear_range, start_key, end_key}) do
-    unrangeable(start_key) || if end_key > Bedrock.end_of_keyspace(), do: end_key
+    key_past_end_of_keyspace(start_key) || if end_key > Bedrock.end_of_keyspace(), do: end_key
   end
 
   defp mutation_key_out_of_range(_other), do: nil
 
-  defp unrangeable(key), do: if(key >= Bedrock.end_of_keyspace(), do: key)
+  defp key_past_end_of_keyspace(key), do: if(key >= Bedrock.end_of_keyspace(), do: key)
 
   @impl true
   @spec handle_info(

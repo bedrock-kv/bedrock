@@ -9,9 +9,15 @@
   "id": "bedrock-q67.23",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "End-state clarification per the Phase B definition of done: whichever option is chosen, the terminal state is that recover_from carries NO map content - the routing snapshot introduced by q67.20.1 (the correct crash fix at the time) is itself a side channel under the doctrine and is retired once proxies seed Metadata+RoutingData from the keyspace. The unlock message shrinks to lock token, sequencer, and resolver layout.",
+      "timestamp": "2026-08-19T22:13:28Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Proxy metadata bootstrap: decide full-rewrite vs seeded recover_from (FDB TxnStateRequest analogue)",
   "type": "task",
-  "updated_at": "2026-08-19T22:04:08Z"
+  "updated_at": "2026-08-19T22:13:28Z"
 }

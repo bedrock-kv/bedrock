@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main", "develop" ]
   pull_request:
-    branches: [ "main", "develop" ]
+    branches: [ "main", "develop", "feature/q67-phase-b-prereqs", "q67.20**" ]
   workflow_dispatch:
   schedule:
     - cron: "0 7 * * 1"

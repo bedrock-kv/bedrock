@@ -313,7 +313,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       wait_until(fn -> map_size(:sys.get_state(server).waiting) == 1 end)
       state = :sys.get_state(server)
 
-      assert [{deadline, _reply_fn, {^future_version, [^test_transaction], [[]], _proxy_pid}}] =
+      assert [{deadline, _reply_fn, {^future_version, [^test_transaction], [[]], _proxy_pid, _metadata_directives}}] =
                Map.get(state.waiting, next_version)
 
       assert is_integer(deadline)

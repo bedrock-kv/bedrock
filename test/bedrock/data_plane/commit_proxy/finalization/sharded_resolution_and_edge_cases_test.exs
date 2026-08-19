@@ -158,6 +158,104 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       assert_receive {:tx1, {:error, :aborted}}
     end
 
+    test "defers metadata: resolvers get no metadata_per_tx, a hold flag, and re-sent confirmations" do
+      test_pid = self()
+      confirms = [{Version.from_integer(90), [{:set, <<0xFF, "k">>, "v"}]}]
+
+      metadata_tx =
+        Transaction.encode(%{
+          mutations: [{:set, "apple", "v0"}, {:set, <<0xFF, "/system/key">>, "meta"}],
+          write_conflicts: [{"apple", "apple" <> <<0>>}],
+          read_conflicts: nil
+        })
+
+      batch = batch_with([{reply_fn(test_pid, :tx0), metadata_tx}])
+
+      resolver_fn = fn ref, _epoch, _last, _commit, _txns, metadata_per_tx, opts ->
+        send(test_pid, {:resolver_called, ref, metadata_per_tx, opts[:metadata_hold], opts[:metadata_confirms]})
+        {:ok, [], nil}
+      end
+
+      opts =
+        base_opts(sharded_layout(), routing_data(),
+          resolver_fn: resolver_fn,
+          metadata_confirms: confirms
+        )
+
+      assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+
+      # No speculative metadata reaches any resolver; both get the hold flag
+      # (this batch carries metadata) and the proxy's pending confirmations.
+      assert_receive {:resolver_called, :resolver_a, [], true, ^confirms}
+      assert_receive {:resolver_called, :resolver_b, [], true, ^confirms}
+    end
+
+    test "reports committed metadata filtered by the MERGED global abort set via metadata_deferred_fn" do
+      test_pid = self()
+
+      metadata_tx = fn key, meta_key ->
+        Transaction.encode(%{
+          mutations: [{:set, key, "v"}, {:set, meta_key, "meta"}],
+          write_conflicts: [{key, key <> <<0>>}],
+          read_conflicts: nil
+        })
+      end
+
+      # tx0 survives; tx1 is aborted by resolver_b ONLY - resolver_a saw no
+      # conflict for it, but its metadata must still be excluded globally.
+      batch =
+        batch_with([
+          {reply_fn(test_pid, :tx0), metadata_tx.("apple", <<0xFF, "/committed">>)},
+          {reply_fn(test_pid, :tx1), metadata_tx.("zebra", <<0xFF, "/aborted">>)}
+        ])
+
+      resolver_fn = fn
+        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil}
+        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [1], nil}
+      end
+
+      metadata_deferred_fn = fn version, mutations -> send(test_pid, {:deferred, version, mutations}) end
+
+      opts =
+        base_opts(sharded_layout(), routing_data(),
+          resolver_fn: resolver_fn,
+          metadata_deferred_fn: metadata_deferred_fn
+        )
+
+      assert {:ok, 1, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+
+      assert_receive {:deferred, @commit_version, [{:set, <<0xFF, "/committed">>, "meta"}]}
+    end
+
+    test "merged metadata windows claim the weakest coverage on both ends and withhold unsettled entries" do
+      test_pid = self()
+      v = &Version.from_integer/1
+      entry_95 = {v.(95), [{:set, <<0xFF, "a">>, "1"}]}
+      entry_98 = {v.(98), [{:set, <<0xFF, "b">>, "2"}]}
+
+      # resolver_a has settled through v(99); resolver_b only through v(96)
+      # (it still holds deferred metadata). The merged window must not let the
+      # proxy ack past v(96) nor apply the entry at v(98) out of order, and
+      # the duplicate entry at v(95) (both resolvers carry it) collapses.
+      resolver_fn = fn
+        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(99), [entry_95, entry_98]}}
+
+        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(96), [entry_95]}}
+      end
+
+      metadata_merge_fn = fn window -> send(test_pid, {:merged_window, window}) end
+
+      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn, metadata_merge_fn: metadata_merge_fn)
+
+      assert {:ok, 0, 0, _routing_data} = Finalization.finalize_batch(empty_batch(), opts)
+
+      from90 = v.(90)
+      to96 = v.(96)
+      assert_receive {:merged_window, {^from90, ^to96, [^entry_95]}}
+    end
+
     test "fails the batch when a resolver task exits" do
       exiting_async_stream_fn = fn _enumerable, _fun, _opts -> [{:exit, :killed}] end
 

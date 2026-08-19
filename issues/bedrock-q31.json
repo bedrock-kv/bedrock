@@ -8,9 +8,15 @@
   "description": "OSV audit of mix.lock found hackney 1.25.0 carries CVE-2026-47069 (CRLF injection via cookie domain/path), CVE-2026-47071 (SOCKS5 TLS upgrade ignores caller timeout), CVE-2026-47075 (CR/LF injection in query parameter), CVE-2026-47076 (SSRF allowlist bypass via percent-encoded host) — all fixed in hackney 4.0.1. ex_aws 2.6.1 constrained hackney ~\u003e 1.16; ex_aws 2.7.0 requires ~\u003e 4.0. Bump ex_aws to ~\u003e 2.7 and hackney to ~\u003e 4.0. Add mix_audit dev dep + CI step so advisories surface automatically. Also refresh the pinned MinIO test binary (RELEASE.2024-09-13 has 21 known advisories; dev/test only).",
   "id": "bedrock-q31",
   "labels": [],
+  "comments": [
+    {
+      "text": "Reworked per review question: hackney dropped entirely instead of upgraded. Object storage now uses Req 0.7 via ExAws.Request.Req (injected per request in the S3 backend; test support's Minio.config too). The HEAD shim and hackney's nine-package transitive tree are deleted. Same verification bar: full suite vs real MinIO over Req green, deps.audit clean, dialyzer both envs.",
+      "timestamp": "2026-08-19T14:14:55Z"
+    }
+  ],
   "priority": 1,
   "status": "closed",
   "title": "Fix hackney CVEs via ex_aws 2.7 / hackney 4.x; add dependency audit to CI",
   "type": "chore",
-  "updated_at": "2026-08-19T14:04:33Z"
+  "updated_at": "2026-08-19T14:14:55Z"
 }

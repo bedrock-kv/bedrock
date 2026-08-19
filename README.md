@@ -45,10 +45,12 @@ Transactions read from a consistent snapshot, see their own writes, and either
 commit atomically or not at all — across any keys, on any node:
 
 ```elixir
-MyApp.Repo.transact(fn ->
-  balance = MyApp.Repo.get("alice/balance")
-  MyApp.Repo.put("alice/balance", debit(balance, 10))
-  MyApp.Repo.put("bob/balance", credit(balance, 10))
+alias MyApp.Repo
+
+Repo.transact(fn ->
+  balance = Repo.get("alice/balance")
+  Repo.put("alice/balance", debit(balance, 10))
+  Repo.put("bob/balance", credit(balance, 10))
   {:ok, :transferred}
 end)
 ```
@@ -72,7 +74,13 @@ detect MVCC conflicts over key ranges, logs make commits durable, and
 materializers serve reads — each a separate, independently recoverable
 process. Optimistic concurrency means no locks and no deadlocks; conflicts
 are detected at commit time. The result is strict serializability: the
-strongest isolation guarantee a database can offer.
+strongest isolation guarantee a database can offer. FoundationDB's
+[architecture overview](https://apple.github.io/foundationdb/architecture.html),
+[read/write path](https://apple.github.io/foundationdb/kv-architecture.html),
+and [SIGMOD '21 paper](https://www.foundationdb.org/files/fdb-paper.pdf) are
+excellent background on the design; Bedrock's own
+[deep dives](guides/deep-dives/architecture.md) cover how it maps onto the
+BEAM and where it diverges.
 
 **Durability, modernized.** A commit is acknowledged only after *every*
 required log has appended it to its write-ahead log and fsynced. From there,
@@ -95,8 +103,12 @@ is.
 
 **Pure BEAM.** No ports, no NIFs to a storage engine, no sidecar processes.
 Distribution rides on Erlang distribution; supervision, recovery, and
-backpressure are OTP all the way down. If you can run an Elixir node, you can
-run Bedrock.
+backpressure are OTP all the way down. Bedrock also leans on a quiet BEAM
+superpower: large binaries are shared between processes by reference, never
+copied. Keys, values, and whole encoded transactions stay binaries as they
+flow from commit proxy to log to shard streams, so the hot path hands around
+pointers rather than payloads — a design that is naturally multi-core and
+cache friendly. If you can run an Elixir node, you can run Bedrock.
 
 ## How a write becomes durable
 

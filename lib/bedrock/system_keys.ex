@@ -204,11 +204,20 @@ defmodule Bedrock.SystemKeys do
   @doc """
   Parses a system key and extracts its type and parameter.
 
+  This is the inverse of the key generation functions above and covers every
+  key family written by the director's recovery persistence phase.
+
   Returns:
   - `{:layout_log, log_id}` for log keys
   - `{:shard_key, end_key}` for shard key mappings
   - `{:shard, tag}` for shard metadata keys
   - `{:materializer_key, end_key}` for materializer keys
+  - `:layout_services` / `:layout_id` for fixed layout keys
+  - `{:cluster, :coordinators | :epoch}` for fixed cluster keys
+  - `{:cluster_policy, :volunteer_nodes}` for cluster policies
+  - `{:cluster_parameter, name}` for known cluster parameters
+  - `{:recovery, :attempt | :state | :last_completed}` for recovery keys
+  - `:config_monolithic` / `:epoch_legacy` / `:last_recovery_legacy` for legacy keys
   - `:unknown` for unrecognized system keys
   - `:error` for non-system keys
   """
@@ -217,6 +226,15 @@ defmodule Bedrock.SystemKeys do
           | {:shard_key, String.t()}
           | {:shard, String.t()}
           | {:materializer_key, String.t()}
+          | :layout_services
+          | :layout_id
+          | {:cluster, :coordinators | :epoch}
+          | {:cluster_policy, :volunteer_nodes}
+          | {:cluster_parameter, atom()}
+          | {:recovery, :attempt | :state | :last_completed}
+          | :config_monolithic
+          | :epoch_legacy
+          | :last_recovery_legacy
           | :unknown
           | :error
   # Order matters: more specific prefixes first (shard_keys before shards)
@@ -224,7 +242,38 @@ defmodule Bedrock.SystemKeys do
   def parse_key(<<@system_prefix, "/shard_keys/", rest::binary>>), do: {:shard_key, rest}
   def parse_key(<<@system_prefix, "/shards/", rest::binary>>), do: {:shard, rest}
   def parse_key(<<@system_prefix, "/materializer_keys/", rest::binary>>), do: {:materializer_key, rest}
+  def parse_key(<<@system_prefix, "/layout/services">>), do: :layout_services
+  def parse_key(<<@system_prefix, "/layout/id">>), do: :layout_id
+  def parse_key(<<@system_prefix, "/cluster/coordinators">>), do: {:cluster, :coordinators}
+  def parse_key(<<@system_prefix, "/cluster/epoch">>), do: {:cluster, :epoch}
+  def parse_key(<<@system_prefix, "/cluster/policies/volunteer_nodes">>), do: {:cluster_policy, :volunteer_nodes}
+  def parse_key(<<@system_prefix, "/cluster/parameters/", rest::binary>>), do: parse_cluster_parameter(rest)
+  def parse_key(<<@system_prefix, "/recovery/attempt">>), do: {:recovery, :attempt}
+  def parse_key(<<@system_prefix, "/recovery/state">>), do: {:recovery, :state}
+  def parse_key(<<@system_prefix, "/recovery/last_completed">>), do: {:recovery, :last_completed}
+  def parse_key(<<@system_prefix, "/config">>), do: :config_monolithic
+  def parse_key(<<@system_prefix, "/epoch">>), do: :epoch_legacy
+  def parse_key(<<@system_prefix, "/last_recovery">>), do: :last_recovery_legacy
   def parse_key(<<@system_prefix, _rest::binary>>), do: :unknown
   def parse_key(key) when is_binary(key), do: :error
   def parse_key(_), do: :error
+
+  # Known cluster parameters only; unknown parameters are forward-compatible
+  @cluster_parameters ~w(
+    desired_logs
+    desired_replication
+    desired_commit_proxies
+    desired_coordinators
+    desired_read_version_proxies
+    empty_transaction_timeout_ms
+    ping_rate_in_hz
+    retransmission_rate_in_hz
+    transaction_window_in_ms
+  )
+
+  for name <- @cluster_parameters do
+    defp parse_cluster_parameter(unquote(name)), do: {:cluster_parameter, unquote(String.to_atom(name))}
+  end
+
+  defp parse_cluster_parameter(_), do: :unknown
 end

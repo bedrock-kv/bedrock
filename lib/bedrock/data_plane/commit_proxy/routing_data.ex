@@ -30,6 +30,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   alias Bedrock.DataPlane.Log
   alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   @type t :: %__MODULE__{
           shard_table: :ets.table(),
@@ -203,14 +204,18 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   defp apply_mutation({:set, key, value}, routing_data) do
     case SystemKeys.parse_key(key) do
       {:shard_key, end_key} ->
-        tag = :erlang.binary_to_term(value)
-        insert_shard(routing_data, end_key, tag)
+        # Undecodable values are ignored; the routing table keeps its last
+        # good entry rather than crashing the commit proxy.
+        case Values.decode_shard_key_entry(value) do
+          {:ok, {tag, _start_key}} -> insert_shard(routing_data, end_key, tag)
+          {:error, _} -> :ignored
+        end
+
         routing_data
 
       {:layout_log, log_id} ->
-        # layout_log stores the log descriptor (tags) as erlang term, not OtpRef
-        # Service refs are populated at runtime by the director, not from persisted data
-        _log_descriptor = :erlang.binary_to_term(value)
+        # The value (log descriptor tags) is not needed for routing; service
+        # refs are populated at runtime by the director, not from persisted data.
         insert_log(routing_data, log_id)
 
       _ ->

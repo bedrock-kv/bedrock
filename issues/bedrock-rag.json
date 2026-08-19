@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-19T22:40:31Z",
   "created": "2026-07-14T20:09:07Z",
   "description": "Follow-up from bedrock-74j: decide whether the commit proxy should reject transactions touching keys at/beyond the last shard boundary (e.g. \u003c\u003c0xFF,0xFF\u003e\u003e system range) at ingress, rather than only failing them at finalization with storage_team_coverage_error. Larger design decision deliberately excluded from PR #87.",
   "id": "bedrock-rag",
@@ -26,7 +27,7 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Commit proxy ingress validation for system-range keys",
   "type": "task",
   "updated_at": "2026-08-19T22:40:31Z"

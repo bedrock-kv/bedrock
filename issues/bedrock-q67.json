@@ -16,11 +16,15 @@
     {
       "text": "Policy items from PR #101/#102 audits needing a decision (recorded 2026-07-15): (1) manifest params asymmetry — pre-spin-down-era and bootstrap-created workers carry no idle_timeout and will never spin down even after re-adoption; (2) a spun-down worker is fully removed (manifest+dir), so it can never be a re-adoption candidate — next-epoch coverage cold-starts from ObjectStorage snapshot (intended? or should spin-down leave a tombstone manifest for cheap re-adoption?); (3) q67.14 decides who gets idle_timeout (recruited-only vs bootstrap data shards too).",
       "timestamp": "2026-07-15T14:57:45Z"
+    },
+    {
+      "text": "Workflow update 2026-08-19: Phase B prerequisite extraction to develop tracked as bedrock-q67.20 (children .1-.5), inverting the 'reconcile phase-a first' plan - reconciling the TSL-delta channel only to have q67.9 delete it is wasted conflict work. feature/q67-phase-a / PR #97 stays parked until after q67.9; its eventual reconciliation drops (not merges) the metadata-pipeline commits now ported to develop.",
+      "timestamp": "2026-08-19T19:10:03Z"
     }
   ],
   "priority": 3,
   "status": "in_progress",
   "title": "Shard-Centric Storage Architecture",
   "type": "epic",
-  "updated_at": "2026-08-15T20:39:35Z"
+  "updated_at": "2026-08-19T19:10:03Z"
 }

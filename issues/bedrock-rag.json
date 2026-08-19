@@ -11,11 +11,15 @@
     {
       "text": "FDB-source finding (2026-08-19, while validating q67.20.5/#151): FDB avoids deferred metadata accumulation entirely by verdict convergence — conflict ranges intersecting systemKeys are broadcast to ALL resolvers (CommitProxyServer.actor.cpp addRead/WriteConflictRanges), so every resolver holds full system-range conflict history and independently reaches the GLOBAL verdict for system-only-conflict transactions; the resolver's local committed flag then safely gates its stateMutations relay (Resolver.actor.cpp:397). This works only because FDB's metadata writers conflict exclusively in system space. If this ticket lands ingress rejection of user transactions touching system ranges AND system writes are required to carry system write-conflict ranges AND system-range conflicts are broadcast to all resolvers, then q67.17's hold/confirm protocol (q67.20.5) becomes retirable in favor of the simpler convergent design. Scope decision for this ticket + q67.9; #151 stays as-is meanwhile (it is correct for the general mixed-conflict case FDB does not handle).",
       "timestamp": "2026-08-19T20:45:14Z"
+    },
+    {
+      "text": "Ingress half landed as PR #153 (stacked on #151, stack #149): out-of-range mutations rejected per-transaction at commit ingress with {:error,{:key_out_of_range,key}}; corrupt mutation payloads rejected as :invalid_transaction instead of crashing the proxy; Repo.transact surfaces both immediately (non-retryable). Cold-audit findings applied (retry classification, decode guard, corrected mechanism comment - single keys were silently fallback-routed to the last shard pre-fix, only clear_range past the boundary killed the epoch). Remaining scope on this ticket: the FDB-convergence question (system-write gating + system-range conflict broadcast) - see earlier comment; decide at q67.9 time.",
+      "timestamp": "2026-08-19T21:02:43Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Commit proxy ingress validation for system-range keys",
   "type": "task",
-  "updated_at": "2026-08-19T20:48:32Z"
+  "updated_at": "2026-08-19T21:02:43Z"
 }

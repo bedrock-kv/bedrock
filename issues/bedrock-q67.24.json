@@ -13,11 +13,15 @@
     {
       "text": "PR #155 (stack #156, on #154) closes hole 1 (server folds version-filtered window entries into Metadata AND RoutingData in one step; ack+routing snapshot consistent by construction; {:routing_data_update} replacement retired) and hole 2 for both re-delivered windows (global version filter) and legitimate re-sets (insert_log now idempotent by log id). Cold audit interleaving analysis: invariant holds by induction, no counterexample on server struct state. RESIDUAL (audit finding 2, fixing as next stacked PR): the shared ETS shard table has multiple unordered writers - finalization tasks, now the server, and ShardRouter.get_logs_for_key's lazy in-row log-index cache. Counterexample: task A (window (v0,v1], K-\u003etag1) sends its window to the server, is descheduled before its ETS write; server applies A then B ((v0,v2], K-\u003etag2); A resumes and writes K-\u003etag1 - permanent stale tag, never repaired (resolver acked past v1). Fix: versioned LWW shard rows {end_key, tag, version} written via atomic insert_new/select_replace, tombstoned clears, router skips tombstones, and the lazy cache is deleted (golden-ratio indices are cheap; the cache is an unversioned writer inside the read path). Also documenting audit finding 4: sharded-mode settle-lag (batch at cV can route before committed metadata at vN\u003ccV from a prior batch settles across all resolvers) is an accepted trade-off vs FDB's single-pipeline guarantee; revisit under q67.22.",
       "timestamp": "2026-08-19T22:52:39Z"
+    },
+    {
+      "text": "Residual closed by PR #157 (stack #156): shard rows are {end_key, tag, version} written via atomic insert_new/select_replace LWW; clears tombstone (:deleted) so late old sets cannot resurrect boundaries; router navigation skips tombstones; equal versions overwrite (in-transaction clear-then-set order preserved; identical replayed sequences converge); snapshot rows version nil lose to any commit. Lazy log-index cache and lookup_shards_for_range deleted (production-dead; the cache was an unversioned writer inside the read path). Cold audit: prior counterexample converges, no reachable new counterexamples (equal-version divergence impossible - confirms list canonical per version; fresh-key races serialize through ETS; clear_range boundary math exact). Noted for the future: (1) tombstones accumulate until recovery rebuilds the table - if shard churn becomes sustained, compact at recovery; (2) all-tombstones is transiently reachable between a rewrite's clear and sets under a concurrent routing task and raises 'No live shard boundaries' - crash lands in the batch task, acceptable pre-q67.21, revisit with the Distributor; (3) sharded settle-lag (audit finding 4 of PR #155) accepted vs FDB's single-pipeline guarantee, revisit under q67.22. Both q67.24 holes plus the ETS ordering residual are now closed - ticket complete pending stack review/merge.",
+      "timestamp": "2026-08-19T23:41:12Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "RoutingData window application: version-guard and ordering for mid-epoch shard-map churn",
   "type": "task",
-  "updated_at": "2026-08-19T22:52:39Z"
+  "updated_at": "2026-08-19T23:41:12Z"
 }

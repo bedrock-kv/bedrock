@@ -1,7 +1,8 @@
 {
   "assignee": "",
   "blocked_by": [
-    "bedrock-q67.20"
+    "bedrock-q67.20",
+    "bedrock-q67.24"
   ],
   "blocks": [
     "bedrock-q67.9"
@@ -15,5 +16,5 @@
   "status": "open",
   "title": "Port Distributor + placeholder from phase-a: coverage published as keyspace mutations",
   "type": "task",
-  "updated_at": "2026-08-19T20:24:13Z"
+  "updated_at": "2026-08-19T22:04:08Z"
 }

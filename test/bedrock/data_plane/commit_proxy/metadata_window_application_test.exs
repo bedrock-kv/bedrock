@@ -92,7 +92,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
 
     assert updated.metadata.version == v(1)
     assert updated.routing_data.log_map == %{0 => "log_a"}
-    assert :ets.lookup(updated.routing_data.shard_table, "a") == [{"a", 7}]
+    assert :ets.lookup(updated.routing_data.shard_table, "a") == [{"a", 7, v(1)}]
   end
 
   test "a re-delivered window does not duplicate log entries" do

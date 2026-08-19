@@ -1318,7 +1318,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       # reference built in another process is invalid after that process dies,
       # and is never valid on another node.
       assert :ets.info(routing_data.shard_table, :owner) == commit_proxy
-      assert :ets.tab2list(routing_data.shard_table) == [{<<0xFF, 0xFF>>, 0}]
+      assert :ets.tab2list(routing_data.shard_table) == [{<<0xFF, 0xFF>>, 0, nil}]
       assert routing_data.log_map == %{0 => "log-1"}
       assert routing_data.log_services == %{"log-1" => {:log_1, :node1}}
     end

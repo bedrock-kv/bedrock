@@ -32,7 +32,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
   defp build_routing_data(logs) do
     table = :ets.new(:test_shard_keys, [:ordered_set, :public])
     # Default shard layout covering entire keyspace with a single shard (tag 0)
-    :ets.insert(table, {<<0xFF, 0xFF>>, 0})
+    :ets.insert(table, {<<0xFF, 0xFF>>, 0, nil})
 
     log_map =
       logs

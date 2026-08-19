@@ -136,7 +136,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
 
     # Populate shard_keys from shard_layout: %{end_key => {tag, start_key}}
     Enum.each(shard_layout, fn {end_key, {tag, _start_key}} ->
-      :ets.insert(table, {end_key, tag})
+      :ets.insert(table, {end_key, tag, nil})
     end)
 
     log_map =

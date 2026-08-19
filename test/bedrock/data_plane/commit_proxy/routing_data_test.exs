@@ -2,8 +2,51 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.RoutingData
+  alias Bedrock.DataPlane.ShardRouter
+  alias Bedrock.DataPlane.Version
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
+
+  defp v(n), do: Version.from_integer(n)
+
+  # Live shard boundaries as {end_key, tag}, hiding tombstones and versions.
+  defp live_shards(table), do: for({k, tag, _v} <- :ets.tab2list(table), tag != :deleted, do: {k, tag})
+
+  describe "versioned shard writes (last-writer-wins)" do
+    # Finalization tasks and the server write the shared shard table without
+    # any ordering between them; per-row version guards make the row converge
+    # to the newest write no matter the arrival order (bedrock-q67.24).
+    setup do
+      routing_data = RoutingData.new_empty()
+      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 0, v(1))
+      on_exit(fn -> RoutingData.cleanup(routing_data) end)
+      {:ok, routing_data: routing_data}
+    end
+
+    test "a late write of an older version cannot clobber a newer tag", %{routing_data: rd} do
+      RoutingData.insert_shard(rd, "m", 7, v(5))
+      RoutingData.insert_shard(rd, "m", 3, v(2))
+
+      assert ShardRouter.lookup_shard(rd.shard_table, "a") == 7
+    end
+
+    test "a clear tombstones the boundary and an older late set cannot resurrect it", %{routing_data: rd} do
+      RoutingData.insert_shard(rd, "m", 7, v(2))
+      RoutingData.delete_shard(rd, "m", v(5))
+      RoutingData.insert_shard(rd, "m", 7, v(3))
+
+      # The boundary at "m" is gone: keys below it route to the next live shard.
+      assert ShardRouter.lookup_shard(rd.shard_table, "a") == 0
+    end
+
+    test "a newer set revives a tombstoned boundary", %{routing_data: rd} do
+      RoutingData.insert_shard(rd, "m", 7, v(2))
+      RoutingData.delete_shard(rd, "m", v(3))
+      RoutingData.insert_shard(rd, "m", 9, v(4))
+
+      assert ShardRouter.lookup_shard(rd.shard_table, "a") == 9
+    end
+  end
 
   describe "from_snapshot/1" do
     test "builds fully-populated routing data owned by the calling process" do
@@ -17,7 +60,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.from_snapshot(snapshot)
 
       assert :ets.info(routing_data.shard_table, :owner) == self()
-      assert :ets.tab2list(routing_data.shard_table) == [{"m", 1}, {<<0xFF, 0xFF>>, 0}]
+      assert :ets.tab2list(routing_data.shard_table) == [{"m", 1, nil}, {<<0xFF, 0xFF>>, 0, nil}]
       assert routing_data.log_map == %{0 => "log-a", 1 => "log-b"}
       assert routing_data.log_services == %{"log-a" => {:log_a, :node1}, "log-b" => {:log_b, :node2}}
       assert routing_data.replication_factor == 2
@@ -294,10 +337,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         |> RoutingData.put_log_service("log-2", {:log_2, :n2@host})
         |> RoutingData.put_log_service("log-3", {:log_3, :n3@host})
 
-      # Add shard entries (via existing insert_shard/3)
-      RoutingData.insert_shard(routing_data, "m", 0)
-      RoutingData.insert_shard(routing_data, "z", 1)
-      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 2)
+      # Add shard entries
+      RoutingData.insert_shard(routing_data, "m", 0, v(1))
+      RoutingData.insert_shard(routing_data, "z", 1, v(1))
+      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 2, v(1))
 
       # Set replication factor
       routing_data = RoutingData.set_replication_factor(routing_data, 3)
@@ -313,7 +356,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
       assert routing_data.replication_factor == 3
 
-      assert :ets.tab2list(routing_data.shard_table) == [
+      assert live_shards(routing_data.shard_table) == [
                {"m", 0},
                {"z", 1},
                {<<0xFF, 0xFF>>, 2}
@@ -328,11 +371,11 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.new_empty()
       key = SystemKeys.shard_key("m")
       value = Values.encode_shard_key_entry(42, "")
-      updates = [{100, [{:set, key, value}]}]
+      updates = [{v(100), [{:set, key, value}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.lookup(updated.shard_table, "m") == [{"m", 42}]
+      assert :ets.lookup(updated.shard_table, "m") == [{"m", 42, v(100)}]
 
       RoutingData.cleanup(routing_data)
     end
@@ -341,7 +384,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.new_empty()
 
       updates = [
-        {100,
+        {v(100),
          [
            {:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(1, "")},
            {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(2, "")},
@@ -351,9 +394,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.lookup(updated.shard_table, "a") == [{"a", 1}]
-      assert :ets.lookup(updated.shard_table, "m") == [{"m", 2}]
-      assert :ets.lookup(updated.shard_table, "z") == [{"z", 3}]
+      assert :ets.lookup(updated.shard_table, "a") == [{"a", 1, v(100)}]
+      assert :ets.lookup(updated.shard_table, "m") == [{"m", 2, v(100)}]
+      assert :ets.lookup(updated.shard_table, "z") == [{"z", 3, v(100)}]
 
       RoutingData.cleanup(routing_data)
     end
@@ -364,7 +407,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       # layout_log stores log descriptor (tags) as erlang term
       log_descriptor = [0, 1]
       value = Values.encode_tag_list(log_descriptor)
-      updates = [{100, [{:set, key, value}]}]
+      updates = [{v(100), [{:set, key, value}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
@@ -380,7 +423,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.new_empty()
 
       updates = [
-        {100,
+        {v(100),
          [
            {:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])},
            {:set, SystemKeys.layout_log("log-2"), Values.encode_tag_list([1])}
@@ -398,14 +441,15 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
     test "handles shard_key clear mutation" do
       routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "m", 42)
+      RoutingData.insert_shard(routing_data, "m", 42, v(1))
 
       key = SystemKeys.shard_key("m")
-      updates = [{100, [{:clear, key}]}]
+      updates = [{v(100), [{:clear, key}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.lookup(updated.shard_table, "m") == []
+      assert :ets.lookup(updated.shard_table, "m") == [{"m", :deleted, v(100)}]
+      assert live_shards(updated.shard_table) == []
 
       RoutingData.cleanup(routing_data)
     end
@@ -417,7 +461,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         |> RoutingData.put_log_service("log-123", {:my_log, :node@host})
 
       key = SystemKeys.layout_log("log-123")
-      updates = [{100, [{:clear, key}]}]
+      updates = [{v(100), [{:clear, key}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
@@ -433,16 +477,16 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.new_empty()
 
       updates = [
-        {100, [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(1, "")}]},
-        {101, [{:set, SystemKeys.shard_key("b"), Values.encode_shard_key_entry(2, "")}]},
-        {102, [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(99, "")}]}
+        {v(100), [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(1, "")}]},
+        {v(101), [{:set, SystemKeys.shard_key("b"), Values.encode_shard_key_entry(2, "")}]},
+        {v(102), [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(99, "")}]}
       ]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
       # Later version (102) overwrites earlier (100)
-      assert :ets.lookup(updated.shard_table, "a") == [{"a", 99}]
-      assert :ets.lookup(updated.shard_table, "b") == [{"b", 2}]
+      assert :ets.lookup(updated.shard_table, "a") == [{"a", 99, v(102)}]
+      assert :ets.lookup(updated.shard_table, "b") == [{"b", 2, v(101)}]
 
       RoutingData.cleanup(routing_data)
     end
@@ -451,7 +495,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.new_empty()
 
       # Unknown system key
-      updates = [{100, [{:set, "\xff/system/unknown/foo", "bar"}]}]
+      updates = [{v(100), [{:set, "\xff/system/unknown/foo", "bar"}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
@@ -466,7 +510,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
     test "ignores non-system keys" do
       routing_data = RoutingData.new_empty()
 
-      updates = [{100, [{:set, "user/data", "value"}]}]
+      updates = [{v(100), [{:set, "user/data", "value"}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
@@ -480,7 +524,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.new_empty()
 
       # atomic ops are not routing-relevant
-      updates = [{100, [{:atomic, :add, "key", <<1>>}]}]
+      updates = [{v(100), [{:atomic, :add, "key", <<1>>}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
@@ -491,31 +535,31 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
     test "clear_range removes shard entries whose full key falls in range" do
       routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "a", 1)
-      RoutingData.insert_shard(routing_data, "m", 2)
-      RoutingData.insert_shard(routing_data, "z", 3)
+      RoutingData.insert_shard(routing_data, "a", 1, v(1))
+      RoutingData.insert_shard(routing_data, "m", 2, v(1))
+      RoutingData.insert_shard(routing_data, "z", 3, v(1))
 
       # Clear [shard_key("a"), shard_key("z")) - end is exclusive, so "z" survives
-      updates = [{100, [{:clear_range, SystemKeys.shard_key("a"), SystemKeys.shard_key("z")}]}]
+      updates = [{v(100), [{:clear_range, SystemKeys.shard_key("a"), SystemKeys.shard_key("z")}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.tab2list(updated.shard_table) == [{"z", 3}]
+      assert live_shards(updated.shard_table) == [{"z", 3}]
 
       RoutingData.cleanup(routing_data)
     end
 
     test "clear_range over the shard_keys prefix removes all shard entries" do
       routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "m", 1)
-      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 2)
+      RoutingData.insert_shard(routing_data, "m", 1, v(1))
+      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 2, v(1))
 
       {start_key, end_key} = Bedrock.KeyRange.from_prefix(SystemKeys.shard_keys_prefix())
-      updates = [{100, [{:clear_range, start_key, end_key}]}]
+      updates = [{v(100), [{:clear_range, start_key, end_key}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.tab2list(updated.shard_table) == []
+      assert live_shards(updated.shard_table) == []
 
       RoutingData.cleanup(routing_data)
     end
@@ -530,7 +574,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         |> RoutingData.put_log_service("log-b", {:log_b, :n2@host})
 
       # Clear [layout_log("log-a"), layout_log("log-c")) - "log-c" survives
-      updates = [{100, [{:clear_range, SystemKeys.layout_log("log-a"), SystemKeys.layout_log("log-c")}]}]
+      updates = [{v(100), [{:clear_range, SystemKeys.layout_log("log-a"), SystemKeys.layout_log("log-c")}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
@@ -542,14 +586,14 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
     test "clear_range outside routing families leaves routing data unchanged" do
       routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "m", 1)
+      RoutingData.insert_shard(routing_data, "m", 1, v(1))
       routing_data = RoutingData.insert_log(routing_data, "log-1")
 
-      updates = [{100, [{:clear_range, "user/a", "user/z"}]}]
+      updates = [{v(100), [{:clear_range, "user/a", "user/z"}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.tab2list(updated.shard_table) == [{"m", 1}]
+      assert live_shards(updated.shard_table) == [{"m", 1}]
       assert updated.log_map == %{0 => "log-1"}
 
       RoutingData.cleanup(routing_data)
@@ -557,14 +601,14 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
     test "recovery-style rewrite: clear_range then sets shrinks 3 shards to 2" do
       routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "g", 1)
-      RoutingData.insert_shard(routing_data, "p", 2)
-      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 3)
+      RoutingData.insert_shard(routing_data, "g", 1, v(1))
+      RoutingData.insert_shard(routing_data, "p", 2, v(1))
+      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 3, v(1))
 
       {start_key, end_key} = Bedrock.KeyRange.from_prefix(SystemKeys.shard_keys_prefix())
 
       updates = [
-        {100,
+        {v(100),
          [
            {:clear_range, start_key, end_key},
            {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(10, "")},
@@ -574,7 +618,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.tab2list(updated.shard_table) == [{"m", 10}, {<<0xFF, 0xFF>>, 11}]
+      assert live_shards(updated.shard_table) == [{"m", 10}, {<<0xFF, 0xFF>>, 11}]
 
       RoutingData.cleanup(routing_data)
     end
@@ -583,7 +627,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.new_empty()
 
       updates = [
-        {100,
+        {v(100),
          [
            {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "")},
            {:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])},
@@ -595,8 +639,8 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updated = RoutingData.apply_mutations(routing_data, updates)
 
       # Shard entries
-      assert :ets.lookup(updated.shard_table, "m") == [{"m", 1}]
-      assert :ets.lookup(updated.shard_table, "z") == [{"z", 2}]
+      assert :ets.lookup(updated.shard_table, "m") == [{"m", 1, v(100)}]
+      assert :ets.lookup(updated.shard_table, "z") == [{"z", 2, v(100)}]
       # Log entries - only log_map populated, not log_services
       assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
       assert updated.log_services == %{}

@@ -16,8 +16,12 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   ## Shard Updates
 
-  - `insert_shard/3` - Adds or updates a shard entry
-  - `delete_shard/2` - Removes a shard entry
+  Shard rows are `{end_key, tag, version}`, written last-writer-wins by
+  version so concurrent unordered writers (finalization tasks and the server)
+  converge; clears leave `:deleted` tombstones that lookups skip.
+
+  - `insert_shard/4` - Adds or updates a shard entry
+  - `delete_shard/3` - Tombstones a shard entry
 
   ## Log Updates
 
@@ -66,8 +70,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
       }) do
     shard_table = :ets.new(:shard_keys, [:ordered_set, :public])
 
+    # Snapshot rows carry a nil version: they predate every committed window
+    # entry of the epoch, so any versioned write wins over them.
     Enum.each(shard_layout, fn {end_key, {tag, _start_key}} ->
-      :ets.insert(shard_table, {end_key, tag})
+      :ets.insert(shard_table, {end_key, tag, nil})
     end)
 
     %__MODULE__{
@@ -109,23 +115,51 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   end
 
   @doc """
-  Inserts or updates a shard entry in the routing table.
+  Inserts or updates a shard entry in the routing table, last-writer-wins by
+  version.
 
-  Called from apply_mutations/2 when processing shard_key mutations.
+  The shard table is written by concurrent, unordered writers (finalization
+  tasks and the commit proxy server), so a plain overwrite would let a late
+  write of an older version clobber a newer tag permanently - the resolver
+  has already been acked past it and will never re-send it. The per-row
+  version guard makes each row converge to its newest write regardless of
+  arrival order. Called from apply_mutations/2 for shard_key mutations.
   """
-  @spec insert_shard(t(), binary(), term()) :: true
-  def insert_shard(%__MODULE__{shard_table: table}, end_key, tag) do
-    :ets.insert(table, {end_key, tag})
+  @spec insert_shard(t(), binary(), term(), Bedrock.version() | nil) :: true
+  def insert_shard(%__MODULE__{shard_table: table}, end_key, tag, version) do
+    put_row_if_newer(table, end_key, tag, version)
   end
 
   @doc """
-  Deletes a shard entry from the routing table.
+  Deletes a shard entry from the routing table by writing a tombstone,
+  last-writer-wins by version.
 
-  Called from apply_mutations/2 when processing shard_key clear mutations.
+  Physically removing the row would let a late write of an older version
+  resurrect the boundary; the tombstone keeps the version to lose against.
+  Router lookups treat tombstoned rows as absent. Tombstones live until the
+  next recovery rebuilds the table from a fresh snapshot.
   """
-  @spec delete_shard(t(), binary()) :: true
-  def delete_shard(%__MODULE__{shard_table: table}, end_key) do
-    :ets.delete(table, end_key)
+  @spec delete_shard(t(), binary(), Bedrock.version()) :: true
+  def delete_shard(%__MODULE__{shard_table: table}, end_key, version) do
+    put_row_if_newer(table, end_key, :deleted, version)
+  end
+
+  # Atomic per-row last-writer-wins: insert_new wins the empty-row race;
+  # otherwise select_replace atomically swaps the row unless the stored
+  # version is newer. Equal versions overwrite: a transaction's mutations
+  # apply in order, so within one version the later mutation must win
+  # (recovery's clear-then-rewrite pattern), and every writer replays the
+  # same sequence, so equal-version interleavings still converge on its
+  # final mutation. Snapshot rows carry a nil version and lose to any
+  # committed version (atoms sort below binaries).
+  defp put_row_if_newer(table, end_key, tag, version) do
+    row = {end_key, tag, version}
+
+    if not :ets.insert_new(table, row) do
+      :ets.select_replace(table, [{{end_key, :_, :"$1"}, [{:"=<", :"$1", {:const, version}}], [{:const, row}]}])
+    end
+
+    true
   end
 
   @doc """
@@ -201,20 +235,20 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   Updated routing data with applied mutations.
   """
-  @spec apply_mutations(t(), [{term(), [term()]}]) :: t()
+  @spec apply_mutations(t(), [{Bedrock.version(), [term()]}]) :: t()
   def apply_mutations(%__MODULE__{} = routing_data, updates) do
-    Enum.reduce(updates, routing_data, fn {_version, mutations}, acc ->
-      Enum.reduce(mutations, acc, &apply_mutation/2)
+    Enum.reduce(updates, routing_data, fn {version, mutations}, acc ->
+      Enum.reduce(mutations, acc, &apply_mutation(&1, &2, version))
     end)
   end
 
-  defp apply_mutation({:set, key, value}, routing_data) do
+  defp apply_mutation({:set, key, value}, routing_data, version) do
     case SystemKeys.parse_key(key) do
       {:shard_key, end_key} ->
         # Undecodable values are ignored; the routing table keeps its last
         # good entry rather than crashing the commit proxy.
         case Values.decode_shard_key_entry(value) do
-          {:ok, {tag, _start_key}} -> insert_shard(routing_data, end_key, tag)
+          {:ok, {tag, _start_key}} -> insert_shard(routing_data, end_key, tag, version)
           {:error, _} -> :ignored
         end
 
@@ -230,10 +264,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     end
   end
 
-  defp apply_mutation({:clear, key}, routing_data) do
+  defp apply_mutation({:clear, key}, routing_data, version) do
     case SystemKeys.parse_key(key) do
       {:shard_key, end_key} ->
-        delete_shard(routing_data, end_key)
+        delete_shard(routing_data, end_key, version)
         routing_data
 
       {:layout_log, log_id} ->
@@ -249,19 +283,19 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   # Mirrors Metadata's clear_range semantics: delete every known entry whose
   # full system key falls in [start_key, end_key). Recovery rewrites use this
   # to drop stale shard/log entries before re-writing the current layout.
-  defp apply_mutation({:clear_range, start_key, end_key}, routing_data) do
+  defp apply_mutation({:clear_range, start_key, end_key}, routing_data, version) do
     routing_data
-    |> clear_shards_in_range(start_key, end_key)
+    |> clear_shards_in_range(start_key, end_key, version)
     |> clear_logs_in_range(start_key, end_key)
   end
 
-  defp apply_mutation(_mutation, routing_data), do: routing_data
+  defp apply_mutation(_mutation, routing_data, _version), do: routing_data
 
-  defp clear_shards_in_range(%__MODULE__{shard_table: table} = routing_data, start_key, end_key) do
-    for {shard_end_key, _tag} <- :ets.tab2list(table),
+  defp clear_shards_in_range(%__MODULE__{shard_table: table} = routing_data, start_key, end_key, version) do
+    for {shard_end_key, _tag, _version} <- :ets.tab2list(table),
         full_key = SystemKeys.shard_key(shard_end_key),
         full_key >= start_key and full_key < end_key do
-      :ets.delete(table, shard_end_key)
+      delete_shard(routing_data, shard_end_key, version)
     end
 
     routing_data

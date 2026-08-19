@@ -38,7 +38,9 @@ defmodule Bedrock.Test.Minio do
       region: "local",
       host: "127.0.0.1",
       port: 9000,
-      console_address: ":9001"
+      console_address: ":9001",
+      # ex_aws's default client is hackney, which is not a dependency.
+      http_client: ExAws.Request.Req
     ]
   end
 

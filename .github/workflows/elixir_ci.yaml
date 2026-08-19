@@ -76,6 +76,11 @@ jobs:
       if: matrix.elixir == '1.19.4'
       run: mix format --check-formatted
 
+    # One cell is enough: the advisory database is the same everywhere.
+    - name: Audit dependencies for known vulnerabilities
+      if: matrix.elixir == '1.19.4'
+      run: mix deps.audit
+
     - name: Credo
       run: mix credo --strict
 

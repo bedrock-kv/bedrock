@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-19T14:14:16Z",
   "created": "2026-08-19T14:14:05Z",
   "description": "",
   "id": "bedrock-mnf",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Fix mix docs warning: defdelegate doc references hidden WalFormat.previous_version/1",
   "type": "chore",
-  "updated_at": "2026-08-19T14:14:05Z"
+  "updated_at": "2026-08-19T14:14:16Z"
 }

@@ -20,11 +20,15 @@
     {
       "text": "Workflow update 2026-08-19: Phase B prerequisite extraction to develop tracked as bedrock-q67.20 (children .1-.5), inverting the 'reconcile phase-a first' plan - reconciling the TSL-delta channel only to have q67.9 delete it is wasted conflict work. feature/q67-phase-a / PR #97 stays parked until after q67.9; its eventual reconciliation drops (not merges) the metadata-pipeline commits now ported to develop.",
       "timestamp": "2026-08-19T19:10:03Z"
+    },
+    {
+      "text": "PHASE B DEFINITION OF DONE (agreed 2026-08-19): the \\xFF/system keyspace is the SOLE source of truth for cluster metadata; no parallel or side-channel system exists that could contradict or supplement it. Four testable clauses: (1) AUTHORITY - metadata is written only as committed transactions against system keys; no second writable copy anywhere. (2) DISTRIBUTION - the commit stream is the only propagation mechanism (resolver windows -\u003e proxy Metadata/RoutingData; materializers; clients via proxies or metadata shard); no broadcasts, deltas, director pushes, or unlock payloads carrying map content. (3) BOOTSTRAP EXCEPTION, MINIMIZED - only the coordinator descriptor (epoch + transaction core + metadata-materializer location) and the cold-boot ClusterBootstrap blob live outside the keyspace; both are anchors to REACH the keyspace, never overlapping what it owns, never authoritative over it once it is readable. (4) WRITE INTEGRITY - \\xFF writes are privileged, atomics on system keys rejected, every family explicitly encoded with clear-on-rewrite semantics.\n\nDone is verified by ABSENCE - the kill list: tsl_updated steady-state broadcast + Link replay (q67.9); apply_tsl_delta (never ported, q67.21); shard_layout/shard_materializers in the TSL (q67.9); the director-built recover_from routing snapshot (q67.23 end state - proxies seed from the keyspace, unlock carries no map content); cluster config duplicated between coordinator raft and write-only keyspace copies (q67.25); worker-manifest shard_id reclassified as a claim validated against materializer_keys/ (q67.21). Proxy/client state is permitted only as views: seeded complete (q67.23), version-consistent (q67.24), invalidate-and-reread (q67.9).",
+      "timestamp": "2026-08-19T22:13:27Z"
     }
   ],
   "priority": 3,
   "status": "in_progress",
   "title": "Shard-Centric Storage Architecture",
   "type": "epic",
-  "updated_at": "2026-08-19T19:10:03Z"
+  "updated_at": "2026-08-19T22:13:27Z"
 }

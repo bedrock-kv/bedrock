@@ -144,7 +144,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @impl true
   @spec handle_call(
           {:recover_from, binary(), pid(), ResolverLayout.t(), RoutingData.snapshot()}
-          | {:commit, Bedrock.transaction()},
+          | {:commit, Bedrock.epoch(), Bedrock.transaction()}
+          | {:commit, Bedrock.epoch(), Bedrock.transaction(), :user | :system},
           GenServer.from(),
           State.t()
         ) ::
@@ -167,18 +168,23 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  def handle_call({:commit, epoch, transaction}, from, %{mode: :running, epoch: epoch} = t)
-      when is_binary(transaction) do
-    case first_key_out_of_range(transaction) do
+  def handle_call({:commit, epoch, transaction}, from, t),
+    do: handle_call({:commit, epoch, transaction, :user}, from, t)
+
+  def handle_call({:commit, epoch, transaction, commit_mode}, from, %{mode: :running, epoch: epoch} = t)
+      when is_binary(transaction) and commit_mode in [:user, :system] do
+    case first_rejected_mutation(transaction, commit_mode) do
       nil -> accept_commit(transaction, from, t)
       :invalid_transaction -> reply(t, {:error, :invalid_transaction})
-      key -> reply(t, {:error, {:key_out_of_range, key}})
+      {reason, key} -> reply(t, {:error, {reason, key}})
     end
   end
 
-  def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :running} = t), do: reply(t, {:error, :wrong_epoch})
+  def handle_call({:commit, _epoch, _transaction, _commit_mode}, _from, %{mode: :running} = t),
+    do: reply(t, {:error, :wrong_epoch})
 
-  def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
+  def handle_call({:commit, _epoch, _transaction, _commit_mode}, _from, %{mode: :locked} = t),
+    do: reply(t, {:error, :locked})
 
   defp accept_commit(transaction, from, t) do
     case start_batch_if_needed(t) do
@@ -204,21 +210,32 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  # Keys at or past the end of the keyspace belong to no shard. Before this
+  # The legal write range depends on who is committing: user commits end at
+  # the system boundary, system commits at the end of the keyspace. Keys past
+  # the commit's bound belong to no shard the caller may touch. Before this
   # check, finalization silently routed such single-key mutations into the
   # LAST shard (the system shard) via the router's ceiling fallback, and a
   # clear_range starting past the last boundary failed the whole batch -
   # after it had consumed a commit version - stopping the proxy into
   # director recovery. Rejecting at ingress costs the one offending commit.
-  # clear_range ends are exclusive, so an end AT the boundary is legal.
+  # clear_range ends are exclusive, so an end AT the bound is legal.
   #
-  # Returns nil when valid, the offending key, or :invalid_transaction when
-  # the mutation section decodes but its payload is corrupt (the decode
-  # stream raises lazily; unguarded, that would crash the proxy here).
-  @spec first_key_out_of_range(Transaction.encoded()) :: Bedrock.key() | :invalid_transaction | nil
-  defp first_key_out_of_range(transaction) do
+  # Atomics on system keys are rejected in EVERY mode: the metadata pipeline
+  # (Metadata, RoutingData, and every view fed by the commit stream) replays
+  # only sets and clears, while the materializer would apply the atomic
+  # durably - the two copies of truth would silently diverge.
+  #
+  # Returns nil when valid, {reason, key} for the offending mutation, or
+  # :invalid_transaction when the mutation section decodes but its payload
+  # is corrupt (the decode stream raises lazily; unguarded, that would
+  # crash the proxy here).
+  @spec first_rejected_mutation(Transaction.encoded(), :user | :system) ::
+          {:key_out_of_range | :atomic_on_system_key, Bedrock.key()} | :invalid_transaction | nil
+  defp first_rejected_mutation(transaction, commit_mode) do
+    bound = keyspace_bound(commit_mode)
+
     case Transaction.mutations(transaction) do
-      {:ok, mutations} -> Enum.find_value(mutations, &mutation_key_out_of_range/1)
+      {:ok, mutations} -> Enum.find_value(mutations, &rejected_mutation(&1, bound))
       {:error, :section_not_found} -> nil
       {:error, _} -> :invalid_transaction
     end
@@ -226,17 +243,25 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     _ -> :invalid_transaction
   end
 
-  defp mutation_key_out_of_range({:set, key, _value}), do: key_past_end_of_keyspace(key)
-  defp mutation_key_out_of_range({:clear, key}), do: key_past_end_of_keyspace(key)
-  defp mutation_key_out_of_range({:atomic, _op, key, _value}), do: key_past_end_of_keyspace(key)
+  defp keyspace_bound(:user), do: Bedrock.end_of_user_keyspace()
+  defp keyspace_bound(:system), do: Bedrock.end_of_keyspace()
 
-  defp mutation_key_out_of_range({:clear_range, start_key, end_key}) do
-    key_past_end_of_keyspace(start_key) || if end_key > Bedrock.end_of_keyspace(), do: end_key
+  defp rejected_mutation({:set, key, _value}, bound), do: key_past_bound(key, bound)
+  defp rejected_mutation({:clear, key}, bound), do: key_past_bound(key, bound)
+
+  defp rejected_mutation({:atomic, _op, key, _value}, bound) do
+    key_past_bound(key, bound) ||
+      if key >= Bedrock.end_of_user_keyspace(), do: {:atomic_on_system_key, key}
   end
 
-  defp mutation_key_out_of_range(_other), do: nil
+  # No catch-all clause: a mutation shape this validator does not know is
+  # caught by the rescue above and rejected as :invalid_transaction, so a
+  # future mutation type fails closed instead of bypassing the gate.
+  defp rejected_mutation({:clear_range, start_key, end_key}, bound) do
+    key_past_bound(start_key, bound) || if end_key > bound, do: {:key_out_of_range, end_key}
+  end
 
-  defp key_past_end_of_keyspace(key), do: if(key >= Bedrock.end_of_keyspace(), do: key)
+  defp key_past_bound(key, bound), do: if(key >= bound, do: {:key_out_of_range, key})
 
   @impl true
   @spec handle_info(

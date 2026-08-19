@@ -46,8 +46,36 @@ defmodule Bedrock.DataPlane.CommitProxy do
   def recover_from(commit_proxy, lock_token, sequencer, resolver_layout, routing_snapshot),
     do: call(commit_proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot}, :infinity)
 
-  @spec commit(commit_proxy_ref :: ref(), epoch :: Bedrock.epoch(), transaction :: Transaction.encoded()) ::
+  @doc """
+  Submits a transaction for commit.
+
+  By default the commit is bounded to the user keyspace: any mutation keyed
+  at or above `Bedrock.end_of_user_keyspace()` is rejected at ingress.
+  Passing `mode: :system` extends the legal range to
+  `Bedrock.end_of_keyspace()`, admitting writes to `\\xFF` system keys. The
+  mode is asserted by the caller — like FoundationDB's `ACCESS_SYSTEM_KEYS`
+  option it guards against accidental system writes, not hostile ones. Only
+  system components (recovery's persistence phase, and eventually the
+  Distributor) commit in system mode.
+
+  Atomic operations on system keys are rejected in every mode: the metadata
+  pipeline replays only sets and clears, so an atomic would let durable
+  state diverge from every metadata view built from the commit stream.
+  """
+  @spec commit(
+          commit_proxy_ref :: ref(),
+          epoch :: Bedrock.epoch(),
+          transaction :: Transaction.encoded(),
+          opts :: [mode: :user | :system]
+        ) ::
           {:ok, version :: Bedrock.version(), index :: non_neg_integer()}
-          | {:error, :wrong_epoch | :timeout | :unavailable}
-  def commit(commit_proxy, epoch, transaction), do: call(commit_proxy, {:commit, epoch, transaction}, :infinity)
+          | {:error, :wrong_epoch | :locked | :abort | :timeout | :unavailable}
+          | {:error, {:key_out_of_range | :atomic_on_system_key, Bedrock.key()}}
+          | {:error, :invalid_transaction}
+  def commit(commit_proxy, epoch, transaction, opts \\ []) do
+    case Keyword.get(opts, :mode, :user) do
+      mode when mode in [:user, :system] -> call(commit_proxy, {:commit, epoch, transaction, mode}, :infinity)
+      other -> raise ArgumentError, "invalid commit mode: #{inspect(other)}"
+    end
+  end
 end

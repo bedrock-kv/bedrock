@@ -89,19 +89,18 @@ defmodule Bedrock.Internal.RepoTransactTest do
     end
   end
 
-  # A commit proxy that rejects every transaction with a permanent client error.
+  # A commit proxy that rejects every transaction with the configured error.
   defmodule RejectingProxy do
     @moduledoc false
     use GenServer
 
-    def start_link(_), do: GenServer.start_link(__MODULE__, nil)
+    def start_link(error), do: GenServer.start_link(__MODULE__, error)
 
     @impl true
-    def init(state), do: {:ok, state}
+    def init(error), do: {:ok, error}
 
     @impl true
-    def handle_call({:commit, _epoch, _tx}, _from, state),
-      do: {:reply, {:error, {:key_out_of_range, <<0xFF, 0xFF>>}}, state}
+    def handle_call({:commit, _epoch, _tx, _mode}, _from, error), do: {:reply, {:error, error}, error}
   end
 
   @minimal_tsl %{epoch: 1, proxies: []}
@@ -265,7 +264,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
       # A commit proxy that rejects the transaction with a permanent client
       # error: transact must surface it on the first attempt - retrying a
       # deterministic rejection would only burn the transaction deadline.
-      proxy = start_supervised!({RejectingProxy, []})
+      proxy = start_supervised!({RejectingProxy, {:key_out_of_range, <<0xFF, 0xFF>>}})
       attempts = :counters.new(1, [])
 
       result =
@@ -281,6 +280,30 @@ defmodule Bedrock.Internal.RepoTransactTest do
         )
 
       assert result == {:error, {:key_out_of_range, <<0xFF, 0xFF>>}}
+      assert :counters.get(attempts, 1) == 1
+      assert TransactionContext.builder(TestRepo) == nil
+    end
+
+    test "surfaces atomic_on_system_key immediately instead of retrying" do
+      # Same permanent-rejection contract as key_out_of_range: an atomic op
+      # aimed at a system key is deterministic, so retrying cannot succeed.
+      key = <<0xFF, "/system/counter">>
+      proxy = start_supervised!({RejectingProxy, {:atomic_on_system_key, key}})
+      attempts = :counters.new(1, [])
+
+      result =
+        Repo.transact(
+          NoCluster,
+          TestRepo,
+          fn ->
+            :counters.add(attempts, 1, 1)
+            Repo.put(TestRepo, "key", "value")
+          end,
+          transaction_system_layout: %{epoch: 1, proxies: [proxy]},
+          retry_limit: 3
+        )
+
+      assert result == {:error, {:atomic_on_system_key, key}}
       assert :counters.get(attempts, 1) == 1
       assert TransactionContext.builder(TestRepo) == nil
     end

@@ -114,8 +114,11 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     })
   end
 
+  # System mode: these transactions write \xFF metadata keys, which
+  # user-mode commits are rejected for at ingress.
   defp commit!(proxy, epoch, mutations, conflict_key) do
-    assert {:ok, version, _index} = GenServer.call(proxy, {:commit, epoch, encode_tx(mutations, conflict_key)}, 5_000)
+    assert {:ok, version, _index} =
+             GenServer.call(proxy, {:commit, epoch, encode_tx(mutations, conflict_key), :system}, 5_000)
 
     version
   end

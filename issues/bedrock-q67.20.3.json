@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-19T19:09:49Z",
+  "description": "Port of closed bedrock-q67.18 (phase-a commits df2d3239 + d708ea4a-audit, PR #110). PersistencePhase clear_ranges the rewritten-every-recovery keyed families (shard_keys/, shards/, layout/logs/ via KeyRange.from_prefix) in the same system transaction before re-writing them, so a shrinking layout leaves no stale entries for a later bootstrap read to treat as live. RoutingData gains the {:clear_range, s, e} apply_mutation clause (mirrors Metadata semantics: delete known entries whose full system key falls in [s,e)). nil/empty shard_layout leaves existing entries untouched.\n\nSequenced after the ri40 port (same persistence_phase/routing_data hunks; avoids re-cutting patches). Survey from the original audit still holds: layout_services/layout_id are single-key (no staleness); materializer_keys/ has no writer yet - q67.9 must add its clear when the Distributor starts writing them.",
+  "id": "bedrock-q67.20.3",
+  "labels": [],
+  "parent": "bedrock-q67.20",
+  "priority": 2,
+  "status": "open",
+  "title": "Port q67.18 to develop: clear system-key prefixes on recovery rewrite; RoutingData clear_range",
+  "type": "task",
+  "updated_at": "2026-08-19T19:09:49Z"
+}

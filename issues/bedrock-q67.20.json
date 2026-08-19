@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [
+    "bedrock-q67.21",
     "bedrock-q67.9"
   ],
   "created": "2026-08-19T19:08:46Z",
@@ -19,5 +20,5 @@
   "status": "open",
   "title": "Extract Phase B metadata-pipeline prerequisites onto develop",
   "type": "epic",
-  "updated_at": "2026-08-19T20:13:18Z"
+  "updated_at": "2026-08-19T20:24:13Z"
 }

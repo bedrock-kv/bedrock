@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-q67.20"
+  ],
   "blocks": [],
   "created": "2026-08-19T20:24:12Z",
   "description": "Port the Phase A coverage machinery (feature/q67-phase-a: Distributor singleton, placeholder materializer, on-demand recruitment, death healing, recovery relaxation, idle spin-down, warm re-adoption - q67.2-.7, .12, .13, cbj + tests) onto develop, ADAPTED to keyspace-mutation publication. PR #97 closed 2026-08-19; the branch is the audited reference implementation and is deleted once this lands.\n\nWHAT CHANGES IN THE PORT (the FDB model, verified in ../foundationdb source):\n- FDB's DD moves shards by transactionally mutating keyServers/ and serverKeys/ (MoveKeys.actor.cpp, krmSetRange); commit proxies observe those mutations AS THEY COMMIT and update their in-memory keyInfo range map (ApplyMetadataMutation.cpp:243-287); txnStateStore at the proxy holds the system metadata; clients ask proxies (GetKeyServerLocations) and invalidate on wrong_shard_server.\n- Bedrock equivalents after bedrock-q67.20: the resolver-\u003ewindow-\u003eCommitProxy.Metadata pipeline IS ApplyMetadataMutation/txnStateStore; RoutingData in-batch application gives same-batch visibility. So the Distributor publishes coverage by COMMITTING ORDINARY TRANSACTIONS that mutate \\xFF/system/materializer_keys/\u003cend_key\u003e (MaterializerList values; family + encoding already exist), and later shard_keys//shards/ for split/merge. Proxies learn routing with no new channel.\n- DELETED from the phase-a version, not ported: Director.apply_tsl_delta, the tsl-delta hardening (bedrock-0u3 scope), and placeholder-into-TSL-slot swaps. Client read path (materializer lookup from proxy Metadata or metadata shard, invalidate-on-failure) is q67.9's design decision - this ticket lands the writer and the healing loop against whichever read path q67.9 picks.\n- PersistencePhase note: once materializer_keys/ has a writer, its prefix joins the clear-before-rewrite set ONLY if recovery rewrites it (see bedrock-q67.20.3 survey) - decide ownership: recovery-written vs distributor-owned-only.\n\nWHAT PORTS UNCHANGED IN SPIRIT: coverage sweep + demand channel ({:coverage_demand, tag}), bounded parking (min(client timeout, hold_ms), shed :unavailable), epoch-validated mutations (stale distributor self-terminates - now naturally enforced because its transactions carry its epoch), director re-recruits distributor on death, recovery stalls only for tag 0.\n\nSequencing: blocked by bedrock-q67.20 (pipeline must be on develop); blocks bedrock-q67.9's exit criterion (Distributor publishes via system keys; tsl_updated broadcast deleted) - land in coordination with q67.9. Same workflow as q67.20: TDD, stacked PRs, cold audit per layer.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Port Distributor + placeholder from phase-a: coverage published as keyspace mutations",
   "type": "task",
-  "updated_at": "2026-08-19T20:24:12Z"
+  "updated_at": "2026-08-19T20:24:13Z"
 }

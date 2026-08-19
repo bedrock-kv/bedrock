@@ -230,11 +230,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
     # Extract what proxies need from TSL
     sequencer = transaction_system_layout.sequencer
     resolver_layout = CommitProxy.ResolverLayout.from_layout(transaction_system_layout)
-    routing_data = build_routing_data(transaction_system_layout)
+    routing_snapshot = build_routing_snapshot(transaction_system_layout)
 
     proxies
     |> Task.async_stream(
-      &unlock_fn.(&1, lock_token, sequencer, resolver_layout, routing_data),
+      &unlock_fn.(&1, lock_token, sequencer, resolver_layout, routing_snapshot),
       ordered: false
     )
     |> Enum.reduce_while(:ok, fn
@@ -244,16 +244,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
     end)
   end
 
-  # Build full routing data from TSL for commit proxy unlock
-  @spec build_routing_data(TransactionSystemLayout.t()) :: CommitProxy.RoutingData.t()
-  defp build_routing_data(%{logs: logs, services: services, shard_layout: shard_layout}) do
-    # Build shard_table ETS from shard_layout
-    shard_table = :ets.new(:commit_proxy_shards, [:ordered_set, :public])
-
-    Enum.each(shard_layout || %{}, fn {end_key, {tag, _start_key}} ->
-      :ets.insert(shard_table, {end_key, tag})
-    end)
-
+  # Build the plain-data routing snapshot proxies need at unlock. Each proxy
+  # turns it into its own RoutingData (`RoutingData.from_snapshot/1`); proxies
+  # may live on other nodes, so nothing process- or node-local goes in here.
+  @spec build_routing_snapshot(TransactionSystemLayout.t()) :: CommitProxy.RoutingData.snapshot()
+  defp build_routing_snapshot(%{logs: logs, services: services, shard_layout: shard_layout}) do
     # Build log_map: index -> log_id
     log_map =
       logs
@@ -279,13 +274,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
         end
       end)
 
-    replication_factor = max(1, map_size(logs))
-
-    %CommitProxy.RoutingData{
-      shard_table: shard_table,
+    %{
+      shard_layout: shard_layout || %{},
       log_map: log_map,
       log_services: log_services,
-      replication_factor: replication_factor
+      replication_factor: max(1, map_size(logs))
     }
   end
 

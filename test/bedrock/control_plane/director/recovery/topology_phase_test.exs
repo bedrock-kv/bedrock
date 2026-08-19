@@ -50,6 +50,43 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
              } = result
     end
 
+    test "unlocks proxies with a plain routing snapshot that carries no process-local handles" do
+      test_pid = self()
+
+      recovery_attempt =
+        base_recovery_attempt()
+        |> with_logs(%{"log_1" => [1, 2]})
+        |> with_transaction_services(%{
+          "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}}
+        })
+
+      context =
+        recovery_context()
+        |> with_lock_token("test_token")
+        |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout, snapshot ->
+          send(test_pid, {:routing_snapshot, snapshot})
+          :ok
+        end)
+
+      {_result, _next_phase} = TopologyPhase.execute(recovery_attempt, context)
+
+      assert_received {:routing_snapshot, snapshot}
+
+      # An ETS table reference is only usable by the process/node that made
+      # it; the proxy must receive plain data and build its own table.
+      refute is_struct(snapshot)
+
+      assert %{
+               shard_layout: shard_layout,
+               log_map: %{0 => "log_1"},
+               log_services: %{"log_1" => _},
+               replication_factor: 1
+             } = snapshot
+
+      assert is_map(shard_layout)
+      refute snapshot |> Map.values() |> Enum.any?(&is_reference/1)
+    end
+
     test "fails when commit proxy unlocking fails" do
       recovery_attempt =
         base_recovery_attempt()

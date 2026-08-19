@@ -171,7 +171,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
                       [
                         Server,
                         {TestCluster, _director, 42, _max_latency, _max_per_batch, 5000, "test_lock_token", _sequencer,
-                         _resolver_layout, _routing_data}
+                         _resolver_layout}
                       ]}
                  } = child_spec
 
@@ -213,7 +213,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
                     [
                       _,
                       {_cluster, _director, _epoch, _max_latency, _max_per_batch, 2500, _lock_token, _sequencer,
-                       _resolver_layout, _routing_data}
+                       _resolver_layout}
                     ]}
                }
              ] = Agent.get(agent, & &1)

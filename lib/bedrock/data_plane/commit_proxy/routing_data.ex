@@ -37,7 +37,44 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
           replication_factor: pos_integer()
         }
 
+  @typedoc """
+  A plain-data description of routing state, safe to send between processes
+  and nodes. `from_snapshot/1` turns it into runnable routing data whose ETS
+  table is created by — and therefore owned by and local to — the receiver.
+  """
+  @type snapshot :: %{
+          shard_layout: %{Bedrock.key() => {tag :: term(), start_key :: Bedrock.key()}},
+          log_map: %{non_neg_integer() => Log.id()},
+          log_services: %{Log.id() => {atom(), node()} | pid()},
+          replication_factor: pos_integer()
+        }
+
   defstruct [:shard_table, :log_map, :log_services, :replication_factor]
+
+  @doc """
+  Builds routing data from a plain snapshot, creating the ETS shard table in
+  the calling process.
+  """
+  @spec from_snapshot(snapshot()) :: t()
+  def from_snapshot(%{
+        shard_layout: shard_layout,
+        log_map: log_map,
+        log_services: log_services,
+        replication_factor: replication_factor
+      }) do
+    shard_table = :ets.new(:shard_keys, [:ordered_set, :public])
+
+    Enum.each(shard_layout, fn {end_key, {tag, _start_key}} ->
+      :ets.insert(shard_table, {end_key, tag})
+    end)
+
+    %__MODULE__{
+      shard_table: shard_table,
+      log_map: log_map,
+      log_services: log_services,
+      replication_factor: replication_factor
+    }
+  end
 
   @doc """
   Creates empty routing data for dynamic population via metadata.

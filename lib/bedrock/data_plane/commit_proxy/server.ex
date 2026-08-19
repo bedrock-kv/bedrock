@@ -84,7 +84,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     max_latency_in_ms = opts[:max_latency_in_ms] || 4
     max_per_batch = opts[:max_per_batch] || 32
     empty_transaction_timeout_ms = opts[:empty_transaction_timeout_ms] || 1_000
-    routing_data = opts[:routing_data]
 
     %{
       id: {__MODULE__, cluster, epoch, instance},
@@ -93,7 +92,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
          [
            __MODULE__,
            {cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, lock_token,
-            sequencer, resolver_layout, routing_data}
+            sequencer, resolver_layout}
          ]},
       restart: :temporary
     }
@@ -102,20 +101,19 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @impl true
   @spec init(
           {module(), pid(), Bedrock.epoch(), non_neg_integer(), pos_integer(), non_neg_integer(), binary(), pid(),
-           ResolverLayout.t(), RoutingData.t() | nil}
+           ResolverLayout.t()}
         ) ::
           {:ok, State.t(), timeout()}
   def init(
         {cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, lock_token,
-         sequencer, resolver_layout, provided_routing_data}
+         sequencer, resolver_layout}
       ) do
     # Monitor the Director - if it dies, this commit proxy should terminate
     Process.monitor(director)
 
     trace_metadata(%{cluster: cluster, pid: self()})
 
-    # Use provided routing data or start with empty (populated via metadata from first transaction)
-    routing_data = provided_routing_data || RoutingData.new_empty()
+    routing_data = RoutingData.new_empty()
 
     then(
       %State{
@@ -144,18 +142,20 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   @impl true
   @spec handle_call(
-          {:recover_from, binary(), pid(), ResolverLayout.t(), RoutingData.t()}
+          {:recover_from, binary(), pid(), ResolverLayout.t(), RoutingData.snapshot()}
           | {:commit, Bedrock.transaction()},
           GenServer.from(),
           State.t()
         ) ::
           {:reply, term(), State.t()} | {:noreply, State.t(), timeout() | {:continue, term()}}
-  def handle_call({:recover_from, lock_token, sequencer, resolver_layout, routing_data}, _from, %{mode: :locked} = t) do
+  def handle_call(
+        {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot},
+        _from,
+        %{mode: :locked} = t
+      ) do
     if lock_token == t.lock_token do
-      # Clean up old routing_data only if it's a different ETS table
-      if t.routing_data.shard_table != routing_data.shard_table do
-        RoutingData.cleanup(t.routing_data)
-      end
+      RoutingData.cleanup(t.routing_data)
+      routing_data = RoutingData.from_snapshot(routing_snapshot)
 
       reply(
         %{t | mode: :running, sequencer: sequencer, resolver_layout: resolver_layout, routing_data: routing_data},

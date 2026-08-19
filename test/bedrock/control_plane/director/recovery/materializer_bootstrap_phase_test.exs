@@ -539,4 +539,36 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert RecoveryAttempt.system_shard_id() == 0
     end
   end
+
+  describe "shard_layout_from_entries/1" do
+    alias Bedrock.SystemKeys
+    alias Bedrock.SystemKeys.Values
+
+    test "decodes tuple-encoded shard values and rebuilds contiguous start keys" do
+      entries = [
+        {SystemKeys.shard_key(<<0xFF, 0xFF>>), Values.encode_shard_key_entry(0, "m")},
+        {SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "")}
+      ]
+
+      assert {:ok, %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries(entries)
+    end
+
+    test "decodes legacy term_to_binary shard values in both historical shapes" do
+      entries = [
+        {SystemKeys.shard_key("m"), :erlang.term_to_binary(1)},
+        {SystemKeys.shard_key(<<0xFF, 0xFF>>), :erlang.term_to_binary({0, "m"})}
+      ]
+
+      assert {:ok, %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries(entries)
+    end
+
+    test "rejects values that decode in neither encoding" do
+      key = SystemKeys.shard_key("m")
+
+      assert {:error, {:invalid_shard_value, ^key}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries([{key, "garbage"}])
+    end
+  end
 end

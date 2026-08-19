@@ -37,6 +37,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
+  alias Bedrock.SystemKeys.Values
 
   require Logger
 
@@ -504,23 +505,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
     case Materializer.get_range(materializer_pid, prefix, end_key, read_version, limit: 1000) do
       {:ok, {entries, _more}} ->
-        # Key format: \xff/system/shard_keys/<end_key>; value: the tag
-        # (persistence writes `shard_key(end_key) -> tag`). Start keys are
-        # not stored — ranges are contiguous, so each shard starts where
-        # the previous one ends (the first starts at the empty key).
-        shard_layout =
-          entries
-          |> Enum.map(fn {key, value} ->
-            {extract_end_key_from_shard_key(key), decode_shard_tag(value)}
-          end)
-          |> Enum.sort_by(fn {end_key, _tag} -> end_key end)
-          |> Enum.map_reduce(<<>>, fn {end_key, tag}, start_key ->
-            {{end_key, {tag, start_key}}, end_key}
-          end)
-          |> elem(0)
-          |> Map.new()
-
-        {:ok, shard_layout}
+        shard_layout_from_entries(entries)
 
       {:error, reason} ->
         {:error, {:shard_layout_query_failed, reason}}
@@ -530,16 +515,63 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
+  @doc false
+  # Key format: \xff/system/shard_keys/<end_key>; value: {tag, start_key}
+  # (see Bedrock.SystemKeys.Values). Ranges are contiguous, so start keys
+  # are rebuilt from the sorted end keys — each shard starts where the
+  # previous one ends, the first at the empty key — which also covers
+  # legacy values that carried only the tag.
+  @spec shard_layout_from_entries([{Bedrock.key(), binary()}]) ::
+          {:ok, TransactionSystemLayout.shard_layout()} | {:error, {:invalid_shard_value, Bedrock.key()}}
+  def shard_layout_from_entries(entries) do
+    entries
+    |> Enum.reduce_while({:ok, []}, fn {key, value}, {:ok, acc} ->
+      case decode_shard_tag(value) do
+        {:ok, tag} -> {:cont, {:ok, [{extract_end_key_from_shard_key(key), tag} | acc]}}
+        {:error, _} -> {:halt, {:error, {:invalid_shard_value, key}}}
+      end
+    end)
+    |> case do
+      {:ok, tags_by_end_key} ->
+        shard_layout =
+          tags_by_end_key
+          |> Enum.sort_by(fn {end_key, _tag} -> end_key end)
+          |> Enum.map_reduce(<<>>, fn {end_key, tag}, start_key ->
+            {{end_key, {tag, start_key}}, end_key}
+          end)
+          |> elem(0)
+          |> Map.new()
+
+        {:ok, shard_layout}
+
+      error ->
+        error
+    end
+  end
+
   defp extract_end_key_from_shard_key(key) do
     prefix = Bedrock.SystemKeys.shard_keys_prefix()
     prefix_len = byte_size(prefix)
     binary_part(key, prefix_len, byte_size(key) - prefix_len)
   end
 
-  defp decode_shard_tag(value) when is_binary(value) do
-    case :erlang.binary_to_term(value) do
-      tag when is_integer(tag) -> tag
-      {tag, _start_key} when is_integer(tag) -> tag
+  defp decode_shard_tag(value) do
+    case Values.decode_shard_key_entry(value) do
+      {:ok, {tag, _start_key}} -> {:ok, tag}
+      {:error, _} -> decode_legacy_shard_tag(value)
     end
+  end
+
+  # Clusters created before Bedrock.SystemKeys.Values wrote shard_key values
+  # with term_to_binary; their first completed recovery re-encodes them.
+  # Remove once no supported release can carry the old encoding.
+  defp decode_legacy_shard_tag(value) do
+    case :erlang.binary_to_term(value) do
+      tag when is_integer(tag) -> {:ok, tag}
+      {tag, _start_key} when is_integer(tag) -> {:ok, tag}
+      _ -> {:error, :invalid_encoding}
+    end
+  rescue
+    ArgumentError -> {:error, :invalid_encoding}
   end
 end

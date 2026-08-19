@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-19T19:09:14Z",
+  "description": "Root cause of the 2026-08-19 livebook crash: TopologyPhase.build_routing_data/1 (topology_phase.ex:251) creates the shard ETS table in the DIRECTOR's process and ships the raw table reference to commit proxies via CommitProxy.recover_from/5. ETS tids are node-local and owner-linked, so (a) a proxy recruited on another node gets badarg :ets.insert \"not a valid table identifier\" on the first shard_key mutation of the recovery system transaction (observed: RoutingData.insert_shard/3 via Finalization.apply_metadata_updates, killing the Director from PersistencePhase's :infinity commit call), and (b) even same-node, director death deletes the table under a live proxy. Bug predates the phase-a fork (came in #65); exists on both branches.\n\nFIX (single-job restoration - RoutingData lifecycle wholly inside the proxy):\n- recover_from/5 (and the {:recover_from,...} message) carries PLAIN data - the shard_layout map (%{end_key =\u003e {tag, start_key}}), log_map, log_services, replication_factor - not a RoutingData struct.\n- The proxy's recover_from handler builds its own RoutingData locally (new constructor, e.g. RoutingData.from_layout/1, over new_empty + insert_shard/insert_log); table owner is always the proxy server; finalize tasks (Task.start_link from the server, same node) use it via :public.\n- TopologyPhase keeps assembling the plain snapshot from the TSL but never touches :ets.\n- Delete the shard_table-identity cleanup dance in the recover_from handler; terminate/2 cleanup stays.\n\nVerify: multi-node test (or unit test asserting the recover_from message contains no ETS ref) + existing recovery suite. Independent of the encoding/pipeline ports - land FIRST.",
+  "id": "bedrock-q67.20.1",
+  "labels": [],
+  "parent": "bedrock-q67.20",
+  "priority": 2,
+  "status": "open",
+  "title": "Commit proxy builds and owns its routing table; recover_from carries plain layout data",
+  "type": "bug",
+  "updated_at": "2026-08-19T19:09:14Z"
+}

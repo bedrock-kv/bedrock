@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "bedrock-q67.9"
+  ],
   "created": "2026-08-19T19:08:46Z",
   "description": "Landing-path inversion, decided 2026-08-19: the five closed Phase B prerequisites (q67.15, q67.16, q67.17, q67.18, ri40) were built on feature/q67-phase-a, which forked from develop 2026-07-14 (merge-base 10a20bf6) and is now 43 ahead / 25 behind the qzr rework. Rather than reconciling phase-a first (its TSL-delta channel is q67.9 deletion fodder - wasted conflict work), the metadata pipeline is ported directly to develop as a short PR series. Phase A's coverage machinery (Distributor, placeholder) reconciles LATER against a develop where system-key coverage writes already exist.\n\nPORT METHOD (decided): apply the phase-a FINAL-STATE diff per area (git diff 10a20bf6..eda6a319 -- \u003cfiles\u003e), not sequential cherry-picks - q67.16/17 rewrote q67.15's seam, so replaying history reproduces churn. Preserve audited code verbatim where possible; credit original commits.\n\nSource of truth: feature/q67-phase-a @ eda6a319 (PRs #105 metadata e2e, #106 window protocol, #107 ri40 encodings, #110 stale-key clearing, #112 deferred accumulation), all gate-audited there.\n\nDEVELOP-SIDE RECONCILIATION POINTS (from 2026-08-19 source read):\n- commit_proxy/server.ex: keep develop's {:finalization_failed,_} handler (replaces phase-a's exit(reason) in the finalize task) alongside ported metadata handlers.\n- resolver/state.ex: develop removed oldest_version; do NOT re-add. resolver/server.ex init uses Conflicts.new(last_version).\n- batch/batching: develop's sequencer next_commit_version returns a 4-tuple (KCV); phase-a tests assume 3-tuple - adjust ported tests.\n- finalization.ex: develop added KCV plumbing + classify_log_failures/recovery_required; hunks are disjoint from the metadata threading - merge both.\n- materializer_bootstrap_phase.ex: heavily reworked on develop (#140, qzr re-adoption, per-shard resolver descriptors). Only port the DECODE swap (Values.decode_shard_key_entry replacing decode_shard_tag/binary_to_term + adjacency start_key reconstruction - ri40 stores {tag,start_key} explicitly). Do NOT port phase-a's data-shard-skip/Distributor-sweep hunks.\n- persistence_phase.ex: unchanged on develop since fork - ri40/q67.18 hunks apply nearly clean.\n- Only ONE site reads pre-upgrade durable system-key bytes: materializer bootstrap's shard_key decode (config_monolithic etc. are written, never read back). Legacy term_to_binary fallback lives THERE only; Values stays pure (see child ticket).\n\nAfter this epic: q67.9 proceeds on develop, but note its Distributor-published coverage writes still need phase-a reconciliation or a develop-side equivalent - recorded on q67.9.",
   "id": "bedrock-q67.20",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Extract Phase B metadata-pipeline prerequisites onto develop",
   "type": "epic",
-  "updated_at": "2026-08-19T19:08:46Z"
+  "updated_at": "2026-08-19T19:10:02Z"
 }

@@ -237,30 +237,33 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # strinc bound must keep each cleared range strictly within its own
       # family: '_' (0x5F) < 's' (0x73) puts strinc("...shard_keys/") =
       # "...shard_keys0" below every "...shards/" key.
-      cleared_prefixes = [
-        SystemKeys.shard_keys_prefix(),
-        SystemKeys.shards_prefix(),
-        SystemKeys.layout_logs_prefix()
-      ]
+      cleared_prefixes = %{
+        shard_key: SystemKeys.shard_keys_prefix(),
+        shard: SystemKeys.shards_prefix(),
+        layout_log: SystemKeys.layout_logs_prefix()
+      }
 
-      other_family_keys = [
-        SystemKeys.shard_key(<<>>),
-        SystemKeys.shard_key(<<0xFF, 0xFF>>),
-        SystemKeys.shard("0"),
-        SystemKeys.layout_log("log_1"),
-        SystemKeys.layout_services(),
-        SystemKeys.layout_id(),
-        SystemKeys.materializer_key(<<>>),
-        SystemKeys.materializer_key(<<0xFF, 0xFF>>)
-      ]
+      keys_by_family = %{
+        shard_key: [SystemKeys.shard_key(<<>>), SystemKeys.shard_key(<<0xFF, 0xFF>>)],
+        shard: [SystemKeys.shard("0")],
+        layout_log: [SystemKeys.layout_log("log_1")],
+        layout_services: [SystemKeys.layout_services()],
+        layout_id: [SystemKeys.layout_id()],
+        materializer_key: [SystemKeys.materializer_key(<<>>), SystemKeys.materializer_key(<<0xFF, 0xFF>>)]
+      }
 
-      for prefix <- cleared_prefixes,
-          key <- other_family_keys,
-          not String.starts_with?(key, prefix) do
+      # Foreignness is decided by family identity, not by whether the key
+      # happens to share the prefix's bytes — so an over-broad prefix
+      # definition (e.g. layout_logs_prefix returning "layout/") fails here
+      # instead of being filtered out of the comparison.
+      for {cleared_family, prefix} <- cleared_prefixes,
+          {family, keys} <- keys_by_family,
+          family != cleared_family,
+          key <- keys do
         range = KeyRange.from_prefix(prefix)
 
         refute KeyRange.contains?(range, key),
-               "clear_range over #{inspect(prefix)} would clear foreign family key #{inspect(key)}"
+               "clear_range over #{inspect(prefix)} would clear #{family} key #{inspect(key)}"
       end
     end
 

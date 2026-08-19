@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-19T20:38:20Z",
+  "description": "Stacked PRs #146/#148/#151 report no CI checks: elixir_ci.yaml pull_request trigger only matches base branches main/develop, so only integration PR #152 runs the matrix and the stacked layers land unexercised by CI. Same gap phase-a fixed in 57ca258d (bedrock-z86). Fix: add feature/q67-phase-b-prereqs and q67.20** to the pull_request branches filter, committed at the bottom of the stack (q67.20.3) and restacked upward so every stacked PR's merge ref carries the trigger.",
+  "id": "bedrock-q67.20.6",
+  "labels": [],
+  "parent": "bedrock-q67.20",
+  "priority": 2,
+  "status": "open",
+  "title": "CI: accept pull_request runs targeting the q67.20 integration branch and stacked bases",
+  "type": "task",
+  "updated_at": "2026-08-19T20:38:20Z"
+}

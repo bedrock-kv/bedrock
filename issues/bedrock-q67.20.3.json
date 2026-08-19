@@ -10,8 +10,8 @@
   "labels": [],
   "parent": "bedrock-q67.20",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Port q67.18 to develop: clear system-key prefixes on recovery rewrite; RoutingData clear_range",
   "type": "task",
-  "updated_at": "2026-08-19T19:10:02Z"
+  "updated_at": "2026-08-19T19:46:22Z"
 }

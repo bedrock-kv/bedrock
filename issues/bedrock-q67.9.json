@@ -25,6 +25,10 @@
     {
       "text": "Landing path inverted 2026-08-19 (see bedrock-q67.20): the five prerequisite implementations are being ported from feature/q67-phase-a onto develop as a PR series (proxy-owned routing table first, then ri40 encodings, q67.18 clearing, q67.15+16 window distribution, q67.17 deferred accumulation). This ticket then proceeds ON DEVELOP. Note: the exit criterion's 'Distributor publishes coverage via transactional system-key writes' still requires the Distributor, which exists only on feature/q67-phase-a - phase-a reconciliation (now much smaller: its TSL-delta channel and metadata-pipeline copies are dropped, not merged) or a develop-side coverage writer is a remaining prerequisite for the full exit criterion.",
       "timestamp": "2026-08-19T19:10:03Z"
+    },
+    {
+      "text": "Distributor prerequisite now tracked as bedrock-q67.21 (port from phase-a with keyspace-mutation publication per the FDB MoveKeys/ApplyMetadataMutation model; PR #97 closed). This ticket and bedrock-q67.21 land in coordination: q67.9 owns the client read path + tsl_updated deletion, bedrock-q67.21 owns the coverage writer + healing loop.",
+      "timestamp": "2026-08-19T20:24:13Z"
     }
   ],
   "priority": 3,

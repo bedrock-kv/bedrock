@@ -169,6 +169,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   def handle_call({:commit, epoch, transaction}, from, %{mode: :running, epoch: epoch} = t)
       when is_binary(transaction) do
+    case first_key_out_of_range(transaction) do
+      nil -> accept_commit(transaction, from, t)
+      key -> reply(t, {:error, {:key_out_of_range, key}})
+    end
+  end
+
+  def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :running} = t), do: reply(t, {:error, :wrong_epoch})
+
+  def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
+
+  defp accept_commit(transaction, from, t) do
     case start_batch_if_needed(t) do
       {:error, reason} ->
         GenServer.reply(from, {:error, :abort})
@@ -192,9 +203,31 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :running} = t), do: reply(t, {:error, :wrong_epoch})
+  # Finalization routes every mutation to a shard; a key at or past the end
+  # of the keyspace has no shard, and by the time routing discovers that the
+  # batch has already consumed a commit version and recorded conflicts, so
+  # the whole batch fails and the proxy stops into recovery. Rejecting the
+  # transaction at ingress makes an unroutable key cost one commit, not an
+  # epoch. clear_range ends are exclusive, so an end AT the boundary is legal.
+  @spec first_key_out_of_range(Transaction.encoded()) :: Bedrock.key() | nil
+  defp first_key_out_of_range(transaction) do
+    case Transaction.mutations(transaction) do
+      {:ok, mutations} -> Enum.find_value(mutations, &mutation_key_out_of_range/1)
+      {:error, _} -> nil
+    end
+  end
 
-  def handle_call({:commit, _epoch, _transaction}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
+  defp mutation_key_out_of_range({:set, key, _value}), do: unrangeable(key)
+  defp mutation_key_out_of_range({:clear, key}), do: unrangeable(key)
+  defp mutation_key_out_of_range({:atomic, _op, key, _value}), do: unrangeable(key)
+
+  defp mutation_key_out_of_range({:clear_range, start_key, end_key}) do
+    unrangeable(start_key) || if end_key > Bedrock.end_of_keyspace(), do: end_key
+  end
+
+  defp mutation_key_out_of_range(_other), do: nil
+
+  defp unrangeable(key), do: if(key >= Bedrock.end_of_keyspace(), do: key)
 
   @impl true
   @spec handle_info(

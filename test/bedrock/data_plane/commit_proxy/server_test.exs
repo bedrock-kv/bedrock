@@ -1017,6 +1017,111 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
     end
   end
 
+  describe "keyspace bounds validation at ingress" do
+    # The sequencer here is a bare atom: any transaction that survives
+    # validation would crash the proxy on version assignment, so a clean
+    # {:error, {:key_out_of_range, _}} reply with the proxy still alive
+    # proves rejection happens before the batch is ever started.
+    setup do
+      lock_token = "bounds_test_token"
+      resolver_layout = %ResolverLayout.Single{resolver_ref: :test_resolver}
+
+      opts = [
+        cluster: TestCluster,
+        director: self(),
+        epoch: 1,
+        instance: 0,
+        max_latency_in_ms: 50,
+        max_per_batch: 5,
+        empty_transaction_timeout_ms: 60_000,
+        lock_token: lock_token,
+        sequencer: :fake_sequencer,
+        resolver_layout: resolver_layout
+      ]
+
+      commit_proxy = start_supervised!(Server.child_spec(opts))
+
+      :ok =
+        GenServer.call(
+          commit_proxy,
+          {:recover_from, lock_token, :fake_sequencer, resolver_layout, empty_routing_snapshot()}
+        )
+
+      {:ok, commit_proxy: commit_proxy}
+    end
+
+    defp encode_mutations(mutations) do
+      Transaction.encode(%{
+        mutations: mutations,
+        read_conflicts: [],
+        write_conflicts: [{"k", "k" <> <<0>>}]
+      })
+    end
+
+    test "rejects a set at the end of the keyspace without touching the sequencer", %{commit_proxy: proxy} do
+      eok = Bedrock.end_of_keyspace()
+      tx = encode_mutations([{:set, eok, "v"}])
+
+      assert {:error, {:key_out_of_range, ^eok}} = GenServer.call(proxy, {:commit, 1, tx})
+      assert Process.alive?(proxy)
+    end
+
+    test "rejects a set beyond the end of the keyspace", %{commit_proxy: proxy} do
+      key = Bedrock.end_of_keyspace() <> <<0x01>>
+      tx = encode_mutations([{:set, key, "v"}])
+
+      assert {:error, {:key_out_of_range, ^key}} = GenServer.call(proxy, {:commit, 1, tx})
+    end
+
+    test "rejects a clear at or beyond the end of the keyspace", %{commit_proxy: proxy} do
+      key = Bedrock.end_of_keyspace()
+      tx = encode_mutations([{:clear, key}])
+
+      assert {:error, {:key_out_of_range, ^key}} = GenServer.call(proxy, {:commit, 1, tx})
+    end
+
+    test "rejects a clear_range starting at the end of the keyspace", %{commit_proxy: proxy} do
+      eok = Bedrock.end_of_keyspace()
+      tx = encode_mutations([{:clear_range, eok, eok <> <<0x01>>}])
+
+      assert {:error, {:key_out_of_range, ^eok}} = GenServer.call(proxy, {:commit, 1, tx})
+    end
+
+    test "rejects a clear_range ending beyond the end of the keyspace", %{commit_proxy: proxy} do
+      bad_end = Bedrock.end_of_keyspace() <> <<0x01>>
+      tx = encode_mutations([{:clear_range, "a", bad_end}])
+
+      assert {:error, {:key_out_of_range, ^bad_end}} = GenServer.call(proxy, {:commit, 1, tx})
+    end
+
+    test "rejects when any single mutation in the transaction is out of range", %{commit_proxy: proxy} do
+      key = Bedrock.end_of_keyspace()
+      tx = encode_mutations([{:set, "fine", "v"}, {:set, key, "v"}])
+
+      assert {:error, {:key_out_of_range, ^key}} = GenServer.call(proxy, {:commit, 1, tx})
+    end
+
+    test "in-range mutations pass validation and reach version assignment", %{commit_proxy: proxy} do
+      # System keys below the boundary and a clear_range ending exactly AT the
+      # boundary (exclusive end) are legal; with the atom sequencer the proxy
+      # exits at version assignment - past validation - so callers see :abort.
+      tx =
+        encode_mutations([
+          {:set, <<0xFF, "/system/ok">>, "v"},
+          {:clear_range, "a", Bedrock.end_of_keyspace()}
+        ])
+
+      result =
+        try do
+          GenServer.call(proxy, {:commit, 1, tx})
+        catch
+          :exit, _ -> {:error, :abort}
+        end
+
+      assert result == {:error, :abort}
+    end
+  end
+
   describe "epoch validation" do
     test "rejects commit with wrong epoch" do
       director = self()

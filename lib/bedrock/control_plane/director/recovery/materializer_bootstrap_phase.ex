@@ -566,7 +566,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # with term_to_binary; their first completed recovery re-encodes them.
   # Remove once no supported release can carry the old encoding.
   defp decode_legacy_shard_tag(value) do
-    case :erlang.binary_to_term(value) do
+    case :erlang.binary_to_term(value, [:safe]) do
       tag when is_integer(tag) -> {:ok, tag}
       {tag, _start_key} when is_integer(tag) -> {:ok, tag}
       _ -> {:error, :invalid_encoding}

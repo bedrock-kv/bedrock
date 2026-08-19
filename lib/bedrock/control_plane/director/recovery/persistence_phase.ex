@@ -308,7 +308,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end)
   end
 
-  # Creates shard_key(end_key) -> tag and shard(tag) -> ShardMetadata entries
+  # Creates shard_key(end_key) -> {tag, start_key} and shard(tag) -> ShardMetadata entries
   # shard_layout format: %{end_key => {tag, start_key}}
   @spec build_shard_keys(Tx.t(), TransactionSystemLayout.shard_layout() | nil) :: Tx.t()
   defp build_shard_keys(tx, nil), do: tx

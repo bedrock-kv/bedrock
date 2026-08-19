@@ -106,8 +106,9 @@ defmodule Bedrock.SystemKeys.Values do
   Encodes a shard key entry: `{tag, start_key}`.
 
   The key carries the shard's `end_key`; the value carries the tag and the
-  range's start key so readers (materializer bootstrap) can reconstruct the
-  full shard layout without relying on adjacency.
+  range's start key. (Readers currently rebuild start keys from adjacency —
+  the explicit start key exists so a future reader of a single entry does
+  not have to.)
   """
   @spec encode_shard_key_entry(Bedrock.range_tag(), Bedrock.key()) :: binary()
   def encode_shard_key_entry(tag, start_key) when is_integer(tag) and is_binary(start_key),

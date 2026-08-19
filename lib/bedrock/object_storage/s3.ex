@@ -250,11 +250,10 @@ defmodule Bedrock.ObjectStorage.S3 do
 
   defp extract_etag(_headers), do: nil
 
-  # Every request goes through our own hackney client: the adapter
-  # bundled with ex_aws crashes on bodiless HEAD responses. Callers may
-  # still override :http_client through their backend config.
+  # Requests go through Req rather than ex_aws's default hackney client.
+  # Callers may still override :http_client through their backend config.
   defp request_config(config) do
-    Keyword.put_new(Keyword.get(config, :config, []), :http_client, Bedrock.ObjectStorage.S3.HttpClient)
+    Keyword.put_new(Keyword.get(config, :config, []), :http_client, ExAws.Request.Req)
   end
 
   defp put_object_opts(opts, conditional_opts \\ []) do

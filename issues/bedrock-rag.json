@@ -15,11 +15,15 @@
     {
       "text": "Ingress half landed as PR #153 (stacked on #151, stack #149): out-of-range mutations rejected per-transaction at commit ingress with {:error,{:key_out_of_range,key}}; corrupt mutation payloads rejected as :invalid_transaction instead of crashing the proxy; Repo.transact surfaces both immediately (non-retryable). Cold-audit findings applied (retry classification, decode guard, corrected mechanism comment - single keys were silently fallback-routed to the last shard pre-fix, only clear_range past the boundary killed the epoch). Remaining scope on this ticket: the FDB-convergence question (system-write gating + system-range conflict broadcast) - see earlier comment; decide at q67.9 time.",
       "timestamp": "2026-08-19T21:02:43Z"
+    },
+    {
+      "text": "Gap audit 2026-08-19 (vs ../foundationdb) upgrades the remaining scope from protocol-simplification question to INTEGRITY REQUIREMENT before q67.9 flips shard-map authority: (1) any client may write \\xFF/system keys today and they flow into every proxy's routing table - FDB gates via ACCESS_SYSTEM_KEYS/lockAware (CommitProxyServer.actor.cpp:247-253); require privileged/system-flagged commits for \\xFF writes. (2) Atomics on system keys silently diverge durable state from all metadata views: they pass ingress, are classified metadata mutations (transaction.ex:531), then skipped by Metadata and RoutingData while the materializer applies them durably - FDB transforms versionstamps to plain sets BEFORE the metadata check and handles no atomics in ApplyMetadataMutation; reject atomics targeting \\xFF at ingress. Both fold into this ticket's next PR.",
+      "timestamp": "2026-08-19T22:04:09Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Commit proxy ingress validation for system-range keys",
   "type": "task",
-  "updated_at": "2026-08-19T21:02:43Z"
+  "updated_at": "2026-08-19T22:04:09Z"
 }

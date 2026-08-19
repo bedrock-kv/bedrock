@@ -7,9 +7,15 @@
   "id": "bedrock-rag",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "FDB-source finding (2026-08-19, while validating q67.20.5/#151): FDB avoids deferred metadata accumulation entirely by verdict convergence — conflict ranges intersecting systemKeys are broadcast to ALL resolvers (CommitProxyServer.actor.cpp addRead/WriteConflictRanges), so every resolver holds full system-range conflict history and independently reaches the GLOBAL verdict for system-only-conflict transactions; the resolver's local committed flag then safely gates its stateMutations relay (Resolver.actor.cpp:397). This works only because FDB's metadata writers conflict exclusively in system space. If this ticket lands ingress rejection of user transactions touching system ranges AND system writes are required to carry system write-conflict ranges AND system-range conflicts are broadcast to all resolvers, then q67.17's hold/confirm protocol (q67.20.5) becomes retirable in favor of the simpler convergent design. Scope decision for this ticket + q67.9; #151 stays as-is meanwhile (it is correct for the general mixed-conflict case FDB does not handle).",
+      "timestamp": "2026-08-19T20:45:14Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Commit proxy ingress validation for system-range keys",
   "type": "task",
-  "updated_at": "2026-08-15T20:46:22Z"
+  "updated_at": "2026-08-19T20:45:14Z"
 }

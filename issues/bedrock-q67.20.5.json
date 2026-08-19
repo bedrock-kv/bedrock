@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-q67.20.4"
+  ],
   "blocks": [],
   "created": "2026-08-19T19:09:49Z",
   "description": "Port of closed bedrock-q67.17 (phase-a commit 13f25e72, PR #112). In sharded-resolver mode no resolver knows the merged GLOBAL abort set at resolution time, so metadata from a globally-aborted transaction could otherwise be distributed. Deferred accumulation via next-call piggyback: proxies send no metadata_per_tx to sharded resolvers; metadata_hold marks the version held (capping windows below the oldest held version - no proxy acks past unconfirmed metadata); the batch's globally-filtered committed metadata is reported via metadata_deferred_fn and re-sent as metadata_confirms on every subsequent call (including ~1/s empty batches - the liveness channel) until windows ack past it; MetadataAccumulator.insert_sorted folds confirms at original commit versions; unconfirmed holds expire at the retention horizon into metadata_pruned_through (coverage-gap fail-fast into recovery, never silent loss); merge_metadata_windows takes max(from)/min(to), dedups entries by version, truncates past merged to.\n\nMANDATORY on develop, not optional: since #140/qzr, materializer bootstrap creates one resolver per shard range (resolver_descriptors_for_layout), so every multi-shard cluster runs sharded resolution.\n\nBrings: finalization sharded path, proxy deferred_metadata state + {:metadata_deferred,..} handler, resolver hold/confirm handling, sharded_metadata_distribution_integration_test. Depends on the T4 port (or lands folded into it - see T4).",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Port q67.17 to develop: sharded resolvers defer metadata accumulation until global-abort confirmation",
   "type": "task",
-  "updated_at": "2026-08-19T19:09:49Z"
+  "updated_at": "2026-08-19T19:10:02Z"
 }

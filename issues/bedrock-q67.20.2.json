@@ -5,14 +5,15 @@
     "bedrock-q67.20.3",
     "bedrock-q67.20.4"
   ],
+  "closed_at": "2026-08-19T19:46:22Z",
   "created": "2026-08-19T19:09:14Z",
   "description": "Port of closed bedrock-ri40 (phase-a commits 7c6acbab + 13facee5, PR #107). Replaces :erlang.term_to_binary for \\xFF/system values with explicit encodings: scalar families via Bedrock.Encoding.Tuple (exists on develop), structured families (config_monolithic, layout_services) via a versioned term codec (0x01) rejecting pids/refs/funs at encode, String.to_existing_atom on decode. shard_key values become {tag, start_key} - readers no longer reconstruct start keys by adjacency.\n\nBrings: lib/bedrock/system_keys/values.ex (new, with gating-audit fixes), SystemKeys.parse_key expansion to all ~20 families written by PersistencePhase (from q67.15's commit - pulled forward here so Values.decode_for has its key types), PersistencePhase writer swap, RoutingData shard_key decode swap (undecodable values ignored, keep last good entry), materializer_bootstrap_phase decode swap.\n\nDECISION - legacy compatibility: materializer bootstrap's shard_key read is the ONLY site that reads pre-upgrade durable bytes (verified 2026-08-19: config_monolithic/cluster/* are written, never read back; RoutingData sees only current-epoch mutations, which an upgraded director writes new-format). Keep a narrow legacy fallback THERE only (current decode_shard_tag tolerates t2b tag | {tag, start_key}; retain behind Values-first decode, with comment + follow-up removal ticket after one release). Values itself stays pure - no t2b anywhere in it. Precedent: #138 legacy BED0 WAL reading. First post-upgrade recovery re-encodes everything via PersistencePhase rewrite.\n\nConflict notes: persistence_phase.ex unchanged on develop since fork - applies nearly clean. Bootstrap hunk must be re-cut against develop's reworked get_shard_layout (line ~500-545; drop adjacency map_reduce, use explicit start_key). encode_services_for_storage pid-sanitization (phase-a) comes along.",
   "id": "bedrock-q67.20.2",
   "labels": [],
   "parent": "bedrock-q67.20",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Port ri40 to develop: Values module, full parse_key coverage, system-key encode/decode swap",
   "type": "task",
-  "updated_at": "2026-08-19T19:32:50Z"
+  "updated_at": "2026-08-19T19:46:22Z"
 }

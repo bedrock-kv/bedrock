@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-19T22:04:08Z",
+  "description": "From the 2026-08-19 gap audit of #152 vs ../foundationdb. FDB seeds every new commit proxy with the FULL system-key state before it serves anything (CommitProxyServer.actor.cpp:77 broadcastTxnRequest(TxnStateRequest); requests refused until txnStateStore is valid). Bedrock has no counterpart: a recovered proxy starts at Metadata.new() and converges only to what THIS epoch commits. The recovery system transaction rewrites config/layout families, but materializer_keys/ has no writer at all, and the shard families are skipped when shard_layout is nil/empty (persistence_phase.ex:330). The coverage-gap fail-fast's premise (\"recovery rebuilds proxies with full state\", commit_proxy/server.ex) is only true for rewritten families.\n\nNon-consequential today (nothing reads proxy Metadata but the window applier), but BOTH q67.9 read-path options (\"clients read map from metadata shard or proxy MetadataAccumulator\") and q67.21's materializer_keys writer presuppose post-recovery completeness.\n\nDecide and implement ONE of: (a) PersistencePhase clear+rewrites every proxy-visible family each recovery, including materializer_keys/ once q67.21 writes it (resolves q67.21's open ownership question as recovery-written); or (b) seed proxy Metadata from a durable metadata-shard read at recover_from (closer to FDB's TxnStateRequest). Decision gates q67.9's read path.",
+  "id": "bedrock-q67.23",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Proxy metadata bootstrap: decide full-rewrite vs seeded recover_from (FDB TxnStateRequest analogue)",
+  "type": "task",
+  "updated_at": "2026-08-19T22:04:08Z"
+}

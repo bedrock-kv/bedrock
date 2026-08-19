@@ -14,11 +14,15 @@
     {
       "text": "Landing structure: integration PR #152 (feature/q67-phase-b-prereqs -\u003e develop, draft). T1 #144 and T2 #145 squash-merged into the integration branch; T3 #146 -\u003e T4 #148 -\u003e T5 #151 ride as GitHub stack #149 on top, merging bottom-up into the integration branch after review. Each layer TDD'd and independently cold-audited before the next stacked on.",
       "timestamp": "2026-08-19T20:13:18Z"
+    },
+    {
+      "text": "Stack #149 merged bottom-up into feature/q67-phase-b-prereqs 2026-08-19 (atomic squash via gh stack merge): #151 (q67.20.5) + #153 (bedrock-rag ingress half) joined #144/#145/#146/#148 already on the branch. Integration branch at 4dc3393e, full CI matrix green. Remaining: #152 (draft, integration -\u003e develop) — flipping ready + landing it closes this epic and unblocks q67.9.",
+      "timestamp": "2026-08-19T21:52:16Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Extract Phase B metadata-pipeline prerequisites onto develop",
   "type": "epic",
-  "updated_at": "2026-08-19T20:24:13Z"
+  "updated_at": "2026-08-19T21:52:16Z"
 }

@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-q67.9"
+  ],
   "blocks": [],
   "created": "2026-08-19T22:13:28Z",
   "description": "Phase B definition-of-done gap (2026-08-19): cluster parameters and policies currently live in coordinator raft state (authoritative - recovery reads context.cluster_config from it) AND are written to the keyspace every recovery (cluster/parameters/*, cluster/policies/*, config_monolithic) where they are never read back - a write-only shadow copy that could silently diverge. FDB's model: \\xff/conf is authoritative; coordinators hold only the connection string (../foundationdb fdbclient/ManagementAPI, coordinators only store cluster file). Target: the keyspace copies become authoritative (read back at recovery via the metadata shard, changed via ordinary transactions), and coordinator raft shrinks to the bootstrap anchor (epoch, log identities per bedrock-aum, coordinator membership). The legacy config_monolithic/epoch_legacy/last_recovery_legacy family is deleted once nothing consumes it. Sequencing: after q67.9's read path exists (recovery must be able to read config from the keyspace before raft stops carrying it).",

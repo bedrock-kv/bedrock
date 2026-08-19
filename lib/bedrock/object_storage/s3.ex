@@ -250,7 +250,11 @@ defmodule Bedrock.ObjectStorage.S3 do
 
   defp extract_etag(_headers), do: nil
 
-  defp request_config(config), do: Keyword.get(config, :config, [])
+  # Requests go through Req rather than ex_aws's default hackney client.
+  # Callers may still override :http_client through their backend config.
+  defp request_config(config) do
+    Keyword.put_new(Keyword.get(config, :config, []), :http_client, ExAws.Request.Req)
+  end
 
   defp put_object_opts(opts, conditional_opts \\ []) do
     content_type_opt =

@@ -74,9 +74,9 @@ defmodule Bedrock.MixProject do
       {:flatbuffer, "~> 0.3"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"},
-      {:ex_aws, "~> 2.5"},
+      {:ex_aws, "~> 2.7"},
       {:ex_aws_s3, "~> 2.5"},
-      {:hackney, "~> 1.18"},
+      {:req, "~> 0.7"},
       {:sweet_xml, "~> 0.7"}
     ])
   end
@@ -86,6 +86,7 @@ defmodule Bedrock.MixProject do
       [
         {:stream_data, "~> 1.1", only: :test},
         {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+        {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
         {:dialyxir, "~> 1.4.7", only: [:dev, :test], runtime: false},
         {:faker, "~> 0.17", only: :test},
         {:mix_test_watch, "~> 1.0", only: [:dev, :test], runtime: false},

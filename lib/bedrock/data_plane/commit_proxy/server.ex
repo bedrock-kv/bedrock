@@ -201,6 +201,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           :timeout
           | {:routing_data_update, RoutingData.t()}
           | {:metadata_updates, {Bedrock.version() | nil, Bedrock.version(), [term()]}}
+          | {:metadata_deferred, Bedrock.version(), [term()]}
           | {:finalization_failed, term()}
           | {:DOWN, reference(), :process, pid(), term()},
           State.t()

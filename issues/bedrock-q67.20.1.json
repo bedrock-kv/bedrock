@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67.20",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Commit proxy builds and owns its routing table; recover_from carries plain layout data",
   "type": "bug",
-  "updated_at": "2026-08-19T19:09:14Z"
+  "updated_at": "2026-08-19T19:16:53Z"
 }

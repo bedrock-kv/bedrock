@@ -93,7 +93,7 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulatorTest do
     end
   end
 
-  describe "prune_before/2" do
+  describe "prune_through/2" do
     setup do
       acc =
         MetadataAccumulator.new()
@@ -105,29 +105,29 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulatorTest do
       {:ok, acc: acc}
     end
 
-    test "removes entries before specified version", %{acc: acc} do
-      acc = MetadataAccumulator.prune_before(acc, v(3))
+    test "removes entries at or below the specified version", %{acc: acc} do
+      acc = MetadataAccumulator.prune_through(acc, v(2))
 
       assert length(entries(acc)) == 2
       versions = Enum.map(entries(acc), fn {ver, _} -> ver end)
       assert versions == [v(3), v(4)]
     end
 
-    test "keeps all entries when pruning before first version", %{acc: acc} do
-      acc = MetadataAccumulator.prune_before(acc, v(0))
+    test "keeps all entries when pruning through a version before the first", %{acc: acc} do
+      acc = MetadataAccumulator.prune_through(acc, v(0))
 
       assert length(entries(acc)) == 4
     end
 
-    test "removes all entries when pruning at or after last version", %{acc: acc} do
-      acc = MetadataAccumulator.prune_before(acc, v(100))
+    test "removes all entries when pruning through the last version or later", %{acc: acc} do
+      acc = MetadataAccumulator.prune_through(acc, v(100))
 
       assert entries(acc) == []
     end
 
-    test "prune_before is idempotent", %{acc: acc} do
-      acc1 = MetadataAccumulator.prune_before(acc, v(2))
-      acc2 = MetadataAccumulator.prune_before(acc1, v(2))
+    test "prune_through is idempotent", %{acc: acc} do
+      acc1 = MetadataAccumulator.prune_through(acc, v(2))
+      acc2 = MetadataAccumulator.prune_through(acc1, v(2))
 
       assert acc1 == acc2
     end
@@ -147,7 +147,7 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulatorTest do
       assert length(updates) == 2
 
       # Prune old entries now that client is at v(3)
-      acc = MetadataAccumulator.prune_before(acc, v(2))
+      acc = MetadataAccumulator.prune_through(acc, v(1))
 
       # Add new mutations
       acc = MetadataAccumulator.append(acc, v(4), [{:set, <<0xFF, "d">>, "4"}])

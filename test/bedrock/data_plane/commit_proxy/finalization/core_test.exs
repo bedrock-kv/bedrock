@@ -46,7 +46,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert commit_version == Version.from_integer(100)
       assert is_list(summaries)
       assert Keyword.has_key?(opts, :timeout)
-      {:ok, aborted_indices, []}
+      {:ok, aborted_indices, nil}
     end
   end
 
@@ -146,7 +146,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
 
       mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [], []}
+        {:ok, [], nil}
       end
 
       assert {:ok, 0, 0, _routing_data} =
@@ -190,7 +190,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       # Mock resolver that aborts both transactions
       mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [0, 1], []}
+        {:ok, [0, 1], nil}
       end
 
       assert {:ok, 2, 0, _routing_data} =
@@ -221,7 +221,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
 
       mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [], []}
+        {:ok, [], nil}
       end
 
       mock_log_push_fn = fn _last_version, _tx_by_log, _commit_version, _opts ->
@@ -251,7 +251,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
 
       mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [], []}
+        {:ok, [], nil}
       end
 
       mock_log_push_fn = fn _last_version, _tx_by_log, _commit_version, _opts ->
@@ -296,7 +296,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                             _metadata_per_tx,
                             _opts ->
         send(test_pid, {:resolver_called, last_version, received_commit_version})
-        {:ok, [], []}
+        {:ok, [], nil}
       end
 
       # Mock log push function that captures version parameters

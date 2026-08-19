@@ -13,11 +13,15 @@
     {
       "text": "End-state clarification per the Phase B definition of done: whichever option is chosen, the terminal state is that recover_from carries NO map content - the routing snapshot introduced by q67.20.1 (the correct crash fix at the time) is itself a side channel under the doctrine and is retired once proxies seed Metadata+RoutingData from the keyspace. The unlock message shrinks to lock token, sequencer, and resolver layout.",
       "timestamp": "2026-08-19T22:13:28Z"
+    },
+    {
+      "text": "DECISION PROPOSAL (2026-08-19, from FDB source study; amends the earlier end-state comment): choose option (b), seeded recover_from - and recognize that today's unlock snapshot already IS option (b) in embryo, because topology_phase builds it from the materializer-bootstrap KEYSPACE READS of the previous epoch. That makes the seed a transport of committed keyspace state, not a second authority - exactly FDB's TxnStateRequest, which seeds every proxy's txnStateStore from recovered durable state before it serves anything, with differential updates riding the resolvers thereafter. The pure 'recover_from carries NO map content' reading has a real chicken-and-egg: the epoch's FIRST commit is the recovery system transaction itself, and the proxy committing it needs THIS epoch's log wiring (log_map/log_services) before any window can exist. FDB has the same split: keyServers/serverKeys ride the keyspace, but tlog interfaces ride ServerDBInfo broadcast - runtime wiring lives outside the keyspace in FDB too. REFINED END STATE: recover_from carries lock token, sequencer, resolver layout, and runtime wiring (this epoch's log_map + log_services + replication factor, the ServerDBInfo analogue); all shard-map CONTENT is keyspace-derived - seeded at unlock from the durable read, then differential via windows. The earlier comment's 'unlock shrinks to lock token + sequencer + resolver layout' overshot: it must also carry log wiring. Doctrine survives intact: the seed cannot contradict the keyspace because it is byte-derived from it; the kill-list entry for the routing snapshot becomes 'formalize as keyspace-derived seed' rather than 'retire'. Remaining implementation (gates q67.9): extend the seed from routing content to the full decoded proxy-visible family image (proxy Metadata), landing together with q67.9's read path since nothing reads proxy Metadata before then. Awaiting user confirmation before closing - this adjusts the recorded definition-of-done.",
+      "timestamp": "2026-08-19T23:35:55Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Proxy metadata bootstrap: decide full-rewrite vs seeded recover_from (FDB TxnStateRequest analogue)",
   "type": "task",
-  "updated_at": "2026-08-19T22:13:28Z"
+  "updated_at": "2026-08-19T23:35:55Z"
 }

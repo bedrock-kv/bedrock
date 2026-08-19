@@ -9,9 +9,15 @@
   "id": "bedrock-q67.20",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Landing structure: integration PR #152 (feature/q67-phase-b-prereqs -\u003e develop, draft). T1 #144 and T2 #145 squash-merged into the integration branch; T3 #146 -\u003e T4 #148 -\u003e T5 #151 ride as GitHub stack #149 on top, merging bottom-up into the integration branch after review. Each layer TDD'd and independently cold-audited before the next stacked on.",
+      "timestamp": "2026-08-19T20:13:18Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Extract Phase B metadata-pipeline prerequisites onto develop",
   "type": "epic",
-  "updated_at": "2026-08-19T19:10:02Z"
+  "updated_at": "2026-08-19T20:13:18Z"
 }

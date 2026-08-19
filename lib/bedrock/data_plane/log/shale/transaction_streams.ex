@@ -8,6 +8,9 @@ defmodule Bedrock.DataPlane.Log.Shale.TransactionStreams do
   alias Bedrock.DataPlane.Log.Shale.WalFormat
   alias Bedrock.DataPlane.Transaction
 
+  @doc """
+  Reads the previous-version marker from the WAL file header at `path`.
+  """
   @spec read_previous_version(String.t()) ::
           {:ok, Bedrock.version()}
           | {:error, :unsupported_wal_format | :invalid_wal_format | File.posix()}

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.1 — 2026-08-19
+
+- **Security: remove hackney from the dependency tree.** An audit found the
+  ex_aws default HTTP client, hackney 1.25.0, carrying four CVEs —
+  CRLF/header injection via cookie options (CVE-2026-47069), a SOCKS5 TLS
+  upgrade with no timeout (CVE-2026-47071), CR/LF injection in query
+  parameters (CVE-2026-47075), and an SSRF allowlist bypass via
+  percent-encoded hosts (CVE-2026-47076). Rather than upgrading, object
+  storage now speaks through **Req** via ex_aws's own adapter, and hackney
+  plus its nine transitive packages leave the lock entirely. No
+  configuration is required — the S3 backend selects the client per request,
+  and a custom `:http_client` in your backend config still takes precedence.
+  If your application configured `:ex_aws, :hackney_opts` for Bedrock's
+  benefit, use `:ex_aws, :req_opts` instead. ex_aws is now `~> 2.7`.
+
+- **Dependency vulnerabilities now fail CI.** `mix deps.audit` (via the new
+  `mix_audit` dev dependency) runs on every build, so future advisories
+  surface immediately instead of accumulating.
+
 ## 0.6.0 — 2026-08-18
 
 - **Write-ahead logs now trim themselves.** Logs previously retained their

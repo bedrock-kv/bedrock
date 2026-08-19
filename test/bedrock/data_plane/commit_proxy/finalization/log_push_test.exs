@@ -45,7 +45,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
     {
       fn :test_sequencer, _epoch, _commit_version, _opts -> :ok end,
       fn :test_resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
-        {:ok, [], []}
+        {:ok, [], nil}
       end
     }
   end
@@ -182,7 +182,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         assert length(summaries) == 3
         assert Keyword.has_key?(opts, :timeout)
         # Abort middle transaction
-        {:ok, [1], []}
+        {:ok, [1], nil}
       end
 
       sequencer_notify_fn = fn :test_sequencer, _epoch, ^expected_version, _opts -> :ok end
@@ -592,7 +592,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         )
 
       resolver_fn = fn :test_resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
-        {:ok, [], []}
+        {:ok, [], nil}
       end
 
       routing_data = Support.build_routing_data(layout)

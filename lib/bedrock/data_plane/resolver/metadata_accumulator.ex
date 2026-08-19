@@ -102,27 +102,42 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
   end
 
   @doc """
-  Removes all entries with versions strictly before the given version.
+  Removes all entries with versions at or below the given version.
 
-  This prunes old entries that are no longer needed, keeping memory bounded.
+  This prunes entries every proxy has confirmed applying (they can never be
+  requested again - `mutations_since/2` is exclusive), keeping memory bounded.
 
   ## Parameters
     - `accumulator` - The accumulator to prune
-    - `before_version` - Remove entries with versions < this version
+    - `through_version` - Remove entries with versions <= this version
 
   ## Examples
 
       iex> acc = new()
       iex>   |> append(v(1), [{:set, <<0xFF, "a">>, "1"}])
       iex>   |> append(v(2), [{:set, <<0xFF, "b">>, "2"}])
-      iex>   |> prune_before(v(2))
+      iex>   |> prune_through(v(1))
       iex> length(entries(acc))
       1
   """
-  @spec prune_before(t(), Bedrock.version()) :: t()
-  def prune_before(%__MODULE__{reversed_entries: reversed} = accumulator, before_version) do
-    # Keep entries where version >= before_version (from newest end)
-    pruned = Enum.take_while(reversed, fn {version, _} -> version >= before_version end)
+  @spec prune_through(t(), Bedrock.version()) :: t()
+  def prune_through(%__MODULE__{reversed_entries: reversed} = accumulator, through_version) do
+    # Keep entries where version > through_version (from newest end)
+    pruned = Enum.take_while(reversed, fn {version, _} -> version > through_version end)
     %{accumulator | reversed_entries: pruned}
+  end
+
+  @doc """
+  Returns the newest entry version at or below the given version, or nil if
+  there is none.
+
+  Used to record the exact coverage lost by a `prune_through/2` call: a proxy
+  whose ack is at or above this version has confirmed every discarded entry,
+  even when the prune version itself (a commit-stream version) is far ahead of
+  its ack.
+  """
+  @spec newest_version_at_or_below(t(), Bedrock.version()) :: Bedrock.version() | nil
+  def newest_version_at_or_below(%__MODULE__{reversed_entries: reversed}, version) do
+    Enum.find_value(reversed, fn {v, _} -> if v <= version, do: v end)
   end
 end

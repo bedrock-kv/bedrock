@@ -46,12 +46,13 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
     def init(:ok), do: {:ok, %{}}
 
     def handle_call(
-          {:resolve_transactions, _epoch, {_last_version, _commit_version}, _transaction_summaries},
+          {:resolve_transactions, _epoch, {_last_version, _commit_version}, _transaction_summaries, _metadata_per_tx,
+           {_proxy_id, _acked_version}},
           _from,
           state
         ) do
-      # Return no conflicts (empty list) for simple test scenarios
-      {:reply, {:ok, []}, state}
+      # Return no conflicts and no metadata window for simple test scenarios
+      {:reply, {:ok, [], nil}, state}
     end
   end
 

@@ -80,7 +80,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
         if attempt < 2 do
           {:error, :timeout}
         else
-          {:ok, [], []}
+          {:ok, [], nil}
         end
       end
 
@@ -122,7 +122,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
         if attempt < 2 do
           {:error, :unavailable}
         else
-          {:ok, [], []}
+          {:ok, [], nil}
         end
       end
 
@@ -162,7 +162,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
           # Alternative failure format used by some resolver implementations
           {:failure, :timeout, :test_resolver}
         else
-          {:ok, [], []}
+          {:ok, [], nil}
         end
       end
 
@@ -410,7 +410,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
         if attempt < 3 do
           {:error, :timeout}
         else
-          {:ok, [], []}
+          {:ok, [], nil}
         end
       end
 
@@ -469,7 +469,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
         if attempt < 2 do
           {:error, :timeout}
         else
-          {:ok, [], []}
+          {:ok, [], nil}
         end
       end
 

@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-19T22:40:31Z",
+  "description": "From the #154 cold audit. Two client-honesty gaps that become parity gaps once \\xFF/system is authoritative: (1) reads of \\xFF keys are ungated anywhere - FDB bounds reads via getMaxReadKey/READ_SYSTEM_KEYS (client-side, same trust model as write gating); q67.9's client read path (GetKeyServerLocations analogue) should decide where the read bound lives. (2) A hand-crafted encoded transaction can declare read/write-conflict ranges over \\xFF and conflict-abort system transactions; FDB's equivalent check is also client-side (ReadYourWrites.actor.cpp:2452-2456), so this matches the threat model but belongs on the hardening backlog - validating conflict sections at ingress would make the proxy gate complete. Neither is a corruption vector; both are foot-gun guards.",
+  "id": "bedrock-q67.26",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Gate system-keyspace reads and validate conflict-range sections (FDB READ_SYSTEM_KEYS parity)",
+  "type": "task",
+  "updated_at": "2026-08-19T22:40:31Z"
+}

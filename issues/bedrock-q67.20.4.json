@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-q67.20.2"
+  ],
   "blocks": [],
   "created": "2026-08-19T19:09:49Z",
   "description": "Port of closed bedrock-q67.15 (PR #105) and bedrock-q67.16 (PR #106) as ONE coherent unit - .16 rewrote .15's merge seam, so porting the final state avoids replaying churn. Source: phase-a @ eda6a319. Design highlights (all audited on phase-a):\n\n- CommitProxy.Metadata (new module): structured parsed view of the \\xFF/system families, version-guarded idempotent apply_updates, clear/clear_range support, forward-compatible skip of unknown keys. Built directly on Values (port after ri40 - no binary_to_term interim state).\n- Proxy State: metadata: Metadata.t() + (in this port, empty) deferred_metadata; server applies windows IN THE SERVER PROCESS ({:metadata_updates, window}), gap fail-fast exit({:metadata_coverage_gap,..}), noreply_resuming_cadence to avoid stranding an open batch's zero timeout.\n- Resolver protocol: resolve_transactions carries metadata_ack {proxy SERVER pid, applied version} as explicit call-message elements (7-tuple); resolver keys proxy_progress by proxy id with {acked, last_seen}; differential windows (from=recorded monotone ack, to=settled), nil when nothing to report; prune_through min confirmed ack CAPPED at retention horizon; metadata_pruned_through floor for gap detection using newest_version_at_or_below (not the ack itself - avoids spurious gap exits); laggard proxy expiry.\n- MetadataAccumulator: prune_before -\u003e prune_through (\u003c=), committed_mutations/2, newest_version_at_or_below/2 (insert_sorted comes with q67.17).\n- Finalization: apply_metadata_window threading, metadata_merge_fn seam, RoutingData application at resolution time; telemetry (trace_metadata_applied, trace_unknown_key_skipped).\n- Tests: metadata_distribution_integration_test, metadata_window_distribution_test, metadata_window_application_test, metadata_test + finalization test updates.\n\nFIXES LIVE BUGS ON DEVELOP: current develop resolver keys proxy_progress by elem(from,0) - a fresh finalization task pid per batch - so last_seen is always nil: full window re-sent every batch (O(history)), one dead-pid progress entry per batch (unbounded), prune stuck forever (q67.16's findings are live on develop today).\n\nReconciliation: keep develop's {:finalization_failed,_} path and Conflicts.new(last_version) init; do NOT re-add oldest_version to resolver State; adapt tests to the sequencer 4-tuple (KCV). In THIS port the sharded resolve path keeps phase-a's structure but hold/confirm semantics arrive with the q67.17 port - if splitting cleanly is awkward (finalization's sharded path is interwoven), fold T5 into this PR rather than inventing an interim sharded behavior that never shipped; decide at port time, bias to whatever avoids inventing new intermediate states.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Port metadata window distribution to develop (q67.15 + q67.16 as one unit)",
   "type": "task",
-  "updated_at": "2026-08-19T19:09:49Z"
+  "updated_at": "2026-08-19T19:10:02Z"
 }

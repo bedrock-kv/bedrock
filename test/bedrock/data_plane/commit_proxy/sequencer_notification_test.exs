@@ -63,7 +63,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       routing_data = Support.build_routing_data(layout)
       opts = create_finalization_opts()
 
-      assert {:ok, 0, 0, _metadata} =
+      assert {:ok, 0, 0} =
                Finalization.finalize_batch(batch, opts ++ [routing_data: routing_data, sequencer: layout.sequencer])
 
       assert_receive {:sequencer_notified, 100}, 100

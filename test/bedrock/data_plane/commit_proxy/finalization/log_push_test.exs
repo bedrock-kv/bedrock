@@ -75,7 +75,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       routing_data = Support.build_routing_data(transaction_system_layout)
 
-      assert {:ok, 0, 3, _routing_data} =
+      assert {:ok, 0, 3} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -117,7 +117,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       routing_data = Support.build_routing_data(layout)
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -156,7 +156,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       routing_data = Support.build_routing_data(layout)
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -219,7 +219,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       routing_data = Support.build_routing_data(layout)
 
       # Should have 1 abort (transaction 1) and 2 successes (transactions 0, 2)
-      assert {:ok, 1, 2, _routing_data} =
+      assert {:ok, 1, 2} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,

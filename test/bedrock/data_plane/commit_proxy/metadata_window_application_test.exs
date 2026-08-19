@@ -18,6 +18,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.Metadata
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.CommitProxy.Server
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Version
@@ -33,11 +34,14 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
       epoch: 1,
       empty_transaction_timeout_ms: 1_000,
       mode: :running,
-      metadata: metadata
+      metadata: metadata,
+      routing_data: RoutingData.new_empty()
     }
   end
 
   defp shard_set(key, tag), do: {:set, SystemKeys.shard_key(key), Values.encode_shard_key_entry(tag, "")}
+
+  defp log_set(log_id), do: {:set, SystemKeys.layout_log(log_id), Values.encode_tag_list([1])}
 
   defp apply_window(state, window) do
     {:noreply, updated, _timeout} = Server.handle_info({:metadata_updates, window}, state)
@@ -77,5 +81,56 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
   test "a gap is detected even when the window carries no entries" do
     assert {:metadata_coverage_gap, _} =
              catch_exit(Server.handle_info({:metadata_updates, {v(5), v(6), []}}, state(Metadata.new())))
+  end
+
+  test "window entries update routing data in the same step that advances the ack" do
+    # A batch snapshots (routing_data, metadata.version) together at spawn.
+    # The resolver keys its differential windows off the version, so routing
+    # state must advance atomically with it - otherwise a batch could hold an
+    # ack that promises entries its routing data never saw (bedrock-q67.24).
+    updated = apply_window(state(Metadata.new()), {nil, v(1), [{v(1), [shard_set("a", 7), log_set("log_a")]}]})
+
+    assert updated.metadata.version == v(1)
+    assert updated.routing_data.log_map == %{0 => "log_a"}
+    assert :ets.lookup(updated.routing_data.shard_table, "a") == [{"a", 7}]
+  end
+
+  test "a re-delivered window does not duplicate log entries" do
+    window = {nil, v(1), [{v(1), [log_set("log_a")]}]}
+
+    updated = apply_window(state(Metadata.new()), window)
+    updated = apply_window(updated, window)
+
+    assert updated.routing_data.log_map == %{0 => "log_a"}
+  end
+
+  test "an overlapping superset window applies only entries newer than the applied version" do
+    e1 = {v(1), [log_set("log_a")]}
+    e2 = {v(2), [log_set("log_b")]}
+
+    updated = apply_window(state(Metadata.new()), {nil, v(1), [e1]})
+    updated = apply_window(updated, {nil, v(2), [e1, e2]})
+
+    assert updated.routing_data.log_map == %{0 => "log_a", 1 => "log_b"}
+  end
+
+  test "re-setting the same layout_log key at a newer version does not duplicate the log" do
+    # A mid-epoch writer may legitimately re-set a layout_log key (e.g. a tag
+    # change). The log keeps its index; only genuinely new logs append.
+    updated = apply_window(state(Metadata.new()), {nil, v(1), [{v(1), [log_set("log_a")]}]})
+    updated = apply_window(updated, {v(1), v(2), [{v(2), [log_set("log_a"), log_set("log_b")]}]})
+
+    assert updated.routing_data.log_map == %{0 => "log_a", 1 => "log_b"}
+  end
+
+  test "a stale routing-data replacement message can no longer clobber window-applied state" do
+    # Finalization tasks used to send {:routing_data_update, struct} after log
+    # push; racing tasks made the last writer win, silently dropping log-map
+    # changes. The message is retired - if one arrives, it is ignored.
+    updated = apply_window(state(Metadata.new()), {nil, v(1), [{v(1), [log_set("log_a")]}]})
+
+    assert {:noreply, after_stale} = Server.handle_info({:routing_data_update, RoutingData.new_empty()}, updated)
+
+    assert after_stale.routing_data.log_map == %{0 => "log_a"}
   end
 end

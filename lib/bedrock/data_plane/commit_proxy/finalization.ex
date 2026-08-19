@@ -205,7 +205,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   ## Returns
 
-    - `{:ok, n_aborts, n_successes, updated_routing_data}` - Pipeline completed with updated routing
+    - `{:ok, n_aborts, n_successes}` - Pipeline completed
     - `{:error, finalization_error()}` - Pipeline failed; all pending clients notified of failure
 
   ## Error Handling
@@ -234,7 +234,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             timeout: non_neg_integer()
           ]
         ) ::
-          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer(), updated_routing_data :: RoutingData.t()}
+          {:ok, n_aborts :: non_neg_integer(), n_oks :: non_neg_integer()}
           | {:error, finalization_error()}
   def finalize_batch(batch, opts) do
     trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
@@ -256,9 +256,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
     |> :timer.tc()
     |> case do
-      {n_usec, {:ok, n_aborts, n_oks, updated_routing_data}} ->
+      {n_usec, {:ok, n_aborts, n_oks}} ->
         trace_commit_proxy_batch_finished(batch.commit_version, n_aborts, n_oks, n_usec)
-        {:ok, n_aborts, n_oks, updated_routing_data}
+        {:ok, n_aborts, n_oks}
 
       {n_usec, {:error, reason}} ->
         trace_commit_proxy_batch_failed(batch, reason, n_usec)
@@ -1187,22 +1187,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Result Extraction and Error Handling
   # ============================================================================
 
+  # The plan's window-updated routing fields are deliberately NOT returned:
+  # the server folds windows into its own routing data (version-guarded, in
+  # the same step that advances its ack), so a post-push replacement from a
+  # racing task could only clobber newer state (bedrock-q67.24).
   @spec extract_result_or_handle_error(FinalizationPlan.t(), keyword()) ::
-          {:ok, non_neg_integer(), non_neg_integer(), RoutingData.t()}
+          {:ok, non_neg_integer(), non_neg_integer()}
           | {:error, finalization_error()}
   def extract_result_or_handle_error(%FinalizationPlan{stage: :completed} = plan, _opts) do
-    # Table is managed by commit proxy server - no cleanup needed here
     n_aborts = plan.aborted_count
     n_successes = plan.transaction_count - n_aborts
 
-    updated_routing_data = %RoutingData{
-      shard_table: plan.shard_table,
-      log_map: plan.log_map,
-      log_services: plan.log_services,
-      replication_factor: plan.replication_factor
-    }
-
-    {:ok, n_aborts, n_successes, updated_routing_data}
+    {:ok, n_aborts, n_successes}
   end
 
   def extract_result_or_handle_error(%FinalizationPlan{stage: :failed} = plan, opts), do: handle_error(plan, opts)

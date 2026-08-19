@@ -105,7 +105,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], nil}
       end
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -150,7 +150,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], nil}
       end
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -199,7 +199,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], metadata_window}
       end
 
-      assert {:ok, 0, 1, _returned_routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -233,7 +233,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], nil}
       end
 
-      assert {:ok, 0, 1, _returned_routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -267,7 +267,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], nil}
       end
 
-      assert {:ok, 0, 1, _returned_routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -328,7 +328,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], nil}
       end
 
-      assert {:ok, 0, 3, _routing_data} =
+      assert {:ok, 0, 3} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -380,7 +380,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], nil}
       end
 
-      assert {:ok, 0, 0, _routing_data} =
+      assert {:ok, 0, 0} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -438,7 +438,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         {:ok, [], nil}
       end
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,

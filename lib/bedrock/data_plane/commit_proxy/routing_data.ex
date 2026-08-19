@@ -130,11 +130,18 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   @doc """
   Adds a log to the log_map at the next available index.
+
+  Idempotent by log id: a re-set of an already-known log (a legitimate
+  layout_log update, or the same entry seen again) keeps its index instead
+  of appending a duplicate that would corrupt golden-ratio routing.
   """
   @spec insert_log(t(), Log.id()) :: t()
   def insert_log(%__MODULE__{log_map: log_map} = routing_data, log_id) do
-    next_index = map_size(log_map)
-    %{routing_data | log_map: Map.put(log_map, next_index, log_id)}
+    if Enum.any?(log_map, fn {_index, id} -> id == log_id end) do
+      routing_data
+    else
+      %{routing_data | log_map: Map.put(log_map, map_size(log_map), log_id)}
+    end
   end
 
   @doc """

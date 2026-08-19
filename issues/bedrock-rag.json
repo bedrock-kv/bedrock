@@ -19,11 +19,15 @@
     {
       "text": "Gap audit 2026-08-19 (vs ../foundationdb) upgrades the remaining scope from protocol-simplification question to INTEGRITY REQUIREMENT before q67.9 flips shard-map authority: (1) any client may write \\xFF/system keys today and they flow into every proxy's routing table - FDB gates via ACCESS_SYSTEM_KEYS/lockAware (CommitProxyServer.actor.cpp:247-253); require privileged/system-flagged commits for \\xFF writes. (2) Atomics on system keys silently diverge durable state from all metadata views: they pass ingress, are classified metadata mutations (transaction.ex:531), then skipped by Metadata and RoutingData while the materializer applies them durably - FDB transforms versionstamps to plain sets BEFORE the metadata check and handles no atomics in ApplyMetadataMutation; reject atomics targeting \\xFF at ingress. Both fold into this ticket's next PR.",
       "timestamp": "2026-08-19T22:04:09Z"
+    },
+    {
+      "text": "Integrity half landed as PR #154 (stacked on integration branch feature/q67-phase-b-prereqs): commits carry a mode; user commits bounded at \u003c\u003c0xFF\u003e\u003e ({:key_out_of_range}), recovery commits mode: :system (bound \u003c\u003c0xFF,0xFF\u003e\u003e), atomics on system keys rejected in EVERY mode ({:atomic_on_system_key}) since the metadata pipeline replays only sets/clears. Repo classifies both as permanent. Cold audit: no blockers; FDB verdicts confirmed against source - (a) ACCESS_SYSTEM_KEYS is client-asserted (NativeAPI.actor.cpp:5501-5512, ReadYourWrites getMaxWriteKey), Bedrock's proxy-side enforcement is strictly stronger; (b) FDB rejects non-system clear_range end \u003e \\xff (ReadYourWrites.actor.cpp:2370-2373); (c) FDB transforms versionstamps to sets BEFORE isMetadataMutation (CommitProxyServer.actor.cpp:232-238), so the blanket atomic ban is strictly more conservative - a future \\xff/metadataVersion-style feature needs transform-at-ingress instead. NOTE: a user-mode atomic on a system key reports {:key_out_of_range} (the more fundamental error), not {:atomic_on_system_key}; both permanent. Remaining scope (system-range conflict broadcast / hold-confirm retirement) is exactly bedrock-q67.22, decided at q67.9 time - closing this ticket.",
+      "timestamp": "2026-08-19T22:40:31Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Commit proxy ingress validation for system-range keys",
   "type": "task",
-  "updated_at": "2026-08-19T22:04:09Z"
+  "updated_at": "2026-08-19T22:40:31Z"
 }

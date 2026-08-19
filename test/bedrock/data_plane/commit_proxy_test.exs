@@ -3,7 +3,6 @@ defmodule Bedrock.DataPlane.CommitProxyTest do
 
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
-  alias Bedrock.DataPlane.CommitProxy.RoutingData
 
   # Mock GenServer for testing API functions
   defmodule MockCommitProxy do
@@ -30,14 +29,14 @@ defmodule Bedrock.DataPlane.CommitProxyTest do
       sequencer = self()
       resolver_layout = %ResolverLayout.Single{resolver_ref: self()}
 
-      routing_data = %RoutingData{
-        shard_table: :ets.new(:test_shards, [:ordered_set, :public]),
+      routing_snapshot = %{
+        shard_layout: %{},
         log_map: %{},
         log_services: %{"test_log" => self()},
         replication_factor: 1
       }
 
-      assert :ok = CommitProxy.recover_from(pid, "test_lock_token", sequencer, resolver_layout, routing_data)
+      assert :ok = CommitProxy.recover_from(pid, "test_lock_token", sequencer, resolver_layout, routing_snapshot)
     end
   end
 end

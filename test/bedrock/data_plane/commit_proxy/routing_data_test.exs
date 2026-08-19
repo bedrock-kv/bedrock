@@ -4,6 +4,38 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
   alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.SystemKeys
 
+  describe "from_snapshot/1" do
+    test "builds fully-populated routing data owned by the calling process" do
+      snapshot = %{
+        shard_layout: %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}},
+        log_map: %{0 => "log-a", 1 => "log-b"},
+        log_services: %{"log-a" => {:log_a, :node1}, "log-b" => {:log_b, :node2}},
+        replication_factor: 2
+      }
+
+      routing_data = RoutingData.from_snapshot(snapshot)
+
+      assert :ets.info(routing_data.shard_table, :owner) == self()
+      assert :ets.tab2list(routing_data.shard_table) == [{"m", 1}, {<<0xFF, 0xFF>>, 0}]
+      assert routing_data.log_map == %{0 => "log-a", 1 => "log-b"}
+      assert routing_data.log_services == %{"log-a" => {:log_a, :node1}, "log-b" => {:log_b, :node2}}
+      assert routing_data.replication_factor == 2
+
+      RoutingData.cleanup(routing_data)
+    end
+
+    test "builds empty routing data from an empty snapshot" do
+      snapshot = %{shard_layout: %{}, log_map: %{}, log_services: %{}, replication_factor: 1}
+
+      routing_data = RoutingData.from_snapshot(snapshot)
+
+      assert :ets.tab2list(routing_data.shard_table) == []
+      assert routing_data.replication_factor == 1
+
+      RoutingData.cleanup(routing_data)
+    end
+  end
+
   describe "new_empty/0" do
     test "creates empty routing data with all fields initialized" do
       routing_data = RoutingData.new_empty()

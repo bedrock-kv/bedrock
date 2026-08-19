@@ -16,7 +16,7 @@ defmodule Bedrock.DataPlane.CommitProxy do
 
   The component uses a fail-fast recovery model where unrecoverable errors trigger
   process exit and Director-coordinated recovery. Commit Proxies start in locked mode
-  and require explicit unlocking through `recover_from/3` before accepting transaction
+  and require explicit unlocking through `recover_from/5` before accepting transaction
   commits, ensuring proper coordination during cluster recovery scenarios.
 
   """
@@ -41,10 +41,10 @@ defmodule Bedrock.DataPlane.CommitProxy do
           lock_token :: binary(),
           sequencer :: pid(),
           resolver_layout :: ResolverLayout.t(),
-          routing_data :: RoutingData.t()
+          routing_snapshot :: RoutingData.snapshot()
         ) :: :ok | {:error, :timeout} | {:error, :unavailable}
-  def recover_from(commit_proxy, lock_token, sequencer, resolver_layout, routing_data),
-    do: call(commit_proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_data}, :infinity)
+  def recover_from(commit_proxy, lock_token, sequencer, resolver_layout, routing_snapshot),
+    do: call(commit_proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot}, :infinity)
 
   @spec commit(commit_proxy_ref :: ref(), epoch :: Bedrock.epoch(), transaction :: Transaction.encoded()) ::
           {:ok, version :: Bedrock.version(), index :: non_neg_integer()}

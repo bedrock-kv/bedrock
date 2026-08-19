@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-19T14:14:05Z",
+  "description": "",
+  "id": "bedrock-mnf",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Fix mix docs warning: defdelegate doc references hidden WalFormat.previous_version/1",
+  "type": "chore",
+  "updated_at": "2026-08-19T14:14:05Z"
+}

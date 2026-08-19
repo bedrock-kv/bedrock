@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [
     "bedrock-q67.21"
@@ -10,8 +10,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "RoutingData window application: version-guard and ordering for mid-epoch shard-map churn",
   "type": "task",
-  "updated_at": "2026-08-19T22:04:08Z"
+  "updated_at": "2026-08-19T22:41:07Z"
 }

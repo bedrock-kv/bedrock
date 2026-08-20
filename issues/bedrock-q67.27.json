@@ -7,9 +7,15 @@
   "id": "bedrock-q67.27",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "FDB design audit CONFIRMED 'one guard, one place': ApplyMetadataMutation.cpp applies blindly (txnStateStore-\u003eset unconditional at :247-248, keyInfo insert :287, no version comparison anywhere); ordering lives entirely in the pipeline (NotifiedVersion gates; resolver-side exact windows). Bedrock's single filter is the receiver-side pre-filter in server apply_metadata_window (windows deliberately overlap, unlike FDB's exact per-proxy push). Implement: delete the skip branch in Metadata.apply_updates:112-117 (keep per-entry version bookkeeping), move the idempotence claim from metadata.ex moduledoc to the server contract.",
+      "timestamp": "2026-08-20T14:47:51Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Review follow-ups: dead words, single version guard, fail-fast router fallback",
   "type": "task",
-  "updated_at": "2026-08-20T14:37:03Z"
+  "updated_at": "2026-08-20T14:47:51Z"
 }

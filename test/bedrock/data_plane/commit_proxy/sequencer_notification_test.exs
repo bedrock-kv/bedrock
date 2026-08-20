@@ -29,7 +29,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
     [
       epoch: 1,
       resolver_layout: %ResolverLayout.Single{resolver_ref: :test_resolver},
-      resolver_fn: fn _, _, _, _, _, _, _ -> {:ok, [], nil} end,
+      resolver_fn: fn _, _, last, commit, _, _, _ -> last |> Support.tiling_window(commit) |> then(&{:ok, [], &1}) end,
       batch_log_push_fn: fn _, _, _, _ -> :ok end
     ]
   end

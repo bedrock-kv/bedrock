@@ -15,14 +15,13 @@ defmodule Bedrock.DataPlane.Resolver do
 
   The Resolver also acts as a distribution point for system metadata mutations
   (keys with \\xFF prefix). Each request includes metadata mutations per
-  transaction plus a `metadata_ack` - the calling commit proxy's stable
-  identity (its server pid, not the per-batch finalization task pid) and the
-  highest metadata window version that proxy has confirmed applying. The
-  response includes a differential metadata window covering everything since
-  the confirmed version, or `nil` when there is nothing to report. Because
-  progress only advances via acks, lost replies are re-sent on the proxy's
-  next call and concurrent in-flight windows overlap (out-of-order arrival at
-  the proxy is lossless).
+  transaction plus the calling commit proxy's stable identity (its server
+  pid, not the per-batch finalization task pid); the
+  response includes an exact metadata window `(last_served, last_version]`
+  computed resolver-side from the calling proxy's served floor (FDB's
+  per-proxy lastVersion). Consecutive windows to one proxy tile exactly: the
+  proxy applies them in batch order and asserts each window's from_version
+  equals its applied version.
 
   ## Converged verdicts (sharded resolvers)
 
@@ -49,22 +48,15 @@ defmodule Bedrock.DataPlane.Resolver do
   @type metadata_mutations :: [Bedrock.Internal.TransactionBuilder.Tx.mutation()]
 
   @typedoc """
-  The calling proxy's stable identity and the highest metadata window
-  `to_version` it has confirmed applying (nil if none yet).
-  """
-  @type metadata_ack :: {proxy_id :: pid(), applied_version :: Bedrock.version() | nil}
-
-  @typedoc """
-  A differential window of metadata mutations covering `(from_version,
-  to_version]`. `from_version` is nil when coverage starts at the beginning of
-  the resolver's history; a `from_version` beyond what the proxy has applied
-  signals an unrecoverable coverage gap (the resolver pruned history the proxy
-  never confirmed).
+  An exact window of metadata entries covering `(from_version, to_version]`.
+  `from_version` is nil on a proxy's first window of the epoch; thereafter it
+  equals the proxy's applied version by construction (windows tile), which
+  the proxy asserts - a mismatch means resolver and proxy disagree about
+  history and the epoch must recover.
   """
   @type metadata_window ::
           {from_version :: Bedrock.version() | nil, to_version :: Bedrock.version(),
            entries :: [MetadataAccumulator.entry()]}
-          | nil
 
   @spec resolve_transactions(
           ref(),
@@ -75,14 +67,14 @@ defmodule Bedrock.DataPlane.Resolver do
           metadata_per_tx :: [metadata_mutations()],
           opts :: [
             timeout: Bedrock.timeout_in_ms(),
-            metadata_ack: metadata_ack()
+            proxy_id: pid()
           ]
         ) ::
           {:ok, aborted :: [transaction_index :: non_neg_integer()], metadata_window()}
           | {:error, :timeout | :unavailable}
   def resolve_transactions(ref, epoch, last_version, commit_version, transaction_summaries, metadata_per_tx, opts \\ []) do
     timeout = opts[:timeout] || :infinity
-    metadata_ack = opts[:metadata_ack] || {self(), nil}
+    proxy_id = opts[:proxy_id] || self()
 
     :telemetry.span(
       [:bedrock, :data_plane, :resolver, :call, :resolve_transactions],
@@ -98,7 +90,7 @@ defmodule Bedrock.DataPlane.Resolver do
         ref
         |> GenServer.call(
           {:resolve_transactions, epoch, {last_version, commit_version}, transaction_summaries, metadata_per_tx,
-           metadata_ack},
+           proxy_id},
           timeout
         )
         |> case do

@@ -43,7 +43,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
             director: pid(),
             cluster: module(),
             sweep_interval_ms: pos_integer(),
-            version_retention_ms: pos_integer()
+            version_retention_ms: pos_integer(),
+            commit_proxy_count: pos_integer()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -54,6 +55,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     sweep_interval_ms = opts[:sweep_interval_ms] || 1_000
     version_retention_ms = opts[:version_retention_ms] || 6_000
+    commit_proxy_count = opts[:commit_proxy_count] || 1
 
     %{
       id: {__MODULE__, cluster, key_range, epoch},
@@ -61,14 +63,14 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {last_version, epoch, director, sweep_interval_ms, version_retention_ms}
+           {last_version, epoch, director, sweep_interval_ms, version_retention_ms, commit_proxy_count}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({last_version, epoch, director, sweep_interval_ms, version_retention_ms}) do
+  def init({last_version, epoch, director, sweep_interval_ms, version_retention_ms, commit_proxy_count}) do
     # Monitor the Director - if it dies, this resolver should terminate
     Process.monitor(director)
 
@@ -81,8 +83,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         director: director,
         sweep_interval_ms: sweep_interval_ms,
         version_retention_ms: version_retention_ms,
+        commit_proxy_count: commit_proxy_count,
         last_sweep_time: Time.monotonic_now_in_ms(),
-        proxy_progress: %{},
         metadata_window: MetadataAccumulator.new()
       },
       &{:ok, &1}
@@ -106,7 +108,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @impl true
   def handle_call(
-        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, metadata_ack},
+        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, proxy_id},
         from,
         t
       )
@@ -114,18 +116,18 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     emit_received(transactions, next_version)
 
     noreply(t,
-      continue: {:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, reply_fn(from)}}
+      continue: {:process_ready, {next_version, transactions, metadata_per_tx, proxy_id, reply_fn(from)}}
     )
   end
 
   @impl true
   def handle_call(
-        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, metadata_ack},
+        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, proxy_id},
         from,
         t
       )
       when epoch == t.epoch and is_binary(last_version) and last_version > t.last_version do
-    data = {next_version, transactions, metadata_per_tx, metadata_ack}
+    data = {next_version, transactions, metadata_per_tx, proxy_id}
 
     {new_waiting, _timeout} =
       WaitingList.insert(
@@ -139,30 +141,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     emit_waiting_list_inserted(transactions, new_waiting, next_version)
 
     noreply(%{t | waiting: new_waiting}, continue: :next_timeout)
-  end
-
-  @impl true
-  def handle_call(
-        {:resolve_transactions, epoch, {last_version, next_version}, _transactions, _metadata, metadata_ack},
-        _from,
-        t
-      )
-      when epoch == t.epoch and is_binary(last_version) and last_version < t.last_version do
-    # A retry of an already-processed batch (its reply was lost): REPLAY the
-    # recorded verdict - recomputing or fabricating one could tell clients
-    # "aborted" for transactions the system committed. The metadata window is
-    # recomputed - it is differential by the caller's ack, so recomputation
-    # is the correct, idempotent choice. A verdict pruned past the retention
-    # horizon (or never recorded) has no truthful answer: fail explicitly and
-    # let the proxy fail fast into recovery.
-    case Map.fetch(t.recent_replies, next_version) do
-      {:ok, aborted_indices} ->
-        {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack)
-        reply(t, {:ok, aborted_indices, metadata_window})
-
-      :error ->
-        reply(t, {:error, :version_beyond_retention})
-    end
   end
 
   @impl true
@@ -186,15 +164,10 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   end
 
   @impl true
-  def handle_continue({:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, reply_fn}}, t) do
+  def handle_continue({:process_ready, {next_version, transactions, metadata_per_tx, proxy_id, reply_fn}}, t) do
     {conflicts, aborted} = resolve(t.conflicts, transactions, next_version)
 
-    t = %{
-      t
-      | conflicts: conflicts,
-        last_version: next_version,
-        recent_replies: Map.put(t.recent_replies, next_version, aborted)
-    }
+    t = %{t | conflicts: conflicts, last_version: next_version}
 
     emit_completed(transactions, aborted, next_version)
 
@@ -203,8 +176,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     # windows to reach the global verdict (FDB's stateMutations relay).
     t = accumulate_metadata_verdicts(t, next_version, metadata_per_tx, aborted)
 
-    # Get the differential window for this proxy and record its confirmed progress
-    {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack)
+    # Serve this proxy its exact window and advance its served floor.
+    {metadata_window, t} = serve_window(t, proxy_id)
 
     reply_fn.({:ok, aborted, metadata_window})
 
@@ -212,11 +185,11 @@ defmodule Bedrock.DataPlane.Resolver.Server do
       {updated_waiting, nil} ->
         noreply(%{t | waiting: updated_waiting}, continue: :next_timeout)
 
-      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions, metadata, ack}}} ->
+      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions, metadata, proxy_id}}} ->
         emit_waiting_resolved(transactions, [], waiting_next_version)
 
         noreply(%{t | waiting: updated_waiting},
-          continue: {:process_ready, {waiting_next_version, transactions, metadata, ack, reply_fn}}
+          continue: {:process_ready, {waiting_next_version, transactions, metadata, proxy_id, reply_fn}}
         )
     end
   end
@@ -235,14 +208,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         if current_version_int >= retention_microseconds do
           floor = Version.subtract(t.last_version, retention_microseconds)
           new_conflicts = remove_old_transactions(t.conflicts, floor)
-          recent_replies = Map.reject(t.recent_replies, fn {version, _aborted} -> version < floor end)
-
-          %{
-            t
-            | conflicts: new_conflicts,
-              recent_replies: recent_replies,
-              last_sweep_time: Time.monotonic_now_in_ms()
-          }
+          %{t | conflicts: new_conflicts, last_sweep_time: Time.monotonic_now_in_ms()}
         else
           %{t | last_sweep_time: Time.monotonic_now_in_ms()}
         end
@@ -281,135 +247,37 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     end
   end
 
-  # Builds the differential metadata window for a proxy and records its
-  # confirmed progress.
-  #
-  # The window covers (from, last_version] where `from` is the version the
-  # proxy has CONFIRMED applying (its ack). Progress advances only via acks,
-  # so a reply lost to a call timeout is simply re-sent on the proxy's next
-  # call, and windows to concurrently in-flight batches overlap -
-  # out-of-order arrival at the proxy is lossless (the proxy filters entries
-  # at or below its applied version).
-  #
-  # If pruning has discarded coverage the proxy never confirmed, the window's
-  # from_version is the pruned floor - above the proxy's applied version -
-  # which the proxy detects as an unrecoverable coverage gap.
-  @spec get_metadata_window_for_proxy(State.t(), Resolver.metadata_ack()) ::
-          {Resolver.metadata_window(), State.t()}
-  defp get_metadata_window_for_proxy(t, {proxy_id, acked}) do
-    t =
-      t
-      |> record_proxy_progress(proxy_id, acked)
-      |> expire_stale()
-      |> prune_metadata_window()
-
-    # Serve the differential from the RECORDED (monotone) ack: a retried call
-    # can carry a stale ack, but the proxy's applied version is at least every
-    # ack it has ever sent, so entries at or below the recorded ack are
-    # already applied there. (The requesting proxy was just recorded, so it
-    # cannot have been expired above.)
-    {acked, _last_seen} = Map.fetch!(t.proxy_progress, proxy_id)
-
-    floor = t.metadata_pruned_through
-    gap? = floor != nil and (acked == nil or acked < floor)
-    from = if gap?, do: floor, else: acked
-
+  # Serves a proxy its exact metadata window - (last_served, last_version] -
+  # and advances its served floor. Windows to one proxy tile exactly, so the
+  # proxy's applied version always equals the next window's from_version
+  # (asserted there); there is no ack, no overlap, and no receiver-side
+  # filtering. This is FDB's stateMutations relay: per-proxy lastVersion,
+  # exact half-open intervals, verdicts carried per entry.
+  @spec serve_window(State.t(), pid()) :: {Resolver.metadata_window(), State.t()}
+  defp serve_window(t, proxy_id) do
+    from = Map.get(t.last_served, proxy_id)
     entries = MetadataAccumulator.mutations_since(t.metadata_window, from)
+    window = {from, t.last_version, entries}
 
-    window = if entries == [] and not gap?, do: nil, else: {from, t.last_version, entries}
+    t = %{t | last_served: Map.put(t.last_served, proxy_id, t.last_version)}
 
-    {window, t}
+    {window, prune_metadata_window(t)}
   end
 
-  @spec record_proxy_progress(State.t(), pid(), Bedrock.version() | nil) :: State.t()
-  defp record_proxy_progress(t, proxy_id, acked) do
-    updated_progress =
-      Map.update(t.proxy_progress, proxy_id, {acked, t.last_version}, fn {prev_acked, _} ->
-        {max_ack(prev_acked, acked), t.last_version}
-      end)
-
-    %{t | proxy_progress: updated_progress}
-  end
-
-  # Acks are monotone per proxy; a retried call may carry a stale ack.
-  defp max_ack(nil, acked), do: acked
-  defp max_ack(prev, nil), do: prev
-  defp max_ack(prev, acked), do: max(prev, acked)
-
-  # Expires proxies not seen within the version retention horizon, so a dead
-  # (or pathologically stalled) proxy neither leaks a progress entry nor
-  # blocks window pruning forever. A live proxy calls at least once per
-  # empty-batch interval, far inside the horizon.
-  @spec expire_stale(State.t()) :: State.t()
-  defp expire_stale(t) do
-    case retention_cutoff(t) do
-      nil ->
-        t
-
-      cutoff ->
-        %{t | proxy_progress: Map.filter(t.proxy_progress, fn {_pid, {_acked, seen}} -> seen >= cutoff end)}
-    end
-  end
-
-  # The version retention horizon, or nil while the version stream is still
-  # inside the first horizon.
-  @spec retention_cutoff(State.t()) :: Bedrock.version() | nil
-  defp retention_cutoff(t) do
-    retention = t.version_retention_ms * 1000
-
-    if Version.to_integer(t.last_version) >= retention do
-      Version.subtract(t.last_version, retention)
-    end
-  end
-
-  # Prunes the metadata window through the minimum version confirmed by every
-  # known proxy, CAPPED at the retention horizon. A proxy that has confirmed
-  # nothing (nil ack) blocks pruning until it confirms or expires.
-  #
-  # The cap makes gap detection symmetric with proxy expiry: no entry younger
-  # than the retention horizon is ever discarded, so a proxy calling within
-  # retention (any live proxy - the empty-batch cadence is far inside it) can
-  # never observe a gap. Without it, acks alone could prune an entry before a
-  # proxy the resolver has not yet HEARD FROM (epoch start: one proxy commits
-  # and acks metadata before another's first call) ever saw it, gap-exiting a
-  # healthy proxy. Memory stays bounded: at most one retention horizon of
-  # metadata entries is retained beyond what acks allow.
+  # Prunes entries every proxy has been served (windows are exact, so a
+  # served entry can never be requested again) - but only once every one of
+  # the epoch's proxies has been served at least once. FDB gates
+  # oldestProxyVersion pruning on having heard from all commitProxyCount
+  # proxies for the same reason: an entry must survive until the last
+  # first-contact window that needs it. A dead proxy freezes pruning only
+  # until the Director notices and recovers the epoch.
   @spec prune_metadata_window(State.t()) :: State.t()
-  defp prune_metadata_window(%{proxy_progress: progress} = t) when map_size(progress) == 0, do: t
-
   defp prune_metadata_window(t) do
-    t.proxy_progress
-    |> Map.values()
-    |> Enum.map(fn {acked, _seen} -> acked end)
-    |> Enum.min()
-    |> cap_at_retention_cutoff(t)
-    |> case do
-      nil ->
-        t
-
-      min_acked ->
-        # Record the newest ENTRY version being discarded, not min_acked
-        # itself: acks are window to_versions (commit-stream versions, coarser
-        # than entry versions), so min_acked can run far ahead of the last
-        # entry it covers. Using it as the gap floor would fail returning
-        # laggards that confirmed every discarded entry - a spurious full
-        # recovery. A proxy acked >= this floor has everything discarded.
-        discarded = MetadataAccumulator.newest_version_at_or_below(t.metadata_window, min_acked)
-
-        %{
-          t
-          | metadata_window: MetadataAccumulator.prune_through(t.metadata_window, min_acked),
-            metadata_pruned_through: max_ack(t.metadata_pruned_through, discarded)
-        }
-    end
-  end
-
-  defp cap_at_retention_cutoff(nil, _t), do: nil
-
-  defp cap_at_retention_cutoff(min_acked, t) do
-    case retention_cutoff(t) do
-      nil -> nil
-      cutoff -> min(min_acked, cutoff)
+    if map_size(t.last_served) < t.commit_proxy_count do
+      t
+    else
+      floor = t.last_served |> Map.values() |> Enum.min()
+      %{t | metadata_window: MetadataAccumulator.prune_through(t.metadata_window, floor)}
     end
   end
 end

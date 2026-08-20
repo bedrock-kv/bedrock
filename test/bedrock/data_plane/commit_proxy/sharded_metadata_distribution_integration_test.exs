@@ -71,7 +71,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ShardedMetadataDistributionIntegrationTe
            epoch: epoch,
            last_version: Version.zero(),
            director: director,
-           cluster: TestCluster
+           cluster: TestCluster,
+           commit_proxy_count: 2
          ]},
         id: {:resolver, key_range}
       )

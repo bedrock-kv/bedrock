@@ -29,14 +29,14 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
     def init(state), do: {:ok, state}
 
     def handle_call(
-          {:resolve_transactions, _epoch, {_last_version, _next_version}, _transactions, _metadata_per_tx,
-           {_proxy_id, _acked_version}},
+          {:resolve_transactions, _epoch, {last_version, next_version}, _transactions, _metadata_per_tx, _proxy_id},
           _from,
           state
         ) do
       # Accept all transactions (no conflicts since we use unique keys in tests)
-      # Return empty list = no aborted transaction indices, empty metadata updates
-      {:reply, {:ok, [], nil}, state}
+      # and serve an exact empty window that tiles with the batch chain.
+      from = if last_version == Bedrock.DataPlane.Version.zero(), do: nil, else: last_version
+      {:reply, {:ok, [], {from, next_version, []}}, state}
     end
   end
 

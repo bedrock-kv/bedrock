@@ -99,9 +99,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         ])
 
       # Mock resolver that captures metadata_per_tx
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], nil}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
       assert {:ok, 0, 1} =
@@ -143,9 +143,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
           {reply_fn, tx_binary, :system}
         ])
 
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], nil}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
       assert {:ok, 0, 1} =
@@ -225,8 +225,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
           {reply_fn, tx_binary, :system}
         ])
 
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
-        {:ok, [], nil}
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
       assert {:ok, 0, 1} =
@@ -258,8 +258,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         ])
 
       # Resolver returns no metadata updates
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
-        {:ok, [], nil}
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
       assert {:ok, 0, 1} =
@@ -315,9 +315,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
           {reply_fn3, tx3_binary, :system}
         ])
 
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], nil}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
       assert {:ok, 0, 3} =
@@ -367,9 +367,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         create_batch_with_transactions(100, 99, [])
 
       # Mock resolver captures metadata
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], nil}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
       assert {:ok, 0, 0} =
@@ -424,9 +424,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
           {reply_fn, tx_binary, :system}
         ])
 
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], nil}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
       assert {:ok, 0, 1} =

@@ -103,7 +103,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
                restart: :temporary,
                start:
                  {GenServer, :start_link,
-                  [Server, {last_version, epoch, director, sweep_interval_ms, version_retention_ms}]}
+                  [Server, {last_version, epoch, director, sweep_interval_ms, version_retention_ms, _proxy_count}]}
              } = spec
 
       assert last_version == Version.zero()
@@ -442,7 +442,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       spec = Server.child_spec(opts)
 
       assert %{
-               start: {GenServer, :start_link, [Server, {_last_version, _epoch, _director, 500, 2000}]}
+               start: {GenServer, :start_link, [Server, {_last_version, _epoch, _director, 500, 2000, _proxy_count}]}
              } = spec
     end
 

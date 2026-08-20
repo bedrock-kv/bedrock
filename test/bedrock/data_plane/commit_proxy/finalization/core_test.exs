@@ -46,7 +46,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert commit_version == Version.from_integer(100)
       assert is_list(summaries)
       assert Keyword.has_key?(opts, :timeout)
-      {:ok, aborted_indices, nil}
+      {:ok, aborted_indices, Support.tiling_window(last_version, commit_version)}
     end
   end
 
@@ -142,9 +142,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     test "handles empty batch", %{transaction_system_layout: transaction_system_layout, routing_data: routing_data} do
       batch = create_batch_with_transactions(100, 99, [])
 
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [], nil}
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
       assert {:ok, 0, 0} =
@@ -184,9 +184,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         ])
 
       # Mock resolver that aborts both transactions
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [0, 1], nil}
+        {:ok, [0, 1], Support.tiling_window(last_version, commit_version)}
       end
 
       assert {:ok, 2, 0} =
@@ -215,9 +215,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     } do
       batch = Support.create_test_batch(100, 99)
 
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [], nil}
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
       mock_log_push_fn = fn _last_version, _tx_by_log, _commit_version, _opts ->
@@ -245,9 +245,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     } do
       batch = Support.create_test_batch(100, 99)
 
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [], nil}
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
       mock_log_push_fn = fn _last_version, _tx_by_log, _commit_version, _opts ->
@@ -292,7 +292,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                             _metadata_per_tx,
                             _opts ->
         send(test_pid, {:resolver_called, last_version, received_commit_version})
-        {:ok, [], nil}
+        {:ok, [], Support.tiling_window(last_version, received_commit_version)}
       end
 
       # Mock log push function that captures version parameters
@@ -353,7 +353,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock resolver that fails
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
         {:error, :timeout}
       end

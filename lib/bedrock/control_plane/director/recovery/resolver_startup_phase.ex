@@ -37,6 +37,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
 
     resolver_context = %{
       resolvers: recovery_attempt.resolvers,
+      commit_proxy_count: max(length(recovery_attempt.proxies), 1),
       epoch: recovery_attempt.epoch,
       available_nodes: available_resolver_nodes,
       start_supervised_fn: start_supervised_fn,
@@ -59,6 +60,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
 
   @spec define_resolvers(%{
           resolvers: [ResolverDescriptor.t()],
+          commit_proxy_count: pos_integer(),
           epoch: Bedrock.epoch(),
           available_nodes: [node()],
           start_supervised_fn: (Supervisor.child_spec(), node() ->
@@ -83,7 +85,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
              key_range,
              context.last_committed_version,
              self(),
-             context.cluster
+             context.cluster,
+             context.commit_proxy_count
            ), start_key}
         end)
 
@@ -147,11 +150,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase do
           key_range :: Bedrock.key_range(),
           last_committed_version :: Bedrock.version(),
           director :: pid(),
-          cluster :: module()
+          cluster :: module(),
+          commit_proxy_count :: pos_integer()
         ) ::
           Supervisor.child_spec()
-  def child_spec_for_resolver(epoch, key_range, last_committed_version, director, cluster) do
+  def child_spec_for_resolver(epoch, key_range, last_committed_version, director, cluster, commit_proxy_count) do
     Resolver.Server.child_spec(
+      commit_proxy_count: commit_proxy_count,
       epoch: epoch,
       key_range: key_range,
       last_version: last_committed_version,

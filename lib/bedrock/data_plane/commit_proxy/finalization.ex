@@ -55,9 +55,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                           [metadata_mutations()],
                           keyword() ->
                             {:ok, [non_neg_integer()], Resolver.metadata_window()}
-                            | {:error, term()}
-                            | {:failure, :timeout, Resolver.ref()}
-                            | {:failure, :unavailable, Resolver.ref()})
+                            | {:error, term()})
 
   @type log_push_batch_fn() :: (last_commit_version :: Bedrock.version(),
                                 transactions_by_log :: %{
@@ -172,10 +170,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   ## Metadata Distribution
 
-  During conflict resolution, metadata mutations (keys with \\xFF prefix) are extracted
-  from each transaction and sent to the resolver along with the caller's `metadata_ack`
-  ({stable proxy identity, highest confirmed window version}). The resolver returns a
-  differential metadata window (or nil). The batch then makes one
+  During conflict resolution, metadata mutations (keys with \\xFF prefix) are
+  extracted from each transaction and sent to every resolver along with the
+  stable proxy identity. Each resolver returns the proxy's exact metadata
+  window. The batch then makes one
   `metadata_apply_fn` call: the commit proxy server applies the window - plus,
   in sharded mode, the batch's own globally-committed metadata - serialized in
   batch-sequence order, and returns the immutable routing snapshot the batch
@@ -211,7 +209,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             resolver_layout: ResolverLayout.t(),
             resolver_fn: resolver_fn(),
             resolver_timeout_in_ms: non_neg_integer(),
-            metadata_ack: Resolver.metadata_ack(),
+            proxy_id: pid(),
             metadata_apply_fn: metadata_apply_fn(),
             batch_log_push_fn: log_push_batch_fn(),
             abort_reply_fn: abort_reply_fn(),
@@ -514,13 +512,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec apply_committed_metadata(FinalizationPlan.t(), Resolver.metadata_window(), keyword()) ::
           FinalizationPlan.t()
   defp apply_committed_metadata(plan, metadata_window, opts) do
-    committed = committed_window(metadata_window)
-
-    entries =
-      case committed do
-        nil -> []
-        {_from, _to, entries} -> entries
-      end
+    {_from, _to, entries} = committed = committed_window(metadata_window)
 
     trace_metadata_updates_received(plan.commit_version, entries)
 
@@ -540,9 +532,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # transactions were all vetoed disappear; the window bounds are unchanged
   # (the ack advances on coverage, not content).
   @spec committed_window(Resolver.metadata_window()) ::
-          {Bedrock.version() | nil, Bedrock.version(), [{Bedrock.version(), metadata_mutations()}]} | nil
-  defp committed_window(nil), do: nil
-
+          {Bedrock.version() | nil, Bedrock.version(), [{Bedrock.version(), metadata_mutations()}]}
   defp committed_window({from, to, entries}) do
     committed =
       entries
@@ -603,32 +593,28 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end)
   end
 
-  # Sharded resolvers each maintain independent metadata accumulators whose
-  # entries carry LOCAL verdicts, so merging is where the global verdict is
-  # born: coverage claims are the WEAKEST of both windows - max from_version
-  # (a gap at any resolver is still detected) and min to_version - and
-  # entries at the same version are combined by ANDing verdicts positionally
-  # (every resolver recorded the same transactions in the same order from
-  # the same broadcast metadata_per_tx; a length mismatch means the windows
-  # diverged and the batch must fail rather than guess). Entries present in
-  # only one window lie at or below the other's from (already applied at the
-  # proxy and filtered there) - their solo verdicts are moot.
+  # Sharded resolvers process every batch in version lockstep and serve the
+  # same proxy the same exact window bounds, so merging is pure verdict
+  # combination: bounds must MATCH (a mismatch means the resolvers diverged
+  # and the batch must fail into recovery rather than guess - FDB's
+  # size-consistency ASSERT), and entries at the same version are ANDed
+  # positionally into the global verdict.
   @spec merge_metadata_windows(Resolver.metadata_window(), Resolver.metadata_window()) :: Resolver.metadata_window()
   defp merge_metadata_windows(nil, window), do: window
-  defp merge_metadata_windows(window, nil), do: window
 
-  defp merge_metadata_windows({from_a, to_a, entries_a}, {from_b, to_b, entries_b}) do
-    from = if from_a == nil, do: from_b, else: if(from_b == nil, do: from_a, else: max(from_a, from_b))
-    to = min(to_a, to_b)
-
+  defp merge_metadata_windows({from, to, entries_a}, {from, to, entries_b}) do
     entries =
       (entries_a ++ entries_b)
       |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
       |> Enum.sort_by(&elem(&1, 0))
       |> Enum.map(fn {version, metadata_lists} -> {version, and_verdicts(version, metadata_lists)} end)
-      |> Enum.take_while(fn {version, _} -> version <= to end)
 
     {from, to, entries}
+  end
+
+  defp merge_metadata_windows({from_a, to_a, _}, {from_b, to_b, _}) do
+    raise "resolver metadata windows diverged: (#{inspect(from_a)}, #{inspect(to_a)}] vs " <>
+            "(#{inspect(from_b)}, #{inspect(to_b)}]"
   end
 
   defp and_verdicts(_version, [transaction_metadata]), do: transaction_metadata
@@ -663,13 +649,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     resolver_fn = Keyword.get(opts, :resolver_fn, &Resolver.resolve_transactions/7)
     timeout_in_ms = Keyword.get(opts, :resolver_timeout_in_ms, 5_000)
 
-    # The stable proxy identity plus the highest metadata window version it
-    # has confirmed applying - the resolver keys its differential off this.
-    metadata_ack = Keyword.get(opts, :metadata_ack, {self(), nil})
+    # The stable proxy identity (the server, not this per-batch task): the
+    # resolver keys each proxy's exact window off its served floor.
+    proxy_id = Keyword.get(opts, :proxy_id, self())
 
     case resolver_fn.(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx,
            timeout: timeout_in_ms,
-           metadata_ack: metadata_ack
+           proxy_id: proxy_id
          ) do
       {:ok, _, _} = success -> success
       {:error, reason} when reason in [:timeout, :unavailable] -> {:error, {:resolver_unavailable, reason}}
@@ -983,17 +969,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       {:error, reason} ->
         %{plan | error: reason, stage: :failed}
     end
-  end
-
-  @spec resolve_log_descriptors(%{Log.id() => term()}, %{term() => ServiceDescriptor.t()}) :: %{
-          Log.id() => ServiceDescriptor.t()
-        }
-  def resolve_log_descriptors(log_descriptors, services) do
-    log_descriptors
-    |> Map.keys()
-    |> Enum.map(&{&1, Map.get(services, &1)})
-    |> Enum.reject(&is_nil(elem(&1, 1)))
-    |> Map.new()
   end
 
   @spec try_to_push_transaction_to_log(ServiceDescriptor.t(), binary(), Bedrock.version(), Bedrock.version() | nil) ::

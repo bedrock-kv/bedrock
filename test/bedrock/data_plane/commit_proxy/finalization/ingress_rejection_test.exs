@@ -84,9 +84,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
     layout = %{logs: %{"log_1" => [0]}, services: %{"log_1" => %{kind: :log, status: {:up, self()}}}}
     routing_data = Support.build_routing_data(layout)
 
-    resolver_fn = fn _ref, _epoch, _last, _commit, transactions, _metadata, _opts ->
+    resolver_fn = fn _ref, _epoch, last, commit, transactions, _metadata, _opts ->
       send(test_pid, {:resolved, transactions})
-      {:ok, [], nil}
+      {:ok, [], Support.tiling_window(last, commit)}
     end
 
     opts =

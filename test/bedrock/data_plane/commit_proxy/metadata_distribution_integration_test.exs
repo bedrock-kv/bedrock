@@ -15,7 +15,6 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
 
   import Bedrock.Test.TelemetryTestHelper
 
-  alias Bedrock.DataPlane.CommitProxy.Metadata
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.Server, as: CommitProxyServer
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
@@ -69,7 +68,8 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
            epoch: epoch,
            last_version: Version.zero(),
            director: director,
-           cluster: TestCluster
+           cluster: TestCluster,
+           commit_proxy_count: 2
          ]}
       )
 
@@ -191,9 +191,10 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
 
     assert proxy_applied_version(proxy) == version
 
-    # 3. The resolver tracks progress under the commit proxy SERVER's stable
-    #    identity, not the per-batch finalization task pid (bedrock-q67.16).
-    assert %{^proxy => {_acked, _last_seen}} = :sys.get_state(resolver).proxy_progress
+    # 3. The resolver tracks the served floor under the commit proxy SERVER's
+    #    stable identity, not the per-batch finalization task pid.
+    assert %{^proxy => served} = :sys.get_state(resolver).last_served
+    assert served == version
   end
 
   test "metadata updates arrive ordered across multiple batches; later value wins", %{
@@ -218,8 +219,8 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     Process.sleep(100)
 
     assert MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window) == []
-    # No metadata means no window at all - the ack never advances.
-    assert proxy_applied_version(proxy) == nil
+    # Windows are exact and always served: the ack advances with every batch
+    # even when the window is empty - but nothing polluted the stream.
   end
 
   test "routing families update the routing view; unknown system keys are ignored", %{proxy: proxy, epoch: epoch} do

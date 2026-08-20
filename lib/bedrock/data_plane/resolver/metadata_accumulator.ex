@@ -107,8 +107,8 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
   @doc """
   Removes all entries with versions at or below the given version.
 
-  This prunes entries every proxy has confirmed applying (they can never be
-  requested again - `mutations_since/2` is exclusive), keeping memory bounded.
+  This prunes entries every proxy has been served (windows are exact, so a
+  served entry can never be requested again), keeping memory bounded.
 
   ## Parameters
     - `accumulator` - The accumulator to prune
@@ -128,19 +128,5 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
     # Keep entries where version > through_version (from newest end)
     pruned = Enum.take_while(reversed, fn {version, _} -> version > through_version end)
     %{accumulator | reversed_entries: pruned}
-  end
-
-  @doc """
-  Returns the newest entry version at or below the given version, or nil if
-  there is none.
-
-  Used to record the exact coverage lost by a `prune_through/2` call: a proxy
-  whose ack is at or above this version has confirmed every discarded entry,
-  even when the prune version itself (a commit-stream version) is far ahead of
-  its ack.
-  """
-  @spec newest_version_at_or_below(t(), Bedrock.version()) :: Bedrock.version() | nil
-  def newest_version_at_or_below(%__MODULE__{reversed_entries: reversed}, version) do
-    Enum.find_value(reversed, fn {v, _} -> if v <= version, do: v end)
   end
 end

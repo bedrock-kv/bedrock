@@ -87,6 +87,38 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
       refute snapshot |> Map.values() |> Enum.any?(&is_reference/1)
     end
 
+    test "routing snapshot carries string-encoded materializer refs (the q67.23 seed)" do
+      test_pid = self()
+      mat_sys = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt =
+        base_recovery_attempt()
+        |> with_logs(%{"log_1" => [1, 2]})
+        |> with_transaction_services(%{
+          "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
+          "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}}
+        })
+        |> Map.put(:shard_materializers, %{0 => mat_sys})
+
+      context =
+        recovery_context()
+        |> with_lock_token("test_token")
+        |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout, snapshot ->
+          send(test_pid, {:routing_snapshot, snapshot})
+          :ok
+        end)
+
+      {_result, _next_phase} = TopologyPhase.execute(recovery_attempt, context)
+
+      assert_received {:routing_snapshot, snapshot}
+
+      # Refs are the same plain strings the persistence phase commits to the
+      # materializers/ family - the seed and the keyspace cannot disagree
+      # because both are derived from the same layout.
+      node_string = Atom.to_string(node())
+      assert snapshot.materializers == %{0 => {"wkr_sys", node_string}}
+    end
+
     test "fails when commit proxy unlocking fails" do
       recovery_attempt =
         base_recovery_attempt()

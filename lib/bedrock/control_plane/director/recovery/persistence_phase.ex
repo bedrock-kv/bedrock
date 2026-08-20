@@ -189,8 +189,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Every key written here has a named reader: layout/logs/ keys feed each
-  # proxy's RoutingData log wiring through resolver windows, and shard_keys/
-  # feeds both RoutingData and the next recovery's materializer bootstrap.
+  # proxy's RoutingData log wiring through resolver windows, shard_keys/
+  # feeds both RoutingData and the next recovery's materializer bootstrap,
+  # and materializers/ refs feed the client-facing routing projection
+  # (FDB's serverList analogue - runtime hints, never recovery input).
   # Nothing else is written - a system key without a reader is inventory,
   # not communication (config and policy travel via the object-storage
   # cluster bootstrap, which the coordinator actually reads; services are
@@ -205,7 +207,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         Tx.set(tx, SystemKeys.layout_log(log_id), Values.encode_tag_list(log_descriptor))
       end)
 
-    build_shard_keys(tx, transaction_system_layout.shard_layout)
+    tx = build_shard_keys(tx, transaction_system_layout.shard_layout)
+    build_materializer_keys(tx, transaction_system_layout)
+  end
+
+  # Creates materializer_key(tag) -> {worker_id, node} entries (strings; the
+  # reader derives the callable ref). Gated like shard_keys: an empty ref map
+  # means shard management is not active, so existing entries are untouched.
+  @spec build_materializer_keys(Tx.t(), TransactionSystemLayout.t()) :: Tx.t()
+  defp build_materializer_keys(tx, transaction_system_layout) do
+    case TransactionSystemLayout.materializer_refs(transaction_system_layout) do
+      refs when map_size(refs) == 0 ->
+        tx
+
+      refs ->
+        tx = clear_prefix(tx, SystemKeys.materializers_prefix())
+
+        Enum.reduce(refs, tx, fn {tag, {worker_id, node}}, tx ->
+          Tx.set(tx, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node))
+        end)
+    end
   end
 
   # Rewritten-every-recovery keyed families are cleared before their entries

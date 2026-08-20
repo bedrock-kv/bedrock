@@ -8,9 +8,15 @@
   "id": "bedrock-q67.11",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Gating pointer refresh 2026-08-20: 'phase-a reconciliation' is now concretely bedrock-q67.21 - the metadata pipeline the port lands on is complete on feature/q67-phase-b-prereqs (#152). Re-check against q67.21's keyspace-mutation publication model when thawed: recruitment failure paths change shape when coverage is published as committed transactions.",
+      "timestamp": "2026-08-20T18:09:49Z"
+    }
+  ],
   "priority": 3,
   "status": "deferred",
   "title": "Recruitment orphan residuals: reconcile workers leaked by task crashes or distributor death",
   "type": "task",
-  "updated_at": "2026-08-15T20:46:19Z"
+  "updated_at": "2026-08-20T18:09:49Z"
 }

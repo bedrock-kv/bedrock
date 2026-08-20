@@ -3,11 +3,33 @@ defmodule Bedrock.Internal.Repo do
   import Bitwise
 
   alias Bedrock.Cluster.Link
+  alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.Internal.Repo.TransactionContext
   alias Bedrock.Internal.TransactionBuilder
   alias Bedrock.KeySelector
 
   @default_timeout_in_ms 5_000
+
+  # Read failures that never resolve without new information, only with a
+  # retry: version window misses resolve with a fresh read version, and the
+  # rest are routing- or liveness-shaped (FDB's wrong_shard_server model:
+  # they cost the caller a retry, never surface to the user).
+  @retryable_read_failures [
+    :timeout,
+    :unavailable,
+    :version_too_new,
+    :version_too_old,
+    :layout_lookup_failed,
+    :no_servers_to_race,
+    :locked
+  ]
+
+  # Of those, the ones that look like stale routing: an unroutable key, no
+  # servers to race, or a server that stopped answering. A dead pid is
+  # exactly what a stale snapshot looks like, so the retry drops the node's
+  # routing cache and refetches from a proxy. Version window misses are not
+  # routing's fault and keep the cache.
+  @routing_invalidating_failures [:layout_lookup_failed, :no_servers_to_race, :unavailable, :timeout, :locked]
 
   @type transaction :: pid()
   @type key :: term()
@@ -37,7 +59,7 @@ defmodule Bedrock.Internal.Repo do
       {:error, :not_found} ->
         nil
 
-      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
+      {:failure, reason} when reason in @retryable_read_failures ->
         throw({__MODULE__, t, :retryable_failure, reason})
 
       {failure_or_error, reason} when failure_or_error in [:error, :failure] and is_atom(reason) ->
@@ -59,7 +81,7 @@ defmodule Bedrock.Internal.Repo do
       {:error, :not_found} ->
         nil
 
-      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
+      {:failure, reason} when reason in @retryable_read_failures ->
         throw({__MODULE__, t, :retryable_failure, reason})
 
       {failure_or_error, reason} when failure_or_error in [:error, :failure] and is_atom(reason) ->
@@ -169,7 +191,7 @@ defmodule Bedrock.Internal.Repo do
       {:ok, {[first_row | rest], has_more}} ->
         emit_row_from_buffer(%{state | current_batch: rest, has_more: has_more}, first_row, rest)
 
-      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new, :no_servers_to_race] ->
+      {:failure, reason} when reason in @retryable_read_failures ->
         throw({__MODULE__, state.txn, :retryable_failure, reason})
 
       {:error, reason} ->
@@ -238,9 +260,10 @@ defmodule Bedrock.Internal.Repo do
     timeout_in_ms = Keyword.get(opts, :timeout_in_ms, @default_timeout_in_ms)
 
     TransactionContext.with_deadline(repo, timeout_in_ms, fn ->
-      run_retryable_transaction(repo, fun, 0, retry_limit, fn ->
+      run_retryable_transaction(repo, fun, 0, retry_limit, fn last_reason ->
+        maybe_invalidate_routing(link, last_reason)
         tsl = fetch_tsl_for_transaction(repo, provided_tsl, link)
-        start_transaction_builder(tsl, repo)
+        start_transaction_builder(tsl, routing_fn_for_transaction(cluster, provided_tsl, link), repo)
       end)
     end)
   after
@@ -251,12 +274,19 @@ defmodule Bedrock.Internal.Repo do
     timeout_in_ms = Keyword.get(opts, :timeout_in_ms, @default_timeout_in_ms)
 
     TransactionContext.with_deadline(repo, timeout_in_ms, fn ->
-      run_retryable_transaction(repo, fun, 0, nil, fn ->
+      run_retryable_transaction(repo, fun, 0, nil, fn _last_reason ->
         call_transaction(repo, txn, :nested_transaction)
         txn
       end)
     end)
   end
+
+  defp maybe_invalidate_routing(nil, _last_reason), do: :ok
+
+  defp maybe_invalidate_routing(link, last_reason) when last_reason in @routing_invalidating_failures,
+    do: Link.invalidate_routing(link)
+
+  defp maybe_invalidate_routing(_link, _last_reason), do: :ok
 
   defp fetch_tsl_for_transaction(repo, nil, link) do
     case Link.fetch_transaction_system_layout(link,
@@ -269,8 +299,53 @@ defmodule Bedrock.Internal.Repo do
 
   defp fetch_tsl_for_transaction(_repo, tsl, _link), do: tsl
 
-  defp start_transaction_builder(tsl, repo) do
-    case TransactionBuilder.start_link(transaction_system_layout: tsl) do
+  # A caller-provided TSL carries its own shard fields; the builder derives
+  # routing from them directly (no routing_fn). Otherwise routing is
+  # proxy-served and lazy: the builder calls this on its first read - Link
+  # cache first (the node's locationCache), fetch-through to a random
+  # commit proxy on a miss, caching the raw projection for the next
+  # transaction on this node. Runs in the builder process, so failures are
+  # returned (they surface as read failures), never thrown.
+  defp routing_fn_for_transaction(_cluster, provided_tsl, _link) when not is_nil(provided_tsl), do: nil
+
+  defp routing_fn_for_transaction(cluster, nil, link) do
+    fn ->
+      case Link.fetch_cached_routing(link) do
+        {:ok, routing} -> {:ok, callable_routing(cluster, routing)}
+        {:error, _not_cached} -> fetch_and_cache_routing(cluster, link)
+      end
+    end
+  end
+
+  defp fetch_and_cache_routing(cluster, link) do
+    with {:ok, tsl} <- Link.fetch_transaction_system_layout(link),
+         [_ | _] = proxies <- Map.get(tsl, :proxies, []),
+         {:ok, routing} <- proxies |> Enum.random() |> CommitProxy.fetch_routing() do
+      Link.cache_routing(link, routing)
+      {:ok, callable_routing(cluster, routing)}
+    else
+      [] -> {:error, :unavailable}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Turn the proxy's string-encoded materializer refs into callable
+  # `{otp_name, node}` refs. Worker OTP names are deterministic in the
+  # worker id; the node atom conversion is the documented exception to the
+  # no-atoms-on-decode rule - the values come from system-mode-gated
+  # writers and the atom count is bounded by cluster membership.
+  defp callable_routing(cluster, %{shard_layout: shard_layout, materializers: materializers}) do
+    callable =
+      Map.new(materializers, fn {tag, {worker_id, node}} ->
+        # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
+        {tag, {cluster.otp_name_for_worker(worker_id), String.to_atom(node)}}
+      end)
+
+    %{shard_layout: shard_layout, materializers: callable}
+  end
+
+  defp start_transaction_builder(tsl, routing_fn, repo) do
+    case TransactionBuilder.start_link(transaction_system_layout: tsl, routing_fn: routing_fn) do
       {:ok, txn} ->
         TransactionContext.put_builder(repo, txn)
         txn
@@ -280,15 +355,15 @@ defmodule Bedrock.Internal.Repo do
     end
   end
 
-  defp run_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn) do
+  defp run_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn, last_reason \\ nil) do
     TransactionContext.remaining_timeout!(repo, :timeout)
-    run_transaction(repo, restart_fn.(), fun)
+    run_transaction(repo, restart_fn.(last_reason), fun)
   catch
     {__MODULE__, failed_txn, :retryable_failure, reason} ->
       try_to_rollback(failed_txn)
       enforce_retry_limit(retry_count, retry_limit, reason)
       wait_before_retry(repo, retry_count, reason)
-      run_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn)
+      run_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn, reason)
 
     {__MODULE__, :rollback, reason} ->
       try_to_rollback(txn(repo))

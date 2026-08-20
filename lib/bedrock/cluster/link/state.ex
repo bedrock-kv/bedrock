@@ -14,7 +14,8 @@ defmodule Bedrock.Cluster.Link.State do
           timers: %{atom() => reference()} | nil,
           mode: :passive | :active,
           capabilities: [Bedrock.Cluster.capability()],
-          transaction_system_layout: TransactionSystemLayout.t() | nil
+          transaction_system_layout: TransactionSystemLayout.t() | nil,
+          routing: map() | nil
         }
   defstruct node: nil,
             cluster: nil,
@@ -24,5 +25,6 @@ defmodule Bedrock.Cluster.Link.State do
             timers: nil,
             mode: :active,
             capabilities: [],
-            transaction_system_layout: nil
+            transaction_system_layout: nil,
+            routing: nil
 end

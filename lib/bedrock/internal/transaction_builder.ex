@@ -74,6 +74,7 @@ defmodule Bedrock.Internal.TransactionBuilder do
   @spec start_link(
           opts :: [
             transaction_system_layout: TransactionSystemLayout.t(),
+            routing_fn: (-> {:ok, %{shard_layout: map(), materializers: map()}} | {:error, atom()}),
             time_fn: (-> integer())
           ]
         ) ::
@@ -83,7 +84,7 @@ defmodule Bedrock.Internal.TransactionBuilder do
 
     GenServer.start_link(
       __MODULE__,
-      transaction_system_layout
+      {transaction_system_layout, Keyword.get(opts, :routing_fn)}
     )
   end
 
@@ -91,19 +92,66 @@ defmodule Bedrock.Internal.TransactionBuilder do
   def init(arg), do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def handle_continue(:initialization, transaction_system_layout) do
-    # Build the layout index once during initialization for O(log n) lookups
-    layout_index = LayoutIndex.build_index(transaction_system_layout)
+  def handle_continue(:initialization, {transaction_system_layout, routing_fn}) do
+    # Routing normally arrives proxy-served and LAZILY: like the read
+    # version, the layout index is built on first read, so a transaction
+    # that never reads never fetches routing (FDB fetches locations per
+    # read, not per transaction). A caller-provided TSL carries its own
+    # shard fields and indexes eagerly - no IO involved. That legacy
+    # derivation is deleted with bedrock-q67.9's final layer.
+    layout_index =
+      if routing_fn do
+        nil
+      else
+        %{shard_layout: shard_layout, materializers: materializers} =
+          routing_from_layout(transaction_system_layout)
+
+        LayoutIndex.build_index(shard_layout, materializers)
+      end
 
     noreply(%State{
       state: :valid,
       transaction_system_layout: transaction_system_layout,
       layout_index: layout_index,
+      routing_fn: routing_fn,
       read_version: nil
     })
   end
 
   def handle_continue(:stop, t), do: stop(t, :normal)
+
+  defp routing_from_layout(transaction_system_layout) do
+    materializers =
+      transaction_system_layout
+      |> Map.get(:shard_materializers)
+      |> Kernel.||(%{})
+      |> then(fn materializers ->
+        case Map.get(transaction_system_layout, :metadata_materializer) do
+          nil -> materializers
+          metadata_materializer -> Map.put_new(materializers, 0, metadata_materializer)
+        end
+      end)
+
+    %{
+      shard_layout: Map.get(transaction_system_layout, :shard_layout) || %{},
+      materializers: materializers
+    }
+  end
+
+  # Builds the layout index on first read (lazy, like the read version).
+  # A routing fetch failure replies like any other read failure - the
+  # Repo retry loop invalidates the node's routing cache and refetches.
+  defp with_layout_index(%State{layout_index: nil, routing_fn: routing_fn} = t, fun) do
+    case routing_fn.() do
+      {:ok, %{shard_layout: shard_layout, materializers: materializers}} ->
+        fun.(%{t | layout_index: LayoutIndex.build_index(shard_layout, materializers)})
+
+      {:error, reason} ->
+        reply(t, {:failure, reason})
+    end
+  end
+
+  defp with_layout_index(%State{} = t, fun), do: fun.(t)
 
   @impl true
   def handle_call(:nested_transaction, _from, t), do: reply(%{t | stack: [t.tx | t.stack]}, :ok)
@@ -128,42 +176,48 @@ defmodule Bedrock.Internal.TransactionBuilder do
   def handle_call({:get, key}, from, t) when is_binary(key), do: handle_call({:get, key, []}, from, t)
 
   def handle_call({:get, key, opts}, _from, t) when is_binary(key) and is_list(opts) do
-    t
-    |> get_key(key, opts)
-    |> then(fn
-      {t, {:error, _} = error} ->
-        reply(t, error)
+    with_layout_index(t, fn t ->
+      t
+      |> get_key(key, opts)
+      |> then(fn
+        {t, {:error, _} = error} ->
+          reply(t, error)
 
-      {t, {:failure, failures_by_reason}} ->
-        reply(t, {:failure, choose_a_reason(failures_by_reason)})
+        {t, {:failure, failures_by_reason}} ->
+          reply(t, {:failure, choose_a_reason(failures_by_reason)})
 
-      {t, {:ok, {^key, value}}} ->
-        reply(t, {:ok, value})
+        {t, {:ok, {^key, value}}} ->
+          reply(t, {:ok, value})
+      end)
     end)
   end
 
   def handle_call({:get_key_selector, %KeySelector{} = key_selector, opts}, _from, t) do
-    t
-    |> get_key_selector(key_selector, opts)
-    |> then(fn
-      {t, {:failure, failures_by_reason}} ->
-        reply(t, {:failure, choose_a_reason(failures_by_reason)})
+    with_layout_index(t, fn t ->
+      t
+      |> get_key_selector(key_selector, opts)
+      |> then(fn
+        {t, {:failure, failures_by_reason}} ->
+          reply(t, {:failure, choose_a_reason(failures_by_reason)})
 
-      {t, result} ->
-        reply(t, result)
+        {t, result} ->
+          reply(t, result)
+      end)
     end)
   end
 
   def handle_call({:get_range, start_key, end_key, batch_size, opts}, _from, t)
       when is_binary(start_key) and is_binary(end_key) do
-    t
-    |> get_range({start_key, end_key}, batch_size, opts)
-    |> then(fn
-      {t, {:failure, failures_by_reason}} ->
-        reply(t, {:failure, choose_a_reason(failures_by_reason)})
+    with_layout_index(t, fn t ->
+      t
+      |> get_range({start_key, end_key}, batch_size, opts)
+      |> then(fn
+        {t, {:failure, failures_by_reason}} ->
+          reply(t, {:failure, choose_a_reason(failures_by_reason)})
 
-      {t, result} ->
-        reply(t, result)
+        {t, result} ->
+          reply(t, result)
+      end)
     end)
   end
 
@@ -174,14 +228,16 @@ defmodule Bedrock.Internal.TransactionBuilder do
       ) do
     batch_size = Keyword.get(opts, :limit, 10_000)
 
-    t
-    |> get_range_selectors(start_selector, end_selector, batch_size, opts)
-    |> then(fn
-      {t, {:failure, failures_by_reason}} ->
-        reply(t, {:failure, choose_a_reason(failures_by_reason)})
+    with_layout_index(t, fn t ->
+      t
+      |> get_range_selectors(start_selector, end_selector, batch_size, opts)
+      |> then(fn
+        {t, {:failure, failures_by_reason}} ->
+          reply(t, {:failure, choose_a_reason(failures_by_reason)})
 
-      {t, result} ->
-        reply(t, result)
+        {t, result} ->
+          reply(t, result)
+      end)
     end)
   end
 

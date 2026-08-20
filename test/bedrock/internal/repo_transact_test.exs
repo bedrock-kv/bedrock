@@ -386,6 +386,119 @@ defmodule Bedrock.Internal.RepoTransactTest do
     end
   end
 
+  describe "transact/4 proxy-served routing" do
+    defmodule RoutingCluster do
+      @moduledoc false
+      def link!, do: Process.get(:stub_link_pid)
+      def otp_name_for_worker(id), do: :"repo_transact_routing_worker_#{id}"
+    end
+
+    @projection %{
+      shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
+      materializers: %{0 => {"wkr1", nil}}
+    }
+
+    defp projection, do: put_in(@projection.materializers[0], {"wkr1", Atom.to_string(node())})
+
+    defp spawn_stub_materializer(test_pid) do
+      materializer =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:get, key, _version, _opts}} ->
+              send(test_pid, {:materializer_got, key})
+              GenServer.reply(from, {:ok, "routed_value"})
+          end
+        end)
+
+      Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
+      materializer
+    end
+
+    defp spawn_stub_sequencer do
+      spawn(fn ->
+        receive do
+          {:"$gen_call", from, {:next_read_version, _epoch}} ->
+            GenServer.reply(from, {:ok, Bedrock.DataPlane.Version.from_integer(1)})
+        end
+      end)
+    end
+
+    defp link_loop(tsl, cached_routing, test_pid) do
+      receive do
+        {:"$gen_call", from, :get_routing} ->
+          case cached_routing do
+            nil -> GenServer.reply(from, {:error, :unavailable})
+            routing -> GenServer.reply(from, {:ok, routing})
+          end
+
+          link_loop(tsl, cached_routing, test_pid)
+
+        {:"$gen_call", from, :get_transaction_system_layout} ->
+          GenServer.reply(from, {:ok, tsl})
+          link_loop(tsl, cached_routing, test_pid)
+
+        {:"$gen_cast", {:cache_routing, routing}} ->
+          send(test_pid, {:routing_cached, routing})
+          link_loop(tsl, routing, test_pid)
+      end
+    end
+
+    test "a cache miss fetches routing from a proxy, caches it at the link, and routes the read" do
+      test_pid = self()
+      spawn_stub_materializer(test_pid)
+      routing = projection()
+
+      proxy =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, :fetch_routing} -> GenServer.reply(from, {:ok, routing})
+          end
+        end)
+
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: [proxy]}
+      link = spawn(fn -> link_loop(tsl, nil, test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
+
+      assert result == "routed_value"
+      assert_received {:materializer_got, "some_key"}
+      # The raw (string-ref) projection was cached back for the next
+      # transaction on this node - the Link is the locationCache.
+      assert_received {:routing_cached, ^routing}
+    end
+
+    test "a cache hit routes the read without touching any proxy" do
+      test_pid = self()
+      spawn_stub_materializer(test_pid)
+
+      # No proxies at all: a proxy fetch would fail loudly.
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
+      link = spawn(fn -> link_loop(tsl, projection(), test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
+
+      assert result == "routed_value"
+      assert_received {:materializer_got, "some_key"}
+      refute_received {:routing_cached, _}
+    end
+
+    test "a transaction that never reads never fetches routing" do
+      test_pid = self()
+
+      # Link serves wiring only; a routing fetch would hit the empty proxy
+      # list and fail. Lazy routing means this commit-only (read-free)
+      # transaction never asks.
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
+      link = spawn(fn -> link_loop(tsl, nil, test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      assert Repo.transact(RoutingCluster, TestRepo, fn -> :no_reads end, []) == :no_reads
+      refute_received {:routing_cached, _}
+    end
+  end
+
   describe "transact/4 nested transactions" do
     test "a client read call cannot wait forever for an unresponsive transaction builder" do
       {:ok, txn} = ScriptedTxn.start_link([])

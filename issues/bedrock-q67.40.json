@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T22:39:32Z",
+  "description": "Course item D. The whole-map client projection was an explicitly named at-current-scale divergence; the sharpened arc goal (no large payloads - materializers can number in the thousands) re-opens it. FDB shape (GetKeyServerLocations, CommitProxyInterface.h:442-477, NativeAPI.actor.cpp:1246-1453): request {begin, end, limit(, reverse)}; reply bounded list of {start_key, end_key, tag, materializer_ref} with more?; proxy answers via :gb_trees iterator walk from ceiling(begin) joining materializers[tag] - O(limit log n), no to_list. Client: Link cache becomes a coalescing PARTIAL range tree merged on each fetch; LayoutIndex becomes a range-keyed partial cache whose miss path returns :not_cached (not raise) and triggers routing_fn.(key) -\u003e bounded fetch centered on the key. StorageRacing and above unchanged. Named divergence kept: coarse whole-cache invalidation (vs FDB per-range) - simpler, failures rare; revisit if thrash appears. Reconcile with q67.21 mid-epoch mutation of materializers/ (proxy view stays current via the window pipeline; stale client entries resolve through the existing invalidate+retry).",
+  "id": "bedrock-q67.40",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Bounded routing lookups: fetch_routing takes {begin, end, limit}; coalescing partial cache",
+  "type": "task",
+  "updated_at": "2026-08-20T22:39:32Z"
+}

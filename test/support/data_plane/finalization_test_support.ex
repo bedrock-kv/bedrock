@@ -125,19 +125,12 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
 
   @doc """
   Builds routing data from a transaction system layout.
-  Used by finalize_batch opts.
+  Used to seed metadata_apply_fn/1 for finalize_batch opts.
   """
   def build_routing_data(transaction_system_layout) do
     logs = Map.get(transaction_system_layout, :logs, %{})
     services = Map.get(transaction_system_layout, :services, %{})
     shard_layout = Map.get(transaction_system_layout, :shard_layout, default_shard_layout())
-
-    table = :ets.new(:test_shard_keys, [:ordered_set, :public])
-
-    # Populate shard_keys from shard_layout: %{end_key => {tag, start_key}}
-    Enum.each(shard_layout, fn {end_key, {tag, _start_key}} ->
-      :ets.insert(table, {end_key, tag})
-    end)
 
     log_map =
       logs
@@ -166,12 +159,36 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
 
     replication_factor = max(1, map_size(logs))
 
-    %RoutingData{
-      shard_table: table,
+    RoutingData.from_snapshot(%{
+      shard_layout: shard_layout,
       log_map: log_map,
       log_services: log_services,
       replication_factor: replication_factor
-    }
+    })
+  end
+
+  @doc """
+  A stand-in for the commit proxy server's serialized apply-and-route step:
+  applies the batch's window entries and own committed metadata to the given
+  routing data and returns the snapshot the batch should push with.
+  """
+  def metadata_apply_fn(%RoutingData{} = routing_data) do
+    fn _prev_version, commit_version, window, deferred ->
+      entries =
+        case window do
+          nil -> []
+          {_from, _to, entries} -> entries
+        end
+
+      own =
+        case deferred do
+          nil -> []
+          {[]} -> []
+          {committed} -> [{commit_version, committed}]
+        end
+
+      {:ok, RoutingData.apply_mutations(routing_data, entries ++ own)}
+    end
   end
 
   # Default shard layout covering entire keyspace with a single shard (tag 0)

@@ -112,7 +112,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -157,7 +157,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -206,7 +206,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -240,7 +240,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -274,7 +274,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -335,7 +335,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -387,7 +387,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -445,7 +445,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )

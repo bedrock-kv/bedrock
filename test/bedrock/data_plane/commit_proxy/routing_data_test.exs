@@ -2,11 +2,18 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.CommitProxy.RoutingData
+  alias Bedrock.DataPlane.ShardRouter
+  alias Bedrock.DataPlane.Version
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
 
+  defp v(n), do: Version.from_integer(n)
+
+  # Shard boundaries as a plain sorted list of {end_key, {tag, start_key}}.
+  defp shard_list(%RoutingData{shards: shards}), do: :gb_trees.to_list(shards)
+
   describe "from_snapshot/1" do
-    test "builds fully-populated routing data owned by the calling process" do
+    test "builds fully-populated routing data" do
       snapshot = %{
         shard_layout: %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}},
         log_map: %{0 => "log-a", 1 => "log-b"},
@@ -16,13 +23,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
       routing_data = RoutingData.from_snapshot(snapshot)
 
-      assert :ets.info(routing_data.shard_table, :owner) == self()
-      assert :ets.tab2list(routing_data.shard_table) == [{"m", 1}, {<<0xFF, 0xFF>>, 0}]
+      assert shard_list(routing_data) == [{"m", {1, ""}}, {<<0xFF, 0xFF>>, {0, "m"}}]
       assert routing_data.log_map == %{0 => "log-a", 1 => "log-b"}
       assert routing_data.log_services == %{"log-a" => {:log_a, :node1}, "log-b" => {:log_b, :node2}}
       assert routing_data.replication_factor == 2
-
-      RoutingData.cleanup(routing_data)
     end
 
     test "builds empty routing data from an empty snapshot" do
@@ -30,10 +34,22 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
       routing_data = RoutingData.from_snapshot(snapshot)
 
-      assert :ets.tab2list(routing_data.shard_table) == []
+      assert shard_list(routing_data) == []
       assert routing_data.replication_factor == 1
+    end
 
-      RoutingData.cleanup(routing_data)
+    test "is a plain immutable value: derived copies do not affect the original" do
+      original =
+        RoutingData.from_snapshot(%{
+          shard_layout: %{"m" => {1, ""}},
+          log_map: %{},
+          log_services: %{},
+          replication_factor: 1
+        })
+
+      _derived = RoutingData.insert_shard(original, "z", 2, "m")
+
+      assert shard_list(original) == [{"m", {1, ""}}]
     end
   end
 
@@ -42,372 +58,232 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data = RoutingData.new_empty()
 
       assert %RoutingData{} = routing_data
-      assert is_reference(routing_data.shard_table)
+      assert shard_list(routing_data) == []
       assert routing_data.log_map == %{}
       assert routing_data.log_services == %{}
       assert routing_data.replication_factor == 1
     end
+  end
 
-    test "creates empty ETS ordered_set table" do
-      routing_data = RoutingData.new_empty()
+  describe "insert_shard/4 and delete_shard/2" do
+    test "inserts and overwrites shard entries" do
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_shard("m", 1, "")
+        |> RoutingData.insert_shard(<<0xFF, 0xFF>>, 2, "m")
+        |> RoutingData.insert_shard("m", 7, "")
 
-      # Table should be empty
-      assert :ets.tab2list(routing_data.shard_table) == []
+      assert shard_list(routing_data) == [{"m", {7, ""}}, {<<0xFF, 0xFF>>, {2, "m"}}]
+    end
 
-      # Table should be ordered_set (verify by type info)
-      info = :ets.info(routing_data.shard_table)
-      assert info[:type] == :ordered_set
+    test "deletes a shard entry; deleting an absent key is a no-op" do
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_shard("m", 1, "")
+        |> RoutingData.delete_shard("m")
+        |> RoutingData.delete_shard("never_there")
 
-      RoutingData.cleanup(routing_data)
+      assert shard_list(routing_data) == []
     end
   end
 
   describe "insert_log/2" do
     test "adds log to empty log_map at index 0" do
-      routing_data = RoutingData.new_empty()
-
-      updated = RoutingData.insert_log(routing_data, "log-1")
+      updated = RoutingData.insert_log(RoutingData.new_empty(), "log-1")
 
       assert updated.log_map == %{0 => "log-1"}
-
-      RoutingData.cleanup(routing_data)
     end
 
     test "adds logs at sequential indices" do
-      routing_data = RoutingData.new_empty()
-
       updated =
-        routing_data
+        RoutingData.new_empty()
         |> RoutingData.insert_log("log-a")
         |> RoutingData.insert_log("log-b")
         |> RoutingData.insert_log("log-c")
 
       assert updated.log_map == %{0 => "log-a", 1 => "log-b", 2 => "log-c"}
+    end
 
-      RoutingData.cleanup(routing_data)
+    test "is idempotent by log id: a re-inserted log keeps its index" do
+      updated =
+        RoutingData.new_empty()
+        |> RoutingData.insert_log("log-a")
+        |> RoutingData.insert_log("log-b")
+        |> RoutingData.insert_log("log-a")
+
+      assert updated.log_map == %{0 => "log-a", 1 => "log-b"}
     end
 
     test "does not modify other fields" do
       routing_data = RoutingData.new_empty()
-      original_table = routing_data.shard_table
 
       updated = RoutingData.insert_log(routing_data, "log-1")
 
-      assert updated.shard_table == original_table
+      assert updated.shards == routing_data.shards
       assert updated.log_services == %{}
       assert updated.replication_factor == 1
-
-      RoutingData.cleanup(routing_data)
     end
   end
 
   describe "remove_log/2" do
-    test "removes log from log_map" do
-      routing_data =
+    test "removes log from log_map and reindexes to contiguous indices" do
+      updated =
         RoutingData.new_empty()
         |> RoutingData.insert_log("log-a")
         |> RoutingData.insert_log("log-b")
         |> RoutingData.insert_log("log-c")
+        |> RoutingData.remove_log("log-b")
 
-      updated = RoutingData.remove_log(routing_data, "log-b")
-
-      # Should reindex to maintain contiguous indices
       assert updated.log_map == %{0 => "log-a", 1 => "log-c"}
-
-      RoutingData.cleanup(routing_data)
-    end
-
-    test "removes last log" do
-      routing_data =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-a")
-        |> RoutingData.insert_log("log-b")
-
-      updated = RoutingData.remove_log(routing_data, "log-b")
-
-      assert updated.log_map == %{0 => "log-a"}
-
-      RoutingData.cleanup(routing_data)
     end
 
     test "removes first log and reindexes" do
-      routing_data =
+      updated =
         RoutingData.new_empty()
         |> RoutingData.insert_log("log-a")
         |> RoutingData.insert_log("log-b")
         |> RoutingData.insert_log("log-c")
-
-      updated = RoutingData.remove_log(routing_data, "log-a")
+        |> RoutingData.remove_log("log-a")
 
       assert updated.log_map == %{0 => "log-b", 1 => "log-c"}
-
-      RoutingData.cleanup(routing_data)
     end
 
-    test "no-op if log not found" do
-      routing_data = RoutingData.insert_log(RoutingData.new_empty(), "log-a")
-
-      updated = RoutingData.remove_log(routing_data, "nonexistent")
+    test "no-op if log not found, including on an empty map" do
+      updated =
+        RoutingData.new_empty()
+        |> RoutingData.insert_log("log-a")
+        |> RoutingData.remove_log("nonexistent")
 
       assert updated.log_map == %{0 => "log-a"}
-
-      RoutingData.cleanup(routing_data)
-    end
-
-    test "handles removing from empty log_map" do
-      routing_data = RoutingData.new_empty()
-
-      updated = RoutingData.remove_log(routing_data, "nonexistent")
-
-      assert updated.log_map == %{}
-
-      RoutingData.cleanup(routing_data)
+      assert RoutingData.remove_log(RoutingData.new_empty(), "nonexistent").log_map == %{}
     end
   end
 
-  describe "put_log_service/3" do
-    test "adds service ref to log_services" do
-      routing_data = RoutingData.new_empty()
-
-      updated = RoutingData.put_log_service(routing_data, "log-1", {:log_1, :node@host})
-
-      assert updated.log_services == %{"log-1" => {:log_1, :node@host}}
-
-      RoutingData.cleanup(routing_data)
-    end
-
-    test "adds multiple service refs" do
-      routing_data = RoutingData.new_empty()
-
-      updated =
-        routing_data
-        |> RoutingData.put_log_service("log-1", {:log_1, :n1@host})
-        |> RoutingData.put_log_service("log-2", {:log_2, :n2@host})
-
-      assert updated.log_services == %{
-               "log-1" => {:log_1, :n1@host},
-               "log-2" => {:log_2, :n2@host}
-             }
-
-      RoutingData.cleanup(routing_data)
-    end
-
-    test "overwrites existing service ref" do
-      routing_data = RoutingData.put_log_service(RoutingData.new_empty(), "log-1", {:old_ref, :old_node})
-
-      updated = RoutingData.put_log_service(routing_data, "log-1", {:new_ref, :new_node})
-
-      assert updated.log_services == %{"log-1" => {:new_ref, :new_node}}
-
-      RoutingData.cleanup(routing_data)
-    end
-
-    test "does not modify other fields" do
-      routing_data = RoutingData.insert_log(RoutingData.new_empty(), "log-1")
-
-      updated = RoutingData.put_log_service(routing_data, "log-1", {:log_1, :node@host})
-
-      assert updated.log_map == %{0 => "log-1"}
-      assert updated.replication_factor == 1
-
-      RoutingData.cleanup(routing_data)
-    end
-  end
-
-  describe "delete_log_service/2" do
-    test "removes service ref from log_services" do
+  describe "put_log_service/3 and delete_log_service/2" do
+    test "adds, overwrites, and removes service refs" do
       routing_data =
         RoutingData.new_empty()
         |> RoutingData.put_log_service("log-1", {:log_1, :n1@host})
         |> RoutingData.put_log_service("log-2", {:log_2, :n2@host})
+        |> RoutingData.put_log_service("log-1", {:log_1b, :n3@host})
 
-      updated = RoutingData.delete_log_service(routing_data, "log-1")
+      assert routing_data.log_services == %{"log-1" => {:log_1b, :n3@host}, "log-2" => {:log_2, :n2@host}}
 
-      assert updated.log_services == %{"log-2" => {:log_2, :n2@host}}
+      assert RoutingData.delete_log_service(routing_data, "log-1").log_services ==
+               %{"log-2" => {:log_2, :n2@host}}
 
-      RoutingData.cleanup(routing_data)
-    end
-
-    test "no-op if log not found" do
-      routing_data = RoutingData.put_log_service(RoutingData.new_empty(), "log-1", {:log_1, :node@host})
-
-      updated = RoutingData.delete_log_service(routing_data, "nonexistent")
-
-      assert updated.log_services == %{"log-1" => {:log_1, :node@host}}
-
-      RoutingData.cleanup(routing_data)
-    end
-
-    test "handles deleting from empty log_services" do
-      routing_data = RoutingData.new_empty()
-
-      updated = RoutingData.delete_log_service(routing_data, "nonexistent")
-
-      assert updated.log_services == %{}
-
-      RoutingData.cleanup(routing_data)
+      assert RoutingData.delete_log_service(routing_data, "nonexistent").log_services ==
+               routing_data.log_services
     end
   end
 
   describe "set_replication_factor/2" do
-    test "updates replication factor" do
-      routing_data = RoutingData.new_empty()
+    test "updates replication factor without touching other fields" do
+      routing_data = RoutingData.insert_log(RoutingData.new_empty(), "log-1")
 
       updated = RoutingData.set_replication_factor(routing_data, 3)
 
       assert updated.replication_factor == 3
-
-      RoutingData.cleanup(routing_data)
-    end
-
-    test "does not modify other fields" do
-      routing_data =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-1")
-        |> RoutingData.put_log_service("log-1", {:log_1, :node@host})
-
-      updated = RoutingData.set_replication_factor(routing_data, 5)
-
       assert updated.log_map == %{0 => "log-1"}
-      assert updated.log_services == %{"log-1" => {:log_1, :node@host}}
-
-      RoutingData.cleanup(routing_data)
     end
   end
 
   describe "integration: typical usage pattern" do
-    test "builds complete routing data incrementally" do
-      # Start empty
-      routing_data = RoutingData.new_empty()
-
-      # Add logs (as they arrive via metadata)
+    test "builds complete routing data incrementally and routes with it" do
       routing_data =
-        routing_data
+        RoutingData.new_empty()
         |> RoutingData.insert_log("log-1")
         |> RoutingData.insert_log("log-2")
         |> RoutingData.insert_log("log-3")
-
-      # Add service refs (how to reach each log)
-      routing_data =
-        routing_data
         |> RoutingData.put_log_service("log-1", {:log_1, :n1@host})
         |> RoutingData.put_log_service("log-2", {:log_2, :n2@host})
         |> RoutingData.put_log_service("log-3", {:log_3, :n3@host})
-
-      # Add shard entries (via existing insert_shard/3)
-      RoutingData.insert_shard(routing_data, "m", 0)
-      RoutingData.insert_shard(routing_data, "z", 1)
-      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 2)
-
-      # Set replication factor
-      routing_data = RoutingData.set_replication_factor(routing_data, 3)
-
-      # Verify complete state
-      assert routing_data.log_map == %{0 => "log-1", 1 => "log-2", 2 => "log-3"}
-
-      assert routing_data.log_services == %{
-               "log-1" => {:log_1, :n1@host},
-               "log-2" => {:log_2, :n2@host},
-               "log-3" => {:log_3, :n3@host}
-             }
+        |> RoutingData.insert_shard("m", 0, "")
+        |> RoutingData.insert_shard("z", 1, "m")
+        |> RoutingData.insert_shard(<<0xFF, 0xFF>>, 2, "z")
+        |> RoutingData.set_replication_factor(3)
 
       assert routing_data.replication_factor == 3
 
-      assert :ets.tab2list(routing_data.shard_table) == [
-               {"m", 0},
-               {"z", 1},
-               {<<0xFF, 0xFF>>, 2}
+      assert shard_list(routing_data) == [
+               {"m", {0, ""}},
+               {"z", {1, "m"}},
+               {<<0xFF, 0xFF>>, {2, "z"}}
              ]
 
-      RoutingData.cleanup(routing_data)
+      assert ShardRouter.lookup_shard(routing_data.shards, "apple") == 0
+      assert ShardRouter.lookup_shard(routing_data.shards, "pear") == 1
+      assert ShardRouter.lookup_shard(routing_data.shards, <<0xFF, "/system/x">>) == 2
     end
   end
 
   describe "apply_mutations/2" do
     test "handles shard_key set mutation" do
-      routing_data = RoutingData.new_empty()
-      key = SystemKeys.shard_key("m")
-      value = Values.encode_shard_key_entry(42, "")
-      updates = [{100, [{:set, key, value}]}]
+      updates = [{v(100), [{:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(42, "")}]}]
 
-      updated = RoutingData.apply_mutations(routing_data, updates)
+      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
 
-      assert :ets.lookup(updated.shard_table, "m") == [{"m", 42}]
-
-      RoutingData.cleanup(routing_data)
+      assert shard_list(updated) == [{"m", {42, ""}}]
     end
 
     test "handles multiple shard_key mutations" do
-      routing_data = RoutingData.new_empty()
-
       updates = [
-        {100,
+        {v(100),
          [
            {:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(1, "")},
-           {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(2, "")},
-           {:set, SystemKeys.shard_key("z"), Values.encode_shard_key_entry(3, "")}
+           {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(2, "a")},
+           {:set, SystemKeys.shard_key("z"), Values.encode_shard_key_entry(3, "m")}
          ]}
       ]
 
-      updated = RoutingData.apply_mutations(routing_data, updates)
+      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
 
-      assert :ets.lookup(updated.shard_table, "a") == [{"a", 1}]
-      assert :ets.lookup(updated.shard_table, "m") == [{"m", 2}]
-      assert :ets.lookup(updated.shard_table, "z") == [{"z", 3}]
-
-      RoutingData.cleanup(routing_data)
+      assert shard_list(updated) == [{"a", {1, ""}}, {"m", {2, "a"}}, {"z", {3, "m"}}]
     end
 
-    test "handles layout_log set mutation - updates log_map" do
-      routing_data = RoutingData.new_empty()
-      key = SystemKeys.layout_log("log-123")
-      # layout_log stores log descriptor (tags) as erlang term
-      log_descriptor = [0, 1]
-      value = Values.encode_tag_list(log_descriptor)
-      updates = [{100, [{:set, key, value}]}]
+    test "skips a shard_key set whose value does not decode, keeping the last good entry" do
+      routing_data = RoutingData.insert_shard(RoutingData.new_empty(), "m", 42, "")
+
+      updates = [{v(100), [{:set, SystemKeys.shard_key("m"), <<0xEE, 0xEE, 0xEE>>}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      # Should add to log_map at next index
-      assert updated.log_map == %{0 => "log-123"}
-      # log_services are NOT populated from persisted data - they're runtime state
-      assert updated.log_services == %{}
-
-      RoutingData.cleanup(routing_data)
+      assert shard_list(updated) == [{"m", {42, ""}}]
     end
 
-    test "handles multiple layout_log mutations" do
-      routing_data = RoutingData.new_empty()
+    test "handles layout_log set mutation - updates log_map only" do
+      updates = [{v(100), [{:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])}]}]
 
-      updates = [
-        {100,
-         [
-           {:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])},
-           {:set, SystemKeys.layout_log("log-2"), Values.encode_tag_list([1])}
-         ]}
-      ]
+      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
 
-      updated = RoutingData.apply_mutations(routing_data, updates)
-
-      assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
+      assert updated.log_map == %{0 => "log-1"}
       # log_services are NOT populated from persisted data
       assert updated.log_services == %{}
+    end
 
-      RoutingData.cleanup(routing_data)
+    test "a re-set layout_log key keeps its index" do
+      updates = [
+        {v(100), [{:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])}]},
+        {v(101),
+         [
+           {:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([1])},
+           {:set, SystemKeys.layout_log("log-2"), Values.encode_tag_list([2])}
+         ]}
+      ]
+
+      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
+
+      assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
     end
 
     test "handles shard_key clear mutation" do
-      routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "m", 42)
+      routing_data = RoutingData.insert_shard(RoutingData.new_empty(), "m", 42, "")
 
-      key = SystemKeys.shard_key("m")
-      updates = [{100, [{:clear, key}]}]
+      updates = [{v(100), [{:clear, SystemKeys.shard_key("m")}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.lookup(updated.shard_table, "m") == []
-
-      RoutingData.cleanup(routing_data)
+      assert shard_list(updated) == []
     end
 
     test "handles layout_log clear mutation" do
@@ -416,108 +292,76 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         |> RoutingData.insert_log("log-123")
         |> RoutingData.put_log_service("log-123", {:my_log, :node@host})
 
-      key = SystemKeys.layout_log("log-123")
-      updates = [{100, [{:clear, key}]}]
+      updates = [{v(100), [{:clear, SystemKeys.layout_log("log-123")}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      # Should remove from log_services
       assert updated.log_services == %{}
-      # log_map removal and reindex
       assert updated.log_map == %{}
-
-      RoutingData.cleanup(routing_data)
     end
 
-    test "applies updates from multiple versions in order" do
-      routing_data = RoutingData.new_empty()
-
+    test "applies updates from multiple versions in order; later version wins" do
       updates = [
-        {100, [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(1, "")}]},
-        {101, [{:set, SystemKeys.shard_key("b"), Values.encode_shard_key_entry(2, "")}]},
-        {102, [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(99, "")}]}
+        {v(100), [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(1, "")}]},
+        {v(101), [{:set, SystemKeys.shard_key("b"), Values.encode_shard_key_entry(2, "a")}]},
+        {v(102), [{:set, SystemKeys.shard_key("a"), Values.encode_shard_key_entry(99, "")}]}
       ]
 
-      updated = RoutingData.apply_mutations(routing_data, updates)
+      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
 
-      # Later version (102) overwrites earlier (100)
-      assert :ets.lookup(updated.shard_table, "a") == [{"a", 99}]
-      assert :ets.lookup(updated.shard_table, "b") == [{"b", 2}]
-
-      RoutingData.cleanup(routing_data)
+      assert shard_list(updated) == [{"a", {99, ""}}, {"b", {2, "a"}}]
     end
 
-    test "ignores unknown key types" do
-      routing_data = RoutingData.new_empty()
+    test "ignores unknown system keys and non-system keys" do
+      updates = [
+        {v(100),
+         [
+           {:set, "\xff/system/unknown/foo", "bar"},
+           {:set, "user/data", "value"}
+         ]}
+      ]
 
-      # Unknown system key
-      updates = [{100, [{:set, "\xff/system/unknown/foo", "bar"}]}]
-
-      updated = RoutingData.apply_mutations(routing_data, updates)
-
-      # Should not crash, routing_data unchanged
-      assert updated.log_map == %{}
-      assert updated.log_services == %{}
-      assert :ets.tab2list(updated.shard_table) == []
-
-      RoutingData.cleanup(routing_data)
-    end
-
-    test "ignores non-system keys" do
-      routing_data = RoutingData.new_empty()
-
-      updates = [{100, [{:set, "user/data", "value"}]}]
-
-      updated = RoutingData.apply_mutations(routing_data, updates)
+      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
 
       assert updated.log_map == %{}
-      assert :ets.tab2list(updated.shard_table) == []
-
-      RoutingData.cleanup(routing_data)
+      assert shard_list(updated) == []
     end
 
     test "ignores unsupported mutation types" do
       routing_data = RoutingData.new_empty()
 
-      # atomic ops are not routing-relevant
-      updates = [{100, [{:atomic, :add, "key", <<1>>}]}]
+      updates = [{v(100), [{:atomic, :add, "key", <<1>>}]}]
 
-      updated = RoutingData.apply_mutations(routing_data, updates)
-
-      assert updated == routing_data
-
-      RoutingData.cleanup(routing_data)
+      assert RoutingData.apply_mutations(routing_data, updates) == routing_data
     end
 
     test "clear_range removes shard entries whose full key falls in range" do
-      routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "a", 1)
-      RoutingData.insert_shard(routing_data, "m", 2)
-      RoutingData.insert_shard(routing_data, "z", 3)
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_shard("a", 1, "")
+        |> RoutingData.insert_shard("m", 2, "a")
+        |> RoutingData.insert_shard("z", 3, "m")
 
       # Clear [shard_key("a"), shard_key("z")) - end is exclusive, so "z" survives
-      updates = [{100, [{:clear_range, SystemKeys.shard_key("a"), SystemKeys.shard_key("z")}]}]
+      updates = [{v(100), [{:clear_range, SystemKeys.shard_key("a"), SystemKeys.shard_key("z")}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.tab2list(updated.shard_table) == [{"z", 3}]
-
-      RoutingData.cleanup(routing_data)
+      assert shard_list(updated) == [{"z", {3, "m"}}]
     end
 
     test "clear_range over the shard_keys prefix removes all shard entries" do
-      routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "m", 1)
-      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 2)
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_shard("m", 1, "")
+        |> RoutingData.insert_shard(<<0xFF, 0xFF>>, 2, "m")
 
       {start_key, end_key} = Bedrock.KeyRange.from_prefix(SystemKeys.shard_keys_prefix())
-      updates = [{100, [{:clear_range, start_key, end_key}]}]
+      updates = [{v(100), [{:clear_range, start_key, end_key}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.tab2list(updated.shard_table) == []
-
-      RoutingData.cleanup(routing_data)
+      assert shard_list(updated) == []
     end
 
     test "clear_range removes layout_log entries in range, reindexing log_map and dropping services" do
@@ -530,41 +374,39 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         |> RoutingData.put_log_service("log-b", {:log_b, :n2@host})
 
       # Clear [layout_log("log-a"), layout_log("log-c")) - "log-c" survives
-      updates = [{100, [{:clear_range, SystemKeys.layout_log("log-a"), SystemKeys.layout_log("log-c")}]}]
+      updates = [{v(100), [{:clear_range, SystemKeys.layout_log("log-a"), SystemKeys.layout_log("log-c")}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
       assert updated.log_map == %{0 => "log-c"}
       assert updated.log_services == %{}
-
-      RoutingData.cleanup(routing_data)
     end
 
     test "clear_range outside routing families leaves routing data unchanged" do
-      routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "m", 1)
-      routing_data = RoutingData.insert_log(routing_data, "log-1")
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_shard("m", 1, "")
+        |> RoutingData.insert_log("log-1")
 
-      updates = [{100, [{:clear_range, "user/a", "user/z"}]}]
+      updates = [{v(100), [{:clear_range, "user/a", "user/z"}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.tab2list(updated.shard_table) == [{"m", 1}]
+      assert shard_list(updated) == [{"m", {1, ""}}]
       assert updated.log_map == %{0 => "log-1"}
-
-      RoutingData.cleanup(routing_data)
     end
 
     test "recovery-style rewrite: clear_range then sets shrinks 3 shards to 2" do
-      routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, "g", 1)
-      RoutingData.insert_shard(routing_data, "p", 2)
-      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 3)
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_shard("g", 1, "")
+        |> RoutingData.insert_shard("p", 2, "g")
+        |> RoutingData.insert_shard(<<0xFF, 0xFF>>, 3, "p")
 
       {start_key, end_key} = Bedrock.KeyRange.from_prefix(SystemKeys.shard_keys_prefix())
 
       updates = [
-        {100,
+        {v(100),
          [
            {:clear_range, start_key, end_key},
            {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(10, "")},
@@ -574,34 +416,25 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
-      assert :ets.tab2list(updated.shard_table) == [{"m", 10}, {<<0xFF, 0xFF>>, 11}]
-
-      RoutingData.cleanup(routing_data)
+      assert shard_list(updated) == [{"m", {10, ""}}, {<<0xFF, 0xFF>>, {11, "m"}}]
     end
 
     test "handles mixed shard_key and layout_log mutations" do
-      routing_data = RoutingData.new_empty()
-
       updates = [
-        {100,
+        {v(100),
          [
            {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "")},
            {:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])},
-           {:set, SystemKeys.shard_key("z"), Values.encode_shard_key_entry(2, "")},
+           {:set, SystemKeys.shard_key("z"), Values.encode_shard_key_entry(2, "m")},
            {:set, SystemKeys.layout_log("log-2"), Values.encode_tag_list([1])}
          ]}
       ]
 
-      updated = RoutingData.apply_mutations(routing_data, updates)
+      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
 
-      # Shard entries
-      assert :ets.lookup(updated.shard_table, "m") == [{"m", 1}]
-      assert :ets.lookup(updated.shard_table, "z") == [{"z", 2}]
-      # Log entries - only log_map populated, not log_services
+      assert shard_list(updated) == [{"m", {1, ""}}, {"z", {2, "m"}}]
       assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
       assert updated.log_services == %{}
-
-      RoutingData.cleanup(routing_data)
     end
   end
 end

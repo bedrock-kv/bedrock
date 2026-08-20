@@ -83,7 +83,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
           epoch: 1,
           sequencer: :test_sequencer,
           resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
-          routing_data: routing_data
+          metadata_apply_fn: Support.metadata_apply_fn(routing_data)
         )
 
       assert result == {:error, {:resolver_unavailable, :unavailable}}
@@ -133,7 +133,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
                  sequencer_notify_fn: mock_sequencer_notify(),
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       expected_version = Version.from_integer(100)
@@ -161,7 +161,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                    assert sequencer == :test_sequencer
                    :ok
                  end,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
     end
 
@@ -205,7 +205,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                    assert sequencer == :test_sequencer
                    :ok
                  end,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Both should be aborted
@@ -236,7 +236,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Transaction should be aborted due to log failure
@@ -266,7 +266,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Transaction should be aborted due to insufficient acknowledgments
@@ -317,7 +317,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                    assert sequencer == :test_sequencer
                    :ok
                  end,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Verify both resolver and log push received correct versions
@@ -371,7 +371,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  abort_reply_fn: custom_abort_fn,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       assert_receive {:custom_abort_called, 1}

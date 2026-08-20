@@ -97,7 +97,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end,
                  max_attempts: 3,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Verify retry happened
@@ -138,7 +138,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end,
                  max_attempts: 3,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       assert_receive {:resolver_attempt, 1}
@@ -178,7 +178,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end,
                  max_attempts: 3,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       assert_receive {:resolver_attempt, 1}
@@ -221,7 +221,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 3,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Should have attempted exactly 3 times
@@ -260,7 +260,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 2,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       assert_receive {:resolver_attempt, 1}
@@ -294,7 +294,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 3,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       assert_receive {:resolver_attempt, 1}
@@ -337,7 +337,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 3,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Should fail immediately - only 1 attempt
@@ -371,7 +371,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  max_attempts: 3,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Should fail immediately
@@ -435,7 +435,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end,
                  timeout_fn: custom_timeout_fn,
                  max_attempts: 5,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Verify timeouts were passed correctly
@@ -500,7 +500,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end,
                  max_attempts: 3,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Both attempts should see 2 transactions
@@ -562,7 +562,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
                    resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                    resolver_fn: mock_resolver_fn,
                    max_attempts: 3,
-                   routing_data: routing_data
+                   metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                  )
       end)
 

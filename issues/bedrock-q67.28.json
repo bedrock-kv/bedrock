@@ -7,9 +7,15 @@
   "id": "bedrock-q67.28",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "FDB design audit CONFIRMED with refinements. (1) Per-tx rejection inside batch processing is FDB's own shape: validateAndProcessTenantAccess does reply.sendError + committed[t]=TenantFailure and the batch proceeds (CommitProxyServer.actor.cpp:1757-1792); final reply loop skips answered txs (:2754-2757). (2) FDB's accept-vs-pipeline criterion: byte-pure request checks at accept (even full scans - verifyTenantPrefix :318-392), versioned-state checks in-pipeline; Bedrock's decode cost model favors pipeline placement for the bounds scan. (3) FDB is genuinely unguarded against dishonest clients: key past 0xFFFF gets EMPTY tags via keyInfo sentinel (RangeMap.h:135-141, commented-out assert :111) -\u003e silently dropped by every storage server; out-of-range conflict range -\u003e ASSERT(resolvers.size()) proxy CRASH (:180); atomic on system keys -\u003e silent txnStateStore/keyspace divergence. Our proxy-side enforcement guards real holes - keep it, move it. PLACEMENT: run first_rejected_mutation during the existing extraction pass in resolve_conflicts (finalization.ex:335-343/:393-402) before resolver calls; on rejection reply_fn immediately, send EMPTY conflict sections + [] metadata to keep resolver indices stable (FDB creates out-transactions on all resolvers for alignment :260-265; and unlike FDB we avoid polluting conflict history with rejected txs' ranges); union rejected into replied_indices; keep binary/mode guards at accept. Rejection must stay a pure function of transaction bytes.",
+      "timestamp": "2026-08-20T14:47:52Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Move proxy keyspace validation off the serialized accept loop",
   "type": "task",
-  "updated_at": "2026-08-20T14:37:03Z"
+  "updated_at": "2026-08-20T14:47:52Z"
 }

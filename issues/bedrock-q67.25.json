@@ -9,9 +9,15 @@
   "id": "bedrock-q67.25",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Audit 2026-08-20: this ticket's premise changed under it. q67.31 DELETED the write-only shadow copy - cluster/parameters/*, cluster/policies/*, and the config_monolithic/epoch_legacy/last_recovery_legacy family are no longer written at all (and their codecs are gone from SystemKeys.Values). There is no divergence hazard anymore; coordinator raft is cleanly the sole authority. The ticket's shape flips from 'promote the existing keyspace copy to authoritative' to 'introduce the keyspace config family WITH its recovery-time reader in one move' (per the inventory-not-communication rule: the writer lands with the reader, shaped by the reader). The legacy-family deletion listed as cleanup here is already done. Sequencing unchanged: after q67.9's read path.",
+      "timestamp": "2026-08-20T18:09:48Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "Cluster config authority: keyspace owns parameters/policies; coordinator keeps only the bootstrap anchor",
   "type": "task",
-  "updated_at": "2026-08-19T22:13:28Z"
+  "updated_at": "2026-08-20T18:09:48Z"
 }

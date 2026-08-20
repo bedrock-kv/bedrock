@@ -177,20 +177,30 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @impl true
   def handle_call(
-        {:resolve_transactions, epoch, {last_version, _next_version}, transactions, _metadata, metadata_ack,
+        {:resolve_transactions, epoch, {last_version, next_version}, _transactions, _metadata, metadata_ack,
          {_hold?, confirms}},
         _from,
         t
       )
       when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version < t.last_version do
-    # All transactions aborted due to stale version - return a differential
-    # metadata window for the proxy. This is a retry of an already-processed
-    # batch, so any hold was recorded then (re-holding a confirmed version
-    # would wedge it) - but its confirms may be new; apply them (idempotent).
-    {t, confirmed_any?} = apply_metadata_confirms(t, confirms)
-    {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack, confirmed_any?)
-    aborted_indices = Enum.to_list(0..(length(transactions) - 1)//1)
-    reply(t, {:ok, aborted_indices, metadata_window})
+    # A retry of an already-processed batch (its reply was lost): REPLAY the
+    # recorded verdict - recomputing or fabricating one could tell clients
+    # "aborted" for transactions the system committed. Any hold was recorded
+    # on first processing (re-holding a confirmed version would wedge it),
+    # but the retry's confirms may be new; apply them (idempotent). The
+    # metadata window is recomputed - it is differential by the caller's ack,
+    # so recomputation is the correct, idempotent choice. A verdict pruned
+    # past the retention horizon (or never recorded) has no truthful answer:
+    # fail explicitly and let the proxy fail fast into recovery.
+    case Map.fetch(t.recent_replies, next_version) do
+      {:ok, aborted_indices} ->
+        {t, confirmed_any?} = apply_metadata_confirms(t, confirms)
+        {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack, confirmed_any?)
+        reply(t, {:ok, aborted_indices, metadata_window})
+
+      :error ->
+        reply(t, {:error, :version_beyond_retention})
+    end
   end
 
   @impl true
@@ -221,7 +231,14 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     emit_processing(transactions, next_version)
 
     {conflicts, aborted} = resolve(t.conflicts, transactions, next_version)
-    t = %{t | conflicts: conflicts, last_version: next_version}
+
+    t = %{
+      t
+      | conflicts: conflicts,
+        last_version: next_version,
+        recent_replies: Map.put(t.recent_replies, next_version, aborted)
+    }
+
     emit_completed(transactions, aborted, next_version)
 
     # Fold in confirmed deferred metadata, then either hold this batch
@@ -269,8 +286,16 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
       updated_state =
         if current_version_int >= retention_microseconds do
-          new_conflicts = remove_old_transactions(t.conflicts, Version.subtract(t.last_version, retention_microseconds))
-          %{t | conflicts: new_conflicts, last_sweep_time: Time.monotonic_now_in_ms()}
+          floor = Version.subtract(t.last_version, retention_microseconds)
+          new_conflicts = remove_old_transactions(t.conflicts, floor)
+          recent_replies = Map.reject(t.recent_replies, fn {version, _aborted} -> version < floor end)
+
+          %{
+            t
+            | conflicts: new_conflicts,
+              recent_replies: recent_replies,
+              last_sweep_time: Time.monotonic_now_in_ms()
+          }
         else
           %{t | last_sweep_time: Time.monotonic_now_in_ms()}
         end

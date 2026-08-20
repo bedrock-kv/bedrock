@@ -107,12 +107,15 @@ defmodule Bedrock.DataPlane.ShardRouter do
     # With [min, max) ranges, end_key is exclusive, so we want end_key > key
     case ceiling_entry(shards, key) do
       :none ->
-        # Key is beyond all boundaries - fall back to the last entry
+        # A key at or past every boundary belongs to no shard. Commit ingress
+        # bounds every mutation below the last boundary, so this firing means
+        # the map and the keyspace have diverged - the historical fallback
+        # (route into the last shard) turned exactly that into a silent
+        # misroute. Fail the batch into director recovery instead.
         if :gb_trees.is_empty(shards) do
           raise "Empty shard map"
         else
-          {_end_key, {tag, _start_key}} = :gb_trees.largest(shards)
-          tag
+          raise "Key beyond all shard boundaries: #{inspect(key)}"
         end
 
       {_end_key, {tag, _start_key}} ->

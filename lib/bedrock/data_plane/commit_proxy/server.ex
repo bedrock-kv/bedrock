@@ -47,7 +47,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 2]
 
   import Bedrock.DataPlane.CommitProxy.Telemetry,
-    only: [trace_metadata: 0, trace_metadata: 1, trace_metadata_applied: 2, trace_unknown_key_skipped: 1]
+    only: [
+      trace_metadata: 0,
+      trace_metadata: 1,
+      trace_metadata_applied: 2,
+      trace_unknown_key_skipped: 1,
+      trace_ingress_validation_failed: 1
+    ]
 
   import Bedrock.Internal.GenServer.Replies
 
@@ -269,7 +275,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       {:error, _} -> :invalid_transaction
     end
   rescue
-    _ -> :invalid_transaction
+    error ->
+      trace_ingress_validation_failed(error)
+      :invalid_transaction
   end
 
   defp keyspace_bound(:user), do: Bedrock.end_of_user_keyspace()
@@ -376,7 +384,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
              # Serialized apply-and-route: the server folds this batch's
              # committed metadata into its state in commit-version order and
              # returns the immutable routing snapshot the batch pushes with.
-             metadata_apply_fn: fn _prev_version, commit_version, window, deferred ->
+             metadata_apply_fn: fn commit_version, window, deferred ->
                GenServer.call(
                  server_pid,
                  {:apply_metadata_and_route, seq, commit_version, window, deferred},

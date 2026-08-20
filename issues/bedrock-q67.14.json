@@ -8,9 +8,15 @@
   "id": "bedrock-q67.14",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Gating pointer refresh 2026-08-20: 'phase-a reconciliation' is now concretely bedrock-q67.21. The knob plumbs through whatever recruitment shape that port lands.",
+      "timestamp": "2026-08-20T18:09:49Z"
+    }
+  ],
   "priority": 2,
   "status": "deferred",
   "title": "Plumb idle_timeout from cluster config to recruitment worker_params",
   "type": "task",
-  "updated_at": "2026-08-15T20:46:15Z"
+  "updated_at": "2026-08-20T18:09:49Z"
 }

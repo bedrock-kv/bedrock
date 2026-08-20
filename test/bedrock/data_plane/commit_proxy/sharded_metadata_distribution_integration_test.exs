@@ -18,7 +18,6 @@ defmodule Bedrock.DataPlane.CommitProxy.ShardedMetadataDistributionIntegrationTe
   """
   use ExUnit.Case, async: false
 
-  alias Bedrock.DataPlane.CommitProxy.Metadata
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.Server, as: CommitProxyServer
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
@@ -155,7 +154,12 @@ defmodule Bedrock.DataPlane.CommitProxy.ShardedMetadataDistributionIntegrationTe
     end
   end
 
-  defp proxy_metadata(proxy), do: :sys.get_state(proxy).metadata
+  defp proxy_shard(proxy, end_key) do
+    case :gb_trees.lookup(end_key, :sys.get_state(proxy).routing_data.shards) do
+      {:value, {tag, _start}} -> tag
+      :none -> nil
+    end
+  end
 
   defp resolver_metadata_mutations(resolver) do
     resolver
@@ -203,7 +207,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ShardedMetadataDistributionIntegrationTe
 
     refute metadata_mutation in resolver_metadata_mutations(resolver_a)
     refute metadata_mutation in resolver_metadata_mutations(resolver_b)
-    assert proxy_metadata(proxy).shards == %{}
+    assert proxy_shard(proxy, "q") == nil
   end
 
   test "metadata from committed transactions is distributed to resolver windows and proxy metadata", %{
@@ -218,7 +222,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ShardedMetadataDistributionIntegrationTe
     version = commit!(proxy, epoch, encode_tx([metadata_mutation], "apple"))
 
     # The proxy's structured metadata converges on the committed value...
-    commit_until(proxy, epoch, fn -> proxy_metadata(proxy).shards == %{"q" => 3} end)
+    commit_until(proxy, epoch, fn -> proxy_shard(proxy, "q") == 3 end)
 
     # ...and each resolver's window holds the entry at the ORIGINAL commit
     # version (ordering is preserved by version, not by confirmation arrival).
@@ -254,8 +258,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ShardedMetadataDistributionIntegrationTe
     v3 = commit!(proxy, epoch, encode_tx([set_tag.(3)], "apple"))
 
     # Later committed value wins; the aborted tag 2 never surfaces.
-    commit_until(proxy, epoch, fn -> proxy_metadata(proxy).shards == %{"q" => 3} end)
-    assert %Metadata{shards: %{"q" => 3}} = proxy_metadata(proxy)
+    commit_until(proxy, epoch, fn -> proxy_shard(proxy, "q") == 3 end)
 
     # The resolver window carries exactly the committed entries, in version order.
     commit_until(proxy, epoch, fn ->

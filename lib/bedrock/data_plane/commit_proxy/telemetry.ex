@@ -54,15 +54,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
     )
   end
 
-  @spec trace_metadata_applied(count :: non_neg_integer(), families :: [atom()]) :: :ok
-  def trace_metadata_applied(count, families) do
-    Telemetry.execute(
-      [:bedrock, :data_plane, :commit_proxy, :metadata_applied],
-      %{count: count},
-      Map.put(trace_metadata(), :families, families)
-    )
-  end
-
   @doc """
   A transaction was rejected at ingress because its mutation section raised
   during validation. Fail-closed is correct, but a burst of these can also
@@ -74,15 +65,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
       [:bedrock, :data_plane, :commit_proxy, :ingress_validation_failed],
       %{count: 1},
       Map.put(trace_metadata(), :error, error)
-    )
-  end
-
-  @spec trace_unknown_key_skipped(keys :: [Bedrock.key()]) :: :ok
-  def trace_unknown_key_skipped(keys) do
-    Telemetry.execute(
-      [:bedrock, :data_plane, :commit_proxy, :unknown_key_skipped],
-      %{count: length(keys)},
-      Map.put(trace_metadata(), :keys, keys)
     )
   end
 

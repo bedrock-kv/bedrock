@@ -25,7 +25,6 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
   """
   use ExUnit.Case, async: true
 
-  alias Bedrock.DataPlane.CommitProxy.Metadata
   alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.CommitProxy.Server
   alias Bedrock.DataPlane.CommitProxy.State
@@ -42,7 +41,6 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
       epoch: 1,
       empty_transaction_timeout_ms: 1_000,
       mode: :running,
-      metadata: Keyword.get(opts, :metadata, Metadata.new()),
       routing_data: RoutingData.new_empty(),
       routed_seq: Keyword.get(opts, :routed_seq, 0)
     }
@@ -69,7 +67,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
 
     {updated, routing_data} = apply_in_order(state(), 1, v(1), window)
 
-    assert updated.metadata.version == v(1)
+    assert updated.applied_version == v(1)
     assert updated.routed_seq == 1
     assert routing_data.log_map == %{0 => "log_a"}
     assert :gb_trees.lookup("a", routing_data.shards) == {:value, {7, ""}}
@@ -105,7 +103,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
 
     assert routing_data.log_map == %{0 => "log_a"}
     assert :gb_trees.lookup("a", routing_data.shards) == {:value, {3, ""}}
-    assert updated.metadata.version == v(2)
+    assert updated.applied_version == v(2)
   end
 
   test "overlapping windows apply idempotently: entries at or below the applied version are dropped" do
@@ -116,7 +114,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     {updated, routing} = apply_in_order(updated, 2, v(2), {nil, v(2), [e1, e2]})
 
     assert routing.log_map == %{0 => "log_a", 1 => "log_b"}
-    assert updated.metadata.version == v(2)
+    assert updated.applied_version == v(2)
   end
 
   test "applied version advances to the window's to_version, not just the last entry's version" do
@@ -124,8 +122,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     # acking v(3) lets the resolver prune fully.
     {updated, _routing} = apply_in_order(state(), 1, v(3), {nil, v(3), [{v(1), [shard_set("a", 1)]}]})
 
-    assert %Metadata{shards: %{"a" => 1}, version: version} = updated.metadata
-    assert version == v(3)
+    assert updated.applied_version == v(3)
   end
 
   test "a window whose from_version exceeds the applied version is a coverage gap: fail fast" do
@@ -154,7 +151,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     {updated, routing} = apply_in_order(state(), 1, v(1), nil)
 
     assert updated.routed_seq == 1
-    assert updated.metadata.version == nil
+    assert updated.applied_version == nil
     assert routing.log_map == %{}
   end
 

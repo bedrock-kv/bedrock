@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T22:39:31Z",
+  "description": "Course item C. After services leaves (course B), the TSL's logs and resolvers fields have ZERO broadcast consumers: olivine takes the typed seed; old-TSL recovery planning reads the object-storage bootstrap context; proxy log wiring rides the recover_from snapshot + layout/logs/ keyspace family; ResolverLayout.from_layout and monitoring_phase are director-internal and repoint at RecoveryAttempt. Delete both fields; the broadcast becomes {epoch, sequencer, proxies} - smaller than FDB's ServerDBInfo (which carries resolvers + logSystemConfig because SSes peek TLogs at runtime; Bedrock materializers get pull sources at unlock instead - named difference, justified). Coordinator replay/nil-clear semantics unchanged. TSLTypeValidator shrinks accordingly.",
+  "id": "bedrock-q67.39",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Broadcast reduced to its essence: {epoch, sequencer, proxies}",
+  "type": "task",
+  "updated_at": "2026-08-20T22:39:31Z"
+}

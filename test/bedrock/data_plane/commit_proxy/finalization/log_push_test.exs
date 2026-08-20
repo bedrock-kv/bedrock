@@ -459,7 +459,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_2" end)
     end
 
-    test "returns insufficient_acknowledgments when stream exhausted before all acks" do
+    test "fails when the stream is exhausted before all acks" do
       # Simulate a scenario where async stream returns fewer results than expected
       mock_async_stream_fn = fn _logs, _fun, _opts ->
         # Only return one result when two are expected
@@ -473,7 +473,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
 
       transactions_by_log = %{"log_1" => tx_binary, "log_2" => tx_binary}
 
-      assert {:error, {:insufficient_acknowledgments, 1, 2, []}} =
+      assert {:error, :log_push_failed} =
                Finalization.push_transaction_to_logs_direct(
                  Version.from_integer(99),
                  transactions_by_log,

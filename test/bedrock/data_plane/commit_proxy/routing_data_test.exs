@@ -159,35 +159,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
     end
   end
 
-  describe "put_log_service/3 and delete_log_service/2" do
-    test "adds, overwrites, and removes service refs" do
-      routing_data =
-        RoutingData.new_empty()
-        |> RoutingData.put_log_service("log-1", {:log_1, :n1@host})
-        |> RoutingData.put_log_service("log-2", {:log_2, :n2@host})
-        |> RoutingData.put_log_service("log-1", {:log_1b, :n3@host})
-
-      assert routing_data.log_services == %{"log-1" => {:log_1b, :n3@host}, "log-2" => {:log_2, :n2@host}}
-
-      assert RoutingData.delete_log_service(routing_data, "log-1").log_services ==
-               %{"log-2" => {:log_2, :n2@host}}
-
-      assert RoutingData.delete_log_service(routing_data, "nonexistent").log_services ==
-               routing_data.log_services
-    end
-  end
-
-  describe "set_replication_factor/2" do
-    test "updates replication factor without touching other fields" do
-      routing_data = RoutingData.insert_log(RoutingData.new_empty(), "log-1")
-
-      updated = RoutingData.set_replication_factor(routing_data, 3)
-
-      assert updated.replication_factor == 3
-      assert updated.log_map == %{0 => "log-1"}
-    end
-  end
-
   describe "integration: typical usage pattern" do
     test "builds complete routing data incrementally and routes with it" do
       routing_data =
@@ -195,13 +166,13 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         |> RoutingData.insert_log("log-1")
         |> RoutingData.insert_log("log-2")
         |> RoutingData.insert_log("log-3")
-        |> RoutingData.put_log_service("log-1", {:log_1, :n1@host})
-        |> RoutingData.put_log_service("log-2", {:log_2, :n2@host})
-        |> RoutingData.put_log_service("log-3", {:log_3, :n3@host})
+        |> Map.update!(:log_services, fn _ ->
+          %{"log-1" => {:log_1, :n1@host}, "log-2" => {:log_2, :n2@host}, "log-3" => {:log_3, :n3@host}}
+        end)
         |> RoutingData.insert_shard("m", 0, "")
         |> RoutingData.insert_shard("z", 1, "m")
         |> RoutingData.insert_shard(<<0xFF, 0xFF>>, 2, "z")
-        |> RoutingData.set_replication_factor(3)
+        |> Map.put(:replication_factor, 3)
 
       assert routing_data.replication_factor == 3
 
@@ -290,7 +261,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       routing_data =
         RoutingData.new_empty()
         |> RoutingData.insert_log("log-123")
-        |> RoutingData.put_log_service("log-123", {:my_log, :node@host})
+        |> Map.update!(:log_services, &Map.put(&1, "log-123", {:my_log, :node@host}))
 
       updates = [{v(100), [{:clear, SystemKeys.layout_log("log-123")}]}]
 
@@ -370,8 +341,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         |> RoutingData.insert_log("log-a")
         |> RoutingData.insert_log("log-b")
         |> RoutingData.insert_log("log-c")
-        |> RoutingData.put_log_service("log-a", {:log_a, :n1@host})
-        |> RoutingData.put_log_service("log-b", {:log_b, :n2@host})
+        |> Map.update!(:log_services, fn _ ->
+          %{"log-a" => {:log_a, :n1@host}, "log-b" => {:log_b, :n2@host}}
+        end)
 
       # Clear [layout_log("log-a"), layout_log("log-c")) - "log-c" survives
       updates = [{v(100), [{:clear_range, SystemKeys.layout_log("log-a"), SystemKeys.layout_log("log-c")}]}]

@@ -26,11 +26,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     assert metadata.next_version == next_version
   end
 
-  defp expect_transaction_processing_start(_last_version, next_version) do
-    {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :processing])
-    assert metadata.next_version == next_version
-  end
-
   defp expect_transaction_completed(_last_version, next_version) do
     {_measurements, metadata} = expect_telemetry([:bedrock, :resolver, :resolve_transactions, :completed])
     assert metadata.next_version == next_version
@@ -79,7 +74,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     opts =
       Keyword.merge(
         [
-          lock_token: lock_token,
           key_range: {"", <<0xFF, 0xFF>>},
           epoch: 1,
           last_version: Version.zero(),
@@ -96,7 +90,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
   describe "child_spec/1" do
     test "creates valid child spec with required options" do
       opts = [
-        lock_token: :crypto.strong_rand_bytes(32),
         key_range: {"a", "z"},
         epoch: 123,
         director: self(),
@@ -110,10 +103,9 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
                restart: :temporary,
                start:
                  {GenServer, :start_link,
-                  [Server, {token, last_version, epoch, director, sweep_interval_ms, version_retention_ms}]}
+                  [Server, {last_version, epoch, director, sweep_interval_ms, version_retention_ms}]}
              } = spec
 
-      assert is_binary(token)
       assert last_version == Version.zero()
       assert epoch == 123
       assert is_pid(director)
@@ -121,21 +113,8 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert version_retention_ms == 6_000
     end
 
-    test "raises error when lock_token option is missing" do
-      opts = [
-        key_range: {"a", "z"},
-        epoch: 123,
-        director: self()
-      ]
-
-      assert_raise RuntimeError, "Missing :lock_token option", fn ->
-        Server.child_spec(opts)
-      end
-    end
-
     test "raises error when key_range option is missing" do
       opts = [
-        lock_token: :crypto.strong_rand_bytes(32),
         epoch: 123,
         director: self()
       ]
@@ -147,7 +126,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
     test "raises error when epoch option is missing" do
       opts = [
-        lock_token: :crypto.strong_rand_bytes(32),
         key_range: {"a", "z"},
         director: self()
       ]
@@ -159,7 +137,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
     test "raises error when director option is missing" do
       opts = [
-        lock_token: :crypto.strong_rand_bytes(32),
         key_range: {"a", "z"},
         epoch: 123
       ]
@@ -177,8 +154,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
     test "initializes with correct state", %{server: server, lock_token: lock_token} do
       assert %State{
-               lock_token: ^lock_token,
-               mode: :running,
                waiting: %{}
              } = :sys.get_state(server)
     end
@@ -190,12 +165,12 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
     end
 
     test "resolver starts in running mode and is ready for transactions", %{server: server} do
-      assert %State{mode: :running} = :sys.get_state(server)
+      assert %State{} = :sys.get_state(server)
     end
 
     test "server is alive and can receive messages", %{server: server} do
       assert Process.alive?(server)
-      assert %State{mode: :running} = :sys.get_state(server)
+      assert %State{} = :sys.get_state(server)
     end
   end
 
@@ -214,23 +189,16 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
     test "resolver is ready to accept transactions", %{server: server} do
       assert %State{
-               mode: :running,
                waiting: %{}
              } = :sys.get_state(server)
     end
 
     test "server maintains state consistency", %{server: server, lock_token: lock_token} do
-      assert %State{
-               lock_token: ^lock_token,
-               mode: :running
-             } = :sys.get_state(server)
+      assert %State{} = :sys.get_state(server)
 
       assert Process.alive?(server)
 
-      assert %State{
-               lock_token: ^lock_token,
-               mode: :running
-             } = :sys.get_state(server)
+      assert %State{} = :sys.get_state(server)
     end
   end
 
@@ -251,19 +219,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
       assert {:ok, [], _metadata_updates} =
                Resolver.resolve_transactions(server, 1, zero_version, next_version, valid_transactions, [[]])
-    end
-
-    test "rejects invalid transaction summaries", %{
-      server: server,
-      zero_version: zero_version,
-      next_version: next_version
-    } do
-      invalid_transactions = ["not_a_transaction_summary", {:invalid, :format}]
-
-      assert {:error, error_message} =
-               Resolver.resolve_transactions(server, 1, zero_version, next_version, invalid_transactions, [[], []])
-
-      assert error_message =~ "invalid transaction format: all transactions must be binary"
     end
 
     test "handles various binary transaction formats", %{
@@ -441,15 +396,11 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
                  [[]]
                )
 
-      # Wait for A to start processing
-      expect_transaction_processing_start(zero_version, next_version)
-
       # Wait for A to complete processing (completed event shows resolver's new state)
       expect_transaction_completed(next_version, next_version)
 
       # Wait for B to be resolved from waitlist and start processing
       expect_waitlisted_transaction_resolved(future_version)
-      expect_transaction_processing_start(next_version, future_version)
 
       # Wait for B to complete processing (completed event shows resolver's new state)
       expect_transaction_completed(future_version, future_version)
@@ -480,7 +431,6 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
 
     test "child_spec accepts custom sweep configuration" do
       opts = [
-        lock_token: :crypto.strong_rand_bytes(32),
         key_range: {"a", "z"},
         epoch: 123,
         director: self(),
@@ -492,7 +442,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       spec = Server.child_spec(opts)
 
       assert %{
-               start: {GenServer, :start_link, [Server, {_token, _last_version, _epoch, _director, 500, 2000}]}
+               start: {GenServer, :start_link, [Server, {_last_version, _epoch, _director, 500, 2000}]}
              } = spec
     end
 

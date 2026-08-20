@@ -167,9 +167,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  def handle_call({:commit, epoch, transaction}, from, t),
-    do: handle_call({:commit, epoch, transaction, :user}, from, t)
-
   def handle_call({:commit, epoch, transaction, commit_mode}, from, %{mode: :running, epoch: epoch} = t)
       when is_binary(transaction) and commit_mode in [:user, :system] do
     accept_commit(transaction, commit_mode, from, t)
@@ -214,7 +211,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   defp accept_commit(transaction, commit_mode, from, t) do
     case start_batch_if_needed(t) do
       {:error, reason} ->
-        GenServer.reply(from, {:error, :abort})
+        GenServer.reply(from, {:error, :aborted})
         exit(reason)
 
       updated_t ->
@@ -422,6 +419,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   defp abort_current_batch(%{batch: batch}) do
     batch
     |> Batch.all_callers()
-    |> Enum.each(fn reply_fn -> reply_fn.({:error, :abort}) end)
+    |> Enum.each(fn reply_fn -> reply_fn.({:error, :aborted}) end)
   end
 end

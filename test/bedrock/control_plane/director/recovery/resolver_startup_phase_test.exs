@@ -70,7 +70,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
         # Verify child spec structure and start args in one pattern match
         assert %{
                  id: {Server, TestCluster, _key_range, 42},
-                 start: {GenServer, :start_link, [Server, {_lock_token, 100, 42, _director, 1000, 6000}]}
+                 start: {GenServer, :start_link, [Server, {100, 42, _director, 1000, 6000}]}
                } = child_spec
 
         # Verify node assignment (order may vary due to non-deterministic iteration)
@@ -128,7 +128,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
                {stall_reason, result.resolvers}
     end
 
-    test "uses correct lock token and version from context" do
+    test "uses correct version from context" do
       agent = fn -> nil end |> Agent.start_link() |> elem(1)
 
       start_supervised_fn = fn child_spec, _node ->
@@ -155,7 +155,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
       {_result, _next_phase} = ResolverStartupPhase.execute(recovery_attempt, context)
 
       assert %{
-               start: {GenServer, :start_link, [_, {"special_lock_token", 200, 7, _director, 1000, 6000}]}
+               start: {GenServer, :start_link, [_, {200, 7, _director, 1000, 6000}]}
              } = Agent.get(agent, & &1)
     end
   end

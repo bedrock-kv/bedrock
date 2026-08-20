@@ -478,28 +478,4 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
                )
     end
   end
-
-  describe "reply and descriptor helpers" do
-    test "send_reply_with_commit_version/2 delivers the commit version to every waiting client" do
-      test_pid = self()
-      oks = [fn result -> send(test_pid, {:client_1, result}) end, fn result -> send(test_pid, {:client_2, result}) end]
-
-      assert :ok = Finalization.send_reply_with_commit_version(oks, @commit_version)
-
-      assert_receive {:client_1, {:ok, @commit_version}}
-      assert_receive {:client_2, {:ok, @commit_version}}
-    end
-
-    test "mutation_to_key_or_range/1 extracts the key from an atomic mutation" do
-      assert Finalization.mutation_to_key_or_range({:atomic, :add, "counter", <<1>>}) == "counter"
-    end
-
-    test "resolve_log_descriptors/2 keeps only logs with known service descriptors" do
-      descriptor = %{kind: :log, status: {:up, self()}}
-      services = %{"log_1" => descriptor}
-
-      assert Finalization.resolve_log_descriptors(%{"log_1" => [0], "log_missing" => [1]}, services) ==
-               %{"log_1" => descriptor}
-    end
-  end
 end

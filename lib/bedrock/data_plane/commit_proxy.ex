@@ -57,10 +57,6 @@ defmodule Bedrock.DataPlane.CommitProxy do
   option it guards against accidental system writes, not hostile ones. Only
   system components (recovery's persistence phase, and eventually the
   Distributor) commit in system mode.
-
-  Atomic operations on system keys are rejected in every mode: the metadata
-  pipeline replays only sets and clears, so an atomic would let durable
-  state diverge from every metadata view built from the commit stream.
   """
   @spec commit(
           commit_proxy_ref :: ref(),

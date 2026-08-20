@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T22:39:31Z",
+  "description": "Course item B. The Foreman keeps its FDB-sanctioned essence (fdbmonitor + worker.actor.cpp analogue: supervision, cold-boot rehydration from local manifests) and loses only its broadcast-map consumption. On each wiring push (epoch change - the ServerDBInfo-change trigger, FDB parity), the Foreman validates each HOSTED worker with a bounded lookup of that worker's own membership fact against proxy-served committed state: materializers/\u003ctag\u003e for materializers (tag from the worker's own manifest/params), layout/logs/\u003clog_id\u003e for logs - both already in RoutingData, answerable via the proxy routing/lookup channel clients use. Absence at the new epoch = retire (FDB rejoin: absence in txnStateStore = worker_removed = self-dispose). Cost O(hosted workers per node), never O(cluster). The empty-layout guard becomes 'lookups must succeed at the new epoch before retiring anything'. Then TransactionSystemLayout loses services: remaining readers (topology snapshot build, persistence materializer_refs, monitoring, ghost pruning, olivine seed) all read recovery_attempt.transaction_services - director-internal. Depends on the typed unlock seed (course A). Deferred to q67.21: in-band privatized-mutation retirement for mid-epoch removals.",
+  "id": "bedrock-q67.38",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Foreman retirement by rejoin validation; services leaves the broadcast",
+  "type": "task",
+  "updated_at": "2026-08-20T22:39:31Z"
+}

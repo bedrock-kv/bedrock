@@ -79,8 +79,7 @@ defmodule Bedrock.DataPlane.Resolver do
           ]
         ) ::
           {:ok, aborted :: [transaction_index :: non_neg_integer()], metadata_window()}
-          | {:failure, :timeout, ref()}
-          | {:failure, :unavailable, ref()}
+          | {:error, :timeout | :unavailable}
   def resolve_transactions(ref, epoch, last_version, commit_version, transaction_summaries, metadata_per_tx, opts \\ []) do
     timeout = opts[:timeout] || :infinity
     metadata_ack = opts[:metadata_ack] || {self(), nil}
@@ -112,7 +111,7 @@ defmodule Bedrock.DataPlane.Resolver do
       end
     )
   catch
-    :exit, {:timeout, _} -> {:failure, :timeout, ref}
-    :exit, _reason -> {:failure, :unavailable, ref}
+    :exit, {:timeout, _} -> {:error, :timeout}
+    :exit, _reason -> {:error, :unavailable}
   end
 end

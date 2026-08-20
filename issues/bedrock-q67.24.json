@@ -17,11 +17,15 @@
     {
       "text": "Residual closed by PR #157 (stack #156): shard rows are {end_key, tag, version} written via atomic insert_new/select_replace LWW; clears tombstone (:deleted) so late old sets cannot resurrect boundaries; router navigation skips tombstones; equal versions overwrite (in-transaction clear-then-set order preserved; identical replayed sequences converge); snapshot rows version nil lose to any commit. Lazy log-index cache and lookup_shards_for_range deleted (production-dead; the cache was an unversioned writer inside the read path). Cold audit: prior counterexample converges, no reachable new counterexamples (equal-version divergence impossible - confirms list canonical per version; fresh-key races serialize through ETS; clear_range boundary math exact). Noted for the future: (1) tombstones accumulate until recovery rebuilds the table - if shard churn becomes sustained, compact at recovery; (2) all-tombstones is transiently reachable between a rewrite's clear and sets under a concurrent routing task and raises 'No live shard boundaries' - crash lands in the batch task, acceptable pre-q67.21, revisit with the Distributor; (3) sharded settle-lag (audit finding 4 of PR #155) accepted vs FDB's single-pipeline guarantee, revisit under q67.22. Both q67.24 holes plus the ETS ordering residual are now closed - ticket complete pending stack review/merge.",
       "timestamp": "2026-08-19T23:41:12Z"
+    },
+    {
+      "text": "Direction change per user + FDB study: PR #157 (versioned LWW rows + tombstones) withdrawn - it tolerated write disorder that FDB simply forbids. Replaced by PR #159 (stack #161): FDB postResolution shape - server applies each batch's committed metadata (window + own deferred) serialized in a PROXY-LOCAL batch sequence (latestLocalCommitBatchLogging analogue; NOT global sequencer versions, which interleave across proxies - cold audit caught that as a latent multi-proxy deadlock, fixed + pinned by test), then hands the task an IMMUTABLE routing snapshot (gb_trees replaces ETS entirely). Task splits+pushes in parallel outside the gate (sound because snapshots are immutable and Shale reorders pushes by version chain - stronger parallelism than FDB, same visible ordering). Apply-then-use gives same-batch visibility: the epoch's first restructuring commit routes itself. Net -400 lines: shared :public ETS + lifecycle, in-task window application, metadata side-messages/callbacks, lazy router cache all deleted. Audit verdicts: chain protocol correct (no deadlock in any single-proxy failure interleaving; ack-vs-snapshot consistent; sharded deferred semantics preserved); gb_trees ceiling search correct; FDB correspondence confirmed with citations. Bonus for q67.23: the ETS-reference crash class is now structurally impossible, and the unlock snapshot is just plain data. Closing again pending stack review.",
+      "timestamp": "2026-08-20T13:59:11Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "RoutingData window application: version-guard and ordering for mid-epoch shard-map churn",
   "type": "task",
-  "updated_at": "2026-08-20T13:29:51Z"
+  "updated_at": "2026-08-20T13:59:11Z"
 }

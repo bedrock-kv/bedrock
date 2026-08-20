@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T15:58:34Z",
+  "description": "From the 2026-08-20 three-agent FDB-armed trim audit. Pure deletions, zero behavior change: per-transaction Task.async in the sharded resolve path that awaits serially (FDB shards inline); dead public helpers resolve_log_descriptors / try_to_push_transaction_to_log (ServiceDescriptor variant) / send_reply_with_commit_version (test-only callers); write-only fields FinalizationPlan.metadata_updates, Batch.finalized_at/set_finalized_at, and the commit_version threaded through apply_metadata_and_route that apply_and_route ignores; RoutingData.put_log_service/set_replication_factor (zero production callers); unreachable insufficient_acknowledgments/log_push_failed error branches; duplicate metadata telemetry (keep received, drop applied duplicate); unify {:error,:abort} vs {:error,:aborted} (no consumer distinguishes; FDB has one atom); tag_to_integer string/catch-all fallback (fix tests, keep integer clause); stale commit_proxy.ex doc still advertising the deleted atomic ban; orphan 3-tuple commit clause; resolver State.mode (single-valued type, tautological guards), resolver State.lock_token (stored, never read), held_metadata_versions doc rot; Validation.check_transactions (guards 'list of binaries' against a caller that constructs it - the structurally-precluded-hazard pattern); resolver waiting-list deadline machinery (FDB queues with no deadline; broken chain means recovery; the 30s expiry replies to callers long dead); resolver telemetry thinned (nine emitters on one path; span ships full transaction binaries).",
+  "id": "bedrock-q67.29",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Trim: dead code, dead state, dead words across the commit path and resolver",
+  "type": "task",
+  "updated_at": "2026-08-20T15:58:34Z"
+}

@@ -18,11 +18,15 @@
     {
       "text": "Stack #149 merged bottom-up into feature/q67-phase-b-prereqs 2026-08-19 (atomic squash via gh stack merge): #151 (q67.20.5) + #153 (bedrock-rag ingress half) joined #144/#145/#146/#148 already on the branch. Integration branch at 4dc3393e, full CI matrix green. Remaining: #152 (draft, integration -\u003e develop) — flipping ready + landing it closes this epic and unblocks q67.9.",
       "timestamp": "2026-08-19T21:52:16Z"
+    },
+    {
+      "text": "Final state 2026-08-20: second stack (#162 q67.28, #163 rag-ingress, #164 q67.27, #165 q67.22+q67.24, #167-#171 trim batch q67.29-.33) collapsed into feature/q67-phase-b-prereqs @ 3862a5b2, full CI green. Whole arc vs develop: 64 files, +3,611/-4,005 (net -394 lines). Cold audits: per-PR audits on every layer, a whole-branch FDB-comparison audit (spawned the follow-up stack), and a trim-batch audit (PASS; sole finding ticketed as bedrock-q67.34). Remaining: flip #152 ready and land (user's call) - that closes this epic. Child q67.20.7 is release-cadence-gated (one release after 0.7), not extraction work; reparenting to bedrock-q67 so it doesn't hold this epic open.",
+      "timestamp": "2026-08-20T18:09:49Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Extract Phase B metadata-pipeline prerequisites onto develop",
   "type": "epic",
-  "updated_at": "2026-08-19T21:52:16Z"
+  "updated_at": "2026-08-20T18:09:49Z"
 }

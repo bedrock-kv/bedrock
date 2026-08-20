@@ -266,7 +266,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @impl true
   @spec handle_info(
           :timeout
-          | {:routing_data_update, RoutingData.t()}
           | {:metadata_updates, {Bedrock.version() | nil, Bedrock.version(), [term()]}}
           | {:metadata_deferred, Bedrock.version(), [term()]}
           | {:finalization_failed, term()}
@@ -300,10 +299,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     finalize_batch_async(batch, t)
 
     maybe_set_empty_transaction_timeout(%{t | batch: nil})
-  end
-
-  def handle_info({:routing_data_update, updated_routing_data}, t) do
-    noreply_resuming_cadence(%{t | routing_data: updated_routing_data})
   end
 
   def handle_info({:metadata_updates, window}, t) do
@@ -367,8 +362,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
                send(server_pid, {:metadata_deferred, version, mutations})
              end
            ) do
-        {:ok, _n_aborts, _n_oks, updated_routing_data} ->
-          send(server_pid, {:routing_data_update, updated_routing_data})
+        {:ok, _n_aborts, _n_oks} ->
+          :ok
 
         {:error, reason} ->
           send(server_pid, {:finalization_failed, reason})
@@ -376,13 +371,20 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end)
   end
 
-  # Folds a resolver metadata window into the proxy's structured metadata.
-  # Applied in the server process so windows from concurrent finalization
-  # tasks are serialized. Windows can arrive out of commit-version order (the
-  # tasks race to this mailbox), but every window covers (from, to] starting
-  # at a version this proxy had already confirmed applying, so a late-arriving
-  # earlier window is a subset of what has been applied - the per-entry
-  # version guard inside Metadata.apply_updates makes it a no-op.
+  # Folds a resolver metadata window into the proxy's structured metadata AND
+  # its routing data, in one step. Applied in the server process so windows
+  # from concurrent finalization tasks are serialized. Windows can arrive out
+  # of commit-version order (the tasks race to this mailbox), but every window
+  # covers (from, to] starting at a version this proxy had already confirmed
+  # applying, so a late-arriving earlier window is a subset of what has been
+  # applied - entries at or below the applied version are dropped before
+  # application, which keeps the non-idempotent parts of routing data (log
+  # index assignment) exact under overlapping windows.
+  #
+  # Advancing routing data here, atomically with the ack version, is what
+  # lets finalize_batch_async snapshot the pair consistently: a batch whose
+  # ack promises the resolver will not re-send version N's entries always
+  # holds routing data that already includes them (bedrock-q67.24).
   #
   # A window whose from_version exceeds what this proxy has applied means the
   # resolver pruned history this proxy never saw (only possible after this
@@ -400,7 +402,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       exit({:metadata_coverage_gap, %{from_version: from_version, applied_version: applied_version}})
     end
 
-    {metadata, stats} = Metadata.apply_updates(t.metadata, entries)
+    new_entries =
+      if applied_version == nil,
+        do: entries,
+        else: Enum.filter(entries, fn {entry_version, _mutations} -> entry_version > applied_version end)
+
+    {metadata, stats} = Metadata.apply_updates(t.metadata, new_entries)
+    routing_data = RoutingData.apply_mutations(t.routing_data, new_entries)
 
     if stats.applied > 0, do: trace_metadata_applied(stats.applied, stats.families)
     if stats.skipped_keys != [], do: trace_unknown_key_skipped(stats.skipped_keys)
@@ -415,7 +423,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     # settled version across resolvers) - stop re-sending it.
     deferred_metadata = Enum.drop_while(t.deferred_metadata, fn {v, _mutations} -> v <= version end)
 
-    %{t | metadata: %{metadata | version: version}, deferred_metadata: deferred_metadata}
+    %{t | metadata: %{metadata | version: version}, routing_data: routing_data, deferred_metadata: deferred_metadata}
   end
 
   @spec add_deferred_metadata(State.t(), Bedrock.version(), [term()]) :: State.t()

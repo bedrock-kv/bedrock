@@ -124,7 +124,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
           end
         end)
 
-      assert {:ok, 1, 1, _routing_data} =
+      assert {:ok, 1, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -149,7 +149,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         {:ok, [], nil}
       end
 
-      assert {:ok, 0, 0, _routing_data} =
+      assert {:ok, 0, 0} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -193,7 +193,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         {:ok, [0, 1], nil}
       end
 
-      assert {:ok, 2, 0, _routing_data} =
+      assert {:ok, 2, 0} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -305,7 +305,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         :ok
       end
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,

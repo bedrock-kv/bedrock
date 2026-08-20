@@ -94,7 +94,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:ok, 0, 0, _routing_data} = Finalization.finalize_batch(empty_batch(), opts)
+      assert {:ok, 0, 0} = Finalization.finalize_batch(empty_batch(), opts)
 
       assert_receive {:resolved, :resolver_a, [], []}
       assert_receive {:resolved, :resolver_b, [], []}
@@ -115,7 +115,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:ok, 2, 0, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 2, 0} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:tx0, {:error, :aborted}}
       assert_receive {:tx1, {:error, :aborted}}
@@ -132,7 +132,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:ok, 0, 2, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 0, 2} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:tx0, {:ok, @commit_version, 0}}
       assert_receive {:tx1, {:ok, @commit_version, 1}}
@@ -182,7 +182,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
           metadata_confirms: confirms
         )
 
-      assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
 
       # No speculative metadata reaches any resolver; both get the hold flag
       # (this batch carries metadata) and the proxy's pending confirmations.
@@ -222,7 +222,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
           metadata_deferred_fn: metadata_deferred_fn
         )
 
-      assert {:ok, 1, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 1, 1} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:deferred, @commit_version, [{:set, <<0xFF, "/committed">>, "meta"}]}
     end
@@ -249,7 +249,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn, metadata_merge_fn: metadata_merge_fn)
 
-      assert {:ok, 0, 0, _routing_data} = Finalization.finalize_batch(empty_batch(), opts)
+      assert {:ok, 0, 0} = Finalization.finalize_batch(empty_batch(), opts)
 
       from90 = v.(90)
       to96 = v.(96)
@@ -287,7 +287,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       opts = base_opts(single_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
       assert_receive {:tx0, {:ok, @commit_version, 0}}
     end
   end
@@ -342,7 +342,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       opts =
         base_opts(single_layout(), routing_data, resolver_fn: resolver_fn, batch_log_push_fn: log_push_fn)
 
-      assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:pushed, %{"log_1" => encoded}}
 
@@ -377,7 +377,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       opts =
         base_opts(single_layout(), routing_data, resolver_fn: resolver_fn, batch_log_push_fn: log_push_fn)
 
-      assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:pushed, %{"log_1" => encoded}}
       assert Enum.to_list(Transaction.mutations!(encoded)) == [{:atomic, :add, "counter", <<1::64-little>>}]
@@ -400,7 +400,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
     opts = base_opts(single_layout(), routing_data, resolver_fn: resolver_fn, batch_log_push_fn: log_push_fn)
 
-    assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+    assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
 
     assert_receive {:pushed, %{"log_1" => encoded}}
     assert Enum.to_list(Transaction.mutations!(encoded)) == [{:set, "key", "value"}]

@@ -87,7 +87,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
       batch = Support.create_test_batch(100, 99)
 
       # Should succeed after retry
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -128,7 +128,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
 
       batch = Support.create_test_batch(100, 99)
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -168,7 +168,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
 
       batch = Support.create_test_batch(100, 99)
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -424,7 +424,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
 
       batch = Support.create_test_batch(100, 99)
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -490,7 +490,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
           {reply_fn2, tx2_binary, task2}
         ])
 
-      assert {:ok, 0, 2, _routing_data} =
+      assert {:ok, 0, 2} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,

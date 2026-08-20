@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-20T15:27:28Z",
   "created": "2026-08-20T14:37:03Z",
   "description": "From the 2026-08-20 cold review: first_rejected_mutation decodes and walks every mutation of every commit inside the GenServer accept loop - a second full decode pass on the proxy's one serialized resource (finalization decodes again in the task). Proposal (pending FDB design audit): move the scan into the batch pipeline with per-transaction rejection through the existing reply machinery, batch continues - FDB precedent is validateAndProcessTenantAccess doing per-tx sendError inside postResolution rather than at accept. Accepted cost: a rejected transaction's batch still consumes a commit version. Audit to confirm placement (before resolution vs at conflict-section extraction), interaction with abort accounting, and what FDB actually does if a client bypasses getMaxWriteKey.",
   "id": "bedrock-q67.28",
@@ -18,8 +19,8 @@
     }
   ],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Move proxy keyspace validation off the serialized accept loop",
   "type": "task",
-  "updated_at": "2026-08-20T15:15:14Z"
+  "updated_at": "2026-08-20T15:27:28Z"
 }

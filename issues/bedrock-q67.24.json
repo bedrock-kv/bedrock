@@ -1,10 +1,9 @@
 {
-  "assignee": "Jason Allum",
+  "assignee": "",
   "blocked_by": [],
   "blocks": [
     "bedrock-q67.21"
   ],
-  "closed_at": "2026-08-19T23:41:12Z",
   "created": "2026-08-19T22:04:08Z",
   "description": "From the 2026-08-19 gap audit of #152 vs ../foundationdb. Two holes, benign on the current branch only because shard/log families change solely in recovery's system transaction (whose content equals the unlock snapshot); both become real when the Distributor (q67.21) mutates shard_keys/ or layout mid-epoch:\n\n1. Staleness race: finalize task N applies the window to RoutingData during resolution but sends {:routing_data_update} only after log push. A batch spawned in between snapshots metadata.version \u003e= N (so the resolver will not re-send version N's entries) with a pre-N routing_data struct. The ETS shard table is immune (shared, mutated in place); log_map/log_services are per-struct - a layout_log change at version N is invisible to batch N+1's routing for the duration of batch N's log push. FDB prevents this with version-ordered stateMutations relay + shardChanged signaling (Resolver.actor.cpp:79-97).\n\n2. No idempotence guard: Metadata.apply_updates is version-guarded; RoutingData.apply_mutations is not, and insert_log is non-idempotent (re-applied layout_log set appends a duplicate index). Overlapping windows to concurrent tasks are a documented protocol feature.\n\nFix shape: guarantee batch K+1 routes with all metadata \u003c= K applied, and make RoutingData application version-guarded (e.g. fold log_map/log_services into the version-guarded server-side path, or route strictly from the in-task differential). Must land with or before q67.21's mid-epoch writer.",
   "id": "bedrock-q67.24",
@@ -21,8 +20,8 @@
     }
   ],
   "priority": 2,
-  "status": "closed",
+  "status": "open",
   "title": "RoutingData window application: version-guard and ordering for mid-epoch shard-map churn",
   "type": "task",
-  "updated_at": "2026-08-19T23:41:12Z"
+  "updated_at": "2026-08-20T13:29:51Z"
 }

@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T22:39:32Z",
+  "description": "Course item E - the no-re-derivation corollary. (1) shard_layout_from_entries (materializer_bootstrap_phase.ex:505-537) DISCARDS the start_key that Values.decode_shard_key_entry returns and rebuilds it from sorted end-key adjacency; RoutingData.apply_mutation consumes it correctly - two readers of one family currently disagree about what the value means. Consume the decoded start_key; adjacency survives only inside the legacy fallback (dies with q67.20.7). (2) The golden-ratio log index is derived independently in THREE places (topology_phase.ex:251-256 sorted ids; streaming.ex:105-116 sorted ids with a comment demanding agreement; routing_data.ex:162-185 arrival-order append + reindex-on-removal) while the layout_log value carries a tag list nothing reads. If arrival order ever differs from sort order, proxies and materializers route the same shard to different logs. Persist the index in the layout_log value; RoutingData consumes it; streaming's candidate_log_ids dies once the typed seed (course A) delivers the replica set. (3) materializer_refs (transaction_system_layout.ex:55-69) linear-scans services to recover worker_ids the bootstrap had in hand at creation (materializer_bootstrap_phase.ex:131-141) - carry {tag -\u003e {worker_id, node, pid}} on the attempt and delete the inversion. Also noted, low priority: ResolverLayout.calculate_resolver_ends adjacency rebuild (recovery-internal, single reader).",
+  "id": "bedrock-q67.41",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Kill re-derivation: consume carried start_keys, persist the log index, carry worker ids from creation",
+  "type": "task",
+  "updated_at": "2026-08-20T22:39:32Z"
+}

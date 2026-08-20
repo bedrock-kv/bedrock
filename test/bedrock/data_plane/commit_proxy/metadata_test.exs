@@ -101,19 +101,22 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataTest do
       assert metadata.version == v(2)
     end
 
-    test "entries at or below the applied version are skipped (idempotent redelivery)" do
+    test "applies blindly: ordering and filtering are the caller's job" do
+      # The commit proxy server pre-filters windows to entries above its
+      # applied version and applies one batch at a time - the store itself
+      # holds no guard (FDB's txnStateStore split). Re-applying a window is
+      # therefore visible in stats, and convergent because sets are
+      # idempotent by key.
       window = [
         {v(1), [{:set, SystemKeys.shard_key("m"), shard_val(7)}]},
         {v(2), [{:set, SystemKeys.shard_key("m"), shard_val(9)}]}
       ]
 
       metadata = apply!(Metadata.new(), window)
-
-      # Resolver re-sends the whole window (e.g. to a new finalization task)
       {redelivered, stats} = Metadata.apply_updates(metadata, window)
 
       assert redelivered == metadata
-      assert stats.applied == 0
+      assert stats.applied == 2
     end
 
     test "within a version, later mutation wins" do

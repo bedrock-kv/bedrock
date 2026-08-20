@@ -63,6 +63,20 @@ defmodule Bedrock.DataPlane.CommitProxy.Telemetry do
     )
   end
 
+  @doc """
+  A transaction was rejected at ingress because its mutation section raised
+  during validation. Fail-closed is correct, but a burst of these can also
+  mean a validator bug - surface it.
+  """
+  @spec trace_ingress_validation_failed(error :: term()) :: :ok
+  def trace_ingress_validation_failed(error) do
+    Telemetry.execute(
+      [:bedrock, :data_plane, :commit_proxy, :ingress_validation_failed],
+      %{count: 1},
+      Map.put(trace_metadata(), :error, error)
+    )
+  end
+
   @spec trace_unknown_key_skipped(keys :: [Bedrock.key()]) :: :ok
   def trace_unknown_key_skipped(keys) do
     Telemetry.execute(

@@ -28,9 +28,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Metadata do
 
   ## Semantics
 
-  Updates are applied in version order; entries at or below the already-applied
-  `version` are skipped, which makes application idempotent when the resolver
-  re-sends a window to a new caller. Within a version, mutations apply in order
+  Updates are applied blindly, in the order given; ordering and filtering are
+  the caller's job (the commit proxy server applies windows one batch at a
+  time, pre-filtered to entries above its applied version - the same split
+  FDB uses, where txnStateStore application is unconditional and ordering
+  lives in the commit pipeline). Within a version, mutations apply in order
   (later mutation wins).
 
   - `{:set, key, value}` - parses the key and stores the (decoded) value
@@ -97,8 +99,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Metadata do
   Reduces version-ordered metadata updates into the structured metadata.
 
   Takes updates as returned by the resolver: a list of
-  `{version, [mutation]}` entries in version order (oldest first). Entries with
-  a version at or below the already-applied `version` are skipped.
+  `{version, [mutation]}` entries in version order (oldest first), applied
+  unconditionally - callers own ordering and filtering.
 
   Returns `{updated_metadata, stats}` where stats counts applied mutations (with
   their key families) and skipped unknown/unsupported keys.
@@ -108,13 +110,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Metadata do
     initial = {metadata, %{applied: 0, families: [], skipped_keys: []}}
 
     {metadata, stats} =
-      Enum.reduce(updates, initial, fn {version, mutations}, {metadata, stats} = acc ->
-        if metadata.version != nil and version <= metadata.version do
-          acc
-        else
-          {metadata, stats} = Enum.reduce(mutations, {metadata, stats}, &apply_mutation/2)
-          {%{metadata | version: version}, stats}
-        end
+      Enum.reduce(updates, initial, fn {version, mutations}, {metadata, stats} ->
+        {metadata, stats} = Enum.reduce(mutations, {metadata, stats}, &apply_mutation/2)
+        {%{metadata | version: version}, stats}
       end)
 
     {metadata,

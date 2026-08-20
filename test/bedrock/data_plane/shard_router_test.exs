@@ -128,8 +128,13 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
       assert ShardRouter.lookup_shard(shards, "\xfe") == 1
     end
 
-    test "keys beyond every boundary fall back to the last shard", %{shards: shards} do
-      assert ShardRouter.lookup_shard(shards, "\xff/system/foo") == 1
+    test "raises for a key beyond every boundary instead of misrouting", %{shards: shards} do
+      # Ingress bounds keys below the last boundary; a key past it means the
+      # map and keyspace diverged. The historical last-shard fallback was the
+      # silent-misroute mechanism bedrock-rag closed - never bring it back.
+      assert_raise RuntimeError, ~r/beyond all shard boundaries/, fn ->
+        ShardRouter.lookup_shard(shards, "\xff/system/foo")
+      end
     end
 
     test "raises on an empty shard map" do

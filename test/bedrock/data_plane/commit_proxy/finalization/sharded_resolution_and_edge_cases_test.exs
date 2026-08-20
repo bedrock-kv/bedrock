@@ -190,7 +190,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       assert_receive {:resolver_called, :resolver_b, [], true, ^confirms}
     end
 
-    test "reports committed metadata filtered by the MERGED global abort set via metadata_deferred_fn" do
+    test "the metadata apply call carries committed metadata filtered by the MERGED global abort set" do
       test_pid = self()
 
       metadata_tx = fn key, meta_key ->
@@ -214,7 +214,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [1], nil}
       end
 
-      metadata_apply_fn = fn _prev, version, _window, deferred ->
+      metadata_apply_fn = fn version, _window, deferred ->
         send(test_pid, {:deferred, version, deferred})
         {:ok, routing_data()}
       end
@@ -248,7 +248,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
           {:ok, [], {v.(90), v.(96), [entry_95]}}
       end
 
-      metadata_apply_fn = fn _prev, _version, window, _deferred ->
+      metadata_apply_fn = fn _version, window, _deferred ->
         send(test_pid, {:merged_window, window})
         {:ok, routing_data()}
       end

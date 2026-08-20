@@ -173,7 +173,7 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   routing data and returns the snapshot the batch should push with.
   """
   def metadata_apply_fn(%RoutingData{} = routing_data) do
-    fn _prev_version, commit_version, window, deferred ->
+    fn commit_version, window, deferred ->
       entries =
         case window do
           nil -> []

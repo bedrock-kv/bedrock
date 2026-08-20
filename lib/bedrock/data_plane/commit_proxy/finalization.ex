@@ -48,8 +48,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   routing snapshot the batch must push with. `nil` deferred means the window
   already carries the batch's own metadata (single-resolver mode).
   """
-  @type metadata_apply_fn() :: (last_commit_version :: Bedrock.version(),
-                                commit_version :: Bedrock.version(),
+  @type metadata_apply_fn() :: (commit_version :: Bedrock.version(),
                                 Resolver.metadata_window(),
                                 {committed :: metadata_mutations()}
                                 | nil ->
@@ -190,15 +189,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   During conflict resolution, metadata mutations (keys with \\xFF prefix) are extracted
   from each transaction and sent to the resolver along with the caller's `metadata_ack`
   ({stable proxy identity, highest confirmed window version}). The resolver returns a
-  differential metadata window (or nil) whose entries are applied to the routing data;
-  the window itself is handed to the caller's `metadata_merge_fn` (defaults to a no-op)
-  for in-order merging into structured metadata state.
+  differential metadata window (or nil). The batch then makes one
+  `metadata_apply_fn` call: the commit proxy server applies the window - plus,
+  in sharded mode, the batch's own globally-committed metadata - serialized in
+  batch-sequence order, and returns the immutable routing snapshot the batch
+  pushes with.
 
   With SHARDED resolvers accumulation is deferred: no resolver knows the merged global
   abort set at resolution time, so metadata-carrying batch versions are held
-  (`metadata_hold`), the batch's globally-committed metadata is reported through
-  `metadata_deferred_fn`, and the caller re-sends it as `metadata_confirms` on
-  subsequent calls until resolver windows confirm it was folded in (see
+  (`metadata_hold`); the batch's globally-committed metadata rides the apply
+  call, and the server re-sends it as `metadata_confirms` on subsequent calls
+  until resolver windows confirm it was folded in (see
   `Bedrock.DataPlane.Resolver`).
 
   ## Parameters
@@ -372,9 +373,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # `metadata_confirms` - committed metadata from earlier batches, filtered by
   # the merged global abort set, which the proxy re-sends on every call until
   # the resolvers' windows confirm it was folded in. The batch's own committed
-  # metadata is reported to the proxy server via `metadata_deferred_fn` for
-  # confirmation on subsequent calls, and applied to THIS batch's routing data
-  # locally (same-batch visibility, as in single-resolver mode).
+  # metadata rides the `metadata_apply_fn` call: the server records it for
+  # confirmation on subsequent calls and folds it into the routing snapshot
+  # this batch pushes with (same-batch visibility, as in single-resolver mode).
   def resolve_conflicts(
         %FinalizationPlan{stage: :ready_for_resolution} = plan,
         epoch,
@@ -467,7 +468,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     metadata_apply_fn = Keyword.fetch!(opts, :metadata_apply_fn)
 
-    case metadata_apply_fn.(plan.last_commit_version, plan.commit_version, metadata_window, deferred) do
+    case metadata_apply_fn.(plan.commit_version, metadata_window, deferred) do
       {:ok, %RoutingData{} = routing_data} ->
         %{plan | stage: :conflicts_resolved, metadata_updates: entries, routing_data: routing_data}
 

@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-20T15:58:34Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Trim: dead code, dead state, dead words across the commit path and resolver",
   "type": "task",
-  "updated_at": "2026-08-20T15:58:34Z"
+  "updated_at": "2026-08-20T15:59:13Z"
 }

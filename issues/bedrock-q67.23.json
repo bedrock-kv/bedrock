@@ -21,11 +21,15 @@
     {
       "text": "Audit 2026-08-20: terminology refresh after the trims. 'Proxy Metadata' / 'Metadata.new()' no longer exist - CommitProxy.Metadata was deleted (q67.30); the proxy's whole metadata state is applied_version + RoutingData. That sharpens the decision: today's routing snapshot in recover_from ALREADY IS option (b) in its final mechanical form - a keyspace-derived seed of exactly the families with readers (shard_keys -\u003e shards, layout/logs -\u003e log wiring), plus runtime wiring (ServerDBInfo analogue). Confirming option (b) is therefore formalizing the status quo, not building anything: the remaining work is documentary (name the snapshot as the TxnStateRequest analogue) plus extending the seed only when q67.9/q67.25 give new families readers. One unchanged wrinkle verified in code: build_shard_keys still skips (no clear, no write) when shard_layout is nil/empty (persistence_phase.ex:227-228) - benign today, worth a decided stance when the seed is formalized. Still awaiting user confirmation.",
       "timestamp": "2026-08-20T18:09:48Z"
+    },
+    {
+      "text": "CONFIRMED 2026-08-20 (user green-lit the q67.9 completion run on the recorded option-(b) proposal): seeded recover_from stands as the TxnStateRequest analogue. The seed is keyspace-derived (topology_phase builds it from the previous epoch's materializer-bootstrap keyspace reads) plus runtime wiring (log_map/log_services/replication_factor - the ServerDBInfo analogue). Remaining implementation is documentary naming plus extending the seed only as q67.9/q67.25 give new families readers - that work rides q67.9's PRs. Closing; q67.9 unblocked on this axis.",
+      "timestamp": "2026-08-20T18:36:30Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Proxy metadata bootstrap: decide full-rewrite vs seeded recover_from (FDB TxnStateRequest analogue)",
   "type": "task",
-  "updated_at": "2026-08-20T18:09:48Z"
+  "updated_at": "2026-08-20T18:36:30Z"
 }

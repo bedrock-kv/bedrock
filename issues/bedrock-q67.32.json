@@ -2,14 +2,15 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-20T16:19:00Z",
   "created": "2026-08-20T15:58:35Z",
   "description": "FDB never retries a resolver call: brokenPromiseToNever (CommitProxyServer.actor.cpp:1149) - the proxy waits; a dead resolver is detected externally and means recovery, because ApplyMetadataMutation's correctness demands every proxy see an identical stream. Bedrock's 3-attempt exponential ladder (finalization.ex:658-738) with duplicated {:error,_}/{:failure,_,_} clause pairs, two telemetry events and handlers, and attempts_used threading compensates for a failure mode the architecture already answers with recovery. Replace with a single call; failure -\u003e {:error,{:resolver_unavailable,reason}} -\u003e batch failed -\u003e proxy exit -\u003e director recovery. Also normalize the {:failure,reason,ref} shape (manufactured in resolver.ex:115-116) to {:error,reason}. ~70 lines + tracing handlers.",
   "id": "bedrock-q67.32",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Trim: resolver calls fail fast instead of retrying",
   "type": "task",
-  "updated_at": "2026-08-20T16:16:38Z"
+  "updated_at": "2026-08-20T16:19:00Z"
 }

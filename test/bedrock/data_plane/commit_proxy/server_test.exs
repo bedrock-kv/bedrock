@@ -284,7 +284,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       transaction = TransactionTestSupport.new_log_transaction(0, %{"test" => "index_verification"})
 
       # The call should return either {:ok, version, index} or {:error, reason}
-      result = GenServer.call(commit_proxy, {:commit, 1, transaction}, 5000)
+      result = GenServer.call(commit_proxy, {:commit, 1, transaction, :user}, 5000)
 
       # Verify the response format matches our new API
       case result do
@@ -419,7 +419,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       tasks =
         for {transaction, i} <- Enum.with_index(transactions) do
           Task.async(fn ->
-            result = GenServer.call(commit_proxy, {:commit, 1, transaction}, 10_000)
+            result = GenServer.call(commit_proxy, {:commit, 1, transaction, :user}, 10_000)
             {i, result}
           end)
         end
@@ -579,7 +579,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
           for transaction <- transactions do
             Task.async(fn ->
               # Simulate individual clients committing transactions
-              GenServer.call(commit_proxy, {:commit, 1, transaction}, :infinity)
+              GenServer.call(commit_proxy, {:commit, 1, transaction, :user}, :infinity)
             end)
           end
 
@@ -748,7 +748,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Before recovery, commit should return :locked
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
-      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction})
+      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction, :user})
       assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction, :system})
 
       # After recovery with correct token, should transition to running
@@ -760,7 +760,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Now commit returns different error (sequencer unavailable)
       # but NOT :locked anymore
-      result = GenServer.call(commit_proxy, {:commit, 1, transaction})
+      result = GenServer.call(commit_proxy, {:commit, 1, transaction, :user})
       refute result == {:error, :locked}
     end
 
@@ -795,7 +795,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Should still be locked
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
-      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction})
+      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction, :user})
     end
 
     test "recovery with correct token after failed attempt succeeds" do
@@ -836,7 +836,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Verify no longer locked
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
-      result = GenServer.call(commit_proxy, {:commit, 1, transaction})
+      result = GenServer.call(commit_proxy, {:commit, 1, transaction, :user})
       refute result == {:error, :locked}
     end
   end
@@ -931,8 +931,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       assert :ok = Server.terminate(:normal, state)
 
       # Both reply functions should have been called with abort
-      assert_receive {:reply0, {:error, :abort}}
-      assert_receive {:reply1, {:error, :abort}}
+      assert_receive {:reply0, {:error, :aborted}}
+      assert_receive {:reply1, {:error, :aborted}}
     end
 
     test "terminate does nothing with nil batch" do
@@ -976,8 +976,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
         )
 
       transaction = TransactionTestSupport.new_log_transaction(0, %{"k" => "v"})
-      assert {:error, :wrong_epoch} = GenServer.call(commit_proxy, {:commit, 41, transaction})
-      assert {:error, :wrong_epoch} = GenServer.call(commit_proxy, {:commit, 43, transaction})
+      assert {:error, :wrong_epoch} = GenServer.call(commit_proxy, {:commit, 41, transaction, :user})
+      assert {:error, :wrong_epoch} = GenServer.call(commit_proxy, {:commit, 43, transaction, :user})
 
       # System-mode commits pass the same epoch gate - pipeline validation
       # never sees a transaction the accept guards refused.
@@ -1087,7 +1087,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Verify proxy can commit - the log_services should now be set
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
-      result = GenServer.call(commit_proxy, {:commit, epoch, transaction}, 5000)
+      result = GenServer.call(commit_proxy, {:commit, epoch, transaction, :user}, 5000)
 
       # With proper log_services, this should NOT return :log_push_failed
       refute match?({:error, :log_push_failed}, result),
@@ -1127,7 +1127,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       # Should still be locked
       transaction = TransactionTestSupport.new_log_transaction(0, %{"key" => "value"})
-      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction})
+      assert {:error, :locked} = GenServer.call(commit_proxy, {:commit, 1, transaction, :user})
     end
   end
 end

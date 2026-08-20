@@ -34,7 +34,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.CommitProxy.Tracing
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver
-  alias Bedrock.DataPlane.Resolver.MetadataAccumulator
   alias Bedrock.DataPlane.Sequencer
   alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.DataPlane.Transaction
@@ -98,10 +97,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @type storage_coverage_error() ::
           {:storage_team_coverage_error, binary()}
 
-  @type log_push_error() ::
-          {:log_failures, [{Log.id(), term()}]}
-          | {:insufficient_acknowledgments, non_neg_integer(), non_neg_integer(), [{Log.id(), term()}]}
-          | :log_push_failed
+  @type log_push_error() :: {:log_failures, [{Log.id(), term()}]} | :log_push_failed
 
   @type recovery_required_error() :: {:recovery_required, log_push_error()}
 
@@ -138,8 +134,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       replied_indices: MapSet.new(),
       aborted_count: 0,
       stage: :initialized,
-      error: nil,
-      metadata_updates: []
+      error: nil
     ]
 
     @type t :: %__MODULE__{
@@ -155,8 +150,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             replied_indices: MapSet.t(non_neg_integer()),
             aborted_count: non_neg_integer(),
             stage: atom(),
-            error: term() | nil,
-            metadata_updates: [MetadataAccumulator.entry()]
+            error: term() | nil
           }
   end
 
@@ -476,8 +470,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           0..(plan.transaction_count - 1)
           |> Enum.map(fn idx ->
             {_idx, _reply_fn, transaction, _commit_mode} = Map.fetch!(plan.transactions, idx)
-            task = create_resolver_task_in_finalization(transaction, resolver_layout)
-            map = Task.await(task, 5000)
+            map = shard_conflicts(transaction, resolver_layout)
             metadata = extract_metadata_mutations(transaction)
             {map, metadata}
           end)
@@ -539,7 +532,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     case metadata_apply_fn.(plan.commit_version, committed) do
       {:ok, %RoutingData{} = routing_data} ->
-        %{plan | stage: :conflicts_resolved, metadata_updates: entries, routing_data: routing_data}
+        %{plan | stage: :conflicts_resolved, routing_data: routing_data}
 
       {:error, reason} ->
         %{plan | error: reason, stage: :failed}
@@ -747,15 +740,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  @spec create_resolver_task_in_finalization(Transaction.encoded(), ResolverLayout.Sharded.t()) :: Task.t()
-  defp create_resolver_task_in_finalization(transaction, %ResolverLayout.Sharded{
-         resolver_refs: refs,
-         resolver_ends: ends
-       }) do
-    Task.async(fn ->
-      sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
-      ConflictSharding.shard_conflicts_across_resolvers(sections, ends, refs)
-    end)
+  @spec shard_conflicts(Transaction.encoded(), ResolverLayout.Sharded.t()) ::
+          %{Resolver.ref() => Transaction.encoded()}
+  defp shard_conflicts(transaction, %ResolverLayout.Sharded{resolver_refs: refs, resolver_ends: ends}) do
+    sections = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
+    ConflictSharding.shard_conflicts_across_resolvers(sections, ends, refs)
   end
 
   @spec split_and_notify_aborts_with_set(FinalizationPlan.t(), MapSet.t(non_neg_integer()), keyword()) ::
@@ -1174,10 +1163,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       {:error, errors} ->
         classify_log_failures(errors)
 
-      {count, errors} when count < required_acknowledgments ->
-        {:error, {:insufficient_acknowledgments, count, required_acknowledgments, errors}}
-
-      _other ->
+      # The reduce halts on the first error or on reaching the full count, so
+      # leaving the loop cleanly means a degenerate push: zero log services,
+      # or a stream that ended early. Neither is a per-log failure; both must
+      # fail rather than succeed vacuously.
+      {_count, _errors} ->
         {:error, :log_push_failed}
     end
   end
@@ -1251,9 +1241,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     %{plan | replied_indices: MapSet.union(plan.replied_indices, MapSet.new(successful_indices)), stage: :completed}
   end
-
-  @spec send_reply_with_commit_version([Batch.reply_fn()], Bedrock.version()) :: :ok
-  def send_reply_with_commit_version(oks, commit_version), do: Enum.each(oks, & &1.({:ok, commit_version}))
 
   @spec send_reply_with_commit_version_and_index(
           [{Batch.reply_fn(), non_neg_integer(), non_neg_integer()}],

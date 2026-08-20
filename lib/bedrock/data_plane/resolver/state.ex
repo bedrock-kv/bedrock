@@ -24,24 +24,15 @@ defmodule Bedrock.DataPlane.Resolver.State do
     pruning (nil if no entry has been discarded). A proxy whose ack falls
     below this floor can no longer be served a complete differential; a proxy
     acked at or above it has confirmed every discarded entry.
-  - `held_metadata_versions` - Batch versions whose metadata is deferred
-    pending global-abort confirmation from the submitting proxy (sharded
-    mode). Windows never extend past the oldest held version; held versions
-    older than the retention horizon are expired (their proxy died - the
-    epoch is being recovered).
   """
 
   alias Bedrock.DataPlane.Resolver.Conflicts
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
 
-  @type mode :: :running
-
   @type t :: %__MODULE__{
           conflicts: Conflicts.t(),
           last_version: Bedrock.version(),
           waiting: Bedrock.Internal.WaitingList.t(),
-          mode: mode(),
-          lock_token: Bedrock.lock_token(),
           epoch: Bedrock.epoch(),
           director: pid(),
           sweep_interval_ms: pos_integer(),
@@ -57,8 +48,6 @@ defmodule Bedrock.DataPlane.Resolver.State do
   defstruct conflicts: nil,
             last_version: nil,
             waiting: %{},
-            mode: :running,
-            lock_token: nil,
             epoch: nil,
             director: nil,
             sweep_interval_ms: nil,

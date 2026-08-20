@@ -30,9 +30,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   - `insert_log/2` - Adds a log to log_map at next index (idempotent by id)
   - `remove_log/2` - Removes a log and reindexes
-  - `put_log_service/3` - Adds or updates a log service reference
   - `delete_log_service/2` - Removes a log service reference
-  - `set_replication_factor/2` - Updates the replication factor
   """
 
   alias Bedrock.DataPlane.Log
@@ -154,27 +152,11 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   end
 
   @doc """
-  Adds or updates a log service reference.
-  """
-  @spec put_log_service(t(), Log.id(), {atom(), node()}) :: t()
-  def put_log_service(%__MODULE__{log_services: log_services} = routing_data, log_id, service_ref) do
-    %{routing_data | log_services: Map.put(log_services, log_id, service_ref)}
-  end
-
-  @doc """
   Removes a log service reference.
   """
   @spec delete_log_service(t(), Log.id()) :: t()
   def delete_log_service(%__MODULE__{log_services: log_services} = routing_data, log_id) do
     %{routing_data | log_services: Map.delete(log_services, log_id)}
-  end
-
-  @doc """
-  Updates the replication factor.
-  """
-  @spec set_replication_factor(t(), pos_integer()) :: t()
-  def set_replication_factor(%__MODULE__{} = routing_data, factor) do
-    %{routing_data | replication_factor: factor}
   end
 
   @doc """

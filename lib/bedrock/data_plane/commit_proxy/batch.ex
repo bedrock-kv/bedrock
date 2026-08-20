@@ -5,7 +5,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
 
   alias Bedrock.DataPlane.Transaction
 
-  @type reply_fn :: ({:ok, Bedrock.version(), index :: non_neg_integer()} | {:error, :abort} -> :ok)
+  @type reply_fn :: ({:ok, Bedrock.version(), index :: non_neg_integer()} | {:error, :aborted} -> :ok)
 
   @typedoc """
   Who is committing, carried per transaction: it decides the legal write

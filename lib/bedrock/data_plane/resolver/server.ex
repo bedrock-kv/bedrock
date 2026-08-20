@@ -16,14 +16,9 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   import Bedrock.DataPlane.Resolver.Telemetry,
     only: [
       emit_received: 2,
-      emit_processing: 2,
       emit_completed: 3,
-      emit_reply_sent: 3,
-      emit_waiting_list: 2,
       emit_waiting_list_inserted: 3,
-      emit_waiting_resolved: 3,
-      emit_validation_error: 2,
-      emit_waiting_list_validation_error: 2
+      emit_waiting_resolved: 3
     ]
 
   import Bedrock.Internal.GenServer.Replies
@@ -32,7 +27,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   alias Bedrock.DataPlane.Resolver.Conflicts
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
   alias Bedrock.DataPlane.Resolver.State
-  alias Bedrock.DataPlane.Resolver.Validation
   alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.Time
   alias Bedrock.Internal.WaitingList
@@ -43,7 +37,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @spec child_spec(
           opts :: [
-            lock_token: Bedrock.lock_token(),
             key_range: Bedrock.key_range(),
             epoch: Bedrock.epoch(),
             last_version: Bedrock.version(),
@@ -54,7 +47,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
-    lock_token = opts[:lock_token] || raise "Missing :lock_token option"
     key_range = opts[:key_range] || raise "Missing :key_range option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     last_version = opts[:last_version] || Version.zero()
@@ -69,24 +61,22 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {lock_token, last_version, epoch, director, sweep_interval_ms, version_retention_ms}
+           {last_version, epoch, director, sweep_interval_ms, version_retention_ms}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({lock_token, last_version, epoch, director, sweep_interval_ms, version_retention_ms}) do
+  def init({last_version, epoch, director, sweep_interval_ms, version_retention_ms}) do
     # Monitor the Director - if it dies, this resolver should terminate
     Process.monitor(director)
 
     then(
       %State{
-        lock_token: lock_token,
         conflicts: Conflicts.new(last_version),
         last_version: last_version,
         waiting: %{},
-        mode: :running,
         epoch: epoch,
         director: director,
         sweep_interval_ms: sweep_interval_ms,
@@ -120,21 +110,12 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         from,
         t
       )
-      when t.mode == :running and epoch == t.epoch and last_version == t.last_version do
+      when epoch == t.epoch and last_version == t.last_version do
     emit_received(transactions, next_version)
 
-    transactions
-    |> Validation.check_transactions()
-    |> case do
-      :ok ->
-        noreply(t,
-          continue: {:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, reply_fn(from)}}
-        )
-
-      {:error, reason} ->
-        emit_validation_error(transactions, reason)
-        reply(t, {:error, reason}, continue: :next_timeout)
-    end
+    noreply(t,
+      continue: {:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, reply_fn(from)}}
+    )
   end
 
   @impl true
@@ -143,32 +124,21 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         from,
         t
       )
-      when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version > t.last_version do
-    emit_waiting_list(transactions, next_version)
+      when epoch == t.epoch and is_binary(last_version) and last_version > t.last_version do
+    data = {next_version, transactions, metadata_per_tx, metadata_ack}
 
-    transactions
-    |> Validation.check_transactions()
-    |> case do
-      :ok ->
-        data = {next_version, transactions, metadata_per_tx, metadata_ack}
+    {new_waiting, _timeout} =
+      WaitingList.insert(
+        t.waiting,
+        last_version,
+        data,
+        reply_fn(from),
+        @default_waiting_timeout_ms
+      )
 
-        {new_waiting, _timeout} =
-          WaitingList.insert(
-            t.waiting,
-            last_version,
-            data,
-            reply_fn(from),
-            @default_waiting_timeout_ms
-          )
+    emit_waiting_list_inserted(transactions, new_waiting, next_version)
 
-        emit_waiting_list_inserted(transactions, new_waiting, next_version)
-
-        noreply(%{t | waiting: new_waiting}, continue: :next_timeout)
-
-      {:error, reason} ->
-        emit_waiting_list_validation_error(transactions, reason)
-        reply(t, {:error, reason}, continue: :next_timeout)
-    end
+    noreply(%{t | waiting: new_waiting}, continue: :next_timeout)
   end
 
   @impl true
@@ -177,7 +147,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         _from,
         t
       )
-      when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version < t.last_version do
+      when epoch == t.epoch and is_binary(last_version) and last_version < t.last_version do
     # A retry of an already-processed batch (its reply was lost): REPLAY the
     # recorded verdict - recomputing or fabricating one could tell clients
     # "aborted" for transactions the system committed. The metadata window is
@@ -217,8 +187,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @impl true
   def handle_continue({:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, reply_fn}}, t) do
-    emit_processing(transactions, next_version)
-
     {conflicts, aborted} = resolve(t.conflicts, transactions, next_version)
 
     t = %{
@@ -239,7 +207,6 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack)
 
     reply_fn.({:ok, aborted, metadata_window})
-    emit_reply_sent(transactions, aborted, next_version)
 
     case WaitingList.remove(t.waiting, next_version) do
       {updated_waiting, nil} ->

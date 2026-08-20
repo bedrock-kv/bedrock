@@ -92,7 +92,7 @@ defmodule Bedrock.DataPlane.Resolver do
         epoch: epoch,
         last_version: last_version,
         commit_version: commit_version,
-        transaction_summaries: transaction_summaries,
+        n_transactions: length(transaction_summaries),
         timeout_ms: timeout
       },
       fn ->

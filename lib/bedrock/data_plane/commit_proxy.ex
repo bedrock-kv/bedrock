@@ -47,6 +47,24 @@ defmodule Bedrock.DataPlane.CommitProxy do
     do: call(commit_proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot}, :infinity)
 
   @doc """
+  Fetches the client-facing routing projection: shard boundaries plus
+  materializer refs.
+
+  This is FDB's `GetKeyServerLocations`, answered from the proxy's live
+  routing view - at least as fresh as the proxy's most recently applied
+  commit, unversioned by design. Locations are unverified hints; staleness
+  costs the caller a retry, never a wrong answer.
+
+  A locked proxy replies `{:error, :locked}`: FDB parks location requests
+  until its state is valid, Bedrock refuses and lets the client's retry
+  loop be the parking lot.
+  """
+  @spec fetch_routing(commit_proxy_ref :: ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          {:ok, RoutingData.client_projection()}
+          | {:error, :locked | :timeout | :unavailable}
+  def fetch_routing(commit_proxy, opts \\ []), do: call(commit_proxy, :fetch_routing, opts[:timeout_in_ms] || 5_000)
+
+  @doc """
   Submits a transaction for commit.
 
   By default the commit is bounded to the user keyspace: any mutation keyed

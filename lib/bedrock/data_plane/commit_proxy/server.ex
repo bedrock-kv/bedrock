@@ -144,7 +144,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           {:recover_from, binary(), pid(), ResolverLayout.t(), RoutingData.snapshot()}
           | {:commit, Bedrock.epoch(), Bedrock.transaction()}
           | {:commit, Bedrock.epoch(), Bedrock.transaction(), :user | :system}
-          | {:apply_metadata_and_route, pos_integer(), Bedrock.version(), term()},
+          | {:apply_metadata_and_route, pos_integer(), Bedrock.version(), term()}
+          | :fetch_routing,
           GenServer.from(),
           State.t()
         ) ::
@@ -206,6 +207,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   def handle_call({:apply_metadata_and_route, _seq, _cv, _window}, _from, %{mode: :locked} = t),
     do: reply(t, {:error, :locked})
+
+  # Client routing requests (FDB GetKeyServerLocations): answered from the
+  # live routing view. Replying resumes the batch cadence - a routing fetch
+  # must not swallow an open batch's pending timeout.
+  def handle_call(:fetch_routing, from, %{mode: :running} = t) do
+    GenServer.reply(from, {:ok, RoutingData.client_projection(t.routing_data)})
+    noreply_resuming_cadence(t)
+  end
+
+  def handle_call(:fetch_routing, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
   defp accept_commit(transaction, commit_mode, from, t) do
     case start_batch_if_needed(t) do

@@ -339,14 +339,10 @@ defmodule Bedrock.Internal.Repo do
       {:ok, _commit_version} ->
         result
 
-      # A key outside the caller's legal range, an atomic op aimed at a
-      # system key, or an undecodable transaction is a permanent client
-      # error - retrying cannot change the outcome, so surface it instead
-      # of burning the transaction deadline.
+      # A key outside the caller's legal range or an undecodable transaction
+      # is a permanent client error - retrying cannot change the outcome, so
+      # surface it instead of burning the transaction deadline.
       {:error, {:key_out_of_range, _key} = reason} ->
-        throw({__MODULE__, :rollback, reason})
-
-      {:error, {:atomic_on_system_key, _key} = reason} ->
         throw({__MODULE__, :rollback, reason})
 
       {:error, :invalid_transaction = reason} ->

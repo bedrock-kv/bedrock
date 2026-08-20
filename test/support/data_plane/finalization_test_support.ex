@@ -196,11 +196,6 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
     %{<<0xFF, 0xFF>> => {0, <<>>}}
   end
 
-  # Helper function to create test resolver task
-  defp create_test_resolver_task(binary) do
-    Task.async(fn -> %{:test_resolver => binary} end)
-  end
-
   @doc """
   Creates a test batch with given parameters.
   """
@@ -225,11 +220,8 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
 
     default_binary = Transaction.encode(default_transaction_map)
 
-    # Create a simple task that returns single resolver map (for tests)
-    default_task = create_test_resolver_task(default_binary)
-
     default_transactions = [
-      {0, fn result -> send(self(), {:reply, result}) end, default_binary, default_task}
+      {0, fn result -> send(self(), {:reply, result}) end, default_binary, :user}
     ]
 
     buffer = if Enum.empty?(transactions), do: default_transactions, else: transactions
@@ -237,17 +229,18 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
     # Ensure buffer contains indexed transactions
     indexed_buffer =
       case buffer do
-        # If buffer already has indexed format {index, reply_fn, binary, task}, use as-is
-        [{_idx, _reply_fn, _binary, _task} | _] ->
+        # If buffer already has indexed format {index, reply_fn, binary, commit_mode}, use as-is
+        [{_idx, _reply_fn, _binary, _commit_mode} | _] ->
           buffer
 
-        # If buffer has old format {reply_fn, binary}, add indices and tasks
+        # If buffer has {reply_fn, binary} or {reply_fn, binary, mode} entries,
+        # add indices (mode defaults to :user)
         _ ->
           buffer
           |> Enum.with_index()
-          |> Enum.map(fn {{reply_fn, binary}, idx} ->
-            task = create_test_resolver_task(binary)
-            {idx, reply_fn, binary, task}
+          |> Enum.map(fn
+            {{reply_fn, binary}, idx} -> {idx, reply_fn, binary, :user}
+            {{reply_fn, binary, mode}, idx} -> {idx, reply_fn, binary, mode}
           end)
       end
 

@@ -30,7 +30,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
         {:ok,
          timestamp()
          |> new_batch(last_commit_version, commit_version, known_committed_version)
-         |> add_transaction(transaction, reply_fn, nil)
+         |> add_transaction(transaction, reply_fn, :user)
          |> set_finalized_at(timestamp())}
 
       {:error, reason} ->
@@ -51,10 +51,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
 
   def start_batch_if_needed(t), do: t
 
-  @spec add_transaction_to_batch(State.t(), Transaction.encoded(), Batch.reply_fn(), Task.t() | nil) ::
+  @spec add_transaction_to_batch(State.t(), Transaction.encoded(), Batch.reply_fn(), Batch.commit_mode()) ::
           State.t()
-  def add_transaction_to_batch(t, transaction, reply_fn, task) when is_binary(transaction),
-    do: %{t | batch: add_transaction(t.batch, transaction, reply_fn, task)}
+  def add_transaction_to_batch(t, transaction, reply_fn, commit_mode) when is_binary(transaction),
+    do: %{t | batch: add_transaction(t.batch, transaction, reply_fn, commit_mode)}
 
   @spec apply_finalization_policy(State.t()) ::
           {State.t(), batch_to_finalize :: Batch.t()} | {State.t(), nil}

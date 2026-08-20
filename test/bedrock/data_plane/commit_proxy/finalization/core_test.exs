@@ -26,8 +26,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     buffer =
       transactions
       |> Enum.with_index()
-      |> Enum.map(fn {{reply_fn, tx_binary, task}, index} ->
-        {index, reply_fn, tx_binary, task}
+      |> Enum.map(fn {{reply_fn, tx_binary, commit_mode}, index} ->
+        {index, reply_fn, tx_binary, commit_mode}
       end)
 
     %Batch{
@@ -102,15 +102,13 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       # Create reply functions and tasks
       reply_fn1 = create_reply_fn(self(), :reply1)
       reply_fn2 = create_reply_fn(self(), :reply2)
-      task1 = Task.async(fn -> %{:test_resolver => tx1_binary} end)
-      task2 = Task.async(fn -> %{:test_resolver => tx2_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
           # index 0 - will be aborted
-          {reply_fn1, tx1_binary, task1},
+          {reply_fn1, tx1_binary, :system},
           # index 1 - success
-          {reply_fn2, tx2_binary, task2}
+          {reply_fn2, tx2_binary, :system}
         ])
 
       # Mock resolver that aborts first transaction (index 0)
@@ -178,13 +176,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       # Create reply functions and tasks
       reply_fn1 = create_reply_fn(self(), :reply1)
       reply_fn2 = create_reply_fn(self(), :reply2)
-      task1 = Task.async(fn -> %{:test_resolver => tx1_binary} end)
-      task2 = Task.async(fn -> %{:test_resolver => tx2_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn1, tx1_binary, task1},
-          {reply_fn2, tx2_binary, task2}
+          {reply_fn1, tx1_binary, :system},
+          {reply_fn2, tx2_binary, :system}
         ])
 
       # Mock resolver that aborts both transactions
@@ -342,11 +338,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       transaction_map = create_test_transaction(<<"key">>, <<"value">>)
       binary_transaction = Transaction.encode(transaction_map)
       reply_fn = create_reply_fn(self(), :reply)
-      task = Task.async(fn -> %{:test_resolver => binary_transaction} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn, binary_transaction, task}
+          {reply_fn, binary_transaction, :user}
         ])
 
       # Custom abort function that tracks calls

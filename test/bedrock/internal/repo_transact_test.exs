@@ -284,30 +284,6 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert TransactionContext.builder(TestRepo) == nil
     end
 
-    test "surfaces atomic_on_system_key immediately instead of retrying" do
-      # Same permanent-rejection contract as key_out_of_range: an atomic op
-      # aimed at a system key is deterministic, so retrying cannot succeed.
-      key = <<0xFF, "/system/counter">>
-      proxy = start_supervised!({RejectingProxy, {:atomic_on_system_key, key}})
-      attempts = :counters.new(1, [])
-
-      result =
-        Repo.transact(
-          NoCluster,
-          TestRepo,
-          fn ->
-            :counters.add(attempts, 1, 1)
-            Repo.put(TestRepo, "key", "value")
-          end,
-          transaction_system_layout: %{epoch: 1, proxies: [proxy]},
-          retry_limit: 3
-        )
-
-      assert result == {:error, {:atomic_on_system_key, key}}
-      assert :counters.get(attempts, 1) == 1
-      assert TransactionContext.builder(TestRepo) == nil
-    end
-
     test "raises after exhausting the retry limit when commit keeps failing" do
       # A put makes the transaction non-empty; with no commit proxies in the
       # layout, commit fails with :unavailable, a retryable failure.

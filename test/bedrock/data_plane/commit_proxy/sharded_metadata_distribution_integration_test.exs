@@ -128,7 +128,9 @@ defmodule Bedrock.DataPlane.CommitProxy.ShardedMetadataDistributionIntegrationTe
     })
   end
 
-  defp commit(proxy, epoch, tx), do: GenServer.call(proxy, {:commit, epoch, tx}, 5_000)
+  # System mode: these transactions write \xFF metadata keys, which
+  # user-mode commits are rejected for at ingress.
+  defp commit(proxy, epoch, tx), do: GenServer.call(proxy, {:commit, epoch, tx, :system}, 5_000)
 
   defp commit!(proxy, epoch, tx) do
     assert {:ok, version, _index} = commit(proxy, epoch, tx)

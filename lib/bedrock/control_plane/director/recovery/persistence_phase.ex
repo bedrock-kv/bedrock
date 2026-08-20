@@ -353,10 +353,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp submit_system_transaction(_system_transaction, [], _epoch, _context), do: {:error, :no_commit_proxies}
 
   defp submit_system_transaction(encoded_transaction, proxies, epoch, context) when is_list(proxies) do
-    commit_fn = Map.get(context, :commit_transaction_fn, &CommitProxy.commit/3)
+    commit_fn = Map.get(context, :commit_transaction_fn, &commit_in_system_mode/3)
 
     proxies
     |> Enum.random()
     |> commit_fn.(epoch, encoded_transaction)
   end
+
+  # Recovery is a system writer: user-mode commits cannot touch \xFF keys.
+  defp commit_in_system_mode(proxy, epoch, encoded_transaction),
+    do: CommitProxy.commit(proxy, epoch, encoded_transaction, mode: :system)
 end

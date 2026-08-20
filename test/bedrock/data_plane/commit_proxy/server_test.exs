@@ -1128,14 +1128,24 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       assert {:error, {:key_out_of_range, ^key}} = GenServer.call(proxy, {:commit, 1, tx})
     end
 
-    test "accepts a long key that sorts below the end of the keyspace", %{commit_proxy: proxy} do
-      # <<0xFF, 0xFE, ...>> is longer than the boundary but sorts below it;
+    test "accepts a long user key that sorts below the system boundary", %{commit_proxy: proxy} do
+      # <<0xFE, 0xFF, ...>> is longer than the boundary but sorts below it;
       # it must reach version assignment (killing the proxy at the atom
       # sequencer), not be rejected at ingress.
       ref = Process.monitor(proxy)
-      tx = encode_mutations([{:set, <<0xFF, 0xFE, 0xFF, 0xFF>>, "v"}])
+      tx = encode_mutations([{:set, <<0xFE, 0xFF, 0xFF, 0xFF>>, "v"}])
 
       assert {:error, :abort} = GenServer.call(proxy, {:commit, 1, tx})
+      assert_receive {:DOWN, ^ref, :process, _, {:sequencer_unavailable, _}}
+    end
+
+    test "accepts a long system key that sorts below the end of the keyspace", %{commit_proxy: proxy} do
+      # Same length-vs-order check at the system bound: <<0xFF, 0xFE, ...>>
+      # sorts below <<0xFF, 0xFF>> despite being longer.
+      ref = Process.monitor(proxy)
+      tx = encode_mutations([{:set, <<0xFF, 0xFE, 0xFF, 0xFF>>, "v"}])
+
+      assert {:error, :abort} = GenServer.call(proxy, {:commit, 1, tx, :system})
       assert_receive {:DOWN, ^ref, :process, _, {:sequencer_unavailable, _}}
     end
 
@@ -1150,11 +1160,58 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
       assert Process.alive?(proxy)
     end
 
-    test "in-range mutations pass validation and reach version assignment", %{commit_proxy: proxy} do
-      # System keys below the boundary and a clear_range ending exactly AT the
-      # boundary (exclusive end) are legal. The proxy must die at VERSION
-      # ASSIGNMENT (the atom sequencer) - proving these passed validation -
-      # not anywhere inside the validation pass.
+    test "in-range user mutations pass validation and reach version assignment", %{commit_proxy: proxy} do
+      # Keys below the system boundary and a clear_range ending exactly AT
+      # the boundary (exclusive end) are legal for user commits. The proxy
+      # must die at VERSION ASSIGNMENT (the atom sequencer) - proving these
+      # passed validation - not anywhere inside the validation pass.
+      ref = Process.monitor(proxy)
+
+      tx =
+        encode_mutations([
+          {:set, "user/ok", "v"},
+          {:atomic, :add, "user/counter", <<1::64-little>>},
+          {:clear_range, "a", Bedrock.end_of_user_keyspace()}
+        ])
+
+      assert {:error, :abort} = GenServer.call(proxy, {:commit, 1, tx})
+      assert_receive {:DOWN, ^ref, :process, _, {:sequencer_unavailable, _}}
+    end
+
+    test "rejects a user commit that writes a system key", %{commit_proxy: proxy} do
+      key = <<0xFF, "/system/shard_keys/x">>
+      tx = encode_mutations([{:set, key, "v"}])
+
+      assert {:error, {:key_out_of_range, ^key}} = GenServer.call(proxy, {:commit, 1, tx})
+      assert Process.alive?(proxy)
+    end
+
+    test "rejects a user clear that targets the reserved range below the system prefix", %{commit_proxy: proxy} do
+      # The whole range at and above <<0xFF>> is reserved, not just \xff/system.
+      key = <<0xFF, 0x00>>
+      tx = encode_mutations([{:clear, key}])
+
+      assert {:error, {:key_out_of_range, ^key}} = GenServer.call(proxy, {:commit, 1, tx})
+    end
+
+    test "rejects a user clear_range that crosses into system space", %{commit_proxy: proxy} do
+      bad_end = <<0xFF, 0x00>>
+      tx = encode_mutations([{:clear_range, "a", bad_end}])
+
+      assert {:error, {:key_out_of_range, ^bad_end}} = GenServer.call(proxy, {:commit, 1, tx})
+    end
+
+    test "rejects a user clear_range starting at the system boundary", %{commit_proxy: proxy} do
+      boundary = Bedrock.end_of_user_keyspace()
+      tx = encode_mutations([{:clear_range, boundary, boundary <> <<0x01>>}])
+
+      assert {:error, {:key_out_of_range, ^boundary}} = GenServer.call(proxy, {:commit, 1, tx})
+    end
+
+    test "system-mode commits may write system keys", %{commit_proxy: proxy} do
+      # A system commit's legal range extends to the end of the keyspace: the
+      # set on a system key and the clear_range ending AT the end of the
+      # keyspace must both reach version assignment.
       ref = Process.monitor(proxy)
 
       tx =
@@ -1163,8 +1220,30 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
           {:clear_range, "a", Bedrock.end_of_keyspace()}
         ])
 
-      assert {:error, :abort} = GenServer.call(proxy, {:commit, 1, tx})
+      assert {:error, :abort} = GenServer.call(proxy, {:commit, 1, tx, :system})
       assert_receive {:DOWN, ^ref, :process, _, {:sequencer_unavailable, _}}
+    end
+
+    test "system mode is still bounded by the end of the keyspace", %{commit_proxy: proxy} do
+      eok = Bedrock.end_of_keyspace()
+      tx = encode_mutations([{:set, eok, "v"}])
+
+      assert {:error, {:key_out_of_range, ^eok}} = GenServer.call(proxy, {:commit, 1, tx, :system})
+      assert Process.alive?(proxy)
+    end
+
+    test "rejects atomics on system keys even in system mode", %{commit_proxy: proxy} do
+      key = <<0xFF, "/system/counter">>
+      tx = encode_mutations([{:atomic, :add, key, <<1::64-little>>}])
+
+      assert {:error, {:atomic_on_system_key, ^key}} = GenServer.call(proxy, {:commit, 1, tx, :system})
+      assert Process.alive?(proxy)
+    end
+
+    test "system-mode commits respect epoch and lock checks", %{commit_proxy: proxy} do
+      tx = encode_mutations([{:set, <<0xFF, "/system/ok">>, "v"}])
+
+      assert {:error, :wrong_epoch} = GenServer.call(proxy, {:commit, 99, tx, :system})
     end
   end
 

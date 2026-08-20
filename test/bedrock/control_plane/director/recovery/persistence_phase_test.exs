@@ -110,6 +110,34 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert %{"log_1" => %{status: :unknown}} = decoded[:layout_services]
       assert decoded[{:layout_log, "log_1"}] == [1, 2]
     end
+
+    test "commits the system transaction in system mode by default" do
+      # Without an injected commit fn, the phase must reach the proxy through
+      # the system-mode commit path: user-mode commits cannot write \xFF keys.
+      test_pid = self()
+
+      stub_proxy =
+        spawn_link(fn ->
+          receive do
+            {:"$gen_call", from, {:commit, epoch, encoded_transaction, mode}} ->
+              send(test_pid, {:committed, epoch, encoded_transaction, mode})
+              GenServer.reply(from, {:ok, 1, 0})
+          end
+        end)
+
+      recovery_attempt =
+        base_recovery_attempt()
+        |> with_proxies([stub_proxy])
+        |> put_in([Access.key!(:transaction_system_layout), :proxies], [stub_proxy])
+
+      assert {_, :completed} = PersistencePhase.execute(recovery_attempt, recovery_context())
+      assert_received {:committed, _epoch, encoded_transaction, :system}
+
+      assert Enum.any?(Transaction.mutations!(encoded_transaction), fn
+               {:set, <<0xFF, _::binary>>, _} -> true
+               _ -> false
+             end)
+    end
   end
 
   # Capture the mutations of the system transaction PersistencePhase commits.

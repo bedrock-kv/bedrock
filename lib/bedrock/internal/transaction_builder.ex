@@ -93,21 +93,13 @@ defmodule Bedrock.Internal.TransactionBuilder do
 
   @impl true
   def handle_continue(:initialization, {transaction_system_layout, routing_fn}) do
-    # Routing normally arrives proxy-served and LAZILY: like the read
-    # version, the layout index is built on first read, so a transaction
-    # that never reads never fetches routing (FDB fetches locations per
-    # read, not per transaction). A caller-provided TSL carries its own
-    # shard fields and indexes eagerly - no IO involved. That legacy
-    # derivation is deleted with bedrock-q67.9's final layer.
-    layout_index =
-      if routing_fn do
-        nil
-      else
-        %{shard_layout: shard_layout, materializers: materializers} =
-          routing_from_layout(transaction_system_layout)
-
-        LayoutIndex.build_index(shard_layout, materializers)
-      end
+    # Routing arrives proxy-served and LAZILY: like the read version, the
+    # layout index is built on first read, so a transaction that never
+    # reads never fetches routing (FDB fetches locations per read, not per
+    # transaction). The TSL is wiring only - it carries no shard topology.
+    # Without a routing_fn (caller-provided wiring, tests) the index is
+    # empty and reads fail as layout_lookup_failed.
+    layout_index = if routing_fn, do: nil, else: LayoutIndex.build_index(%{}, %{})
 
     noreply(%State{
       state: :valid,
@@ -119,24 +111,6 @@ defmodule Bedrock.Internal.TransactionBuilder do
   end
 
   def handle_continue(:stop, t), do: stop(t, :normal)
-
-  defp routing_from_layout(transaction_system_layout) do
-    materializers =
-      transaction_system_layout
-      |> Map.get(:shard_materializers)
-      |> Kernel.||(%{})
-      |> then(fn materializers ->
-        case Map.get(transaction_system_layout, :metadata_materializer) do
-          nil -> materializers
-          metadata_materializer -> Map.put_new(materializers, 0, metadata_materializer)
-        end
-      end)
-
-    %{
-      shard_layout: Map.get(transaction_system_layout, :shard_layout) || %{},
-      materializers: materializers
-    }
-  end
 
   # Builds the layout index on first read (lazy, like the read version).
   # A routing fetch failure replies like any other read failure - the

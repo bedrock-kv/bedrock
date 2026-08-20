@@ -96,7 +96,6 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       transaction_services: %{},
       service_pids: %{},
       transaction_system_layout: nil,
-      metadata_materializer: nil,
       shard_layout: nil
     }
 

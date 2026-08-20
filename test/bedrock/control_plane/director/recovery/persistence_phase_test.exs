@@ -11,36 +11,28 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
 
-  # Shared test data setup
-  defp mock_transaction_system_layout do
-    mat_sys = spawn(fn -> Process.sleep(:infinity) end)
-    mat_user = spawn(fn -> Process.sleep(:infinity) end)
-
+  # Shared test data setup: the TSL is wiring only; shard topology rides
+  # the recovery attempt (and from there the keyspace).
+  defp mock_transaction_system_layout(services) do
     %{
-      id: "test_layout_id",
       epoch: 1,
-      director: self(),
       sequencer: self(),
-      rate_keeper: nil,
       proxies: [self()],
       resolvers: [{<<0>>, self()}],
       logs: %{"log_1" => [1, 2]},
-      services: %{
-        "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
-        "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}},
-        "wkr_user" => %{status: {:up, mat_user}, kind: :materializer, last_seen: {:wkr_user_name, node()}}
-      },
-      shard_layout: %{
-        <<0xFF>> => {1, <<>>},
-        <<0xFF, 0xFF>> => {0, <<0xFF>>}
-      },
-      metadata_materializer: mat_sys,
-      shard_materializers: %{0 => mat_sys, 1 => mat_user}
+      services: services
     }
   end
 
   defp base_recovery_attempt do
-    layout = mock_transaction_system_layout()
+    mat_sys = spawn(fn -> Process.sleep(:infinity) end)
+    mat_user = spawn(fn -> Process.sleep(:infinity) end)
+
+    services = %{
+      "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
+      "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}},
+      "wkr_user" => %{status: {:up, mat_user}, kind: :materializer, last_seen: {:wkr_user_name, node()}}
+    }
 
     recovery_attempt()
     |> with_sequencer(self())
@@ -50,7 +42,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     |> with_transaction_services(%{
       "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}}
     })
-    |> Map.put(:transaction_system_layout, layout)
+    |> Map.put(:shard_layout, %{
+      <<0xFF>> => {1, <<>>},
+      <<0xFF, 0xFF>> => {0, <<0xFF>>}
+    })
+    |> Map.put(:shard_materializers, %{0 => mat_sys, 1 => mat_user})
+    |> Map.put(:transaction_system_layout, mock_transaction_system_layout(services))
   end
 
   describe "execute/2" do
@@ -122,9 +119,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     end
 
     test "materializer family is skipped entirely when shard_materializers is absent" do
-      layout = Map.drop(mock_transaction_system_layout(), [:shard_materializers, :metadata_materializer])
-
-      recovery_attempt = Map.put(base_recovery_attempt(), :transaction_system_layout, layout)
+      recovery_attempt = Map.put(base_recovery_attempt(), :shard_materializers, %{})
       mutations = captured_system_mutations(recovery_attempt)
 
       prefix = SystemKeys.materializers_prefix()
@@ -140,10 +135,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     test "active shard management with zero matching service records still clears the family" do
       # Keyspace and seed must agree: the seed would be empty, so the
       # keyspace must end empty too - the clear fires even with no sets.
-      layout = mock_transaction_system_layout()
-      layout = Map.update!(layout, :services, &Map.drop(&1, ["wkr_sys", "wkr_user"]))
+      recovery_attempt =
+        update_in(
+          base_recovery_attempt(),
+          [Access.key!(:transaction_system_layout), :services],
+          &Map.drop(&1, ["wkr_sys", "wkr_user"])
+        )
 
-      recovery_attempt = Map.put(base_recovery_attempt(), :transaction_system_layout, layout)
       mutations = captured_system_mutations(recovery_attempt)
 
       prefix = SystemKeys.materializers_prefix()
@@ -158,11 +156,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     end
 
     test "a materializer pid without a service record is skipped, not invented" do
-      layout = mock_transaction_system_layout()
       orphan = spawn(fn -> Process.sleep(:infinity) end)
-      layout = put_in(layout, [:shard_materializers, 9], orphan)
 
-      recovery_attempt = Map.put(base_recovery_attempt(), :transaction_system_layout, layout)
+      recovery_attempt =
+        update_in(base_recovery_attempt(), [Access.key!(:shard_materializers)], &Map.put(&1, 9, orphan))
+
       mutations = captured_system_mutations(recovery_attempt)
 
       refute Enum.any?(mutations, fn

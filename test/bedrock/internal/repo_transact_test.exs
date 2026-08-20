@@ -415,12 +415,15 @@ defmodule Bedrock.Internal.RepoTransactTest do
     end
 
     defp spawn_stub_sequencer do
-      spawn(fn ->
-        receive do
-          {:"$gen_call", from, {:next_read_version, _epoch}} ->
-            GenServer.reply(from, {:ok, Bedrock.DataPlane.Version.from_integer(1)})
-        end
-      end)
+      spawn(fn -> sequencer_loop() end)
+    end
+
+    defp sequencer_loop do
+      receive do
+        {:"$gen_call", from, {:next_read_version, _epoch}} ->
+          GenServer.reply(from, {:ok, Bedrock.DataPlane.Version.from_integer(1)})
+          sequencer_loop()
+      end
     end
 
     defp link_loop(tsl, cached_routing, test_pid) do
@@ -440,6 +443,11 @@ defmodule Bedrock.Internal.RepoTransactTest do
         {:"$gen_cast", {:cache_routing, routing}} ->
           send(test_pid, {:routing_cached, routing})
           link_loop(tsl, routing, test_pid)
+
+        {:"$gen_call", from, :invalidate_routing} ->
+          GenServer.reply(from, :ok)
+          send(test_pid, :routing_invalidated)
+          link_loop(tsl, nil, test_pid)
       end
     end
 
@@ -482,6 +490,38 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert result == "routed_value"
       assert_received {:materializer_got, "some_key"}
       refute_received {:routing_cached, _}
+    end
+
+    test "a routing-shaped read failure invalidates the cache exactly once, and the retry refetches" do
+      test_pid = self()
+      spawn_stub_materializer(test_pid)
+
+      # The cached projection routes to a worker that is not registered:
+      # the read fails :unavailable (a dead ref IS what a stale snapshot
+      # looks like). The retry must invalidate, refetch from the proxy -
+      # whose fresh projection names the live worker - and succeed.
+      stale = put_in(projection().materializers[0], {"wkr_gone", Atom.to_string(node())})
+      fresh = projection()
+
+      proxy =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, :fetch_routing} -> GenServer.reply(from, {:ok, fresh})
+          end
+        end)
+
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: [proxy]}
+      link = spawn(fn -> link_loop(tsl, stale, test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
+
+      assert result == "routed_value"
+      # Exactly one invalidation: the failed attempt's reason fired it; the
+      # first attempt (no prior failure) must not.
+      assert_received :routing_invalidated
+      refute_received :routing_invalidated
+      assert_received {:routing_cached, ^fresh}
     end
 
     test "a transaction that never reads never fetches routing" do

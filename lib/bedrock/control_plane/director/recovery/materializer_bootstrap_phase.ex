@@ -32,7 +32,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   import Bedrock, only: [end_of_keyspace: 0]
   import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
 
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.Service.Foreman
@@ -88,13 +87,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     # Create materializers for all shards in the layout
     case create_materializers_for_shards(shard_tags, recovery_attempt, context) do
       {:ok, shard_materializers, created_services} ->
-        # Get the system shard materializer as metadata_materializer for backward compat
-        system_shard = RecoveryAttempt.system_shard_id()
-        metadata_materializer = Map.get(shard_materializers, system_shard)
-
         updated_attempt =
           recovery_attempt
-          |> Map.put(:metadata_materializer, metadata_materializer)
           |> Map.put(:shard_layout, shard_layout)
           |> Map.put(:shard_materializers, shard_materializers)
           |> Map.update!(:transaction_services, &Map.merge(&1, created_services))
@@ -174,11 +168,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     shard_logs = filter_logs_for_shard(recovery_attempt.logs, shard_tag)
 
     tsl = %{
-      id: TransactionSystemLayout.random_id(),
       epoch: recovery_attempt.epoch,
-      director: :unavailable,
       sequencer: recovery_attempt.sequencer,
-      rate_keeper: nil,
       proxies: recovery_attempt.proxies,
       resolvers: recovery_attempt.resolvers,
       logs: shard_logs,
@@ -249,7 +240,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
       updated_attempt =
         recovery_attempt
-        |> Map.put(:metadata_materializer, materializer_pid)
         |> Map.put(:shard_layout, shard_layout)
         |> Map.put(:shard_materializers, shard_materializers)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
@@ -396,11 +386,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
     # TransactionSystemLayout is a type, not a struct, so we build a map
     tsl = %{
-      id: TransactionSystemLayout.random_id(),
       epoch: recovery_attempt.epoch,
-      director: :unavailable,
       sequencer: recovery_attempt.sequencer,
-      rate_keeper: nil,
       proxies: recovery_attempt.proxies,
       resolvers: recovery_attempt.resolvers,
       logs: shard_logs,
@@ -522,7 +509,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # previous one ends, the first at the empty key — which also covers
   # legacy values that carried only the tag.
   @spec shard_layout_from_entries([{Bedrock.key(), binary()}]) ::
-          {:ok, TransactionSystemLayout.shard_layout()} | {:error, {:invalid_shard_value, Bedrock.key()}}
+          {:ok, RecoveryAttempt.shard_layout()} | {:error, {:invalid_shard_value, Bedrock.key()}}
   def shard_layout_from_entries(entries) do
     entries
     |> Enum.reduce_while({:ok, []}, fn {key, value}, {:ok, acc} ->

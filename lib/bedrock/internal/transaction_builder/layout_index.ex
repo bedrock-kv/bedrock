@@ -1,25 +1,12 @@
 defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   @moduledoc """
-  Pre-computed index for efficient Transaction System Layout lookups.
+  The client's shard-lookup index: a gb_tree of `end_key => {start_key,
+  [materializer ref]}` built from the proxy-served routing projection.
 
-  This module builds a gb_tree index from the static TSL configuration by segmenting
-  the keyspace into non-overlapping ranges. Each segment shows exactly which PIDs
-  are responsible for that portion of the keyspace, enabling O(log n) lookups
-  instead of O(n) linear scans through all storage teams.
-
-  ## Segmented Keyspace Example
-
-  Given overlapping storage teams:
-  - a-f → [pid1]
-  - d-m → [pid2]
-  - h-p → [pid3]
-
-  The index creates non-overlapping segments:
-  - {a, d} → [pid1]
-  - {d, f} → [pid1, pid2]
-  - {f, h} → [pid2]
-  - {h, m} → [pid2, pid3]
-  - {m, p} → [pid3]
+  Shards are non-overlapping by construction, so lookups are a single
+  O(log n) ceiling search. Shards whose tag has no materializer are
+  absent - a key landing in the gap fails the lookup, which the client
+  retry loop converts into an invalidate-and-refetch.
   """
 
   defstruct [:tree]
@@ -44,11 +31,21 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
           %{Bedrock.range_tag() => server_ref()}
         ) :: t()
   def build_index(shard_layout, materializers) when is_map(shard_layout) and is_map(materializers) do
+    # Shards are non-overlapping by construction (the layout is keyed by
+    # exclusive end_key), so the index is a direct end_key => {start_key,
+    # [ref]} tree - no segmenting pass. Shards without a materializer are
+    # dropped: a key landing in the gap fails the lookup, which the client
+    # retry loop converts into an invalidate-and-refetch.
     tree =
       shard_layout
-      |> collect_active_ranges(materializers)
-      |> create_segments_with_pids()
-      |> build_tree_from_segments()
+      |> Enum.flat_map(fn {end_key, {tag, start_key}} ->
+        case Map.get(materializers, tag) do
+          nil -> []
+          ref -> [{end_key, {start_key, [ref]}}]
+        end
+      end)
+      |> Enum.sort()
+      |> :gb_trees.from_orddict()
 
     %__MODULE__{tree: tree}
   end
@@ -123,53 +120,6 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   end
 
   # Private implementation functions
-
-  # Build active ranges from shard boundaries and available materializers.
-  # Shards without a materializer have no read server, causing
-  # layout_lookup_failed at lookup time.
-  @spec collect_active_ranges(
-          %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}},
-          %{Bedrock.range_tag() => server_ref()}
-        ) :: [{binary(), binary(), [server_ref()]}]
-  defp collect_active_ranges(shard_layout, materializers) do
-    shard_layout
-    |> Enum.map(fn {end_key, {tag, start_key}} ->
-      case Map.get(materializers, tag) do
-        nil -> {start_key, end_key, []}
-        ref -> {start_key, end_key, [ref]}
-      end
-    end)
-    |> Enum.filter(fn {_start, _end, refs} -> refs != [] end)
-    |> Enum.sort_by(fn {start_key, _end, _refs} -> start_key end)
-  end
-
-  @spec create_segments_with_pids([{binary(), binary(), [pid()]}]) ::
-          [{binary(), {binary(), [pid()]}}]
-  defp create_segments_with_pids(ranges) do
-    boundaries =
-      ranges
-      |> Enum.flat_map(fn {start_key, end_key, _pids} -> [start_key, end_key] end)
-      |> Enum.sort()
-
-    boundaries
-    |> Enum.chunk_every(2, 1, :discard)
-    |> Enum.map(fn [segment_start, segment_end] ->
-      covering_pids =
-        ranges
-        |> Enum.filter(fn {range_start, range_end, _pids} ->
-          range_start <= segment_start and segment_end <= range_end
-        end)
-        |> Enum.flat_map(fn {_, _, pids} -> pids end)
-        |> Enum.uniq()
-
-      {segment_end, {segment_start, covering_pids}}
-    end)
-    |> Enum.filter(fn {_end_key, {_start_key, pids}} -> pids != [] end)
-  end
-
-  @spec build_tree_from_segments([{binary(), {binary(), [pid()]}}]) ::
-          :gb_trees.tree(binary(), {binary(), [pid()]})
-  defp build_tree_from_segments(orddict), do: :gb_trees.from_orddict(orddict)
 
   @spec segment_for_key(:gb_trees.tree(binary(), {binary(), [pid()]}), binary()) ::
           {:ok, {binary(), binary()}, [pid()]} | :not_found

@@ -114,22 +114,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
     end
   end
 
+  # The TSL is runtime wiring only (ClientDBInfo analogue): shard topology
+  # lives in the keyspace and reaches clients through the proxies' routing
+  # views, never through this broadcast.
   defp build_transaction_system_layout(recovery_attempt, context) do
     {:ok,
      %{
-       id: TransactionSystemLayout.random_id(),
        epoch: recovery_attempt.epoch,
-       director: self(),
        sequencer: recovery_attempt.sequencer,
-       rate_keeper: nil,
        proxies: recovery_attempt.proxies,
        resolvers: recovery_attempt.resolvers,
        logs: recovery_attempt.logs,
-       # Metadata materializer and shard layout from MaterializerBootstrapPhase
-       metadata_materializer: recovery_attempt.metadata_materializer,
-       shard_layout: recovery_attempt.shard_layout,
-       # Shard materializers map: shard_tag -> pid
-       shard_materializers: Map.get(recovery_attempt, :shard_materializers, %{}),
        services:
          build_services_for_layout(
            recovery_attempt,
@@ -213,7 +208,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
           :ok | {:error, {:unlock_failed, :timeout | :unavailable}}
   defp unlock_services(recovery_attempt, transaction_system_layout, lock_token, context) when is_binary(lock_token) do
     case unlock_commit_proxies(
-           recovery_attempt.proxies,
+           recovery_attempt,
            transaction_system_layout,
            lock_token,
            context
@@ -223,15 +218,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
     end
   end
 
-  @spec unlock_commit_proxies([pid()], TransactionSystemLayout.t(), Bedrock.lock_token(), map()) ::
+  @spec unlock_commit_proxies(RecoveryAttempt.t(), TransactionSystemLayout.t(), Bedrock.lock_token(), map()) ::
           :ok | {:error, :timeout | :unavailable}
-  defp unlock_commit_proxies(proxies, transaction_system_layout, lock_token, context) when is_list(proxies) do
+  defp unlock_commit_proxies(recovery_attempt, transaction_system_layout, lock_token, context) do
+    proxies = recovery_attempt.proxies
     unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/5)
 
     # Extract what proxies need from TSL
     sequencer = transaction_system_layout.sequencer
     resolver_layout = CommitProxy.ResolverLayout.from_layout(transaction_system_layout)
-    routing_snapshot = build_routing_snapshot(transaction_system_layout)
+    routing_snapshot = build_routing_snapshot(transaction_system_layout, recovery_attempt)
 
     proxies
     |> Task.async_stream(
@@ -248,8 +244,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   # Build the plain-data routing snapshot proxies need at unlock. Each proxy
   # turns it into its own RoutingData (`RoutingData.from_snapshot/1`); proxies
   # may live on other nodes, so nothing process- or node-local goes in here.
-  @spec build_routing_snapshot(TransactionSystemLayout.t()) :: CommitProxy.RoutingData.snapshot()
-  defp build_routing_snapshot(%{logs: logs, services: services, shard_layout: shard_layout} = layout) do
+  @spec build_routing_snapshot(TransactionSystemLayout.t(), RecoveryAttempt.t()) :: CommitProxy.RoutingData.snapshot()
+  defp build_routing_snapshot(%{logs: logs, services: services}, recovery_attempt) do
+    shard_layout = recovery_attempt.shard_layout
     # Build log_map: index -> log_id
     log_map =
       logs
@@ -279,7 +276,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
       shard_layout: shard_layout || %{},
       log_map: log_map,
       log_services: log_services,
-      materializers: TransactionSystemLayout.materializer_refs(layout),
+      materializers:
+        TransactionSystemLayout.materializer_refs(Map.get(recovery_attempt, :shard_materializers), services),
       replication_factor: max(1, map_size(logs))
     }
   end

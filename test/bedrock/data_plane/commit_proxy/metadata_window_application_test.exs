@@ -4,8 +4,8 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
   (bedrock-q67.16, bedrock-q67.24).
 
   Each finalization task asks the server to apply its batch's committed
-  metadata - the resolver window plus, in sharded mode, the batch's own
-  globally-committed metadata - and hand back the immutable routing snapshot
+  metadata window - which covers through the batch's own version, its own
+  committed metadata included - and hand back the immutable routing snapshot
   the batch pushes with. Requests are served strictly in proxy-local
   batch-sequence order: a request whose predecessor has not applied yet
   waits, so every batch routes with exactly the metadata at or below its own
@@ -52,14 +52,14 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
 
   defp log_set(log_id), do: {:set, SystemKeys.layout_log(log_id), Values.encode_tag_list([1])}
 
-  defp request(state, seq, commit_version, window, deferred \\ nil) do
+  defp request(state, seq, commit_version, window) do
     from = {self(), make_ref()}
-    result = Server.handle_call({:apply_metadata_and_route, seq, commit_version, window, deferred}, from, state)
+    result = Server.handle_call({:apply_metadata_and_route, seq, commit_version, window}, from, state)
     {result, elem(from, 1)}
   end
 
-  defp apply_in_order(state, seq, commit_version, window, deferred \\ nil) do
-    {{:noreply, updated, _timeout}, ref} = request(state, seq, commit_version, window, deferred)
+  defp apply_in_order(state, seq, commit_version, window) do
+    {{:noreply, updated, _timeout}, ref} = request(state, seq, commit_version, window)
     assert_receive {^ref, {:ok, routing_data}}
     {updated, routing_data}
   end
@@ -95,34 +95,17 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     assert updated.pending_applies == %{}
   end
 
-  test "a batch's own deferred metadata routes its batch but does not advance the ack" do
-    window = {nil, v(1), []}
-    deferred = {[shard_set("a", 3), log_set("log_a")]}
+  test "a batch's own committed metadata arrives in its window and routes its own push" do
+    # The window covers through the batch's own commit version (verdicts
+    # already resolved at the merge), so applying it gives the batch
+    # same-batch visibility and honestly advances the ack to its version.
+    window = {nil, v(2), [{v(2), [shard_set("a", 3), log_set("log_a")]}]}
 
-    {updated, routing_data} = apply_in_order(state(), 1, v(2), window, deferred)
+    {updated, routing_data} = apply_in_order(state(), 1, v(2), window)
 
-    # Routing includes the batch's own committed metadata (same-batch
-    # visibility for its log push)...
     assert routing_data.log_map == %{0 => "log_a"}
     assert :gb_trees.lookup("a", routing_data.shards) == {:value, {3, ""}}
-
-    # ...but the ack only advances to what resolver windows confirmed, and
-    # the deferred entry is recorded for re-sending as a confirmation.
-    assert updated.metadata.version == v(1)
-    assert [{deferred_version, _mutations}] = updated.deferred_metadata
-    assert deferred_version == v(2)
-  end
-
-  test "a later window covering a deferred version stops re-sending it" do
-    deferred = {[log_set("log_a")]}
-    {updated, _routing} = apply_in_order(state(), 1, v(2), {nil, v(1), []}, deferred)
-
-    # A window whose to_version covers the deferred version proves every
-    # resolver folded the confirmation in.
-    {updated, _routing} = apply_in_order(updated, 2, v(3), {v(1), v(3), [{v(2), [log_set("log_a")]}]})
-
-    assert updated.deferred_metadata == []
-    assert updated.metadata.version == v(3)
+    assert updated.metadata.version == v(2)
   end
 
   test "overlapping windows apply idempotently: entries at or below the applied version are dropped" do
@@ -153,7 +136,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     assert {:metadata_coverage_gap, _} =
              catch_exit(
                Server.handle_call(
-                 {:apply_metadata_and_route, 2, v(6), {v(5), v(6), [{v(6), [shard_set("a", 6)]}]}, nil},
+                 {:apply_metadata_and_route, 2, v(6), {v(5), v(6), [{v(6), [shard_set("a", 6)]}]}},
                  from,
                  initial
                )
@@ -164,7 +147,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     from = {self(), make_ref()}
 
     assert {:metadata_coverage_gap, _} =
-             catch_exit(Server.handle_call({:apply_metadata_and_route, 1, v(6), {v(5), v(6), []}, nil}, from, state()))
+             catch_exit(Server.handle_call({:apply_metadata_and_route, 1, v(6), {v(5), v(6), []}}, from, state()))
   end
 
   test "a nil window advances the chain without touching metadata" do

@@ -190,7 +190,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       commit_version = Version.from_integer(100)
 
       metadata_window =
-        {nil, commit_version, [{commit_version, [{:set, <<0xFF, "system_key">>, "system_value"}]}]}
+        {nil, commit_version, [{commit_version, [{[{:set, <<0xFF, "system_key">>, "system_value"}], true}]}]}
 
       mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
         {:ok, [], metadata_window}

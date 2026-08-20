@@ -176,7 +176,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     # 1. The resolver's MetadataAccumulator captured the system-key mutation
     #    at the batch's commit version.
     resolver_entries = MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window)
-    assert {^version, [{:set, ^shard_key, ^encoded_tag}]} = List.keyfind(resolver_entries, version, 0)
+    assert {^version, [{[{:set, ^shard_key, ^encoded_tag}], true}]} = List.keyfind(resolver_entries, version, 0)
 
     # 2. The commit proxy's post-batch state contains the PARSED structured entry.
     wait_until(fn -> proxy_metadata(proxy).shards != %{} end)

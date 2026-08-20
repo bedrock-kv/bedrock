@@ -11,7 +11,14 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
 
   @type mutation :: Bedrock.Internal.TransactionBuilder.Tx.mutation()
 
-  @type entry :: {version :: Bedrock.version(), mutations :: [mutation()]}
+  @typedoc """
+  One metadata-carrying transaction's mutations with this resolver's LOCAL
+  verdict. The commit proxy ANDs verdicts positionally across all resolvers'
+  windows to obtain the global verdict.
+  """
+  @type transaction_metadata :: {mutations :: [mutation()], committed? :: boolean()}
+
+  @type entry :: {version :: Bedrock.version(), [transaction_metadata()]}
 
   @type t :: %__MODULE__{
           reversed_entries: [entry()]
@@ -35,79 +42,30 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
 
   ## Examples
 
-      iex> acc = new() |> append(v(1), [{:set, <<0xFF, "a">>, "1"}])
+      iex> acc = new() |> append(v(1), [{[{:set, <<0xFF, "a">>, "1"}], true}])
       iex> entries(acc)
-      [{<<0, 0, 0, 0, 0, 0, 0, 1>>, [{:set, <<0xFF, "a">>, "1"}]}]
+      [{<<0, 0, 0, 0, 0, 0, 0, 1>>, [{[{:set, <<0xFF, "a">>, "1"}], true}]}]
   """
   @spec entries(t()) :: [entry()]
   def entries(%__MODULE__{reversed_entries: reversed}), do: Enum.reverse(reversed)
 
   @doc """
-  Appends mutations at a given version to the accumulator.
+  Appends a version's transaction metadata (with local verdicts) to the
+  accumulator.
 
-  Mutations are stored in version order. If mutations is empty, this is a no-op.
-
-  ## Parameters
-    - `accumulator` - The accumulator to append to
-    - `version` - The commit version for these mutations
-    - `mutations` - List of metadata mutations to append
+  Entries are stored in version order. If the list is empty, this is a no-op.
 
   ## Examples
 
-      iex> acc = new() |> append(v(1), [{:set, <<0xFF, "key">>, "value"}])
+      iex> acc = new() |> append(v(1), [{[{:set, <<0xFF, "key">>, "value"}], true}])
       iex> length(entries(acc))
       1
   """
-  @spec append(t(), Bedrock.version(), [mutation()]) :: t()
+  @spec append(t(), Bedrock.version(), [transaction_metadata()]) :: t()
   def append(accumulator, _version, []), do: accumulator
 
-  def append(%__MODULE__{reversed_entries: reversed} = accumulator, version, mutations) do
-    %{accumulator | reversed_entries: [{version, mutations} | reversed]}
-  end
-
-  @doc """
-  Flattens per-transaction metadata mutations, keeping only transactions that
-  survived the abort set (indices are batch positions), in transaction order.
-
-  Shared by immediate accumulation (resolver, local abort set) and deferred
-  confirmation (commit proxy, merged global abort set) so both sides agree on
-  which mutations a batch committed.
-
-  ## Examples
-
-      iex> committed_mutations([[{:set, <<0xFF, "a">>, "1"}], [{:set, <<0xFF, "b">>, "2"}]], MapSet.new([1]))
-      [{:set, <<0xFF, "a">>, "1"}]
-  """
-  @spec committed_mutations([[mutation()]], MapSet.t(non_neg_integer())) :: [mutation()]
-  def committed_mutations(metadata_per_tx, aborted_set) do
-    metadata_per_tx
-    |> Enum.with_index()
-    |> Enum.reject(fn {_mutations, idx} -> MapSet.member?(aborted_set, idx) end)
-    |> Enum.flat_map(fn {mutations, _idx} -> mutations end)
-  end
-
-  @doc """
-  Inserts mutations at a given version, maintaining version order even when
-  the version is older than existing entries.
-
-  Used for deferred (confirmed-later) metadata in sharded-resolver mode, where
-  confirmations for different versions can arrive out of order. If mutations
-  is empty, this is a no-op.
-
-  ## Examples
-
-      iex> acc = new()
-      iex>   |> append(v(2), [{:set, <<0xFF, "b">>, "2"}])
-      iex>   |> insert_sorted(v(1), [{:set, <<0xFF, "a">>, "1"}])
-      iex> Enum.map(entries(acc), &elem(&1, 0))
-      [<<0, 0, 0, 0, 0, 0, 0, 1>>, <<0, 0, 0, 0, 0, 0, 0, 2>>]
-  """
-  @spec insert_sorted(t(), Bedrock.version(), [mutation()]) :: t()
-  def insert_sorted(accumulator, _version, []), do: accumulator
-
-  def insert_sorted(%__MODULE__{reversed_entries: reversed} = accumulator, version, mutations) do
-    {newer, older} = Enum.split_while(reversed, fn {v, _} -> v > version end)
-    %{accumulator | reversed_entries: newer ++ [{version, mutations} | older]}
+  def append(%__MODULE__{reversed_entries: reversed} = accumulator, version, transaction_metadata) do
+    %{accumulator | reversed_entries: [{version, transaction_metadata} | reversed]}
   end
 
   @doc """
@@ -123,10 +81,10 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
   ## Examples
 
       iex> acc = new()
-      iex>   |> append(v(1), [{:set, <<0xFF, "a">>, "1"}])
-      iex>   |> append(v(2), [{:set, <<0xFF, "b">>, "2"}])
+      iex>   |> append(v(1), [{[{:set, <<0xFF, "a">>, "1"}], true}])
+      iex>   |> append(v(2), [{[{:set, <<0xFF, "b">>, "2"}], true}])
       iex> mutations_since(acc, v(1))
-      [{<<0, 0, 0, 0, 0, 0, 0, 2>>, [{:set, <<0xFF, "b">>, "2"}]}]
+      [{<<0, 0, 0, 0, 0, 0, 0, 2>>, [{[{:set, <<0xFF, "b">>, "2"}], true}]}]
   """
   @spec mutations_since(t(), Bedrock.version() | nil) :: [entry()]
   def mutations_since(%__MODULE__{reversed_entries: reversed}, nil), do: Enum.reverse(reversed)
@@ -159,8 +117,8 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
   ## Examples
 
       iex> acc = new()
-      iex>   |> append(v(1), [{:set, <<0xFF, "a">>, "1"}])
-      iex>   |> append(v(2), [{:set, <<0xFF, "b">>, "2"}])
+      iex>   |> append(v(1), [{[{:set, <<0xFF, "a">>, "1"}], true}])
+      iex>   |> append(v(2), [{[{:set, <<0xFF, "b">>, "2"}], true}])
       iex>   |> prune_through(v(1))
       iex> length(entries(acc))
       1

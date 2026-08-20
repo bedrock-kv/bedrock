@@ -21,6 +21,11 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
   - once a proxy confirms, the window is pruned through the minimum confirmed
     ack, and steady-state replies are `nil` - O(new updates) per batch.
 
+  Window entries carry `{mutations, local_verdict}` pairs per
+  metadata-carrying transaction: each resolver records its own verdict and
+  the commit proxy ANDs verdicts across all resolvers' windows to reach the
+  global one (bedrock-q67.22, FDB's stateMutations relay).
+
   Proxies not seen within the resolver's version retention are expired from
   `proxy_progress` (bounding it to ~live proxies and unblocking pruning). A
   returning laggard whose ack predates the pruned floor receives a window with
@@ -100,14 +105,14 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
   } do
     resolver = start_resolver()
 
-    assert {:ok, [], {nil, to1, [{to1_entry, [^m1]}]}} =
+    assert {:ok, [], {nil, to1, [{to1_entry, [{[^m1], true}]}]}} =
              resolve_from_fresh_task(resolver, v(0), v(1), "k1", [m1], {proxy, nil})
 
     assert to1 == v(1)
     assert to1_entry == v(1)
 
     # Proxy confirmed v(1): only the new update rides the next reply.
-    assert {:ok, [], {from2, to2, [{entry_v2, [^m2]}]}} =
+    assert {:ok, [], {from2, to2, [{entry_v2, [{[^m2], true}]}]}} =
              resolve_from_fresh_task(resolver, v(1), v(2), "k2", [m2], {proxy, v(1)})
 
     assert {from2, to2, entry_v2} == {v(1), v(2), v(2)}
@@ -123,13 +128,14 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
   } do
     resolver = start_resolver()
 
-    assert {:ok, [], {nil, _, [{_, [^m1]}]}} = resolve_from_fresh_task(resolver, v(0), v(1), "k1", [m1], {proxy, nil})
+    assert {:ok, [], {nil, _, [{_, [{[^m1], true}]}]}} =
+             resolve_from_fresh_task(resolver, v(0), v(1), "k1", [m1], {proxy, nil})
 
     # The proxy never applied the first window (call timed out; reply lost).
     # Its next call carries the same ack - the resolver re-sends everything
     # since the confirmed version, so the second window is a superset of the
     # first and out-of-order arrival at the proxy is equally harmless.
-    assert {:ok, [], {nil, to2, [{e1, [^m1]}, {e2, [^m2]}]}} =
+    assert {:ok, [], {nil, to2, [{e1, [{[^m1], true}]}, {e2, [{[^m2], true}]}]}} =
              resolve_from_fresh_task(resolver, v(1), v(2), "k2", [m2], {proxy, nil})
 
     assert {to2, e1, e2} == {v(2), v(1), v(2)}
@@ -157,7 +163,7 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
 
     # Entries at or below the confirmed version (and older than the retention
     # horizon) are pruned.
-    assert [{entry_version, [^m3]}] = MetadataAccumulator.entries(state.metadata_window)
+    assert [{entry_version, [{[^m3], true}]}] = MetadataAccumulator.entries(state.metadata_window)
     assert entry_version == v(2500)
   end
 
@@ -168,8 +174,11 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
   } do
     resolver = start_resolver()
 
-    assert {:ok, [], {nil, _, [{_, [^m1]}]}} = resolve_from_fresh_task(resolver, v(0), v(1), "k1", [m1], {proxy, nil})
-    assert {:ok, [], {_, _, [{_, [^m2]}]}} = resolve_from_fresh_task(resolver, v(1), v(2), "k2", [m2], {proxy, v(1)})
+    assert {:ok, [], {nil, _, [{_, [{[^m1], true}]}]}} =
+             resolve_from_fresh_task(resolver, v(0), v(1), "k1", [m1], {proxy, nil})
+
+    assert {:ok, [], {_, _, [{_, [{[^m2], true}]}]}} =
+             resolve_from_fresh_task(resolver, v(1), v(2), "k2", [m2], {proxy, v(1)})
 
     # Proxy confirmed through v(2); window pruned through v(2).
     assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(2), v(3), "k3", [], {proxy, v(2)})
@@ -194,7 +203,7 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
     proxy_a = spawn_link(fn -> Process.sleep(:infinity) end)
     proxy_b = spawn_link(fn -> Process.sleep(:infinity) end)
 
-    assert {:ok, [], {nil, _, [{_, [^m1]}]}} =
+    assert {:ok, [], {nil, _, [{_, [{[^m1], true}]}]}} =
              resolve_from_fresh_task(resolver, v(0), v(1000), "k1", [m1], {proxy_a, nil})
 
     # proxy_a confirms v(1000) while the entry is still inside the horizon
@@ -202,7 +211,7 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
     assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(1000), v(1500), "k2", [], {proxy_a, v(1000)})
 
     # proxy_b's first-ever call: full window, not a gap.
-    assert {:ok, [], {nil, to, [{entry_version, [^m1]}]}} =
+    assert {:ok, [], {nil, to, [{entry_version, [{[^m1], true}]}]}} =
              resolve_from_fresh_task(resolver, v(1500), v(1600), "k3", [], {proxy_b, nil})
 
     assert {to, entry_version} == {v(1600), v(1000)}
@@ -218,7 +227,7 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
     proxy_a = spawn_link(fn -> Process.sleep(:infinity) end)
     proxy_b = spawn_link(fn -> Process.sleep(:infinity) end)
 
-    assert {:ok, [], {nil, to_b, [{_, [^m1]}]}} =
+    assert {:ok, [], {nil, to_b, [{_, [{[^m1], true}]}]}} =
              resolve_from_fresh_task(resolver, v(0), v(1), "k1", [m1], {proxy_b, nil})
 
     assert to_b == v(1)
@@ -228,7 +237,7 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
 
     # proxy_a first calls late: its window covers (nil, v(1500)] with the same
     # single entry, so it acks v(1500) - far beyond the entry's version.
-    assert {:ok, [], {nil, to_a, [{_, [^m1]}]}} =
+    assert {:ok, [], {nil, to_a, [{_, [{[^m1], true}]}]}} =
              resolve_from_fresh_task(resolver, v(2), v(1500), "k3", [], {proxy_a, nil})
 
     assert to_a == v(1500)
@@ -245,131 +254,6 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
     # discarded, so it missed NOTHING - it must get a plain (empty)
     # differential, not a gap-marked window that would force a full recovery.
     assert {:ok, [], nil} = resolve_from_fresh_task(resolver, v(3100), v(3200), "k5", [], {proxy_b, v(1)})
-  end
-
-  describe "deferred metadata (sharded mode, bedrock-q67.17)" do
-    test "a held batch caps the window; the confirmation releases it at the original commit version", %{
-      proxy: proxy,
-      m1: m1
-    } do
-      resolver = start_resolver()
-
-      # Sharded batch carrying metadata: no metadata_per_tx, hold the version.
-      # While a hold is outstanding the window is returned (never nil) so the
-      # settled cap reaches the proxy's merge, but it never extends to (or
-      # past) the held version.
-      assert {:ok, [], {nil, to0, []}} =
-               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy, nil}, metadata_hold: true)
-
-      assert to0 == v(0)
-
-      assert {:ok, [], {nil, to0b, []}} = resolve_from_fresh_task(resolver, v(1), v(2), "k2", [], {proxy, nil})
-      assert to0b == v(0)
-
-      # The confirmation (already filtered by the proxy's merged global abort
-      # set) folds in at the ORIGINAL commit version and rides the reply.
-      assert {:ok, [], {nil, to, [{entry_version, [^m1]}]}} =
-               resolve_from_fresh_task(resolver, v(2), v(3), "k3", [], {proxy, nil}, metadata_confirms: [{v(1), [m1]}])
-
-      assert {to, entry_version} == {v(3), v(1)}
-      assert :sys.get_state(resolver).held_metadata_versions == MapSet.new()
-    end
-
-    test "a confirmation of an all-aborted batch clears the hold and advances the window with no entries", %{
-      proxy: proxy
-    } do
-      resolver = start_resolver()
-
-      assert {:ok, [], {nil, _, []}} =
-               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy, nil}, metadata_hold: true)
-
-      # Every metadata-carrying transaction in the batch was globally aborted:
-      # the confirmation carries no mutations, but the reply still carries a
-      # window so the proxy's ack advances and it stops re-sending.
-      assert {:ok, [], {nil, to, []}} =
-               resolve_from_fresh_task(resolver, v(1), v(2), "k2", [], {proxy, nil}, metadata_confirms: [{v(1), []}])
-
-      assert to == v(2)
-      assert MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window) == []
-    end
-
-    test "re-sent confirmations are idempotent", %{proxy: proxy, m1: m1} do
-      resolver = start_resolver()
-
-      assert {:ok, [], {nil, _, []}} =
-               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy, nil}, metadata_hold: true)
-
-      assert {:ok, [], {nil, _, [{_, [^m1]}]}} =
-               resolve_from_fresh_task(resolver, v(1), v(2), "k2", [], {proxy, nil}, metadata_confirms: [{v(1), [m1]}])
-
-      # The proxy re-sends until its ack covers v(1); no duplicate entry.
-      assert {:ok, [], _} =
-               resolve_from_fresh_task(resolver, v(2), v(3), "k3", [], {proxy, nil}, metadata_confirms: [{v(1), [m1]}])
-
-      assert [{entry_version, [^m1]}] = MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window)
-      assert entry_version == v(1)
-    end
-
-    test "out-of-order confirmations from different proxies keep entries in version order and withheld until settled",
-         %{m1: m1, m2: m2} do
-      resolver = start_resolver()
-      proxy_a = spawn_link(fn -> Process.sleep(:infinity) end)
-      proxy_b = spawn_link(fn -> Process.sleep(:infinity) end)
-
-      # proxy_a holds v(1); proxy_b holds v(2).
-      assert {:ok, [], {nil, _, []}} =
-               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy_a, nil}, metadata_hold: true)
-
-      assert {:ok, [], {nil, _, []}} =
-               resolve_from_fresh_task(resolver, v(1), v(2), "k2", [], {proxy_b, nil}, metadata_hold: true)
-
-      # proxy_b confirms v(2) FIRST - but v(1) is still held, so the entry at
-      # v(2) is withheld (no proxy may apply or ack past unsettled metadata).
-      assert {:ok, [], {nil, to_b, []}} =
-               resolve_from_fresh_task(resolver, v(2), v(3), "k3", [], {proxy_b, nil},
-                 metadata_confirms: [{v(2), [m2]}]
-               )
-
-      assert to_b == v(0)
-
-      # proxy_a confirms v(1): everything settles and both entries are served
-      # in ORIGINAL version order.
-      assert {:ok, [], {nil, to, [{e1, [^m1]}, {e2, [^m2]}]}} =
-               resolve_from_fresh_task(resolver, v(3), v(4), "k4", [], {proxy_a, nil},
-                 metadata_confirms: [{v(1), [m1]}]
-               )
-
-      assert {to, e1, e2} == {v(4), v(1), v(2)}
-    end
-
-    test "held versions never confirmed (dead proxy) expire into a coverage gap, not silent loss", %{
-      proxy: proxy,
-      m1: m1
-    } do
-      # 1ms retention = 1000 versions.
-      resolver = start_resolver(version_retention_ms: 1)
-
-      assert {:ok, [], {nil, _, []}} =
-               resolve_from_fresh_task(resolver, v(0), v(1), "k1", [], {proxy, nil}, metadata_hold: true)
-
-      # The submitting proxy never confirms v(1) (it died mid-batch, or
-      # stalled beyond any healthy cadence). Once the held version falls out
-      # of the retention horizon it expires - but the metadata MAY have
-      # committed, so the expired version poisons the pruned floor: proxies
-      # acked below it (necessarily all of them - holds cap acks) receive a
-      # gap-marked window (from_version above their applied version) and take
-      # the fail-fast exit into recovery rather than silently missing it.
-      assert {:ok, [], {from, to, []}} = resolve_from_fresh_task(resolver, v(1), v(2500), "k2", [], {proxy, nil})
-      assert {from, to} == {v(1), v(2500)}
-      assert :sys.get_state(resolver).held_metadata_versions == MapSet.new()
-
-      # A proxy acked at or above the poisoned floor is served normally
-      # (single-mode accumulation here just proves the cap is gone).
-      assert {:ok, [], {_, to, [{entry_version, [^m1]}]}} =
-               resolve_from_fresh_task(resolver, v(2500), v(2600), "k3", [m1], {proxy, v(2500)})
-
-      assert {to, entry_version} == {v(2600), v(2600)}
-    end
   end
 
   test "proxies not seen within version retention expire; a returning laggard gets a gap-marked window", %{
@@ -392,12 +276,12 @@ defmodule Bedrock.DataPlane.Resolver.MetadataWindowDistributionTest do
 
     state = :sys.get_state(resolver)
     refute Map.has_key?(state.proxy_progress, proxy_b)
-    assert [{entry_version, [^m3]}] = MetadataAccumulator.entries(state.metadata_window)
+    assert [{entry_version, [{[^m3], true}]}] = MetadataAccumulator.entries(state.metadata_window)
     assert entry_version == v(5000)
 
     # proxy_b returns with an ack below the pruned floor: the window's
     # from_version exceeds what proxy_b applied - the proxy-side gap signal.
-    assert {:ok, [], {from, to, [{_, [^m3]}]}} =
+    assert {:ok, [], {from, to, [{_, [{[^m3], true}]}]}} =
              resolve_from_fresh_task(resolver, v(5000), v(5001), "k5", [], {proxy_b, nil})
 
     assert {from, to} == {v(3), v(5001)}

@@ -22,10 +22,9 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
           lock_token: binary(),
           routing_data: RoutingData.t() | nil,
           metadata: Metadata.t(),
-          deferred_metadata: [{Bedrock.version(), [term()]}],
           batch_seq: non_neg_integer(),
           routed_seq: non_neg_integer(),
-          pending_applies: %{pos_integer() => {GenServer.from(), Bedrock.version(), term(), term()}}
+          pending_applies: %{pos_integer() => {GenServer.from(), Bedrock.version(), term()}}
         }
   defstruct cluster: nil,
             director: nil,
@@ -40,10 +39,6 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
             lock_token: nil,
             routing_data: nil,
             metadata: %Metadata{},
-            # Committed metadata from sharded batches (version-ascending),
-            # re-sent as confirmations on every resolver call until the
-            # resolvers' windows show it was folded in (ack >= version).
-            deferred_metadata: [],
             # Proxy-local batch sequence, assigned when a batch's finalization
             # is spawned (batches are created and spawned one at a time in the
             # server, so sequence order IS commit-version order). Apply

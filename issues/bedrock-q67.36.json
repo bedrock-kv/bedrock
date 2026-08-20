@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T19:21:39Z",
+  "description": "Pre-existing, surfaced by the PR #173 cold audit: the recover_from handle_call replies without setting a GenServer timeout, so the empty-transaction heartbeat is unarmed from unlock until the first commit/apply/fetch re-arms the cadence. fetch_routing's cadence-resuming reply mitigates once clients start fetching. Fix shape: reply with timeout empty_transaction_timeout_ms (or route through noreply_resuming_cadence).",
+  "id": "bedrock-q67.36",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Proxy recover_from reply leaves the empty-transaction heartbeat unarmed until first activity",
+  "type": "task",
+  "updated_at": "2026-08-20T19:21:39Z"
+}

@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T16:43:14Z",
+  "description": "From the 2026-08-20 trim-batch cold audit (finding 8, pre-existing, not introduced by the trims): a recovery attempt that stalls AFTER topology unlock leaves that attempt's unlocked proxies running against that attempt's resolvers while the retry rebuilds a fresh set under the SAME epoch. Each set is internally count-consistent so the exact window relay is unaffected, but two live proxy/resolver generations sharing an epoch is a lifecycle wrinkle: the abandoned set should be torn down (or the retry should bump something the abandoned set's epoch guard rejects). Compare FDB: each recovery attempt is a fresh generation with fresh interfaces; stalled attempts die wholesale.",
+  "id": "bedrock-q67.34",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Recovery lifecycle: stalled-attempt retry leaves the abandoned attempt's unlocked proxies running in the same epoch",
+  "type": "task",
+  "updated_at": "2026-08-20T16:43:14Z"
+}

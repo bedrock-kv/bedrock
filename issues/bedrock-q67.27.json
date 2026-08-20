@@ -11,11 +11,15 @@
     {
       "text": "FDB design audit CONFIRMED 'one guard, one place': ApplyMetadataMutation.cpp applies blindly (txnStateStore-\u003eset unconditional at :247-248, keyInfo insert :287, no version comparison anywhere); ordering lives entirely in the pipeline (NotifiedVersion gates; resolver-side exact windows). Bedrock's single filter is the receiver-side pre-filter in server apply_metadata_window (windows deliberately overlap, unlike FDB's exact per-proxy push). Implement: delete the skip branch in Metadata.apply_updates:112-117 (keep per-entry version bookkeeping), move the idempotence claim from metadata.ex moduledoc to the server contract.",
       "timestamp": "2026-08-20T14:47:51Z"
+    },
+    {
+      "text": "Implemented as the first commit of follow-up stack (branch q67.27-review-followups): Metadata.apply_updates internal guard deleted (server pre-filter is the single orderer; FDB txnStateStore applies blindly), router beyond-all-boundaries fallback raises with the key, vacuous {:metadata_update} tests deleted, metadata_merge_fn/metadata_deferred_fn doc drift fixed, unread last_commit_version parameter dropped (apply fn arity 4-\u003e3, later 3-\u003e2 in the converged-verdict commit), trace_ingress_validation_failed telemetry added to the fail-closed rescue. Awaiting stack cold audit.",
+      "timestamp": "2026-08-20T15:15:14Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Review follow-ups: dead words, single version guard, fail-fast router fallback",
   "type": "task",
-  "updated_at": "2026-08-20T14:47:52Z"
+  "updated_at": "2026-08-20T15:15:14Z"
 }

@@ -646,7 +646,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
           timeout: 0
         )
 
-      assert {:failure, :timeout, ^server} = result
+      assert {:error, :timeout} = result
     end
   end
 end

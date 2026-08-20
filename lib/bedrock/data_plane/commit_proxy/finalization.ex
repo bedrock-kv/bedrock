@@ -24,14 +24,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       trace_ingress_validation_failed: 1
     ]
 
-  import Bitwise, only: [<<<: 2]
-
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.ConflictSharding
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.RoutingData
-  alias Bedrock.DataPlane.CommitProxy.Tracing
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Sequencer
@@ -83,8 +80,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @type abort_reply_fn() :: ([Batch.reply_fn()] -> :ok)
 
   @type success_reply_fn() :: ([{Batch.reply_fn(), non_neg_integer(), non_neg_integer()}], Bedrock.version() -> :ok)
-
-  @type timeout_fn() :: (non_neg_integer() -> non_neg_integer())
 
   @type sequencer_notify_fn() :: (Sequencer.ref(), Bedrock.epoch(), Bedrock.version(), opts :: keyword() ->
                                     :ok | {:error, term()})
@@ -215,6 +210,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             sequencer: pid(),
             resolver_layout: ResolverLayout.t(),
             resolver_fn: resolver_fn(),
+            resolver_timeout_in_ms: non_neg_integer(),
             metadata_ack: Resolver.metadata_ack(),
             metadata_apply_fn: metadata_apply_fn(),
             batch_log_push_fn: log_push_batch_fn(),
@@ -384,7 +380,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         opts
       ) do
     # Empty batch: call resolver with empty lists
-    case call_resolver_with_retry(
+    case call_resolver(
            resolver_ref,
            epoch,
            plan.last_commit_version,
@@ -420,7 +416,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       |> Enum.unzip()
 
     # Call resolver directly without async_stream
-    case call_resolver_with_retry(
+    case call_resolver(
            resolver_ref,
            epoch,
            plan.last_commit_version,
@@ -591,7 +587,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       fn {_start_key, ref} ->
         # Every resolver must have transactions after task processing
         filtered_transactions = Map.fetch!(resolver_transaction_map, ref)
-        call_resolver_with_retry(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx, opts)
+        call_resolver(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx, opts)
       end,
       timeout: timeout
     )
@@ -648,87 +644,38 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end)
   end
 
-  @spec call_resolver_with_retry(
+  @spec call_resolver(
           Resolver.ref(),
           Bedrock.epoch(),
           Bedrock.version(),
           Bedrock.version(),
           [Transaction.encoded()],
           [metadata_mutations()],
-          keyword(),
-          non_neg_integer()
+          keyword()
         ) :: {:ok, [non_neg_integer()], Resolver.metadata_window()} | {:error, term()}
-  defp call_resolver_with_retry(
-         ref,
-         epoch,
-         last_version,
-         commit_version,
-         filtered_transactions,
-         metadata_per_tx,
-         opts,
-         attempts_used \\ 0
-       ) do
-    timeout_fn = Keyword.get(opts, :timeout_fn, &default_timeout_fn/1)
+  # One call, no retries: a resolver that cannot answer means the epoch is
+  # over. FDB never retries a resolver (brokenPromiseToNever - the proxy
+  # waits; a dead resolver is detected externally and means recovery),
+  # because correctness requires every proxy to see an identical metadata
+  # stream. The failed batch reports {:resolver_unavailable, reason}, the
+  # proxy stops, and the Director recovers the epoch.
+  defp call_resolver(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx, opts) do
     resolver_fn = Keyword.get(opts, :resolver_fn, &Resolver.resolve_transactions/7)
-    max_attempts = Keyword.get(opts, :max_attempts, 3)
+    timeout_in_ms = Keyword.get(opts, :resolver_timeout_in_ms, 5_000)
 
-    # The stable proxy identity plus the highest metadata window version it has
-    # confirmed applying. Retried calls re-carry the same ack, so a reply lost
-    # to a timeout is simply re-sent by the resolver - no window is ever skipped.
+    # The stable proxy identity plus the highest metadata window version it
+    # has confirmed applying - the resolver keys its differential off this.
     metadata_ack = Keyword.get(opts, :metadata_ack, {self(), nil})
-
-    timeout_in_ms = timeout_fn.(attempts_used)
 
     case resolver_fn.(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx,
            timeout: timeout_in_ms,
            metadata_ack: metadata_ack
          ) do
-      {:ok, _, _} = success ->
-        success
-
-      {:error, reason} when reason in [:timeout, :unavailable] and attempts_used < max_attempts - 1 ->
-        Tracing.emit_resolver_retry(max_attempts - attempts_used - 2, attempts_used + 1, reason)
-
-        call_resolver_with_retry(
-          ref,
-          epoch,
-          last_version,
-          commit_version,
-          filtered_transactions,
-          metadata_per_tx,
-          opts,
-          attempts_used + 1
-        )
-
-      {:failure, reason, _ref} when reason in [:timeout, :unavailable] and attempts_used < max_attempts - 1 ->
-        Tracing.emit_resolver_retry(max_attempts - attempts_used - 2, attempts_used + 1, reason)
-
-        call_resolver_with_retry(
-          ref,
-          epoch,
-          last_version,
-          commit_version,
-          filtered_transactions,
-          metadata_per_tx,
-          opts,
-          attempts_used + 1
-        )
-
-      {:error, reason} when reason in [:timeout, :unavailable] ->
-        Tracing.emit_resolver_max_retries_exceeded(attempts_used + 1, reason)
-        {:error, {:resolver_unavailable, reason}}
-
-      {:failure, reason, _ref} when reason in [:timeout, :unavailable] ->
-        Tracing.emit_resolver_max_retries_exceeded(attempts_used + 1, reason)
-        {:error, {:resolver_unavailable, reason}}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, _, _} = success -> success
+      {:error, reason} when reason in [:timeout, :unavailable] -> {:error, {:resolver_unavailable, reason}}
+      {:error, reason} -> {:error, reason}
     end
   end
-
-  @spec default_timeout_fn(non_neg_integer()) :: non_neg_integer()
-  def default_timeout_fn(attempts_used), do: 500 * (1 <<< attempts_used)
 
   @spec extract_metadata_mutations(Transaction.encoded()) :: metadata_mutations()
   defp extract_metadata_mutations(binary_transaction) do

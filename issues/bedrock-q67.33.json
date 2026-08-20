@@ -2,14 +2,15 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-20T16:34:22Z",
   "created": "2026-08-20T15:58:35Z",
   "description": "The big one, from the resolver trim audit with full FDB citations and a retry/interleaving trace. The overlap the ack-keyed window protocol tolerates is manufactured by the protocol itself; every precondition for FDB's exact relay now holds (batch_seq order == commit-version order via server-side version fetch; resolver processes in version order; proxy applies in serialized chain order; replay cache exists). Adopt FDB's shape (Resolver.actor.cpp:49-53,319-325,457-477,527-536): resolver tracks last_served per proxy and serves exact (last_served, current] windows computed resolver-side; recent_replies caches the WINDOW alongside the verdict (outstandingBatches caches whole replies) so retries replay identically and merge bound-weakening collapses to an equality assertion; pruning = min over last_served, gated on hearing from the statically-known proxy count (structurally precludes the epoch-start hazard the retention cap guarded); laggard story = recovery (already the model for every component). DELETE: record_proxy_progress/max_ack monotone merging, expire_stale/retention_cutoff laggard expiry, prune_metadata_window retention-capped floor, metadata_pruned_through + newest_version_at_or_below gap bookkeeping, the metadata_ack protocol field end to end, receiver-side entry filtering (becomes assert from == applied), nil-window special case, window merge max-from/min-to weakening. Proxy gap exit survives as hard assertion (FDB's ASSERT-and-recover). ~150 net lines + five protocol concepts; most of metadata_window_distribution_test.exs replaced by exact-relay tests. Execute as ONE coherent change - the pieces mutually justify each other today.",
   "id": "bedrock-q67.33",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Trim: exact per-proxy window relay replaces the ack-differential protocol",
   "type": "task",
-  "updated_at": "2026-08-20T16:20:17Z"
+  "updated_at": "2026-08-20T16:34:22Z"
 }

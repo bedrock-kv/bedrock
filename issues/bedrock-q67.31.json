@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T15:58:35Z",
+  "description": "Recovery writes ~30 keys across 10 families; exactly 2 have readers (shard_keys/ read by next recovery's materializer bootstrap + RoutingData; layout_log/ keys consumed by RoutingData for wiring). FDB's recovery commit writes only keys with named readers (ClusterRecovery.actor.cpp:1697-1745). Delete: (1) monolithic trio config_monolithic/epoch_legacy/last_recovery_legacy - coordinator handoff moved to object-storage ClusterBootstrap which persistence itself writes and the coordinator actually reads; cascades to all of config/persistence.ex (~320 lines incl. never-called decode_from_storage); (2) cluster_* family incl. all nine cluster_parameters_* - all dual-written to bootstrap, only bootstrap read (~180 lines incl. encode/decode_boolean, encode/decode_node_list and its existing-atom mechanism); (3) layout_services + layout_id + encode_services_for_storage pid sanitizer - services rebuilt each recovery from foreman discovery; kills the last encode_structured user so the whole versioned structured-term codec (~130 lines) goes; (4) recovery_attempt (written as constant 1) + recovery_last_completed + never-written recovery_state surface (~45 lines); (5) shards/ ShardMetadata family (born_at placeholder, reader is an unread Metadata slot; bootstrap reads shard_keys/ only) - stop writing until q67.21 names its reader (~70 lines, note on q67.21); (6) materializer_key surface - no writer AND no reader (MaterializerList/OtpRef FlatBuffers included, ~110 lines); (7) SystemKeys utility surface with zero production callers (~50 lines); parse_key shrinks to the 3 clauses RoutingData needs. IMPORTANT KEEP recorded: unlock snapshot shard_layout is NOT redundant - Monitoring runs before Persistence, so a commit can precede the recovery transaction; the snapshot is Bedrock's TxnStateRequest (FDB is immune only because its recovery txn is structurally first). q67.25 note: config authority still moves to the keyspace WHEN its reader lands - writing unread keys today fakes the doctrine rather than advancing it.",
+  "id": "bedrock-q67.31",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Trim: stop writing system keys nobody reads",
+  "type": "task",
+  "updated_at": "2026-08-20T15:58:35Z"
+}

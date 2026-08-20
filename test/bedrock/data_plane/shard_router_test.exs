@@ -1,6 +1,7 @@
 defmodule Bedrock.DataPlane.ShardRouterTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.ShardRouter
 
   describe "get_log_indices/3 - golden ratio log selection" do
@@ -92,362 +93,153 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
     end
   end
 
-  describe "lookup_shard/2 - ETS ceiling search" do
-    setup do
-      # Create ETS table with shard_keys
-      table = :ets.new(:test_shard_keys, [:ordered_set, :public])
+  # Shards: %{end_key => {tag, start_key}}
+  defp shards(shard_layout) do
+    RoutingData.from_snapshot(%{
+      shard_layout: shard_layout,
+      log_map: %{},
+      log_services: %{},
+      replication_factor: 1
+    }).shards
+  end
 
+  describe "lookup_shard/2 - ceiling search" do
+    setup do
       # Shard ranges are [min, max) - start inclusive, end exclusive
       # Tag 0 covers ["", "m"), tag 1 covers ["m", \xff)
-      :ets.insert(table, {"m", 0})
-      :ets.insert(table, {"\xff", 1})
-
-      on_exit(fn ->
-        try do
-          :ets.delete(table)
-        rescue
-          ArgumentError -> :ok
-        end
-      end)
-
-      {:ok, table: table}
+      {:ok, shards: shards(%{"m" => {0, ""}, "\xff" => {1, "m"}})}
     end
 
-    test "finds correct shard for key before first boundary", %{table: table} do
-      assert ShardRouter.lookup_shard(table, "a") == 0
-      assert ShardRouter.lookup_shard(table, "hello") == 0
-      assert ShardRouter.lookup_shard(table, "") == 0
-      assert ShardRouter.lookup_shard(table, "lzzz") == 0
+    test "finds correct shard for key before first boundary", %{shards: shards} do
+      assert ShardRouter.lookup_shard(shards, "a") == 0
+      assert ShardRouter.lookup_shard(shards, "hello") == 0
+      assert ShardRouter.lookup_shard(shards, "") == 0
+      assert ShardRouter.lookup_shard(shards, "lzzz") == 0
     end
 
-    test "finds correct shard for key at boundary", %{table: table} do
+    test "finds correct shard for key at boundary", %{shards: shards} do
       # With [min, max) semantics: "m" is the START of tag 1's range, not end of tag 0
-      # Tag 0 covers ["", "m"), tag 1 covers ["m", \xff)
-      assert ShardRouter.lookup_shard(table, "m") == 1
+      assert ShardRouter.lookup_shard(shards, "m") == 1
     end
 
-    test "finds correct shard for key after first boundary", %{table: table} do
-      assert ShardRouter.lookup_shard(table, "n") == 1
-      assert ShardRouter.lookup_shard(table, "zebra") == 1
-      assert ShardRouter.lookup_shard(table, "\xfe") == 1
+    test "finds correct shard for key after first boundary", %{shards: shards} do
+      assert ShardRouter.lookup_shard(shards, "n") == 1
+      assert ShardRouter.lookup_shard(shards, "zebra") == 1
+      assert ShardRouter.lookup_shard(shards, "\xfe") == 1
     end
 
-    test "handles system keys (metadata shard)", %{table: table} do
-      # System keys start with \xff, which is >= "m", so they go to tag 1
-      # But in real setup, there would be a shard_key entry for system keys
-      assert ShardRouter.lookup_shard(table, "\xff/system/foo") == 1
+    test "keys beyond every boundary fall back to the last shard", %{shards: shards} do
+      assert ShardRouter.lookup_shard(shards, "\xff/system/foo") == 1
+    end
+
+    test "raises on an empty shard map" do
+      assert_raise RuntimeError, "Empty shard map", fn ->
+        ShardRouter.lookup_shard(shards(%{}), "a")
+      end
     end
   end
 
   describe "lookup_shard/2 - edge cases" do
     test "single shard covering entire keyspace" do
-      table = :ets.new(:single_shard, [:ordered_set, :public])
+      single = shards(%{"\xff" => {0, ""}})
 
-      try do
-        # Single shard covers ["", \xff)
-        :ets.insert(table, {"\xff", 0})
-
-        assert ShardRouter.lookup_shard(table, "") == 0
-        assert ShardRouter.lookup_shard(table, "any_key") == 0
-        assert ShardRouter.lookup_shard(table, "\xfe") == 0
-      after
-        :ets.delete(table)
-      end
+      assert ShardRouter.lookup_shard(single, "") == 0
+      assert ShardRouter.lookup_shard(single, "any_key") == 0
+      assert ShardRouter.lookup_shard(single, "\xfe") == 0
     end
 
     test "many shards" do
-      table = :ets.new(:many_shards, [:ordered_set, :public])
+      # Tag 0: ["", "b"), Tag 1: ["b", "d"), Tag 2: ["d", "f"),
+      # Tag 3: ["f", "h"), Tag 4: ["h", \xff)
+      many =
+        shards(%{
+          "b" => {0, ""},
+          "d" => {1, "b"},
+          "f" => {2, "d"},
+          "h" => {3, "f"},
+          "\xff" => {4, "h"}
+        })
 
-      try do
-        # 5 shards with [min, max) ranges:
-        # Tag 0: ["", "b"), Tag 1: ["b", "d"), Tag 2: ["d", "f"),
-        # Tag 3: ["f", "h"), Tag 4: ["h", \xff)
-        :ets.insert(table, {"b", 0})
-        :ets.insert(table, {"d", 1})
-        :ets.insert(table, {"f", 2})
-        :ets.insert(table, {"h", 3})
-        :ets.insert(table, {"\xff", 4})
-
-        assert ShardRouter.lookup_shard(table, "a") == 0
-        # "b" is START of tag 1's range
-        assert ShardRouter.lookup_shard(table, "b") == 1
-        assert ShardRouter.lookup_shard(table, "c") == 1
-        # "d" is START of tag 2's range
-        assert ShardRouter.lookup_shard(table, "d") == 2
-        assert ShardRouter.lookup_shard(table, "e") == 2
-        assert ShardRouter.lookup_shard(table, "g") == 3
-        assert ShardRouter.lookup_shard(table, "z") == 4
-      after
-        :ets.delete(table)
-      end
-    end
-  end
-
-  describe "lookup_shards_for_range/3 - range to tags" do
-    setup do
-      table = :ets.new(:range_test, [:ordered_set, :public])
-      # 4 shards with [min, max) ranges:
-      # Tag 0: ["", "d"), Tag 1: ["d", "h"), Tag 2: ["h", "m"), Tag 3: ["m", \xff)
-      :ets.insert(table, {"d", 0})
-      :ets.insert(table, {"h", 1})
-      :ets.insert(table, {"m", 2})
-      :ets.insert(table, {"\xff", 3})
-
-      on_exit(fn ->
-        try do
-          :ets.delete(table)
-        rescue
-          ArgumentError -> :ok
-        end
-      end)
-
-      {:ok, table: table}
-    end
-
-    test "range within single shard returns one tag", %{table: table} do
-      # ["a", "c") is entirely within tag 0's range ["", "d")
-      assert ShardRouter.lookup_shards_for_range(table, "a", "c") == [0]
-    end
-
-    test "range spanning two shards returns both tags", %{table: table} do
-      # ["c", "f") spans tag 0 ["", "d") and tag 1 ["d", "h")
-      tags = ShardRouter.lookup_shards_for_range(table, "c", "f")
-      assert Enum.sort(tags) == [0, 1]
-    end
-
-    test "range spanning all shards returns all tags", %{table: table} do
-      # ["", \xff) spans all shards
-      tags = ShardRouter.lookup_shards_for_range(table, "", "\xff")
-      assert Enum.sort(tags) == [0, 1, 2, 3]
-    end
-
-    test "range at exact boundary", %{table: table} do
-      # ["d", "h") exactly matches tag 1's range
-      # With [min, max): "d" is the START of tag 1, "h" is the END (exclusive)
-      tags = ShardRouter.lookup_shards_for_range(table, "d", "h")
-      assert tags == [1]
-    end
-
-    test "empty range returns single shard", %{table: table} do
-      # ["e", "e") is empty but we still return the shard containing "e"
-      tags = ShardRouter.lookup_shards_for_range(table, "e", "e")
-      # "e" is in tag 1's range ["d", "h")
-      assert tags == [1]
-    end
-
-    test "range in last shard", %{table: table} do
-      # ["z", \xff) is entirely in tag 3's range ["m", \xff)
-      tags = ShardRouter.lookup_shards_for_range(table, "z", "\xff")
-      assert tags == [3]
-    end
-
-    test "range crossing multiple boundaries", %{table: table} do
-      # ["c", "i") spans tags 0, 1, and 2
-      # Tag 0: ["", "d"), Tag 1: ["d", "h"), Tag 2: ["h", "m")
-      tags = ShardRouter.lookup_shards_for_range(table, "c", "i")
-      assert Enum.sort(tags) == [0, 1, 2]
-    end
-  end
-
-  describe "get_logs_for_key/4 - full routing" do
-    setup do
-      table = :ets.new(:routing_test, [:ordered_set, :public])
-      :ets.insert(table, {"m", 0})
-      :ets.insert(table, {"\xff", 1})
-
-      # Log index to log_id mapping
-      log_map = %{0 => "log-a", 1 => "log-b", 2 => "log-c"}
-
-      on_exit(fn ->
-        try do
-          :ets.delete(table)
-        rescue
-          ArgumentError -> :ok
-        end
-      end)
-
-      {:ok, table: table, log_map: log_map}
-    end
-
-    test "routes key to correct logs", %{table: table, log_map: log_map} do
-      # Key "apple" -> tag 0 -> some logs
-      logs = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
-
-      assert length(logs) == 2
-      assert Enum.all?(logs, &is_binary/1)
-      assert Enum.all?(logs, &(&1 in Map.values(log_map)))
-    end
-
-    test "different shards may route to different logs", %{table: table, log_map: log_map} do
-      logs_shard_0 = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
-      logs_shard_1 = ShardRouter.get_logs_for_key(table, "zebra", log_map, 2)
-
-      # They might be the same or different depending on golden ratio
-      # Just verify they're valid
-      assert length(logs_shard_0) == 2
-      assert length(logs_shard_1) == 2
-    end
-  end
-
-  describe "lazy log_indices caching" do
-    setup do
-      table = :ets.new(:caching_test, [:ordered_set, :public])
-      :ets.insert(table, {"m", 0})
-      :ets.insert(table, {"\xff", 1})
-
-      log_map = %{0 => "log-a", 1 => "log-b", 2 => "log-c"}
-
-      on_exit(fn ->
-        try do
-          :ets.delete(table)
-        rescue
-          ArgumentError -> :ok
-        end
-      end)
-
-      {:ok, table: table, log_map: log_map}
-    end
-
-    test "get_logs_for_key caches log_indices in ETS", %{table: table, log_map: log_map} do
-      # Initial entry is just {end_key, tag}
-      assert :ets.lookup(table, "m") == [{"m", 0}]
-
-      # First call computes and caches
-      _logs = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
-
-      # Entry should now be {end_key, {tag, log_indices}}
-      [{_end_key, cached_value}] = :ets.lookup(table, "m")
-      assert is_tuple(cached_value)
-      {tag, log_indices} = cached_value
-      assert tag == 0
-      assert is_list(log_indices)
-      assert length(log_indices) == 2
-    end
-
-    test "subsequent calls use cached log_indices", %{table: table, log_map: log_map} do
-      # First call - computes
-      logs1 = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
-
-      # Verify it's cached
-      [{_, {0, cached_indices}}] = :ets.lookup(table, "m")
-
-      # Second call - uses cache
-      logs2 = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
-
-      # Results should be identical
-      assert logs1 == logs2
-
-      # Cache should be unchanged
-      [{_, {0, ^cached_indices}}] = :ets.lookup(table, "m")
-    end
-
-    test "lookup_shard handles cached format", %{table: table, log_map: log_map} do
-      # Trigger caching
-      _logs = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
-
-      # lookup_shard should still return just the tag
-      tag = ShardRouter.lookup_shard(table, "apple")
-      assert tag == 0
-    end
-
-    test "lookup_shards_for_range handles cached format", %{table: table, log_map: log_map} do
-      # Trigger caching for both shards
-      _logs1 = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
-      _logs2 = ShardRouter.get_logs_for_key(table, "zebra", log_map, 2)
-
-      # Range lookup should still work
-      tags = ShardRouter.lookup_shards_for_range(table, "a", "z")
-      assert Enum.sort(tags) == [0, 1]
-    end
-
-    test "works with pre-cached entries", %{table: table, log_map: log_map} do
-      # Manually insert cached format
-      :ets.insert(table, {"m", {0, [1, 2]}})
-
-      # Should use cached indices
-      logs = ShardRouter.get_logs_for_key(table, "apple", log_map, 2)
-      assert logs == ["log-b", "log-c"]
+      assert ShardRouter.lookup_shard(many, "a") == 0
+      # "b" is START of tag 1's range
+      assert ShardRouter.lookup_shard(many, "b") == 1
+      assert ShardRouter.lookup_shard(many, "c") == 1
+      # "d" is START of tag 2's range
+      assert ShardRouter.lookup_shard(many, "d") == 2
+      assert ShardRouter.lookup_shard(many, "e") == 2
+      assert ShardRouter.lookup_shard(many, "g") == 3
+      assert ShardRouter.lookup_shard(many, "z") == 4
     end
   end
 
   describe "lookup_shards_with_ranges/3 - range to tags with boundaries" do
     setup do
-      table = :ets.new(:ranges_with_bounds, [:ordered_set, :public])
-      # 4 shards with [min, max) ranges:
       # Tag 0: ["", "d"), Tag 1: ["d", "h"), Tag 2: ["h", "m"), Tag 3: ["m", \xff)
-      :ets.insert(table, {"d", 0})
-      :ets.insert(table, {"h", 1})
-      :ets.insert(table, {"m", 2})
-      :ets.insert(table, {"\xff", 3})
-
-      on_exit(fn ->
-        try do
-          :ets.delete(table)
-        rescue
-          ArgumentError -> :ok
-        end
-      end)
-
-      {:ok, table: table}
+      {:ok,
+       shards:
+         shards(%{
+           "d" => {0, ""},
+           "h" => {1, "d"},
+           "m" => {2, "h"},
+           "\xff" => {3, "m"}
+         })}
     end
 
-    test "returns shard boundaries for single shard range", %{table: table} do
+    test "returns shard boundaries for single shard range", %{shards: shards} do
       # ["a", "c") is entirely within tag 0's range ["", "d")
-      result = ShardRouter.lookup_shards_with_ranges(table, "a", "c")
-      assert result == [{0, "", "d"}]
+      assert ShardRouter.lookup_shards_with_ranges(shards, "a", "c") == [{0, "", "d"}]
     end
 
-    test "returns boundaries for range spanning two shards", %{table: table} do
+    test "returns boundaries for range spanning two shards", %{shards: shards} do
       # ["c", "f") spans tag 0 ["", "d") and tag 1 ["d", "h")
-      result = ShardRouter.lookup_shards_with_ranges(table, "c", "f")
-      assert result == [{0, "", "d"}, {1, "d", "h"}]
+      assert ShardRouter.lookup_shards_with_ranges(shards, "c", "f") == [{0, "", "d"}, {1, "d", "h"}]
     end
 
-    test "returns boundaries for range spanning all shards", %{table: table} do
-      # ["", \xff) spans all shards
-      result = ShardRouter.lookup_shards_with_ranges(table, "", "\xff")
-      assert result == [{0, "", "d"}, {1, "d", "h"}, {2, "h", "m"}, {3, "m", "\xff"}]
+    test "returns boundaries for range spanning all shards", %{shards: shards} do
+      assert ShardRouter.lookup_shards_with_ranges(shards, "", "\xff") ==
+               [{0, "", "d"}, {1, "d", "h"}, {2, "h", "m"}, {3, "m", "\xff"}]
     end
 
-    test "returns boundaries at exact shard boundary", %{table: table} do
-      # ["d", "h") exactly matches tag 1's range
-      result = ShardRouter.lookup_shards_with_ranges(table, "d", "h")
-      assert result == [{1, "d", "h"}]
+    test "returns boundaries at exact shard boundary", %{shards: shards} do
+      # ["d", "h") exactly matches tag 1's range; a shard ending AT the range
+      # start (exclusive end) does not overlap.
+      assert ShardRouter.lookup_shards_with_ranges(shards, "d", "h") == [{1, "d", "h"}]
     end
 
-    test "returns boundaries for range in last shard", %{table: table} do
-      # ["z", \xff) is entirely in tag 3's range ["m", \xff)
-      result = ShardRouter.lookup_shards_with_ranges(table, "z", "\xff")
-      assert result == [{3, "m", "\xff"}]
+    test "returns boundaries for range in last shard", %{shards: shards} do
+      assert ShardRouter.lookup_shards_with_ranges(shards, "z", "\xff") == [{3, "m", "\xff"}]
     end
 
-    test "returns boundaries for range crossing multiple boundaries", %{table: table} do
-      # ["c", "i") spans tags 0, 1, and 2
-      result = ShardRouter.lookup_shards_with_ranges(table, "c", "i")
-      assert result == [{0, "", "d"}, {1, "d", "h"}, {2, "h", "m"}]
+    test "returns boundaries for range crossing multiple boundaries", %{shards: shards} do
+      assert ShardRouter.lookup_shards_with_ranges(shards, "c", "i") ==
+               [{0, "", "d"}, {1, "d", "h"}, {2, "h", "m"}]
     end
 
-    test "returns [] for range entirely beyond shard coverage", %{table: table} do
+    test "an empty range returns the shard containing its point" do
+      # Intent pin: split_mutation_by_shards treats an empty tagged list as a
+      # coverage error, so an empty clear_range must still resolve to its
+      # containing shard (the clamped result is a harmless no-op).
+      shards = shards(%{"h" => {1, "d"}, "\xff" => {2, "h"}})
+
+      assert ShardRouter.lookup_shards_with_ranges(shards, "e", "e") == [{1, "d", "h"}]
+    end
+
+    test "returns [] for range entirely beyond shard coverage", %{shards: shards} do
       # Last shard end_key is "\xff" (exclusive); ranges starting at or beyond
-      # it intersect no shard. Regression: this used to raise ArgumentError via
-      # :ets.prev(table, :"$end_of_table").
-      assert ShardRouter.lookup_shards_with_ranges(table, "\xff", "\xff\x00") == []
-      assert ShardRouter.lookup_shards_with_ranges(table, <<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>) == []
+      # it intersect no shard.
+      assert ShardRouter.lookup_shards_with_ranges(shards, "\xff", "\xff\x00") == []
+      assert ShardRouter.lookup_shards_with_ranges(shards, <<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>) == []
     end
 
-    test "enables correct clamping of clear_range", %{table: table} do
+    test "enables correct clamping of clear_range", %{shards: shards} do
       # Test the use case: clamping clear_range "a" to "z" to shard boundaries
-      shards = ShardRouter.lookup_shards_with_ranges(table, "a", "z")
-
-      # Use boundaries to clamp the original range
       clamped =
-        Enum.map(shards, fn {tag, shard_start, shard_end} ->
-          clamped_start = max("a", shard_start)
-          clamped_end = min("z", shard_end)
-          {tag, clamped_start, clamped_end}
+        shards
+        |> ShardRouter.lookup_shards_with_ranges("a", "z")
+        |> Enum.map(fn {tag, shard_start, shard_end} ->
+          {tag, max("a", shard_start), min("z", shard_end)}
         end)
 
-      # Verify clamped ranges
       assert clamped == [
                {0, "a", "d"},
                {1, "d", "h"},

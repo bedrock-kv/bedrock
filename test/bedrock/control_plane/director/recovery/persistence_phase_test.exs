@@ -264,19 +264,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert metadata.shard_metadata |> Map.keys() |> Enum.sort() == ["0", "1"]
     end
 
-    test "shrinking shard layout leaves exactly 2 entries visible to RoutingData ETS" do
+    test "shrinking shard layout leaves exactly 2 entries visible to RoutingData" do
       mutations = captured_system_mutations(base_recovery_attempt())
 
-      routing_data = RoutingData.new_empty()
-      RoutingData.insert_shard(routing_data, <<0x40>>, 2)
-      RoutingData.insert_shard(routing_data, <<0x80>>, 3)
-      RoutingData.insert_shard(routing_data, <<0xFF, 0xFF>>, 4)
+      routing_data =
+        RoutingData.new_empty()
+        |> RoutingData.insert_shard(<<0x40>>, 2, <<>>)
+        |> RoutingData.insert_shard(<<0x80>>, 3, <<0x40>>)
+        |> RoutingData.insert_shard(<<0xFF, 0xFF>>, 4, <<0x80>>)
 
-      updated = RoutingData.apply_mutations(routing_data, [{1, mutations}])
+      updated =
+        RoutingData.apply_mutations(routing_data, [{Bedrock.DataPlane.Version.from_integer(1), mutations}])
 
-      assert :ets.tab2list(updated.shard_table) == [{<<0xFF>>, 1}, {<<0xFF, 0xFF>>, 0}]
-
-      RoutingData.cleanup(routing_data)
+      assert :gb_trees.to_list(updated.shards) == [
+               {<<0xFF>>, {1, <<>>}},
+               {<<0xFF, 0xFF>>, {0, <<0xFF>>}}
+             ]
     end
 
     test "cleared prefix ranges do not cover any other system-key family" do

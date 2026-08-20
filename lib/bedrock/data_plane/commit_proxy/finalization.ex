@@ -41,6 +41,20 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @type metadata_mutations :: [Bedrock.Internal.TransactionBuilder.Tx.mutation()]
 
+  @typedoc """
+  Applies a batch's resolver metadata window - plus, in sharded mode, the
+  batch's own globally-committed metadata (`{committed}`) - to the commit
+  proxy's routing state, serialized in commit-version order, and returns the
+  routing snapshot the batch must push with. `nil` deferred means the window
+  already carries the batch's own metadata (single-resolver mode).
+  """
+  @type metadata_apply_fn() :: (last_commit_version :: Bedrock.version(),
+                                commit_version :: Bedrock.version(),
+                                Resolver.metadata_window(),
+                                {committed :: metadata_mutations()}
+                                | nil ->
+                                  {:ok, RoutingData.t()} | {:error, term()})
+
   @type resolver_fn() :: (Resolver.ref(),
                           Bedrock.epoch(),
                           Bedrock.version(),
@@ -115,11 +129,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :transactions,
       :transaction_count,
       :commit_version,
-      :last_commit_version,
-      :shard_table,
-      :log_map,
-      :log_services,
-      :replication_factor
+      :last_commit_version
     ]
     defstruct [
       :transactions,
@@ -127,10 +137,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       :commit_version,
       :last_commit_version,
       :known_committed_version,
-      :shard_table,
-      :log_map,
-      :replication_factor,
-      log_services: %{},
+      routing_data: nil,
       transactions_by_log: %{},
       replied_indices: MapSet.new(),
       aborted_count: 0,
@@ -147,10 +154,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             commit_version: Bedrock.version(),
             last_commit_version: Bedrock.version(),
             known_committed_version: Bedrock.version() | nil,
-            shard_table: :ets.table(),
-            log_map: %{non_neg_integer() => Log.id()},
-            log_services: %{Log.id() => {atom(), node()} | pid()},
-            replication_factor: pos_integer(),
+            routing_data: RoutingData.t() | nil,
             transactions_by_log: %{Log.id() => Transaction.encoded()},
             replied_indices: MapSet.t(non_neg_integer()),
             aborted_count: non_neg_integer(),
@@ -219,12 +223,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             epoch: Bedrock.epoch(),
             sequencer: pid(),
             resolver_layout: ResolverLayout.t(),
-            routing_data: RoutingData.t(),
             resolver_fn: resolver_fn(),
             metadata_ack: Resolver.metadata_ack(),
-            metadata_merge_fn: (Resolver.metadata_window() -> :ok),
+            metadata_apply_fn: metadata_apply_fn(),
             metadata_confirms: [{Bedrock.version(), metadata_mutations()}],
-            metadata_deferred_fn: (Bedrock.version(), metadata_mutations() -> :ok),
             batch_log_push_fn: log_push_batch_fn(),
             abort_reply_fn: abort_reply_fn(),
             success_reply_fn: success_reply_fn(),
@@ -242,11 +244,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
     sequencer = Keyword.get(opts, :sequencer) || raise "Missing sequencer in finalization opts"
     resolver_layout = Keyword.get(opts, :resolver_layout) || raise "Missing resolver_layout in finalization opts"
-    routing_data = Keyword.get(opts, :routing_data) || raise "Missing routing_data in finalization opts"
+
+    if Keyword.get(opts, :metadata_apply_fn) == nil, do: raise("Missing metadata_apply_fn in finalization opts")
 
     fn ->
       batch
-      |> create_finalization_plan(routing_data)
+      |> create_finalization_plan()
       |> resolve_conflicts(epoch, resolver_layout, opts)
       |> prepare_for_logging()
       |> push_to_logs(opts)
@@ -270,27 +273,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # Pipeline Initialization
   # ============================================================================
 
-  @spec create_finalization_plan(Batch.t(), RoutingData.t()) :: FinalizationPlan.t()
-  def create_finalization_plan(batch, routing_data) do
-    # Routing data is passed in from the commit proxy server
-    # Table is created once on recovery and kept up-to-date as metadata changes
-    %RoutingData{
-      shard_table: shard_table,
-      log_map: log_map,
-      log_services: log_services,
-      replication_factor: replication_factor
-    } = routing_data
-
+  @spec create_finalization_plan(Batch.t()) :: FinalizationPlan.t()
+  def create_finalization_plan(batch) do
+    # Routing data arrives after resolution: the commit proxy server applies
+    # this batch's committed metadata in commit-version order and returns the
+    # snapshot the batch routes with (see apply_committed_metadata/4).
     %FinalizationPlan{
       transactions: Map.new(batch.buffer, &{elem(&1, 0), &1}),
       transaction_count: Batch.transaction_count(batch),
       commit_version: batch.commit_version,
       last_commit_version: batch.last_commit_version,
       known_committed_version: batch.known_committed_version,
-      shard_table: shard_table,
-      log_map: log_map,
-      log_services: log_services,
-      replication_factor: replication_factor,
       stage: :ready_for_resolution
     }
   end
@@ -324,7 +317,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            opts
          ) do
       {:ok, _aborted, metadata_window} ->
-        plan = apply_metadata_window(plan, metadata_window, [], opts)
+        plan = apply_committed_metadata(plan, metadata_window, nil, opts)
         split_and_notify_aborts_with_set(plan, MapSet.new(), opts)
 
       {:error, reason} ->
@@ -361,7 +354,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
          ) do
       {:ok, aborted, metadata_window} ->
         aborted_set = MapSet.new(aborted)
-        plan = apply_metadata_window(plan, metadata_window, [], opts)
+        plan = apply_committed_metadata(plan, metadata_window, nil, opts)
         split_and_notify_aborts_with_set(plan, aborted_set, opts)
 
       {:error, reason} ->
@@ -429,8 +422,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
            opts
          ) do
       {:ok, aborted_set, metadata_window} ->
-        local_entries = deferred_metadata_entries(plan, metadata_per_tx, aborted_set, has_metadata?, opts)
-        plan = apply_metadata_window(plan, metadata_window, local_entries, opts)
+        deferred = deferred_metadata(metadata_per_tx, aborted_set, has_metadata?)
+        plan = apply_committed_metadata(plan, metadata_window, deferred, opts)
         split_and_notify_aborts_with_set(plan, aborted_set, opts)
 
       {:error, reason} ->
@@ -438,40 +431,32 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     end
   end
 
-  # Filters this batch's metadata by the merged GLOBAL abort set, reports it
-  # through metadata_deferred_fn (so the proxy server re-sends it as a
-  # confirmation on subsequent calls - even when empty, so resolvers release
-  # the hold), and returns it as entries for same-batch routing application.
-  @spec deferred_metadata_entries(
-          FinalizationPlan.t(),
-          [metadata_mutations()],
-          MapSet.t(non_neg_integer()),
-          boolean(),
-          keyword()
-        ) :: [MetadataAccumulator.entry()]
-  defp deferred_metadata_entries(_plan, _metadata_per_tx, _aborted_set, false, _opts), do: []
-
-  defp deferred_metadata_entries(plan, metadata_per_tx, aborted_set, true, opts) do
-    committed_metadata = MetadataAccumulator.committed_mutations(metadata_per_tx, aborted_set)
-
-    metadata_deferred_fn = Keyword.get(opts, :metadata_deferred_fn, fn _version, _mutations -> :ok end)
-    metadata_deferred_fn.(plan.commit_version, committed_metadata)
-
-    if committed_metadata == [], do: [], else: [{plan.commit_version, committed_metadata}]
-  end
-
-  # `local_entries` are this batch's own committed metadata (sharded mode) -
-  # applied to the batch's routing data for same-batch visibility, but NOT to
-  # the structured metadata state, which is fed strictly by resolver windows
-  # (keeping ack semantics intact). Single-resolver callers pass [] - their
+  # Filters this batch's metadata by the merged GLOBAL abort set. The result
+  # rides the apply call to the proxy server, which records it for re-sending
+  # as a confirmation on subsequent resolver calls - even when empty, so
+  # resolvers release the hold. Single-resolver callers pass nil: their
   # batch's metadata arrives inside the window itself.
-  @spec apply_metadata_window(
+  @spec deferred_metadata([metadata_mutations()], MapSet.t(non_neg_integer()), boolean()) ::
+          {committed :: metadata_mutations()} | nil
+  defp deferred_metadata(_metadata_per_tx, _aborted_set, false), do: nil
+
+  defp deferred_metadata(metadata_per_tx, aborted_set, true),
+    do: {MetadataAccumulator.committed_mutations(metadata_per_tx, aborted_set)}
+
+  # The commit proxy server applies committed metadata one batch at a time in
+  # commit-version order and returns the routing snapshot this batch pushes
+  # with - which therefore includes the batch's OWN committed metadata (a
+  # shard split in this batch routes this batch's log push). Concurrent
+  # batches route from their own immutable snapshots and cannot observe each
+  # other mid-application. This is FDB's postResolution ordering: apply
+  # metadata, then assign mutations to logs, one batch at a time.
+  @spec apply_committed_metadata(
           FinalizationPlan.t(),
           Resolver.metadata_window(),
-          [MetadataAccumulator.entry()],
+          {committed :: metadata_mutations()} | nil,
           keyword()
         ) :: FinalizationPlan.t()
-  defp apply_metadata_window(plan, metadata_window, local_entries, opts) do
+  defp apply_committed_metadata(plan, metadata_window, deferred, opts) do
     entries =
       case metadata_window do
         nil -> []
@@ -480,31 +465,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     trace_metadata_updates_received(plan.commit_version, entries)
 
-    # Hand the window to the caller's merge function so the commit proxy can
-    # fold it (in version order, gap-checked) into its structured metadata
-    # state. Applied at resolution time (like the routing data below): the
-    # resolver has already accumulated these mutations, regardless of how the
-    # rest of the batch fares.
-    metadata_merge_fn = Keyword.get(opts, :metadata_merge_fn, fn _window -> :ok end)
-    if metadata_window != nil, do: metadata_merge_fn.(metadata_window)
+    metadata_apply_fn = Keyword.fetch!(opts, :metadata_apply_fn)
 
-    routing_data = %RoutingData{
-      shard_table: plan.shard_table,
-      log_map: plan.log_map,
-      log_services: plan.log_services,
-      replication_factor: plan.replication_factor
-    }
+    case metadata_apply_fn.(plan.last_commit_version, plan.commit_version, metadata_window, deferred) do
+      {:ok, %RoutingData{} = routing_data} ->
+        %{plan | stage: :conflicts_resolved, metadata_updates: entries, routing_data: routing_data}
 
-    # Window entries precede this batch's own (higher-version) local entries.
-    updated_routing_data = RoutingData.apply_mutations(routing_data, entries ++ local_entries)
-
-    %{
-      plan
-      | stage: :conflicts_resolved,
-        metadata_updates: entries,
-        log_map: updated_routing_data.log_map,
-        log_services: updated_routing_data.log_services
-    }
+      {:error, reason} ->
+        %{plan | error: reason, stage: :failed}
+    end
   end
 
   # Sharded calls carry no metadata_per_tx (accumulation is deferred; see
@@ -711,7 +680,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   def prepare_for_logging(%FinalizationPlan{stage: :failed} = plan), do: plan
 
   def prepare_for_logging(%FinalizationPlan{stage: :aborts_notified} = plan) do
-    log_ids = plan.log_map |> Map.values() |> Enum.uniq()
+    log_ids = plan.routing_data.log_map |> Map.values() |> Enum.uniq()
 
     case build_transactions_for_logs(plan, log_ids) do
       {:ok, transactions_by_log} ->
@@ -834,10 +803,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec distribute_mutation_to_logs_via_shard_router(term(), FinalizationPlan.t(), %{Log.id() => [term()]}) ::
           {:cont, {:ok, %{Log.id() => [term()]}}} | {:halt, {:error, term()}}
   defp distribute_mutation_to_logs_via_shard_router(mutation, plan, mutations_acc) do
-    %{shard_table: shard_table, log_map: log_map, replication_factor: m} = plan
+    %{shards: shards, log_map: log_map, replication_factor: m} = plan.routing_data
 
     # Split mutation by shards (handles cross-shard clear_range with clamping)
-    tagged_mutations = split_mutation_by_shards(mutation, shard_table)
+    tagged_mutations = split_mutation_by_shards(mutation, shards)
 
     if tagged_mutations == [] do
       key_or_range = mutation_to_key_or_range(mutation)
@@ -906,11 +875,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   # Split mutation by shards (handles cross-shard clear_range)
   # Returns list of {mutation, tag} tuples
-  @spec split_mutation_by_shards(term(), :ets.table()) :: [{term(), non_neg_integer()}]
-  defp split_mutation_by_shards({:clear_range, start_key, end_key}, shard_table) do
-    shards = ShardRouter.lookup_shards_with_ranges(shard_table, start_key, end_key)
+  @spec split_mutation_by_shards(term(), RoutingData.shard_tree()) :: [{term(), non_neg_integer()}]
+  defp split_mutation_by_shards({:clear_range, start_key, end_key}, shards) do
+    overlapping = ShardRouter.lookup_shards_with_ranges(shards, start_key, end_key)
 
-    Enum.map(shards, fn {tag, shard_start, shard_end} ->
+    Enum.map(overlapping, fn {tag, shard_start, shard_end} ->
       # Clamp range to shard boundaries
       clamped_start = max_binary(start_key, shard_start)
       clamped_end = min_binary(end_key, shard_end)
@@ -919,16 +888,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   # Single-key mutations don't split
-  defp split_mutation_by_shards({:set, key, _value} = mutation, shard_table) do
-    [{mutation, ShardRouter.lookup_shard(shard_table, key)}]
+  defp split_mutation_by_shards({:set, key, _value} = mutation, shards) do
+    [{mutation, ShardRouter.lookup_shard(shards, key)}]
   end
 
-  defp split_mutation_by_shards({:clear, key} = mutation, shard_table) do
-    [{mutation, ShardRouter.lookup_shard(shard_table, key)}]
+  defp split_mutation_by_shards({:clear, key} = mutation, shards) do
+    [{mutation, ShardRouter.lookup_shard(shards, key)}]
   end
 
-  defp split_mutation_by_shards({:atomic, _op, key, _value} = mutation, shard_table) do
-    [{mutation, ShardRouter.lookup_shard(shard_table, key)}]
+  defp split_mutation_by_shards({:atomic, _op, key, _value} = mutation, shards) do
+    [{mutation, ShardRouter.lookup_shard(shards, key)}]
   end
 
   # Binary comparison helpers for clamping ranges
@@ -950,7 +919,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     opts_with_log_services =
       opts
-      |> Keyword.put(:log_services, plan.log_services)
+      |> Keyword.put(:log_services, plan.routing_data.log_services)
       |> Keyword.put(:known_committed_version, plan.known_committed_version)
 
     case batch_log_push_fn.(

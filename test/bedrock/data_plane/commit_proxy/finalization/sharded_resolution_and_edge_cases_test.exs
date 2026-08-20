@@ -75,7 +75,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         epoch: 1,
         sequencer: :test_sequencer,
         resolver_layout: resolver_layout,
-        routing_data: routing_data,
+        metadata_apply_fn: Support.metadata_apply_fn(routing_data),
         batch_log_push_fn: fn _last, _by_log, _commit, _opts -> :ok end,
         sequencer_notify_fn: fn :test_sequencer, _epoch, _commit, _opts -> :ok end
       ],
@@ -214,17 +214,20 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [1], nil}
       end
 
-      metadata_deferred_fn = fn version, mutations -> send(test_pid, {:deferred, version, mutations}) end
+      metadata_apply_fn = fn _prev, version, _window, deferred ->
+        send(test_pid, {:deferred, version, deferred})
+        {:ok, routing_data()}
+      end
 
       opts =
         base_opts(sharded_layout(), routing_data(),
           resolver_fn: resolver_fn,
-          metadata_deferred_fn: metadata_deferred_fn
+          metadata_apply_fn: metadata_apply_fn
         )
 
       assert {:ok, 1, 1} = Finalization.finalize_batch(batch, opts)
 
-      assert_receive {:deferred, @commit_version, [{:set, <<0xFF, "/committed">>, "meta"}]}
+      assert_receive {:deferred, @commit_version, {[{:set, <<0xFF, "/committed">>, "meta"}]}}
     end
 
     test "merged metadata windows claim the weakest coverage on both ends and withhold unsettled entries" do
@@ -245,9 +248,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
           {:ok, [], {v.(90), v.(96), [entry_95]}}
       end
 
-      metadata_merge_fn = fn window -> send(test_pid, {:merged_window, window}) end
+      metadata_apply_fn = fn _prev, _version, window, _deferred ->
+        send(test_pid, {:merged_window, window})
+        {:ok, routing_data()}
+      end
 
-      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn, metadata_merge_fn: metadata_merge_fn)
+      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn, metadata_apply_fn: metadata_apply_fn)
 
       assert {:ok, 0, 0} = Finalization.finalize_batch(empty_batch(), opts)
 

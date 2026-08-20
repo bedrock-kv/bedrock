@@ -1,14 +1,22 @@
 defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
   @moduledoc """
-  Pins the commit proxy server's application of resolver metadata windows
-  (bedrock-q67.16).
+  Pins the commit proxy server's serialized apply-and-route step
+  (bedrock-q67.16, bedrock-q67.24).
 
-  Windows arrive from per-batch finalization tasks and can therefore reach the
-  server mailbox out of commit-version order. The protocol makes that safe by
-  construction: every window covers `(from_version, to_version]` starting at
-  the version this proxy last CONFIRMED applying, so concurrent in-flight
-  windows overlap and a late-arriving earlier window is a subset of what has
-  already been applied - the per-entry version guard skips it.
+  Each finalization task asks the server to apply its batch's committed
+  metadata - the resolver window plus, in sharded mode, the batch's own
+  globally-committed metadata - and hand back the immutable routing snapshot
+  the batch pushes with. Requests are served strictly in proxy-local
+  batch-sequence order: a request whose predecessor has not applied yet
+  waits, so every batch routes with exactly the metadata at or below its own
+  commit version. This mirrors FDB's postResolution ordering (apply
+  metadata, then assign mutations to logs, one batch at a time), keyed like
+  FDB's latestLocalCommitBatchLogging on a per-proxy counter - global
+  sequencer versions interleave across proxies.
+
+  Windows still overlap (each covers `(from, to]` from the version the proxy
+  had confirmed when the batch spawned), so entries at or below the applied
+  version are dropped before application.
 
   The one unrecoverable case is a coverage gap (`from_version` beyond what the
   proxy has applied): the resolver has pruned history this proxy never saw, so
@@ -27,15 +35,16 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
 
   defp v(n), do: Version.from_integer(n)
 
-  defp state(metadata) do
+  defp state(opts \\ []) do
     %State{
       cluster: __MODULE__,
       director: self(),
       epoch: 1,
       empty_transaction_timeout_ms: 1_000,
       mode: :running,
-      metadata: metadata,
-      routing_data: RoutingData.new_empty()
+      metadata: Keyword.get(opts, :metadata, Metadata.new()),
+      routing_data: RoutingData.new_empty(),
+      routed_seq: Keyword.get(opts, :routed_seq, 0)
     }
   end
 
@@ -43,94 +52,142 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
 
   defp log_set(log_id), do: {:set, SystemKeys.layout_log(log_id), Values.encode_tag_list([1])}
 
-  defp apply_window(state, window) do
-    {:noreply, updated, _timeout} = Server.handle_info({:metadata_updates, window}, state)
-    updated
+  defp request(state, seq, commit_version, window, deferred \\ nil) do
+    from = {self(), make_ref()}
+    result = Server.handle_call({:apply_metadata_and_route, seq, commit_version, window, deferred}, from, state)
+    {result, elem(from, 1)}
   end
 
-  test "overlapping windows apply idempotently; a late-arriving earlier window is a no-op" do
-    e1 = {v(1), [shard_set("a", 1)]}
-    e2 = {v(2), [shard_set("a", 2)]}
+  defp apply_in_order(state, seq, commit_version, window, deferred \\ nil) do
+    {{:noreply, updated, _timeout}, ref} = request(state, seq, commit_version, window, deferred)
+    assert_receive {^ref, {:ok, routing_data}}
+    {updated, routing_data}
+  end
 
-    # Batch 2's window (same ack, superset) wins the race to the mailbox.
-    updated = apply_window(state(Metadata.new()), {nil, v(2), [e1, e2]})
-    assert %Metadata{shards: %{"a" => 2}, version: version} = updated.metadata
-    assert version == v(2)
+  test "an in-order request applies the window and returns the routing snapshot in one step" do
+    window = {nil, v(1), [{v(1), [shard_set("a", 7), log_set("log_a")]}]}
 
-    # Batch 1's window arrives late: subset of what is applied - no effect.
-    updated = apply_window(updated, {nil, v(1), [e1]})
-    assert %Metadata{shards: %{"a" => 2}, version: version} = updated.metadata
-    assert version == v(2)
+    {updated, routing_data} = apply_in_order(state(), 1, v(1), window)
+
+    assert updated.metadata.version == v(1)
+    assert updated.routed_seq == 1
+    assert routing_data.log_map == %{0 => "log_a"}
+    assert :gb_trees.lookup("a", routing_data.shards) == {:value, {7, ""}}
+    assert updated.routing_data == routing_data
+  end
+
+  test "an out-of-order request waits for its predecessor, then both reply in chain order" do
+    w1 = {nil, v(1), [{v(1), [log_set("log_a")]}]}
+    w2 = {v(1), v(2), [{v(2), [log_set("log_b")]}]}
+
+    # Batch 2's request arrives first: no reply, request held.
+    {{:noreply, held, _timeout}, ref2} = request(state(), 2, v(2), w2)
+    refute_receive {^ref2, _}, 10
+
+    # Batch 1's request arrives: applies, then batch 2 drains behind it.
+    {{:noreply, updated, _timeout}, ref1} = request(held, 1, v(1), w1)
+
+    assert_receive {^ref1, {:ok, routing1}}
+    assert_receive {^ref2, {:ok, routing2}}
+    assert routing1.log_map == %{0 => "log_a"}
+    assert routing2.log_map == %{0 => "log_a", 1 => "log_b"}
+    assert updated.routed_seq == 2
+    assert updated.pending_applies == %{}
+  end
+
+  test "a batch's own deferred metadata routes its batch but does not advance the ack" do
+    window = {nil, v(1), []}
+    deferred = {[shard_set("a", 3), log_set("log_a")]}
+
+    {updated, routing_data} = apply_in_order(state(), 1, v(2), window, deferred)
+
+    # Routing includes the batch's own committed metadata (same-batch
+    # visibility for its log push)...
+    assert routing_data.log_map == %{0 => "log_a"}
+    assert :gb_trees.lookup("a", routing_data.shards) == {:value, {3, ""}}
+
+    # ...but the ack only advances to what resolver windows confirmed, and
+    # the deferred entry is recorded for re-sending as a confirmation.
+    assert updated.metadata.version == v(1)
+    assert [{deferred_version, _mutations}] = updated.deferred_metadata
+    assert deferred_version == v(2)
+  end
+
+  test "a later window covering a deferred version stops re-sending it" do
+    deferred = {[log_set("log_a")]}
+    {updated, _routing} = apply_in_order(state(), 1, v(2), {nil, v(1), []}, deferred)
+
+    # A window whose to_version covers the deferred version proves every
+    # resolver folded the confirmation in.
+    {updated, _routing} = apply_in_order(updated, 2, v(3), {v(1), v(3), [{v(2), [log_set("log_a")]}]})
+
+    assert updated.deferred_metadata == []
+    assert updated.metadata.version == v(3)
+  end
+
+  test "overlapping windows apply idempotently: entries at or below the applied version are dropped" do
+    e1 = {v(1), [log_set("log_a")]}
+    e2 = {v(2), [log_set("log_b")]}
+
+    {updated, _routing} = apply_in_order(state(), 1, v(1), {nil, v(1), [e1]})
+    {updated, routing} = apply_in_order(updated, 2, v(2), {nil, v(2), [e1, e2]})
+
+    assert routing.log_map == %{0 => "log_a", 1 => "log_b"}
+    assert updated.metadata.version == v(2)
   end
 
   test "applied version advances to the window's to_version, not just the last entry's version" do
     # The window covers through v(3) even though the last mutation is at v(1);
     # acking v(3) lets the resolver prune fully.
-    updated = apply_window(state(Metadata.new()), {nil, v(3), [{v(1), [shard_set("a", 1)]}]})
+    {updated, _routing} = apply_in_order(state(), 1, v(3), {nil, v(3), [{v(1), [shard_set("a", 1)]}]})
+
     assert %Metadata{shards: %{"a" => 1}, version: version} = updated.metadata
     assert version == v(3)
   end
 
   test "a window whose from_version exceeds the applied version is a coverage gap: fail fast" do
-    initial = apply_window(state(Metadata.new()), {nil, v(1), [{v(1), [shard_set("a", 1)]}]})
+    {initial, _routing} = apply_in_order(state(), 1, v(1), {nil, v(1), [{v(1), [shard_set("a", 1)]}]})
+
+    from = {self(), make_ref()}
 
     assert {:metadata_coverage_gap, _} =
-             catch_exit(Server.handle_info({:metadata_updates, {v(5), v(6), [{v(6), [shard_set("a", 6)]}]}}, initial))
+             catch_exit(
+               Server.handle_call(
+                 {:apply_metadata_and_route, 2, v(6), {v(5), v(6), [{v(6), [shard_set("a", 6)]}]}, nil},
+                 from,
+                 initial
+               )
+             )
   end
 
   test "a gap is detected even when the window carries no entries" do
+    from = {self(), make_ref()}
+
     assert {:metadata_coverage_gap, _} =
-             catch_exit(Server.handle_info({:metadata_updates, {v(5), v(6), []}}, state(Metadata.new())))
+             catch_exit(Server.handle_call({:apply_metadata_and_route, 1, v(6), {v(5), v(6), []}, nil}, from, state()))
   end
 
-  test "window entries update routing data in the same step that advances the ack" do
-    # A batch snapshots (routing_data, metadata.version) together at spawn.
-    # The resolver keys its differential windows off the version, so routing
-    # state must advance atomically with it - otherwise a batch could hold an
-    # ack that promises entries its routing data never saw (bedrock-q67.24).
-    updated = apply_window(state(Metadata.new()), {nil, v(1), [{v(1), [shard_set("a", 7), log_set("log_a")]}]})
+  test "a nil window advances the chain without touching metadata" do
+    {updated, routing} = apply_in_order(state(), 1, v(1), nil)
 
-    assert updated.metadata.version == v(1)
-    assert updated.routing_data.log_map == %{0 => "log_a"}
-    assert :ets.lookup(updated.routing_data.shard_table, "a") == [{"a", 7}]
+    assert updated.routed_seq == 1
+    assert updated.metadata.version == nil
+    assert routing.log_map == %{}
   end
 
-  test "a re-delivered window does not duplicate log entries" do
-    window = {nil, v(1), [{v(1), [log_set("log_a")]}]}
+  test "the chain is keyed on the proxy-local sequence, not sequencer version numbering" do
+    # With multiple proxies the global sequencer interleaves versions across
+    # them, so this proxy's consecutive batches have non-adjacent versions.
+    # The chain must still link: sequence 1 then 2, whatever the versions.
+    {updated, _routing} = apply_in_order(state(), 1, v(100), {nil, v(100), []})
+    {updated, routing} = apply_in_order(updated, 2, v(250), {v(100), v(250), [{v(250), [log_set("log_a")]}]})
 
-    updated = apply_window(state(Metadata.new()), window)
-    updated = apply_window(updated, window)
-
-    assert updated.routing_data.log_map == %{0 => "log_a"}
+    assert updated.routed_seq == 2
+    assert routing.log_map == %{0 => "log_a"}
   end
 
-  test "an overlapping superset window applies only entries newer than the applied version" do
-    e1 = {v(1), [log_set("log_a")]}
-    e2 = {v(2), [log_set("log_b")]}
-
-    updated = apply_window(state(Metadata.new()), {nil, v(1), [e1]})
-    updated = apply_window(updated, {nil, v(2), [e1, e2]})
-
-    assert updated.routing_data.log_map == %{0 => "log_a", 1 => "log_b"}
-  end
-
-  test "re-setting the same layout_log key at a newer version does not duplicate the log" do
-    # A mid-epoch writer may legitimately re-set a layout_log key (e.g. a tag
-    # change). The log keeps its index; only genuinely new logs append.
-    updated = apply_window(state(Metadata.new()), {nil, v(1), [{v(1), [log_set("log_a")]}]})
-    updated = apply_window(updated, {v(1), v(2), [{v(2), [log_set("log_a"), log_set("log_b")]}]})
-
-    assert updated.routing_data.log_map == %{0 => "log_a", 1 => "log_b"}
-  end
-
-  test "a stale routing-data replacement message can no longer clobber window-applied state" do
-    # Finalization tasks used to send {:routing_data_update, struct} after log
-    # push; racing tasks made the last writer win, silently dropping log-map
-    # changes. The message is retired - if one arrives, it is ignored.
-    updated = apply_window(state(Metadata.new()), {nil, v(1), [{v(1), [log_set("log_a")]}]})
-
-    assert {:noreply, after_stale} = Server.handle_info({:routing_data_update, RoutingData.new_empty()}, updated)
-
-    assert after_stale.routing_data.log_map == %{0 => "log_a"}
+  test "requests are rejected while locked" do
+    locked = %{state() | mode: :locked}
+    {{:reply, {:error, :locked}, _state}, _ref} = request(locked, 1, v(1), nil)
   end
 end

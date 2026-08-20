@@ -137,7 +137,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @spec terminate(term(), State.t()) :: :ok
   def terminate(_reason, %State{} = t) do
     abort_current_batch(t)
-    RoutingData.cleanup(t.routing_data)
     :ok
   end
 
@@ -145,7 +144,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @spec handle_call(
           {:recover_from, binary(), pid(), ResolverLayout.t(), RoutingData.snapshot()}
           | {:commit, Bedrock.epoch(), Bedrock.transaction()}
-          | {:commit, Bedrock.epoch(), Bedrock.transaction(), :user | :system},
+          | {:commit, Bedrock.epoch(), Bedrock.transaction(), :user | :system}
+          | {:apply_metadata_and_route, pos_integer(), Bedrock.version(), term(), term()},
           GenServer.from(),
           State.t()
         ) ::
@@ -156,7 +156,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         %{mode: :locked} = t
       ) do
     if lock_token == t.lock_token do
-      RoutingData.cleanup(t.routing_data)
       routing_data = RoutingData.from_snapshot(routing_snapshot)
 
       reply(
@@ -186,6 +185,36 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   def handle_call({:commit, _epoch, _transaction, _commit_mode}, _from, %{mode: :locked} = t),
     do: reply(t, {:error, :locked})
 
+  # A finalization task asks for its batch's committed metadata to be applied
+  # and for the routing snapshot to push with. Requests are served strictly in
+  # batch-sequence order - a request whose predecessor has not yet been
+  # applied waits - so every batch routes with exactly the metadata at or
+  # below its own commit version, its own included. This is FDB's
+  # postResolution ordering (apply metadata, then assign mutations to logs,
+  # one batch at a time), keyed like FDB's latestLocalCommitBatchLogging on a
+  # PROXY-LOCAL sequence: global sequencer versions interleave across
+  # proxies, so chaining on them would park forever whenever another proxy
+  # took the intervening version. The snapshot handed back is immutable, so
+  # the log push itself proceeds in parallel with later batches' applies.
+  def handle_call(
+        {:apply_metadata_and_route, seq, commit_version, window, deferred},
+        from,
+        %{mode: :running, routed_seq: prev_seq} = t
+      )
+      when seq == prev_seq + 1 do
+    t = apply_and_route(t, seq, commit_version, window, deferred)
+    GenServer.reply(from, {:ok, t.routing_data})
+    noreply_resuming_cadence(drain_pending_applies(t))
+  end
+
+  def handle_call({:apply_metadata_and_route, seq, commit_version, window, deferred}, from, %{mode: :running} = t) do
+    pending = Map.put(t.pending_applies, seq, {from, commit_version, window, deferred})
+    noreply_resuming_cadence(%{t | pending_applies: pending})
+  end
+
+  def handle_call({:apply_metadata_and_route, _seq, _cv, _window, _deferred}, _from, %{mode: :locked} = t),
+    do: reply(t, {:error, :locked})
+
   defp accept_commit(transaction, from, t) do
     case start_batch_if_needed(t) do
       {:error, reason} ->
@@ -203,7 +232,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
           {t, batch} ->
             # Finalize asynchronously and reset for next batch
-            finalize_batch_async(batch, t)
+            t = finalize_batch_async(batch, t)
 
             maybe_set_empty_transaction_timeout(t)
         end
@@ -266,8 +295,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @impl true
   @spec handle_info(
           :timeout
-          | {:metadata_updates, {Bedrock.version() | nil, Bedrock.version(), [term()]}}
-          | {:metadata_deferred, Bedrock.version(), [term()]}
           | {:finalization_failed, term()}
           | {:DOWN, reference(), :process, pid(), term()},
           State.t()
@@ -281,11 +308,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     case single_transaction_batch(t, empty_transaction) do
       {:ok, batch} ->
         # Send empty batch asynchronously
-        finalize_batch_async(batch, t)
+        t = finalize_batch_async(batch, t)
 
         maybe_set_empty_transaction_timeout(t)
 
-      {:error, :sequencer_unavailable} ->
+      {:error, _sequencer_unavailable} ->
         exit({:sequencer_unavailable, :timeout_empty_transaction})
     end
   end
@@ -296,22 +323,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   def handle_info(:timeout, %{batch: batch} = t) do
     # Timeout reached - finalize current batch asynchronously
-    finalize_batch_async(batch, t)
+    t = finalize_batch_async(batch, t)
 
     maybe_set_empty_transaction_timeout(%{t | batch: nil})
-  end
-
-  def handle_info({:metadata_updates, window}, t) do
-    noreply_resuming_cadence(apply_metadata_window(t, window))
-  end
-
-  # A sharded finalization task reports its batch's committed metadata
-  # (already filtered by the merged GLOBAL abort set). It is re-sent to the
-  # resolvers as a confirmation on every subsequent call until their windows
-  # ack past its version (see apply_metadata_window/2). Tasks race to this
-  # mailbox, so insert in version order.
-  def handle_info({:metadata_deferred, version, mutations}, t) do
-    noreply_resuming_cadence(add_deferred_metadata(t, version, mutations))
   end
 
   def handle_info({:DOWN, _ref, :process, director_pid, _reason}, %{director: director_pid} = t) do
@@ -329,15 +343,18 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     {:noreply, t}
   end
 
+  # Spawns finalization for a batch and assigns it the next proxy-local batch
+  # sequence; returns the updated state. Batches are created and spawned one
+  # at a time in this process, so sequence order is commit-version order.
   defp finalize_batch_async(batch, state) do
     trace_meta = trace_metadata()
     server_pid = self()
+    seq = state.batch_seq + 1
 
     %{
       epoch: epoch,
       sequencer: sequencer,
       resolver_layout: resolver_layout,
-      routing_data: routing_data,
       metadata: %{version: applied_metadata_version},
       deferred_metadata: deferred_metadata
     } = state
@@ -349,17 +366,22 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
              epoch: epoch,
              sequencer: sequencer,
              resolver_layout: resolver_layout,
-             routing_data: routing_data,
              # Stable proxy identity (this server, not the per-batch task) plus
              # the metadata version this proxy has confirmed applying - the
              # resolver keys its progress and differential windows off this.
              metadata_ack: {server_pid, applied_metadata_version},
-             metadata_merge_fn: fn window -> send(server_pid, {:metadata_updates, window}) end,
              # Deferred-metadata confirmations for sharded resolvers: committed
              # metadata from earlier batches, re-sent until acked via windows.
              metadata_confirms: deferred_metadata,
-             metadata_deferred_fn: fn version, mutations ->
-               send(server_pid, {:metadata_deferred, version, mutations})
+             # Serialized apply-and-route: the server folds this batch's
+             # committed metadata into its state in commit-version order and
+             # returns the immutable routing snapshot the batch pushes with.
+             metadata_apply_fn: fn _prev_version, commit_version, window, deferred ->
+               GenServer.call(
+                 server_pid,
+                 {:apply_metadata_and_route, seq, commit_version, window, deferred},
+                 :infinity
+               )
              end
            ) do
         {:ok, _n_aborts, _n_oks} ->
@@ -369,22 +391,53 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           send(server_pid, {:finalization_failed, reason})
       end
     end)
+
+    %{state | batch_seq: seq}
+  end
+
+  # Applies one batch's committed metadata - its resolver window plus, in
+  # sharded mode, its own globally-committed metadata - and advances the
+  # chain. Windows fold into structured metadata AND routing in one step;
+  # deferred metadata folds into routing only (the ack must not advance past
+  # what the resolvers' windows have confirmed) and is recorded for
+  # re-sending as confirmations until a window covers it.
+  defp apply_and_route(t, seq, commit_version, window, deferred) do
+    t
+    |> apply_metadata_window(window)
+    |> apply_deferred_metadata(commit_version, deferred)
+    |> Map.put(:routed_seq, seq)
+  end
+
+  defp drain_pending_applies(t) do
+    case Map.pop(t.pending_applies, t.routed_seq + 1) do
+      {nil, _pending} ->
+        t
+
+      {{from, commit_version, window, deferred}, pending} ->
+        t = apply_and_route(%{t | pending_applies: pending}, t.routed_seq + 1, commit_version, window, deferred)
+        GenServer.reply(from, {:ok, t.routing_data})
+        drain_pending_applies(t)
+    end
+  end
+
+  defp apply_deferred_metadata(t, _commit_version, nil), do: t
+
+  defp apply_deferred_metadata(t, commit_version, {committed}) do
+    t = add_deferred_metadata(t, commit_version, committed)
+
+    if committed == [] do
+      t
+    else
+      %{t | routing_data: RoutingData.apply_mutations(t.routing_data, [{commit_version, committed}])}
+    end
   end
 
   # Folds a resolver metadata window into the proxy's structured metadata AND
-  # its routing data, in one step. Applied in the server process so windows
-  # from concurrent finalization tasks are serialized. Windows can arrive out
-  # of commit-version order (the tasks race to this mailbox), but every window
-  # covers (from, to] starting at a version this proxy had already confirmed
-  # applying, so a late-arriving earlier window is a subset of what has been
-  # applied - entries at or below the applied version are dropped before
-  # application, which keeps the non-idempotent parts of routing data (log
-  # index assignment) exact under overlapping windows.
-  #
-  # Advancing routing data here, atomically with the ack version, is what
-  # lets finalize_batch_async snapshot the pair consistently: a batch whose
-  # ack promises the resolver will not re-send version N's entries always
-  # holds routing data that already includes them (bedrock-q67.24).
+  # its routing data, in one step. Requests are served in commit-version chain
+  # order, but windows still overlap (each covers (from, to] starting at the
+  # version this proxy had confirmed when the batch spawned), so entries at or
+  # below the applied version are dropped before application - which keeps the
+  # non-idempotent parts of routing data (log index assignment) exact.
   #
   # A window whose from_version exceeds what this proxy has applied means the
   # resolver pruned history this proxy never saw (only possible after this
@@ -393,8 +446,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   # recovery rebuilds proxies with full state.
   @spec apply_metadata_window(
           State.t(),
-          {Bedrock.version() | nil, Bedrock.version(), [term()]}
+          {Bedrock.version() | nil, Bedrock.version(), [term()]} | nil
         ) :: State.t() | no_return()
+  defp apply_metadata_window(t, nil), do: t
+
   defp apply_metadata_window(t, {from_version, to_version, entries}) do
     applied_version = t.metadata.version
 
@@ -452,7 +507,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     do: noreply(t, timeout: t.empty_transaction_timeout_ms)
 
   defp noreply_resuming_cadence(%{mode: :running} = t), do: noreply(t, timeout: 0)
-  defp noreply_resuming_cadence(t), do: noreply(t)
 
   @spec abort_current_batch(State.t()) :: :ok
   defp abort_current_batch(%{batch: nil}), do: :ok

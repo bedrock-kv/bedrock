@@ -1,27 +1,34 @@
 defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   @moduledoc """
-  Manages routing data for the commit proxy.
+  Immutable routing state for the commit proxy.
 
   Encapsulates all information needed to route mutations to logs:
-  - `shard_table` - ETS ordered_set for key → tag ceiling search
+  - `shards` - a `:gb_trees` map of `end_key => {tag, start_key}` for key → tag
+    ceiling search (`end_key` is the shard's exclusive upper bound)
   - `log_map` - Map of index → log_id for golden ratio routing
   - `log_services` - Map of log_id → pid or {otp_name, node} for contacting logs
   - `replication_factor` - Number of logs per mutation
+
+  The value is a plain immutable term: the commit proxy server is its only
+  writer, applying committed metadata one batch at a time in commit-version
+  order, and every finalization task routes from the snapshot the server
+  handed it for its batch. Concurrent batches can never observe - or race -
+  each other's updates, which is what lets these be ordinary data structures
+  with no versions, locks, or shared tables.
 
   ## Lifecycle
 
   - `new_empty/0` - Creates empty routing data for dynamic population
   - `from_snapshot/1` - Builds routing data from a plain snapshot at unlock
-  - `cleanup/1` - Deletes the ETS table when the commit proxy terminates
 
   ## Shard Updates
 
-  - `insert_shard/3` - Adds or updates a shard entry
+  - `insert_shard/4` - Adds or updates a shard entry
   - `delete_shard/2` - Removes a shard entry
 
   ## Log Updates
 
-  - `insert_log/2` - Adds a log to log_map at next index
+  - `insert_log/2` - Adds a log to log_map at next index (idempotent by id)
   - `remove_log/2` - Removes a log and reindexes
   - `put_log_service/3` - Adds or updates a log service reference
   - `delete_log_service/2` - Removes a log service reference
@@ -32,8 +39,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
 
+  @type shard_tree :: :gb_trees.tree(Bedrock.key(), {tag :: term(), start_key :: Bedrock.key()})
+
   @type t :: %__MODULE__{
-          shard_table: :ets.table(),
+          shards: shard_tree(),
           log_map: %{non_neg_integer() => Log.id()},
           log_services: %{Log.id() => {atom(), node()} | pid()},
           replication_factor: pos_integer()
@@ -41,8 +50,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   @typedoc """
   A plain-data description of routing state, safe to send between processes
-  and nodes. `from_snapshot/1` turns it into runnable routing data whose ETS
-  table is created by — and therefore owned by and local to — the receiver.
+  and nodes. `from_snapshot/1` turns it into runnable routing data.
   """
   @type snapshot :: %{
           shard_layout: %{Bedrock.key() => {tag :: term(), start_key :: Bedrock.key()}},
@@ -51,11 +59,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
           replication_factor: pos_integer()
         }
 
-  defstruct [:shard_table, :log_map, :log_services, :replication_factor]
+  defstruct [:shards, :log_map, :log_services, :replication_factor]
 
   @doc """
-  Builds routing data from a plain snapshot, creating the ETS shard table in
-  the calling process.
+  Builds routing data from a plain snapshot.
   """
   @spec from_snapshot(snapshot()) :: t()
   def from_snapshot(%{
@@ -64,14 +71,13 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         log_services: log_services,
         replication_factor: replication_factor
       }) do
-    shard_table = :ets.new(:shard_keys, [:ordered_set, :public])
-
-    Enum.each(shard_layout, fn {end_key, {tag, _start_key}} ->
-      :ets.insert(shard_table, {end_key, tag})
-    end)
+    shards =
+      Enum.reduce(shard_layout, :gb_trees.empty(), fn {end_key, {tag, start_key}}, tree ->
+        :gb_trees.enter(end_key, {tag, start_key}, tree)
+      end)
 
     %__MODULE__{
-      shard_table: shard_table,
+      shards: shards,
       log_map: log_map,
       log_services: log_services,
       replication_factor: replication_factor
@@ -81,13 +87,13 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   @doc """
   Creates empty routing data for dynamic population via metadata.
 
-  Starts with an empty shard table, no logs, and replication factor of 1.
-  All fields are populated incrementally as metadata mutations arrive.
+  Starts with no shards, no logs, and replication factor of 1. All fields
+  are populated incrementally as metadata mutations arrive.
   """
   @spec new_empty() :: t()
   def new_empty do
     %__MODULE__{
-      shard_table: :ets.new(:shard_keys, [:ordered_set, :public]),
+      shards: :gb_trees.empty(),
       log_map: %{},
       log_services: %{},
       replication_factor: 1
@@ -95,37 +101,23 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   end
 
   @doc """
-  Cleans up routing data by deleting the ETS table.
-
-  Safe to call with nil or if the table has already been deleted.
-  """
-  @spec cleanup(t() | nil) :: true
-  def cleanup(nil), do: true
-
-  def cleanup(%__MODULE__{shard_table: table}) do
-    :ets.delete(table)
-  rescue
-    ArgumentError -> true
-  end
-
-  @doc """
-  Inserts or updates a shard entry in the routing table.
+  Inserts or updates a shard entry.
 
   Called from apply_mutations/2 when processing shard_key mutations.
   """
-  @spec insert_shard(t(), binary(), term()) :: true
-  def insert_shard(%__MODULE__{shard_table: table}, end_key, tag) do
-    :ets.insert(table, {end_key, tag})
+  @spec insert_shard(t(), binary(), term(), Bedrock.key()) :: t()
+  def insert_shard(%__MODULE__{shards: shards} = routing_data, end_key, tag, start_key) do
+    %{routing_data | shards: :gb_trees.enter(end_key, {tag, start_key}, shards)}
   end
 
   @doc """
-  Deletes a shard entry from the routing table.
+  Deletes a shard entry.
 
   Called from apply_mutations/2 when processing shard_key clear mutations.
   """
-  @spec delete_shard(t(), binary()) :: true
-  def delete_shard(%__MODULE__{shard_table: table}, end_key) do
-    :ets.delete(table, end_key)
+  @spec delete_shard(t(), binary()) :: t()
+  def delete_shard(%__MODULE__{shards: shards} = routing_data, end_key) do
+    %{routing_data | shards: :gb_trees.delete_any(end_key, shards)}
   end
 
   @doc """
@@ -189,7 +181,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   Applies metadata mutations to update routing data.
 
   Handles shard_key and layout_log mutations:
-  - shard_key: Updates ETS shard_table
+  - shard_key: Updates the shard tree
   - layout_log: Updates both log_map and log_services
 
   ## Parameters
@@ -201,7 +193,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   Updated routing data with applied mutations.
   """
-  @spec apply_mutations(t(), [{term(), [term()]}]) :: t()
+  @spec apply_mutations(t(), [{Bedrock.version(), [term()]}]) :: t()
   def apply_mutations(%__MODULE__{} = routing_data, updates) do
     Enum.reduce(updates, routing_data, fn {_version, mutations}, acc ->
       Enum.reduce(mutations, acc, &apply_mutation/2)
@@ -214,11 +206,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         # Undecodable values are ignored; the routing table keeps its last
         # good entry rather than crashing the commit proxy.
         case Values.decode_shard_key_entry(value) do
-          {:ok, {tag, _start_key}} -> insert_shard(routing_data, end_key, tag)
-          {:error, _} -> :ignored
+          {:ok, {tag, start_key}} -> insert_shard(routing_data, end_key, tag, start_key)
+          {:error, _} -> routing_data
         end
-
-        routing_data
 
       {:layout_log, log_id} ->
         # The value (log descriptor tags) is not needed for routing; service
@@ -234,7 +224,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     case SystemKeys.parse_key(key) do
       {:shard_key, end_key} ->
         delete_shard(routing_data, end_key)
-        routing_data
 
       {:layout_log, log_id} ->
         routing_data
@@ -257,14 +246,17 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   defp apply_mutation(_mutation, routing_data), do: routing_data
 
-  defp clear_shards_in_range(%__MODULE__{shard_table: table} = routing_data, start_key, end_key) do
-    for {shard_end_key, _tag} <- :ets.tab2list(table),
-        full_key = SystemKeys.shard_key(shard_end_key),
-        full_key >= start_key and full_key < end_key do
-      :ets.delete(table, shard_end_key)
-    end
+  defp clear_shards_in_range(%__MODULE__{shards: shards} = routing_data, start_key, end_key) do
+    cleared =
+      shards
+      |> :gb_trees.keys()
+      |> Enum.filter(fn shard_end_key ->
+        full_key = SystemKeys.shard_key(shard_end_key)
+        full_key >= start_key and full_key < end_key
+      end)
+      |> Enum.reduce(shards, &:gb_trees.delete_any/2)
 
-    routing_data
+    %{routing_data | shards: cleared}
   end
 
   defp clear_logs_in_range(%__MODULE__{log_map: log_map} = routing_data, start_key, end_key) do

@@ -1314,11 +1314,10 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
 
       %{routing_data: routing_data} = :sys.get_state(commit_proxy)
 
-      # The table must be created by (and die with) the proxy itself: a table
-      # reference built in another process is invalid after that process dies,
-      # and is never valid on another node.
-      assert :ets.info(routing_data.shard_table, :owner) == commit_proxy
-      assert :ets.tab2list(routing_data.shard_table) == [{<<0xFF, 0xFF>>, 0}]
+      # Routing data is a plain immutable value: nothing about it is tied to
+      # the process that built it, so a snapshot can cross processes and
+      # nodes safely (the crash class that motivated bedrock-q67.20.1).
+      assert :gb_trees.to_list(routing_data.shards) == [{<<0xFF, 0xFF>>, {0, ""}}]
       assert routing_data.log_map == %{0 => "log-1"}
       assert routing_data.log_services == %{"log-1" => {:log_1, :node1}}
     end

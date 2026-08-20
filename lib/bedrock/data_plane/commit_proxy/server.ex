@@ -145,7 +145,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           {:recover_from, binary(), pid(), ResolverLayout.t(), RoutingData.snapshot()}
           | {:commit, Bedrock.epoch(), Bedrock.transaction()}
           | {:commit, Bedrock.epoch(), Bedrock.transaction(), :user | :system}
-          | {:apply_metadata_and_route, pos_integer(), Bedrock.version(), term(), term()},
+          | {:apply_metadata_and_route, pos_integer(), Bedrock.version(), term()},
           GenServer.from(),
           State.t()
         ) ::
@@ -193,22 +193,22 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   # took the intervening version. The snapshot handed back is immutable, so
   # the log push itself proceeds in parallel with later batches' applies.
   def handle_call(
-        {:apply_metadata_and_route, seq, commit_version, window, deferred},
+        {:apply_metadata_and_route, seq, commit_version, window},
         from,
         %{mode: :running, routed_seq: prev_seq} = t
       )
       when seq == prev_seq + 1 do
-    t = apply_and_route(t, seq, commit_version, window, deferred)
+    t = apply_and_route(t, seq, commit_version, window)
     GenServer.reply(from, {:ok, t.routing_data})
     noreply_resuming_cadence(drain_pending_applies(t))
   end
 
-  def handle_call({:apply_metadata_and_route, seq, commit_version, window, deferred}, from, %{mode: :running} = t) do
-    pending = Map.put(t.pending_applies, seq, {from, commit_version, window, deferred})
+  def handle_call({:apply_metadata_and_route, seq, commit_version, window}, from, %{mode: :running} = t) do
+    pending = Map.put(t.pending_applies, seq, {from, commit_version, window})
     noreply_resuming_cadence(%{t | pending_applies: pending})
   end
 
-  def handle_call({:apply_metadata_and_route, _seq, _cv, _window, _deferred}, _from, %{mode: :locked} = t),
+  def handle_call({:apply_metadata_and_route, _seq, _cv, _window}, _from, %{mode: :locked} = t),
     do: reply(t, {:error, :locked})
 
   defp accept_commit(transaction, commit_mode, from, t) do
@@ -298,8 +298,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       epoch: epoch,
       sequencer: sequencer,
       resolver_layout: resolver_layout,
-      metadata: %{version: applied_metadata_version},
-      deferred_metadata: deferred_metadata
+      metadata: %{version: applied_metadata_version}
     } = state
 
     Task.start_link(fn ->
@@ -313,18 +312,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
              # the metadata version this proxy has confirmed applying - the
              # resolver keys its progress and differential windows off this.
              metadata_ack: {server_pid, applied_metadata_version},
-             # Deferred-metadata confirmations for sharded resolvers: committed
-             # metadata from earlier batches, re-sent until acked via windows.
-             metadata_confirms: deferred_metadata,
              # Serialized apply-and-route: the server folds this batch's
              # committed metadata into its state in commit-version order and
              # returns the immutable routing snapshot the batch pushes with.
-             metadata_apply_fn: fn commit_version, window, deferred ->
-               GenServer.call(
-                 server_pid,
-                 {:apply_metadata_and_route, seq, commit_version, window, deferred},
-                 :infinity
-               )
+             metadata_apply_fn: fn commit_version, window ->
+               GenServer.call(server_pid, {:apply_metadata_and_route, seq, commit_version, window}, :infinity)
              end
            ) do
         {:ok, _n_aborts, _n_oks} ->
@@ -338,16 +330,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     %{state | batch_seq: seq}
   end
 
-  # Applies one batch's committed metadata - its resolver window plus, in
-  # sharded mode, its own globally-committed metadata - and advances the
-  # chain. Windows fold into structured metadata AND routing in one step;
-  # deferred metadata folds into routing only (the ack must not advance past
-  # what the resolvers' windows have confirmed) and is recorded for
-  # re-sending as confirmations until a window covers it.
-  defp apply_and_route(t, seq, commit_version, window, deferred) do
+  # Applies one batch's committed metadata window - which covers through the
+  # batch's own version, its own committed metadata included - into
+  # structured metadata AND routing in one step, and advances the chain.
+  defp apply_and_route(t, seq, _commit_version, window) do
     t
     |> apply_metadata_window(window)
-    |> apply_deferred_metadata(commit_version, deferred)
     |> Map.put(:routed_seq, seq)
   end
 
@@ -356,22 +344,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       {nil, _pending} ->
         t
 
-      {{from, commit_version, window, deferred}, pending} ->
-        t = apply_and_route(%{t | pending_applies: pending}, t.routed_seq + 1, commit_version, window, deferred)
+      {{from, commit_version, window}, pending} ->
+        t = apply_and_route(%{t | pending_applies: pending}, t.routed_seq + 1, commit_version, window)
         GenServer.reply(from, {:ok, t.routing_data})
         drain_pending_applies(t)
-    end
-  end
-
-  defp apply_deferred_metadata(t, _commit_version, nil), do: t
-
-  defp apply_deferred_metadata(t, commit_version, {committed}) do
-    t = add_deferred_metadata(t, commit_version, committed)
-
-    if committed == [] do
-      t
-    else
-      %{t | routing_data: RoutingData.apply_mutations(t.routing_data, [{commit_version, committed}])}
     end
   end
 
@@ -416,18 +392,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     # windows keep this monotone.
     version = if metadata.version == nil or to_version > metadata.version, do: to_version, else: metadata.version
 
-    # A window covering a deferred version proves every resolver folded that
-    # confirmation in (in sharded mode the merged to_version is the MINIMUM
-    # settled version across resolvers) - stop re-sending it.
-    deferred_metadata = Enum.drop_while(t.deferred_metadata, fn {v, _mutations} -> v <= version end)
-
-    %{t | metadata: %{metadata | version: version}, routing_data: routing_data, deferred_metadata: deferred_metadata}
-  end
-
-  @spec add_deferred_metadata(State.t(), Bedrock.version(), [term()]) :: State.t()
-  defp add_deferred_metadata(t, version, mutations) do
-    {earlier, later} = Enum.split_while(t.deferred_metadata, fn {v, _} -> v < version end)
-    %{t | deferred_metadata: earlier ++ [{version, mutations} | later]}
+    %{t | metadata: %{metadata | version: version}, routing_data: routing_data}
   end
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()

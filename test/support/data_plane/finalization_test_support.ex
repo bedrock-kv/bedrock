@@ -35,26 +35,6 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   end
 
   # Fake resolver for testing conflict resolution without self-calls
-  defmodule FakeResolver do
-    @moduledoc false
-    use GenServer
-
-    def start_link(opts \\ []) do
-      GenServer.start_link(__MODULE__, :ok, opts)
-    end
-
-    def init(:ok), do: {:ok, %{}}
-
-    def handle_call(
-          {:resolve_transactions, _epoch, {_last_version, _commit_version}, _transaction_summaries, _metadata_per_tx,
-           {_proxy_id, _acked_version}, {_metadata_hold?, _metadata_confirms}},
-          _from,
-          state
-        ) do
-      # Return no conflicts and no metadata window for simple test scenarios
-      {:reply, {:ok, [], nil}, state}
-    end
-  end
 
   @doc """
   Creates a fake sequencer that handles synchronous report_successful_commit calls.
@@ -62,14 +42,6 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   """
   def create_fake_sequencer do
     ExUnit.Callbacks.start_supervised!(FakeSequencer)
-  end
-
-  @doc """
-  Creates a fake resolver that handles resolve_transactions calls without conflicts.
-  Uses start_supervised! for proper test lifecycle management.
-  """
-  def create_fake_resolver do
-    ExUnit.Callbacks.start_supervised!(FakeResolver)
   end
 
   @doc """
@@ -169,25 +141,19 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
 
   @doc """
   A stand-in for the commit proxy server's serialized apply-and-route step:
-  applies the batch's window entries and own committed metadata to the given
-  routing data and returns the snapshot the batch should push with.
+  applies the batch's committed window entries to the given routing data and
+  returns the snapshot the batch should push with. The window arrives with
+  verdicts already resolved (plain `{version, [mutation]}` entries).
   """
   def metadata_apply_fn(%RoutingData{} = routing_data) do
-    fn commit_version, window, deferred ->
+    fn _commit_version, window ->
       entries =
         case window do
           nil -> []
           {_from, _to, entries} -> entries
         end
 
-      own =
-        case deferred do
-          nil -> []
-          {[]} -> []
-          {committed} -> [{commit_version, committed}]
-        end
-
-      {:ok, RoutingData.apply_mutations(routing_data, entries ++ own)}
+      {:ok, RoutingData.apply_mutations(routing_data, entries)}
     end
   end
 

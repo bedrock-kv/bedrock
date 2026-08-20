@@ -224,7 +224,7 @@ defmodule Bedrock.DataPlane.CommitProxy.ShardedMetadataDistributionIntegrationTe
     # version (ordering is preserved by version, not by confirmation arrival).
     for resolver <- [resolver_a, resolver_b] do
       entries = MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window)
-      assert {^version, [^metadata_mutation]} = List.keyfind(entries, version, 0)
+      assert {^version, [{[^metadata_mutation], true}]} = List.keyfind(entries, version, 0)
     end
   end
 
@@ -272,8 +272,8 @@ defmodule Bedrock.DataPlane.CommitProxy.ShardedMetadataDistributionIntegrationTe
     entries = MetadataAccumulator.entries(:sys.get_state(resolver_a).metadata_window)
     metadata_entries = for {v, muts} <- entries, v in [v1, v3], do: {v, muts}
     assert [{^v1, [tag1_mutation]}, {^v3, [tag3_mutation]}] = metadata_entries
-    assert tag1_mutation == set_tag.(1)
-    assert tag3_mutation == set_tag.(3)
+    assert tag1_mutation == {[set_tag.(1)], true}
+    assert tag3_mutation == {[set_tag.(3)], true}
 
     refute set_tag.(2) in resolver_metadata_mutations(resolver_a)
   end

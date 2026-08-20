@@ -106,7 +106,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @impl true
   def handle_call(
-        {:resolve_transactions, epoch, {_last_version, _next_version}, _transactions, _metadata, _ack, _directives},
+        {:resolve_transactions, epoch, {_last_version, _next_version}, _transactions, _metadata, _ack},
         _from,
         t
       )
@@ -116,8 +116,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @impl true
   def handle_call(
-        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, metadata_ack,
-         metadata_directives},
+        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, metadata_ack},
         from,
         t
       )
@@ -129,9 +128,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     |> case do
       :ok ->
         noreply(t,
-          continue:
-            {:process_ready,
-             {next_version, transactions, metadata_per_tx, metadata_ack, metadata_directives, reply_fn(from)}}
+          continue: {:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, reply_fn(from)}}
         )
 
       {:error, reason} ->
@@ -142,8 +139,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @impl true
   def handle_call(
-        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, metadata_ack,
-         metadata_directives},
+        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, metadata_ack},
         from,
         t
       )
@@ -154,7 +150,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     |> Validation.check_transactions()
     |> case do
       :ok ->
-        data = {next_version, transactions, metadata_per_tx, metadata_ack, metadata_directives}
+        data = {next_version, transactions, metadata_per_tx, metadata_ack}
 
         {new_waiting, _timeout} =
           WaitingList.insert(
@@ -177,25 +173,21 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @impl true
   def handle_call(
-        {:resolve_transactions, epoch, {last_version, next_version}, _transactions, _metadata, metadata_ack,
-         {_hold?, confirms}},
+        {:resolve_transactions, epoch, {last_version, next_version}, _transactions, _metadata, metadata_ack},
         _from,
         t
       )
       when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version < t.last_version do
     # A retry of an already-processed batch (its reply was lost): REPLAY the
     # recorded verdict - recomputing or fabricating one could tell clients
-    # "aborted" for transactions the system committed. Any hold was recorded
-    # on first processing (re-holding a confirmed version would wedge it),
-    # but the retry's confirms may be new; apply them (idempotent). The
-    # metadata window is recomputed - it is differential by the caller's ack,
-    # so recomputation is the correct, idempotent choice. A verdict pruned
-    # past the retention horizon (or never recorded) has no truthful answer:
-    # fail explicitly and let the proxy fail fast into recovery.
+    # "aborted" for transactions the system committed. The metadata window is
+    # recomputed - it is differential by the caller's ack, so recomputation
+    # is the correct, idempotent choice. A verdict pruned past the retention
+    # horizon (or never recorded) has no truthful answer: fail explicitly and
+    # let the proxy fail fast into recovery.
     case Map.fetch(t.recent_replies, next_version) do
       {:ok, aborted_indices} ->
-        {t, confirmed_any?} = apply_metadata_confirms(t, confirms)
-        {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack, confirmed_any?)
+        {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack)
         reply(t, {:ok, aborted_indices, metadata_window})
 
       :error ->
@@ -224,10 +216,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   end
 
   @impl true
-  def handle_continue(
-        {:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, {hold?, confirms}, reply_fn}},
-        t
-      ) do
+  def handle_continue({:process_ready, {next_version, transactions, metadata_per_tx, metadata_ack, reply_fn}}, t) do
     emit_processing(transactions, next_version)
 
     {conflicts, aborted} = resolve(t.conflicts, transactions, next_version)
@@ -241,22 +230,13 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
     emit_completed(transactions, aborted, next_version)
 
-    # Fold in confirmed deferred metadata, then either hold this batch
-    # (sharded mode - accumulation deferred until the proxy confirms against
-    # the merged GLOBAL abort set; any metadata_per_tx is ignored so immediate
-    # and deferred accumulation can never double-apply) or accumulate
-    # immediately (single-resolver mode - the local abort set IS global).
-    {t, confirmed_any?} = apply_metadata_confirms(t, confirms)
-
-    t =
-      if hold? do
-        %{t | held_metadata_versions: MapSet.put(t.held_metadata_versions, next_version)}
-      else
-        accumulate_committed_metadata(t, next_version, metadata_per_tx, aborted)
-      end
+    # Record each metadata-carrying transaction's mutations with this
+    # resolver's LOCAL verdict; the proxy ANDs verdicts across all resolvers'
+    # windows to reach the global verdict (FDB's stateMutations relay).
+    t = accumulate_metadata_verdicts(t, next_version, metadata_per_tx, aborted)
 
     # Get the differential window for this proxy and record its confirmed progress
-    {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack, confirmed_any?)
+    {metadata_window, t} = get_metadata_window_for_proxy(t, metadata_ack)
 
     reply_fn.({:ok, aborted, metadata_window})
     emit_reply_sent(transactions, aborted, next_version)
@@ -265,11 +245,11 @@ defmodule Bedrock.DataPlane.Resolver.Server do
       {updated_waiting, nil} ->
         noreply(%{t | waiting: updated_waiting}, continue: :next_timeout)
 
-      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions, metadata, ack, directives}}} ->
+      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions, metadata, ack}}} ->
         emit_waiting_resolved(transactions, [], waiting_next_version)
 
         noreply(%{t | waiting: updated_waiting},
-          continue: {:process_ready, {waiting_next_version, transactions, metadata, ack, directives, reply_fn}}
+          continue: {:process_ready, {waiting_next_version, transactions, metadata, ack, reply_fn}}
         )
     end
   end
@@ -316,80 +296,40 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   # Metadata accumulation and distribution helpers
   # ===========================================================================
 
-  # Accumulates metadata mutations from committed (non-aborted) transactions
-  @spec accumulate_committed_metadata(State.t(), Bedrock.version(), [[tuple()]], [non_neg_integer()]) :: State.t()
-  defp accumulate_committed_metadata(t, commit_version, metadata_per_tx, aborted) do
+  # Records each metadata-carrying transaction's mutations with this
+  # resolver's LOCAL verdict, in transaction order. Verdict-false entries are
+  # recorded too: at the proxy's merge, absence must never be mistaken for a
+  # veto, so a veto is always explicit.
+  @spec accumulate_metadata_verdicts(State.t(), Bedrock.version(), [[tuple()]], [non_neg_integer()]) :: State.t()
+  defp accumulate_metadata_verdicts(t, commit_version, metadata_per_tx, aborted) do
+    aborted_set = MapSet.new(aborted)
+
     metadata_per_tx
-    |> MetadataAccumulator.committed_mutations(MapSet.new(aborted))
+    |> Enum.with_index()
+    |> Enum.filter(fn {mutations, _idx} -> mutations != [] end)
+    |> Enum.map(fn {mutations, idx} -> {mutations, not MapSet.member?(aborted_set, idx)} end)
     |> case do
       [] -> t
-      mutations -> %{t | metadata_window: MetadataAccumulator.append(t.metadata_window, commit_version, mutations)}
-    end
-  end
-
-  # Folds confirmed deferred metadata (already filtered by the proxy's merged
-  # GLOBAL abort set) into the window at the original commit versions.
-  # Confirmations for different held versions can arrive out of order, so the
-  # insert is sorted; the settled-version cap below guarantees no proxy has
-  # been served (or acked) past any still-held version, so a late insert is
-  # never behind anyone's ack. Idempotent: only still-held versions apply, so
-  # a retried call re-carrying confirms is a no-op. Returns whether any hold
-  # was released (derived from the held-set delta).
-  @spec apply_metadata_confirms(State.t(), [{Bedrock.version(), [tuple()]}]) ::
-          {State.t(), confirmed_any? :: boolean()}
-  defp apply_metadata_confirms(t, confirms) do
-    updated =
-      Enum.reduce(confirms, t, fn {version, mutations}, t ->
-        if MapSet.member?(t.held_metadata_versions, version) do
-          %{
-            t
-            | metadata_window: MetadataAccumulator.insert_sorted(t.metadata_window, version, mutations),
-              held_metadata_versions: MapSet.delete(t.held_metadata_versions, version)
-          }
-        else
-          t
-        end
-      end)
-
-    {updated, updated.held_metadata_versions != t.held_metadata_versions}
-  end
-
-  # The highest version whose metadata is fully settled: everything at or
-  # below it is either accumulated or known metadata-free. Held (deferred,
-  # unconfirmed) versions cap it - windows must never let a proxy ack past
-  # metadata that could still be confirmed later.
-  @spec settled_version(State.t()) :: Bedrock.version()
-  defp settled_version(%{held_metadata_versions: held, last_version: last_version}) do
-    case Enum.min(held, fn -> nil end) do
-      nil -> last_version
-      oldest_held -> Version.subtract(oldest_held, 1)
+      entries -> %{t | metadata_window: MetadataAccumulator.append(t.metadata_window, commit_version, entries)}
     end
   end
 
   # Builds the differential metadata window for a proxy and records its
   # confirmed progress.
   #
-  # The window covers (from, settled] where `from` is the version the proxy
-  # has CONFIRMED applying (its ack) and `settled` is last_version except when
-  # deferred metadata is still held (see settled_version/1). Progress advances
-  # only via acks, so a reply lost to a call timeout is simply re-sent on the
-  # proxy's next call, and windows to concurrently in-flight batches overlap -
-  # out-of-order arrival at the proxy is lossless (its per-entry version guard
-  # skips already-applied entries).
+  # The window covers (from, last_version] where `from` is the version the
+  # proxy has CONFIRMED applying (its ack). Progress advances only via acks,
+  # so a reply lost to a call timeout is simply re-sent on the proxy's next
+  # call, and windows to concurrently in-flight batches overlap -
+  # out-of-order arrival at the proxy is lossless (the proxy filters entries
+  # at or below its applied version).
   #
-  # If pruning (or a held-version expiry) has discarded coverage the proxy
-  # never confirmed, the window's from_version is the pruned floor - above the
-  # proxy's applied version - which the proxy detects as an unrecoverable
-  # coverage gap.
-  #
-  # A window is nil only when there is nothing to report AND settled has
-  # reached last_version: while metadata is held (or when this call released a
-  # hold), even an empty window is returned so the merged to_version at the
-  # proxy honestly reflects this resolver's settled floor and confirmed holds
-  # advance the proxy's ack (letting it stop re-sending confirmations).
-  @spec get_metadata_window_for_proxy(State.t(), Resolver.metadata_ack(), confirmed_any? :: boolean()) ::
+  # If pruning has discarded coverage the proxy never confirmed, the window's
+  # from_version is the pruned floor - above the proxy's applied version -
+  # which the proxy detects as an unrecoverable coverage gap.
+  @spec get_metadata_window_for_proxy(State.t(), Resolver.metadata_ack()) ::
           {Resolver.metadata_window(), State.t()}
-  defp get_metadata_window_for_proxy(t, {proxy_id, acked}, confirmed_any?) do
+  defp get_metadata_window_for_proxy(t, {proxy_id, acked}) do
     t =
       t
       |> record_proxy_progress(proxy_id, acked)
@@ -406,27 +346,13 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     floor = t.metadata_pruned_through
     gap? = floor != nil and (acked == nil or acked < floor)
     from = if gap?, do: floor, else: acked
-    settled = settled_version(t)
 
-    # Entries above the settled floor (confirmed while an older version is
-    # still held) are withheld until everything below them settles.
-    entries =
-      t.metadata_window
-      |> MetadataAccumulator.mutations_since(from)
-      |> withhold_unsettled(settled, t.last_version)
+    entries = MetadataAccumulator.mutations_since(t.metadata_window, from)
 
-    window =
-      if entries == [] and not gap? and not confirmed_any? and settled == t.last_version,
-        do: nil,
-        else: {from, settled, entries}
+    window = if entries == [] and not gap?, do: nil, else: {from, t.last_version, entries}
 
     {window, t}
   end
-
-  # Fast path: with no held versions, settled == last_version and no entry can
-  # exceed it.
-  defp withhold_unsettled(entries, settled, last_version) when settled == last_version, do: entries
-  defp withhold_unsettled(entries, settled, _), do: Enum.take_while(entries, fn {version, _} -> version <= settled end)
 
   @spec record_proxy_progress(State.t(), pid(), Bedrock.version() | nil) :: State.t()
   defp record_proxy_progress(t, proxy_id, acked) do
@@ -443,21 +369,10 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   defp max_ack(prev, nil), do: prev
   defp max_ack(prev, acked), do: max(prev, acked)
 
-  # Expires state older than the version retention horizon:
-  #
-  # - Proxies not seen within the horizon are dropped so a dead (or
-  #   pathologically stalled) proxy neither leaks a progress entry nor blocks
-  #   window pruning forever. A live proxy calls at least once per empty-batch
-  #   interval, far inside the horizon.
-  # - Held (deferred, unconfirmed) metadata versions older than the horizon
-  #   are dropped so an unconfirmed hold cannot cap window distribution
-  #   forever. A hold this old is an invariant breach - its proxy stopped
-  #   confirming (it died mid-batch, or is stalled beyond any healthy cadence)
-  #   and the metadata MAY have committed - so the expired version is folded
-  #   into metadata_pruned_through: every proxy acked below it (necessarily
-  #   all of them, since holds cap acks) takes the coverage-gap fail-fast exit
-  #   into director-driven recovery, which rebuilds metadata from durable
-  #   state, rather than silently missing possibly-committed metadata.
+  # Expires proxies not seen within the version retention horizon, so a dead
+  # (or pathologically stalled) proxy neither leaks a progress entry nor
+  # blocks window pruning forever. A live proxy calls at least once per
+  # empty-batch interval, far inside the horizon.
   @spec expire_stale(State.t()) :: State.t()
   defp expire_stale(t) do
     case retention_cutoff(t) do
@@ -465,14 +380,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         t
 
       cutoff ->
-        {expired_holds, live_holds} = MapSet.split_with(t.held_metadata_versions, &(&1 < cutoff))
-
-        %{
-          t
-          | proxy_progress: Map.filter(t.proxy_progress, fn {_pid, {_acked, seen}} -> seen >= cutoff end),
-            held_metadata_versions: live_holds,
-            metadata_pruned_through: max_ack(t.metadata_pruned_through, Enum.max(expired_holds, fn -> nil end))
-        }
+        %{t | proxy_progress: Map.filter(t.proxy_progress, fn {_pid, {_acked, seen}} -> seen >= cutoff end)}
     end
   end
 

@@ -160,98 +160,51 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       assert_receive {:tx1, {:error, :aborted}}
     end
 
-    test "defers metadata: resolvers get no metadata_per_tx, a hold flag, and re-sent confirmations" do
+    test "every resolver receives every transaction's metadata mutations" do
       test_pid = self()
-      confirms = [{Version.from_integer(90), [{:set, <<0xFF, "k">>, "v"}]}]
 
       metadata_tx =
         Transaction.encode(%{
-          mutations: [{:set, "apple", "v0"}, {:set, <<0xFF, "/system/key">>, "meta"}],
+          mutations: [{:set, "apple", "v"}, {:set, <<0xFF, "/system/key">>, "meta"}],
           write_conflicts: [{"apple", "apple" <> <<0>>}],
           read_conflicts: nil
         })
 
       batch = batch_with([{reply_fn(test_pid, :tx0), metadata_tx}])
 
-      resolver_fn = fn ref, _epoch, _last, _commit, _txns, metadata_per_tx, opts ->
-        send(test_pid, {:resolver_called, ref, metadata_per_tx, opts[:metadata_hold], opts[:metadata_confirms]})
+      resolver_fn = fn ref, _epoch, _last, _commit, _txns, metadata_per_tx, _opts ->
+        send(test_pid, {:metadata_at, ref, metadata_per_tx})
         {:ok, [], nil}
       end
 
-      opts =
-        base_opts(sharded_layout(), routing_data(),
-          resolver_fn: resolver_fn,
-          metadata_confirms: confirms
-        )
+      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
 
       assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
 
-      # No speculative metadata reaches any resolver; both get the hold flag
-      # (this batch carries metadata) and the proxy's pending confirmations.
-      assert_receive {:resolver_called, :resolver_a, [], true, ^confirms}
-      assert_receive {:resolver_called, :resolver_b, [], true, ^confirms}
+      # Both resolvers see the same broadcast metadata, so each can record
+      # verdict-carrying entries; the merge ANDs them into the global verdict.
+      expected = [[{:set, <<0xFF, "/system/key">>, "meta"}]]
+      assert_receive {:metadata_at, :resolver_a, ^expected}
+      assert_receive {:metadata_at, :resolver_b, ^expected}
     end
 
-    test "the metadata apply call carries committed metadata filtered by the MERGED global abort set" do
-      test_pid = self()
-
-      metadata_tx = fn key, meta_key ->
-        Transaction.encode(%{
-          mutations: [{:set, key, "v"}, {:set, meta_key, "meta"}],
-          write_conflicts: [{key, key <> <<0>>}],
-          read_conflicts: nil
-        })
-      end
-
-      # tx0 survives; tx1 is aborted by resolver_b ONLY - resolver_a saw no
-      # conflict for it, but its metadata must still be excluded globally.
-      batch =
-        batch_with([
-          {reply_fn(test_pid, :tx0), metadata_tx.("apple", <<0xFF, "/committed">>)},
-          {reply_fn(test_pid, :tx1), metadata_tx.("zebra", <<0xFF, "/aborted">>)}
-        ])
-
-      resolver_fn = fn
-        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil}
-        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [1], nil}
-      end
-
-      metadata_apply_fn = fn version, _window, deferred ->
-        send(test_pid, {:deferred, version, deferred})
-        {:ok, routing_data()}
-      end
-
-      opts =
-        base_opts(sharded_layout(), routing_data(),
-          resolver_fn: resolver_fn,
-          metadata_apply_fn: metadata_apply_fn
-        )
-
-      assert {:ok, 1, 1} = Finalization.finalize_batch(batch, opts)
-
-      assert_receive {:deferred, @commit_version, {[{:set, <<0xFF, "/committed">>, "meta"}]}}
-    end
-
-    test "merged metadata windows claim the weakest coverage on both ends and withhold unsettled entries" do
+    test "the metadata apply call receives only unanimously-committed mutations" do
       test_pid = self()
       v = &Version.from_integer/1
-      entry_95 = {v.(95), [{:set, <<0xFF, "a">>, "1"}]}
-      entry_98 = {v.(98), [{:set, <<0xFF, "b">>, "2"}]}
+      meta = [{:set, <<0xFF, "a">>, "1"}]
 
-      # resolver_a has settled through v(99); resolver_b only through v(96)
-      # (it still holds deferred metadata). The merged window must not let the
-      # proxy ack past v(96) nor apply the entry at v(98) out of order, and
-      # the duplicate entry at v(95) (both resolvers carry it) collapses.
+      # Both resolvers relay the same entry at v(95): resolver_a's slice saw
+      # no conflict (committed), resolver_b's did (vetoed). The AND vetoes.
       resolver_fn = fn
         :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts ->
-          {:ok, [], {v.(90), v.(99), [entry_95, entry_98]}}
+          {:ok, [], {v.(90), v.(96), [{v.(95), [{meta, true}]}]}}
 
         :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts ->
-          {:ok, [], {v.(90), v.(96), [entry_95]}}
+          {:ok, [], {v.(90), v.(96), [{v.(95), [{meta, false}]}]}}
       end
 
-      metadata_apply_fn = fn _version, window, _deferred ->
-        send(test_pid, {:merged_window, window})
+      metadata_apply_fn = fn _version, window ->
+        send(test_pid, {:committed_window, window})
         {:ok, routing_data()}
       end
 
@@ -261,7 +214,40 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       from90 = v.(90)
       to96 = v.(96)
-      assert_receive {:merged_window, {^from90, ^to96, [^entry_95]}}
+      assert_receive {:committed_window, {^from90, ^to96, []}}
+    end
+
+    test "merged windows claim the weakest coverage and AND verdicts per transaction" do
+      test_pid = self()
+      v = &Version.from_integer/1
+      meta_a = [{:set, <<0xFF, "a">>, "1"}]
+      meta_b = [{:set, <<0xFF, "b">>, "2"}]
+
+      # v(95) carries two metadata transactions; the second is vetoed at
+      # resolver_b only. resolver_a claims coverage through v(99), resolver_b
+      # through v(96): the merged window claims the weakest (min) coverage
+      # and truncates entries beyond it.
+      resolver_fn = fn
+        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(99), [{v.(95), [{meta_a, true}, {meta_b, true}]}, {v.(98), [{meta_b, true}]}]}}
+
+        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(96), [{v.(95), [{meta_a, true}, {meta_b, false}]}]}}
+      end
+
+      metadata_apply_fn = fn _version, window ->
+        send(test_pid, {:committed_window, window})
+        {:ok, routing_data()}
+      end
+
+      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn, metadata_apply_fn: metadata_apply_fn)
+
+      assert {:ok, 0, 0} = Finalization.finalize_batch(empty_batch(), opts)
+
+      from90 = v.(90)
+      to96 = v.(96)
+      v95 = v.(95)
+      assert_receive {:committed_window, {^from90, ^to96, [{^v95, ^meta_a}]}}
     end
 
     test "fails the batch when a resolver task exits" do

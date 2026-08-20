@@ -12,9 +12,15 @@
   "id": "bedrock-q67.21",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Audit 2026-08-20 (post trim campaign, stacks #161/#166 collapsed into feature/q67-phase-b-prereqs @ 3862a5b2): three references in this ticket are now stale. (1) 'family + encoding already exist' - no longer true: q67.31 deleted the MaterializerList codec and every unread system-key family under the 'a key without a reader is inventory, not communication' rule. materializer_keys/ returns WITH this ticket, writer and reader landing together, shaped by what the reader needs. (2) 'resolver-\u003ewindow-\u003eCommitProxy.Metadata pipeline' - CommitProxy.Metadata was deleted (q67.30); the pipeline's consumer is RoutingData (immutable gb_trees), applied under the serialized apply-then-route gate (q67.24). Window application is now the exact per-proxy relay (q67.33), fail-fast, converged-verdict (q67.22) - stronger than what this ticket assumed. (3) 'whichever read path q67.9 picks' - settled on q67.9 2026-08-20: FDB serves GetKeyServerLocations from proxies out of keyInfo; Bedrock's analogue is the proxy's RoutingData snapshot. This ticket lands the writer + healing loop against that. The PersistencePhase ownership question stands and should be answered by the q67.23 decision (seeded recover_from).",
+      "timestamp": "2026-08-20T18:09:48Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Port Distributor + placeholder from phase-a: coverage published as keyspace mutations",
   "type": "task",
-  "updated_at": "2026-08-19T22:04:08Z"
+  "updated_at": "2026-08-20T18:09:48Z"
 }

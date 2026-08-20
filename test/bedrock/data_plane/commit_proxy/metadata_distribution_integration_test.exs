@@ -142,7 +142,14 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     end
   end
 
-  defp proxy_metadata(proxy), do: :sys.get_state(proxy).metadata
+  defp proxy_applied_version(proxy), do: :sys.get_state(proxy).applied_version
+
+  defp proxy_shard(proxy, end_key) do
+    case :gb_trees.lookup(end_key, :sys.get_state(proxy).routing_data.shards) do
+      {:value, {tag, _start}} -> tag
+      :none -> nil
+    end
+  end
 
   test "a user-mode commit writing a system key is rejected end-to-end while the proxy keeps serving", %{
     proxy: proxy,
@@ -178,10 +185,11 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     resolver_entries = MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window)
     assert {^version, [{[{:set, ^shard_key, ^encoded_tag}], true}]} = List.keyfind(resolver_entries, version, 0)
 
-    # 2. The commit proxy's post-batch state contains the PARSED structured entry.
-    wait_until(fn -> proxy_metadata(proxy).shards != %{} end)
+    # 2. The commit proxy's routing view - the consumer of the metadata
+    #    stream - contains the boundary, and the ack advanced to the batch.
+    wait_until(fn -> proxy_shard(proxy, "m") == 7 end)
 
-    assert %Metadata{shards: %{"m" => 7}, version: ^version} = proxy_metadata(proxy)
+    assert proxy_applied_version(proxy) == version
 
     # 3. The resolver tracks progress under the commit proxy SERVER's stable
     #    identity, not the per-batch finalization task pid (bedrock-q67.16).
@@ -195,12 +203,12 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     shard_key = SystemKeys.shard_key("m")
 
     _v1 = commit!(proxy, epoch, [{:set, shard_key, Values.encode_shard_key_entry(7, "")}], "key_a")
-    wait_until(fn -> proxy_metadata(proxy).shards == %{"m" => 7} end)
+    wait_until(fn -> proxy_shard(proxy, "m") == 7 end)
 
     v2 = commit!(proxy, epoch, [{:set, shard_key, Values.encode_shard_key_entry(9, "")}], "key_b")
-    wait_until(fn -> proxy_metadata(proxy).shards == %{"m" => 9} end)
+    wait_until(fn -> proxy_shard(proxy, "m") == 9 end)
 
-    assert %Metadata{shards: %{"m" => 9}, version: ^v2} = proxy_metadata(proxy)
+    assert proxy_applied_version(proxy) == v2
   end
 
   test "a non-system mutation never pollutes metadata", %{proxy: proxy, resolver: resolver, epoch: epoch} do
@@ -210,61 +218,26 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     Process.sleep(100)
 
     assert MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window) == []
-    assert proxy_metadata(proxy) == Metadata.new()
+    # No metadata means no window at all - the ack never advances.
+    assert proxy_applied_version(proxy) == nil
   end
 
-  test "multiple key families parse into their structured slots", %{proxy: proxy, epoch: epoch} do
+  test "routing families update the routing view; unknown system keys are ignored", %{proxy: proxy, epoch: epoch} do
     mutations = [
       {:set, SystemKeys.shard_key("g"), Values.encode_shard_key_entry(3, "")},
       {:set, SystemKeys.layout_log("log-abc"), Values.encode_tag_list([0, 1])},
-      {:set, SystemKeys.layout_services(), Values.encode_structured(%{"log-abc" => %{kind: :log}})},
-      {:set, SystemKeys.cluster_epoch(), Values.encode_integer(1)},
-      {:set, SystemKeys.cluster_parameters_desired_logs(), Values.encode_integer(2)},
-      {:set, SystemKeys.recovery_attempt(), Values.encode_integer(1)}
+      {:set, <<0xFF, "/system/future/feature">>, "opaque"}
     ]
 
     version = commit!(proxy, epoch, mutations, "families_key")
 
-    wait_until(fn -> proxy_metadata(proxy).version == version end)
+    wait_until(fn -> proxy_applied_version(proxy) == version end)
 
-    metadata = proxy_metadata(proxy)
-    assert metadata.shards == %{"g" => 3}
-    assert metadata.logs == %{"log-abc" => [0, 1]}
-    assert metadata.services == %{"log-abc" => %{kind: :log}}
-    assert metadata.cluster == %{epoch: 1}
-    assert metadata.parameters == %{desired_logs: 2}
-    assert metadata.recovery == %{attempt: 1}
-  end
-
-  test "unknown system keys are ignored and counted in telemetry", %{proxy: proxy, epoch: epoch} do
-    attach_telemetry_reflector(
-      self(),
-      [
-        [:bedrock, :data_plane, :commit_proxy, :metadata_applied],
-        [:bedrock, :data_plane, :commit_proxy, :unknown_key_skipped]
-      ],
-      "metadata-distribution-telemetry"
-    )
-
-    mutations = [
-      {:set, SystemKeys.shard_key("z"), Values.encode_shard_key_entry(5, "")},
-      {:set, <<0xFF, "/system/future/feature">>, "opaque"}
-    ]
-
-    version = commit!(proxy, epoch, mutations, "telemetry_key")
-
-    wait_until(fn -> proxy_metadata(proxy).version == version end)
-
-    metadata = proxy_metadata(proxy)
-    assert metadata.shards == %{"z" => 5}
-    refute Map.has_key?(metadata.shards, "/system/future/feature")
-
-    {measurements, meta} = expect_telemetry([:bedrock, :data_plane, :commit_proxy, :metadata_applied], 2_000)
-    assert measurements.count == 1
-    assert :shard_key in meta.families
-
-    {measurements, meta} = expect_telemetry([:bedrock, :data_plane, :commit_proxy, :unknown_key_skipped], 2_000)
-    assert measurements.count == 1
-    assert meta.keys == [<<0xFF, "/system/future/feature">>]
+    routing_data = :sys.get_state(proxy).routing_data
+    assert proxy_shard(proxy, "g") == 3
+    assert "log-abc" in Map.values(routing_data.log_map)
+    # Unknown families ride the window harmlessly (forward compatibility) -
+    # the version still advances so the resolver can prune.
+    assert proxy_applied_version(proxy) == version
   end
 end

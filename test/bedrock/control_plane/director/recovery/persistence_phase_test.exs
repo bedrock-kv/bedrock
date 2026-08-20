@@ -4,7 +4,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
-  alias Bedrock.DataPlane.CommitProxy.Metadata
   alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Key
@@ -243,25 +242,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       log_keys = store |> range_read(SystemKeys.layout_logs_prefix()) |> Enum.map(&elem(&1, 0))
       assert log_keys == [SystemKeys.layout_log("log_1")]
-    end
-
-    test "shrinking shard layout leaves exactly 2 entries visible to proxy Metadata" do
-      mutations = captured_system_mutations(base_recovery_attempt())
-
-      stale_writes = [
-        {:set, SystemKeys.shard_key(<<0x40>>), Values.encode_shard_key_entry(2, <<>>)},
-        {:set, SystemKeys.shard_key(<<0x80>>), Values.encode_shard_key_entry(3, <<0x40>>)},
-        {:set, SystemKeys.shard_key(<<0xFF, 0xFF>>), Values.encode_shard_key_entry(4, <<0x80>>)}
-      ]
-
-      {metadata, _stats} =
-        Metadata.apply_updates(Metadata.new(), [
-          {Bedrock.DataPlane.Version.from_integer(1), stale_writes},
-          {Bedrock.DataPlane.Version.from_integer(2), mutations}
-        ])
-
-      assert metadata.shards == %{<<0xFF>> => 1, <<0xFF, 0xFF>> => 0}
-      assert metadata.shard_metadata |> Map.keys() |> Enum.sort() == ["0", "1"]
     end
 
     test "shrinking shard layout leaves exactly 2 entries visible to RoutingData" do

@@ -2,7 +2,6 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
   @moduledoc false
 
   alias Bedrock.DataPlane.CommitProxy.Batch
-  alias Bedrock.DataPlane.CommitProxy.Metadata
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.RoutingData
 
@@ -21,7 +20,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
           mode: mode(),
           lock_token: binary(),
           routing_data: RoutingData.t() | nil,
-          metadata: Metadata.t(),
+          applied_version: Bedrock.version() | nil,
           batch_seq: non_neg_integer(),
           routed_seq: non_neg_integer(),
           pending_applies: %{pos_integer() => {GenServer.from(), Bedrock.version(), term()}}
@@ -38,7 +37,11 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
             mode: :locked,
             lock_token: nil,
             routing_data: nil,
-            metadata: %Metadata{},
+            # The highest metadata-window to_version this proxy has applied -
+            # the ack the resolver keys its differential windows off. The
+            # structured txnStateStore analogue arrives with its first reader
+            # (bedrock-q67.9); until then a version is the whole of it.
+            applied_version: nil,
             # Proxy-local batch sequence, assigned when a batch's finalization
             # is spawned (batches are created and spawned one at a time in the
             # server, so sequence order IS commit-version order). Apply

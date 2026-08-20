@@ -47,13 +47,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 2]
 
   import Bedrock.DataPlane.CommitProxy.Telemetry,
-    only: [trace_metadata: 0, trace_metadata: 1, trace_metadata_applied: 2, trace_unknown_key_skipped: 1]
+    only: [trace_metadata: 0, trace_metadata: 1]
 
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.Cluster
   alias Bedrock.DataPlane.CommitProxy.Batch
-  alias Bedrock.DataPlane.CommitProxy.Metadata
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.CommitProxy.State
@@ -295,7 +294,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       epoch: epoch,
       sequencer: sequencer,
       resolver_layout: resolver_layout,
-      metadata: %{version: applied_metadata_version}
+      applied_version: applied_metadata_version
     } = state
 
     Task.start_link(fn ->
@@ -367,7 +366,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   defp apply_metadata_window(t, nil), do: t
 
   defp apply_metadata_window(t, {from_version, to_version, entries}) do
-    applied_version = t.metadata.version
+    applied_version = t.applied_version
 
     if from_version != nil and (applied_version == nil or from_version > applied_version) do
       exit({:metadata_coverage_gap, %{from_version: from_version, applied_version: applied_version}})
@@ -378,18 +377,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         do: entries,
         else: Enum.filter(entries, fn {entry_version, _mutations} -> entry_version > applied_version end)
 
-    {metadata, stats} = Metadata.apply_updates(t.metadata, new_entries)
     routing_data = RoutingData.apply_mutations(t.routing_data, new_entries)
-
-    if stats.applied > 0, do: trace_metadata_applied(stats.applied, stats.families)
-    if stats.skipped_keys != [], do: trace_unknown_key_skipped(stats.skipped_keys)
 
     # The window covers through to_version even when the last entry is older;
     # acking to_version lets the resolver prune its window fully. Out-of-order
     # windows keep this monotone.
-    version = if metadata.version == nil or to_version > metadata.version, do: to_version, else: metadata.version
+    version = if applied_version == nil or to_version > applied_version, do: to_version, else: applied_version
 
-    %{t | metadata: %{metadata | version: version}, routing_data: routing_data}
+    %{t | applied_version: version, routing_data: routing_data}
   end
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()

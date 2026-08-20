@@ -52,7 +52,8 @@ defmodule Bedrock.DataPlane.Resolver.State do
           },
           metadata_window: MetadataAccumulator.t(),
           metadata_pruned_through: Bedrock.version() | nil,
-          held_metadata_versions: MapSet.t(Bedrock.version())
+          held_metadata_versions: MapSet.t(Bedrock.version()),
+          recent_replies: %{Bedrock.version() => [non_neg_integer()]}
         }
   defstruct conflicts: nil,
             last_version: nil,
@@ -67,5 +68,11 @@ defmodule Bedrock.DataPlane.Resolver.State do
             proxy_progress: %{},
             metadata_window: nil,
             metadata_pruned_through: nil,
-            held_metadata_versions: MapSet.new()
+            held_metadata_versions: MapSet.new(),
+            # Abort sets of processed batches, keyed by their commit version
+            # and pruned with the conflict retention horizon: a retried batch
+            # (lost reply) REPLAYS its original verdict - FDB's
+            # outstandingBatches. Windows are recomputed per ack, so only the
+            # verdict needs caching.
+            recent_replies: %{}
 end

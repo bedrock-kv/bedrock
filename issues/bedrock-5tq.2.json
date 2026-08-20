@@ -7,9 +7,15 @@
   "id": "bedrock-5tq.2",
   "labels": [],
   "parent": "bedrock-5tq",
+  "comments": [
+    {
+      "text": "From the PR #175 cold audit (2026-08-20): guides/quick-reads/transaction-system-layout.md:44-55 now definitively lies - it shows id/director/rate_keeper (deleted by q67.9's final layer), storage_teams (long gone), and %TransactionSystemLayout{} struct syntax (it is a plain map); line 62 and guides/quick-reads/recovery/transaction-system-layout.md:38 cite transaction_system_layout_phase.ex which does not exist (now topology_phase.ex). The TSL is now wiring-only (epoch/sequencer/proxies/resolvers/logs/services - ClientDBInfo analogue); shard topology rides the keyspace and proxy-served routing.",
+      "timestamp": "2026-08-20T19:27:13Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Dead code paths and stale line-number references across guides",
   "type": "bug",
-  "updated_at": "2026-08-15T17:18:22Z"
+  "updated_at": "2026-08-20T19:27:13Z"
 }

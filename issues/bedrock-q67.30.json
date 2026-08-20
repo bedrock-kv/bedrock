@@ -2,14 +2,15 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-20T16:11:12Z",
   "created": "2026-08-20T15:58:34Z",
   "description": "Both commit-path and recovery trim audits converge: Metadata's eleven structured slots have ZERO production readers - only .version is consumed (ack) - while FDB's txnStateStore is a plain KV store (ApplyMetadataMutation.cpp:238 txnStateStore-\u003eset(KeyValueRef(m.param1,m.param2))) with parsed views only where consumers exist; Bedrock's consumer-facing view is RoutingData, built in the same window-apply step. Collapse Metadata to {version} + skip-count telemetry (~30 lines): deletes family_of, 20 put/delete_entry clauses, known_entries and ~25 reverse key-reconstruction functions duplicating SystemKeys backwards, clear_range parallel bookkeeping (a divergence hazard class in itself), Values decode coupling, stats plumbing. ~230 prod lines + most of metadata_test.exs. q67.9/q67.23's reader rebuilds the structured view WITH its reader, shaped by what the reader needs - the doctrine's txnStateStore analogue arrives with its consumer, not before.",
   "id": "bedrock-q67.30",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Trim: CommitProxy.Metadata collapses to a version tracker",
   "type": "task",
-  "updated_at": "2026-08-20T16:07:45Z"
+  "updated_at": "2026-08-20T16:11:12Z"
 }

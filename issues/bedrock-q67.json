@@ -36,11 +36,15 @@
     {
       "text": "FRAMING CORRECTION (user, 2026-08-20): the Foreman is a local component FDB doesn't have as one piece because FDB runs one process per instance - it IS the fdbmonitor + worker.actor.cpp analogue in OTP terms: fdbmonitor babysits/restarts the OS process; worker.actor.cpp scans its data directory at startup and resurrects a role actor per DiskStore found. Bedrock hosts many workers per node, so the Foreman legitimately owns supervision + cold-boot rehydration from local manifests. What FDB lacks - and what gets deleted - is only the third duty: consuming a broadcast cluster-membership map to decide retirement. FDB's model: the resurrected role validates ITSELF against committed state (rejoin: ask a proxy, absence = worker_removed, self-dispose; CommitProxyServer.actor.cpp:3299-3366, storageserver.actor.cpp:15087-15181) and live removals arrive in-band as privatized mutations tagged for the victim (ApplyMetadataMutation.cpp:320-349, storageserver.actor.cpp:11603-11624). Course A-E stands with this framing: the Foreman keeps manifest scan/restart/supervision; retirement input becomes per-hosted-worker bounded validation against proxy-served committed state, triggered by the wiring push (the ServerDBInfo-change analogue). In-band private-mutation retirement is deferred to q67.21 (the mechanism that creates mid-epoch removals builds the delivery for them - Bedrock's seam: the proxy's apply-then-route step can dual-route a membership clear to the victim's own shard tag).",
       "timestamp": "2026-08-20T22:39:31Z"
+    },
+    {
+      "text": "COURSE SETTLED 2026-08-20 (supersedes the exploratory course comments above; tickets q67.37/.38/.40/.41 hold the authoritative shapes; q67.39 deleted - the TSL keeps sequencer/proxies/resolvers/logs, which is ServerDBInfo-parity and small; only services leaves). Settled shapes: A=q67.37 typed per-shard unlock seed. B=q67.38 workers self-detect displacement (FDB: every role throws worker_removed on itself - checkRemoved/isDisplaced/privatized mutations/rejoin); Foreman = push relay + supervisor + janitor, its reconciliation deleted. D=q67.40 by-key proxy resolution now (cache-until-failure already built); keyspace-read resolution deferred to the Distributor era over metadata-shard availability. E=q67.41 log wiring is epoch-constant (FDB: log topology change IS a recovery) - RoutingData's mid-epoch log handling is a guard for a precluded hazard, deleted; plus start_key consumption and worker-id carry. Key ownership insight from the FDB read: the Data Distributor OWNS key-\u003eserver (writes every assignment via MoveKeys; recovery never rewrites keyServers, only re-reads it) - Bedrock's per-epoch persistence-phase rewrite of the shard families is scaffolding standing in for the missing Distributor, to be handed over under q67.21, which is now the arc's next major work (owner of the mapping + metadata-shard coverage/healing + in-band retirement + retiring the recovery rewrite).",
+      "timestamp": "2026-08-20T23:30:12Z"
     }
   ],
   "priority": 3,
   "status": "in_progress",
   "title": "Shard-Centric Storage Architecture",
   "type": "epic",
-  "updated_at": "2026-08-20T22:39:31Z"
+  "updated_at": "2026-08-20T23:30:12Z"
 }

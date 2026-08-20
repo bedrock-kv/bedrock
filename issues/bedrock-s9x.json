@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T17:55:15Z",
+  "description": "Observed 2026-08-20 on stack #166 CI (S3 MinIO job): test/bedrock/internal/transaction_builder_test.exs:319 'unknown info messages crash the process' - the crash happens (FunctionClauseError logged) but assert_receive {:DOWN,...} times out at the default 100ms on a loaded runner; rerun passed. File untouched by the stack. Likely fix: attach the monitor before provoking the crash (if not already) and/or raise the assert_receive timeout - the assertion is about the crash occurring, not about it occurring within 100ms.",
+  "id": "bedrock-s9x",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Flaky test: TransactionBuilderTest unknown-info crash misses 100ms DOWN window on loaded CI",
+  "type": "task",
+  "updated_at": "2026-08-20T17:55:15Z"
+}

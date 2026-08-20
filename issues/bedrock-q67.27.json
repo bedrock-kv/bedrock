@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-20T14:37:03Z",
+  "description": "From the 2026-08-20 cold review of the full integration branch (feature/q67-phase-b-prereqs). Mechanical eleganza pass: (1) delete vacuous 'metadata update handling' tests in server_test.exs:901-969 - they send {:metadata_update,...} which no handler ever consumed and assert only Process.alive? via the catch-all; (2) fix doc drift in finalization.ex (metadata_merge_fn/metadata_deferred_fn described at :194/:200/:375 but retired in favor of metadata_apply_fn) and the sharded test name still citing metadata_deferred_fn; (3) drop the unread last_commit_version parameter from metadata_apply_fn (arity 4-\u003e3); (4) ShardRouter.lookup_shard beyond-all-boundaries fallback to the last shard is production-dead behind ingress bounds and was the historical silent-misroute mechanism - raise instead, symmetric with the empty-map raise; (5) one guard one place: delete Metadata.apply_updates' internal version guard, leaving the server pipeline filter as the sole orderer (pending FDB design-audit confirmation that txnStateStore has no internal guard); (6) telemetry in first_rejected_mutation's rescue so validator bugs are visible, not just fail-closed.",
+  "id": "bedrock-q67.27",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Review follow-ups: dead words, single version guard, fail-fast router fallback",
+  "type": "task",
+  "updated_at": "2026-08-20T14:37:03Z"
+}

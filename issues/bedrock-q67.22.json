@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-20T15:27:28Z",
   "created": "2026-08-19T20:34:19Z",
   "description": "FDB has no deferred-metadata hold/confirm protocol because it never needs one: transactions touching \\xFF are sent to ALL resolvers (CommitProxyServer.actor.cpp:2823 \"\\xff key space is processed by all resolvers\"), so each resolver's local commit verdict for a state transaction IS the global verdict (Resolver.actor.cpp:397-400, StateTransactionRef committed flag from the resolver's own reply.committed). Bedrock's bedrock-q67.20.5 (PR #151, port of q67.17) instead defers accumulation: holds cap windows, proxies re-send globally-filtered confirms until acked, unconfirmed holds expire into the coverage-gap fail-fast. Correct and audited, but an entire protocol layer FDB's design makes unnecessary.\n\nEvaluate adopting the FDB approach: route any transaction with \\xFF-range write conflicts (and its metadata mutations) to every resolver, so accumulation can be immediate in sharded mode too, then DELETE hold/confirm (held_metadata_versions, settled_version, insert_sorted confirms, deferred_metadata re-send, expiry-into-pruned-floor, min-to window merging - most of PR #151). Cost: every resolver resolves system transactions (rare: recovery + future Distributor coverage writes) and their conflict ranges join every resolver's window. Touches conflict_sharding.ex routing; intersects bedrock-rag (system-range ingress validation). Decide AFTER the q67.20 stack lands and before/while q67.21 makes system-key writes routine - if adopted, it simplifies exactly the path the Distributor will exercise.",
   "id": "bedrock-q67.22",
@@ -18,8 +19,8 @@
     }
   ],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Evaluate replacing hold/confirm with FDB's broadcast-system-transactions-to-all-resolvers",
   "type": "task",
-  "updated_at": "2026-08-20T15:15:14Z"
+  "updated_at": "2026-08-20T15:27:28Z"
 }

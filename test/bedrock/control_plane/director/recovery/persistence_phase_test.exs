@@ -105,8 +105,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert decoded[{:shard_key, <<0xFF>>}] == {1, <<>>}
       assert decoded[{:shard_key, <<0xFF, 0xFF>>}] == {0, <<0xFF>>}
 
-      # Services are sanitized: no live pid survives into durable storage.
-      assert %{"log_1" => %{status: :unknown}} = decoded[:layout_services]
       assert decoded[{:layout_log, "log_1"}] == [1, 2]
     end
 
@@ -185,7 +183,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       for prefix <- [
             SystemKeys.shard_keys_prefix(),
-            SystemKeys.shards_prefix(),
             SystemKeys.layout_logs_prefix()
           ] do
         {clear_start, clear_end} = KeyRange.from_prefix(prefix)
@@ -218,9 +215,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> Map.put(SystemKeys.shard_key(<<0x40>>), Values.encode_shard_key_entry(2, <<>>))
         |> Map.put(SystemKeys.shard_key(<<0x80>>), Values.encode_shard_key_entry(3, <<0x40>>))
         |> Map.put(SystemKeys.shard_key(<<0xFF, 0xFF>>), Values.encode_shard_key_entry(4, <<0x80>>))
-        |> Map.put(SystemKeys.shard(2), "stale-shard-metadata-2")
-        |> Map.put(SystemKeys.shard(3), "stale-shard-metadata-3")
-        |> Map.put(SystemKeys.shard(4), "stale-shard-metadata-4")
         |> Map.put(SystemKeys.layout_log("old_log"), Values.encode_tag_list([9]))
 
       # This epoch's layout has only 2 shards (see mock_transaction_system_layout/0).
@@ -236,10 +230,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert shard_key_1 == SystemKeys.shard_key(<<0xFF>>)
       assert shard_key_2 == SystemKeys.shard_key(<<0xFF, 0xFF>>)
 
-      # Stale shard metadata and layout_log entries are gone too.
-      shard_tags = store |> range_read(SystemKeys.shards_prefix()) |> Enum.map(&elem(&1, 0))
-      assert shard_tags == [SystemKeys.shard(0), SystemKeys.shard(1)]
-
+      # Stale layout_log entries are gone too.
       log_keys = store |> range_read(SystemKeys.layout_logs_prefix()) |> Enum.map(&elem(&1, 0))
       assert log_keys == [SystemKeys.layout_log("log_1")]
     end
@@ -263,24 +254,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     end
 
     test "cleared prefix ranges do not cover any other system-key family" do
-      # shard_keys/ and shards/ are byte-prefix siblings (common prefix
-      # "shard"); layout/logs/ neighbors layout/id and layout/services. The
-      # strinc bound must keep each cleared range strictly within its own
-      # family: '_' (0x5F) < 's' (0x73) puts strinc("...shard_keys/") =
-      # "...shard_keys0" below every "...shards/" key.
+      # The strinc bound must keep each cleared range strictly within its own
+      # family, including against future sibling families that share prefix
+      # bytes (e.g. a "shards/" neighbor of "shard_keys/": '_' (0x5F) < 's'
+      # (0x73) puts strinc("...shard_keys/") = "...shard_keys0" below it).
       cleared_prefixes = %{
         shard_key: SystemKeys.shard_keys_prefix(),
-        shard: SystemKeys.shards_prefix(),
         layout_log: SystemKeys.layout_logs_prefix()
       }
 
       keys_by_family = %{
         shard_key: [SystemKeys.shard_key(<<>>), SystemKeys.shard_key(<<0xFF, 0xFF>>)],
-        shard: [SystemKeys.shard("0")],
+        shard_sibling: ["\xff/system/shards/0"],
         layout_log: [SystemKeys.layout_log("log_1")],
-        layout_services: [SystemKeys.layout_services()],
-        layout_id: [SystemKeys.layout_id()],
-        materializer_key: [SystemKeys.materializer_key(<<>>), SystemKeys.materializer_key(<<0xFF, 0xFF>>)]
+        layout_sibling: ["\xff/system/layout/id", "\xff/system/layout/services"]
       }
 
       # Foreignness is decided by family identity, not by whether the key

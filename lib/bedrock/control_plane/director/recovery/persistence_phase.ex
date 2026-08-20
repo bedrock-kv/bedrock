@@ -21,8 +21,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   alias Bedrock.ClusterBootstrap.Discovery
-  alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.Persistence
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Transaction
@@ -33,7 +31,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.ClusterBootstrap
-  alias Bedrock.SystemKeys.ShardMetadata
   alias Bedrock.SystemKeys.Values
 
   @impl true
@@ -42,13 +39,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     transaction_system_layout = recovery_attempt.transaction_system_layout
 
-    system_transaction =
-      build_system_transaction(
-        recovery_attempt.epoch,
-        context.cluster_config,
-        transaction_system_layout,
-        recovery_attempt.cluster
-      )
+    system_transaction = build_system_transaction(transaction_system_layout)
 
     case submit_system_transaction(system_transaction, recovery_attempt.proxies, recovery_attempt.epoch, context) do
       {:ok, _version, _sequence} ->
@@ -189,98 +180,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end)
   end
 
-  @spec build_system_transaction(
-          epoch :: non_neg_integer(),
-          cluster_config :: Config.t(),
-          transaction_system_layout :: TransactionSystemLayout.t(),
-          cluster :: module()
-        ) :: Transaction.encoded()
-  defp build_system_transaction(epoch, cluster_config, transaction_system_layout, cluster) do
-    encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
-
+  @spec build_system_transaction(TransactionSystemLayout.t()) :: Transaction.encoded()
+  defp build_system_transaction(transaction_system_layout) do
     tx = Tx.new()
-    tx = build_monolithic_keys(tx, epoch, encoded_config)
-    tx = build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, cluster)
+    tx = build_readable_keys(tx, transaction_system_layout)
 
     Tx.commit(tx, nil)
   end
 
-  @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map()) :: Tx.t()
-  defp build_monolithic_keys(tx, epoch, encoded_config) do
-    tx
-    |> Tx.set(SystemKeys.config_monolithic(), Values.encode_structured({epoch, encoded_config}))
-    |> Tx.set(SystemKeys.epoch_legacy(), Values.encode_integer(epoch))
-    |> Tx.set(
-      SystemKeys.last_recovery_legacy(),
-      Values.encode_integer(System.system_time(:millisecond))
-    )
-  end
-
-  @spec build_decomposed_keys(
-          Tx.t(),
-          Bedrock.epoch(),
-          Config.t(),
-          TransactionSystemLayout.t(),
-          module()
-        ) ::
-          Tx.t()
-  defp build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, _cluster) do
-    encoded_services = encode_services_for_storage(transaction_system_layout.services)
-
-    tx =
-      tx
-      |> Tx.set(
-        SystemKeys.cluster_coordinators(),
-        Values.encode_node_list(cluster_config.coordinators)
-      )
-      |> Tx.set(SystemKeys.cluster_epoch(), Values.encode_integer(epoch))
-      |> Tx.set(
-        SystemKeys.cluster_policies_volunteer_nodes(),
-        Values.encode_boolean(cluster_config.policies.allow_volunteer_nodes_to_join || false)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_logs(),
-        Values.encode_integer(cluster_config.parameters.desired_logs)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_replication(),
-        Values.encode_integer(cluster_config.parameters.desired_replication_factor)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_commit_proxies(),
-        Values.encode_integer(cluster_config.parameters.desired_commit_proxies)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_coordinators(),
-        Values.encode_integer(cluster_config.parameters.desired_coordinators)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_read_version_proxies(),
-        Values.encode_integer(cluster_config.parameters.desired_read_version_proxies)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_empty_transaction_timeout_ms(),
-        Values.encode_integer(Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000))
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_ping_rate_in_hz(),
-        Values.encode_integer(cluster_config.parameters.ping_rate_in_hz)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_retransmission_rate_in_hz(),
-        Values.encode_integer(cluster_config.parameters.retransmission_rate_in_hz)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_transaction_window_in_ms(),
-        Values.encode_integer(cluster_config.parameters.transaction_window_in_ms)
-      )
-
-    # Only durable layout config (services and id)
-    tx =
-      tx
-      |> Tx.set(SystemKeys.layout_services(), Values.encode_structured(encoded_services))
-      |> Tx.set(SystemKeys.layout_id(), Values.encode_id(transaction_system_layout.id))
-
+  # Every key written here has a named reader: layout/logs/ keys feed each
+  # proxy's RoutingData log wiring through resolver windows, and shard_keys/
+  # feeds both RoutingData and the next recovery's materializer bootstrap.
+  # Nothing else is written - a system key without a reader is inventory,
+  # not communication (config and policy travel via the object-storage
+  # cluster bootstrap, which the coordinator actually reads; services are
+  # rebuilt each recovery from foreman discovery). Families return to the
+  # keyspace when their readers do (bedrock-q67.9, q67.25).
+  @spec build_readable_keys(Tx.t(), TransactionSystemLayout.t()) :: Tx.t()
+  defp build_readable_keys(tx, transaction_system_layout) do
     tx = clear_prefix(tx, SystemKeys.layout_logs_prefix())
 
     tx =
@@ -288,27 +205,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         Tx.set(tx, SystemKeys.layout_log(log_id), Values.encode_tag_list(log_descriptor))
       end)
 
-    # Shard keys use ceiling-search pattern
-    tx = build_shard_keys(tx, transaction_system_layout.shard_layout)
-
-    tx
-    |> Tx.set(SystemKeys.recovery_attempt(), Values.encode_integer(1))
-    |> Tx.set(
-      SystemKeys.recovery_last_completed(),
-      Values.encode_integer(System.system_time(:millisecond))
-    )
-  end
-
-  # Runtime PIDs are meaningless in durable storage: a later epoch cannot use
-  # them, so live statuses are stored as :unknown. Service refs are
-  # re-populated at runtime by the director.
-  defp encode_services_for_storage(services) when is_map(services) do
-    Map.new(services, fn {service_id, descriptor} ->
-      case descriptor do
-        %{status: {:up, pid}} when is_pid(pid) -> {service_id, %{descriptor | status: :unknown}}
-        _ -> {service_id, descriptor}
-      end
-    end)
+    build_shard_keys(tx, transaction_system_layout.shard_layout)
   end
 
   # Rewritten-every-recovery keyed families are cleared before their entries
@@ -321,7 +218,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     Tx.clear_range(tx, start_key, end_key)
   end
 
-  # Creates shard_key(end_key) -> {tag, start_key} and shard(tag) -> ShardMetadata entries
+  # Creates shard_key(end_key) -> {tag, start_key} entries (ceiling search).
   # shard_layout format: %{end_key => {tag, start_key}}
   #
   # A nil or empty layout means shard management is not active for this
@@ -331,19 +228,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp build_shard_keys(tx, shard_layout) when map_size(shard_layout) == 0, do: tx
 
   defp build_shard_keys(tx, shard_layout) when is_map(shard_layout) do
-    tx =
-      tx
-      |> clear_prefix(SystemKeys.shard_keys_prefix())
-      |> clear_prefix(SystemKeys.shards_prefix())
+    tx = clear_prefix(tx, SystemKeys.shard_keys_prefix())
 
     Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
-      # Write shard_key(end_key) -> {tag, start_key} (for ceiling search)
-      tx = Tx.set(tx, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key))
-
-      # Write shard(tag) -> ShardMetadata (FlatBuffer encoded)
-      # born_at is 0 for now - will be set properly once we track shard versions
-      metadata = ShardMetadata.new(start_key, end_key, 0)
-      Tx.set(tx, SystemKeys.shard(tag), metadata)
+      Tx.set(tx, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key))
     end)
   end
 

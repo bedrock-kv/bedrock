@@ -70,7 +70,7 @@ defmodule Bedrock.DataPlane.CommitProxy do
         ) ::
           {:ok, version :: Bedrock.version(), index :: non_neg_integer()}
           | {:error, :wrong_epoch | :locked | :abort | :timeout | :unavailable}
-          | {:error, {:key_out_of_range | :atomic_on_system_key, Bedrock.key()}}
+          | {:error, {:key_out_of_range, Bedrock.key()}}
           | {:error, :invalid_transaction}
   def commit(commit_proxy, epoch, transaction, opts \\ []) do
     case Keyword.get(opts, :mode, :user) do

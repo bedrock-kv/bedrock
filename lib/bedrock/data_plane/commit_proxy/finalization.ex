@@ -20,7 +20,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       trace_commit_proxy_batch_started: 3,
       trace_commit_proxy_batch_finished: 4,
       trace_commit_proxy_batch_failed: 3,
-      trace_metadata_updates_received: 2
+      trace_metadata_updates_received: 2,
+      trace_ingress_validation_failed: 1
     ]
 
   import Bitwise, only: [<<<: 2]
@@ -147,7 +148,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
     @type t :: %__MODULE__{
             transactions: %{
-              non_neg_integer() => {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Task.t() | nil}
+              non_neg_integer() => {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Batch.commit_mode()}
             },
             transaction_count: non_neg_integer(),
             commit_version: Bedrock.version(),
@@ -251,6 +252,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     fn ->
       batch
       |> create_finalization_plan()
+      |> reject_invalid_transactions()
       |> resolve_conflicts(epoch, resolver_layout, opts)
       |> prepare_for_logging()
       |> push_to_logs(opts)
@@ -288,6 +290,92 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       stage: :ready_for_resolution
     }
   end
+
+  # ============================================================================
+  # Keyspace Validation
+  # ============================================================================
+
+  # Per-transaction keyspace validation, in the pipeline rather than at the
+  # proxy's serialized accept loop (FDB validates tenant access the same way:
+  # per-transaction sendError inside postResolution while the batch
+  # proceeds). Each rejected transaction gets its specific error through its
+  # own reply and is replaced with an empty transaction, so its conflict
+  # ranges never enter resolver history and its mutations never reach a log.
+  #
+  # The legal write range depends on who is committing - the mode rides each
+  # buffer entry: user commits end at the system boundary, system commits at
+  # the end of the keyspace. Keys past the commit's bound belong to no shard
+  # the caller may touch; before validation existed, single-key mutations
+  # were silently routed into the LAST shard and a clear_range past the
+  # boundary failed the whole batch. clear_range ends are exclusive, so an
+  # end AT the bound is legal.
+  #
+  # Atomics are bounded like any other mutation, nothing more - FDB parity.
+  # The metadata views cannot diverge from an atomic because atomics never
+  # enter the metadata stream in the first place: metadata_mutation?/1 admits
+  # only sets and clears, exactly FDB's isMetadataMutation.
+  @spec reject_invalid_transactions(FinalizationPlan.t()) :: FinalizationPlan.t()
+  def reject_invalid_transactions(%FinalizationPlan{transaction_count: 0} = plan), do: plan
+
+  def reject_invalid_transactions(%FinalizationPlan{} = plan) do
+    {transactions, replied, n_rejected} =
+      Enum.reduce(plan.transactions, {plan.transactions, plan.replied_indices, 0}, fn
+        {idx, {idx, reply_fn, transaction, commit_mode}}, {transactions, replied, n_rejected} = acc ->
+          case first_rejected_mutation(transaction, commit_mode) do
+            nil ->
+              acc
+
+            :invalid_transaction ->
+              reply_fn.({:error, :invalid_transaction})
+              blank = {idx, reply_fn, Transaction.empty_transaction(), commit_mode}
+              {Map.put(transactions, idx, blank), MapSet.put(replied, idx), n_rejected + 1}
+
+            {reason, key} ->
+              reply_fn.({:error, {reason, key}})
+              blank = {idx, reply_fn, Transaction.empty_transaction(), commit_mode}
+              {Map.put(transactions, idx, blank), MapSet.put(replied, idx), n_rejected + 1}
+          end
+      end)
+
+    %{plan | transactions: transactions, replied_indices: replied, aborted_count: plan.aborted_count + n_rejected}
+  end
+
+  # Returns nil when valid, {reason, key} for the offending mutation, or
+  # :invalid_transaction when the mutation section decodes but its payload is
+  # corrupt (the decode stream raises lazily; unguarded, that would crash the
+  # finalization task and with it the proxy). No catch-all clause: a mutation
+  # shape this validator does not know is caught by the rescue and rejected
+  # as :invalid_transaction, so a future mutation type fails closed instead
+  # of bypassing the gate.
+  @spec first_rejected_mutation(Transaction.encoded(), Batch.commit_mode()) ::
+          {:key_out_of_range, Bedrock.key()} | :invalid_transaction | nil
+  defp first_rejected_mutation(transaction, commit_mode) do
+    bound = keyspace_bound(commit_mode)
+
+    case Transaction.mutations(transaction) do
+      {:ok, mutations} -> Enum.find_value(mutations, &rejected_mutation(&1, bound))
+      {:error, :section_not_found} -> nil
+      {:error, _} -> :invalid_transaction
+    end
+  rescue
+    error ->
+      trace_ingress_validation_failed(error)
+      :invalid_transaction
+  end
+
+  defp keyspace_bound(:user), do: Bedrock.end_of_user_keyspace()
+  defp keyspace_bound(:system), do: Bedrock.end_of_keyspace()
+
+  defp rejected_mutation({:set, key, _value}, bound), do: key_past_bound(key, bound)
+  defp rejected_mutation({:clear, key}, bound), do: key_past_bound(key, bound)
+
+  defp rejected_mutation({:atomic, _op, key, _value}, bound), do: key_past_bound(key, bound)
+
+  defp rejected_mutation({:clear_range, start_key, end_key}, bound) do
+    key_past_bound(start_key, bound) || if end_key > bound, do: {:key_out_of_range, end_key}
+  end
+
+  defp key_past_bound(key, bound), do: if(key >= bound, do: {:key_out_of_range, key})
 
   # ============================================================================
   # Conflict Resolution
@@ -336,7 +424,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     {filtered_transactions, metadata_per_tx} =
       0..(plan.transaction_count - 1)
       |> Enum.map(fn idx ->
-        {_idx, _reply_fn, transaction, _task} = Map.fetch!(plan.transactions, idx)
+        {_idx, _reply_fn, transaction, _commit_mode} = Map.fetch!(plan.transactions, idx)
         conflicts = Transaction.extract_sections!(transaction, [:read_conflicts, :write_conflicts])
         metadata = extract_metadata_mutations(transaction)
         {conflicts, metadata}
@@ -394,7 +482,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         {maps, metadata_list} =
           0..(plan.transaction_count - 1)
           |> Enum.map(fn idx ->
-            {_idx, _reply_fn, transaction, _task} = Map.fetch!(plan.transactions, idx)
+            {_idx, _reply_fn, transaction, _commit_mode} = Map.fetch!(plan.transactions, idx)
             task = create_resolver_task_in_finalization(transaction, resolver_layout)
             map = Task.await(task, 5000)
             metadata = extract_metadata_mutations(transaction)
@@ -657,16 +745,21 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
 
-    # Reply to aborted transactions
-    aborted_set
+    # Rejected transactions were already answered with their specific error;
+    # never let a conflict-abort double-reply them. (Their emptied conflict
+    # sections make resolver aborts impossible today - this guard makes the
+    # invariant structural rather than incidental.)
+    newly_aborted = MapSet.difference(aborted_set, plan.replied_indices)
+
+    newly_aborted
     |> Enum.map(fn idx ->
-      {_idx, reply_fn, _binary, _task} = Map.fetch!(plan.transactions, idx)
+      {_idx, reply_fn, _binary, _commit_mode} = Map.fetch!(plan.transactions, idx)
       reply_fn
     end)
     |> abort_reply_fn.()
 
-    # Track that we've replied to these transactions and count them as aborted
-    %{plan | replied_indices: aborted_set, aborted_count: MapSet.size(aborted_set), stage: :aborts_notified}
+    replied = MapSet.union(plan.replied_indices, newly_aborted)
+    %{plan | replied_indices: replied, aborted_count: MapSet.size(replied), stage: :aborts_notified}
   end
 
   @spec reply_to_all_clients_with_aborted_transactions([Batch.reply_fn()]) :: :ok
@@ -755,13 +848,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   @spec process_transaction_for_logs(
-          {non_neg_integer(), {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Task.t() | nil}},
+          {non_neg_integer(), {non_neg_integer(), Batch.reply_fn(), Transaction.encoded(), Batch.commit_mode()}},
           FinalizationPlan.t(),
           %{Log.id() => [term()]}
         ) ::
           {:cont, {:ok, %{Log.id() => [term()]}}}
           | {:halt, {:error, term()}}
-  defp process_transaction_for_logs({idx, {_idx, _reply_fn, binary, _task}}, plan, acc) do
+  defp process_transaction_for_logs({idx, {_idx, _reply_fn, binary, _commit_mode}}, plan, acc) do
     if MapSet.member?(plan.replied_indices, idx) do
       # Skip transactions that were already replied to (aborted)
       {:cont, {:ok, acc}}
@@ -1131,7 +1224,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     successful_entries =
       plan.transactions
       |> Enum.reject(fn {idx, _entry} -> MapSet.member?(plan.replied_indices, idx) end)
-      |> Enum.map(fn {idx, {tx_idx, reply_fn, _binary, _task}} -> {reply_fn, tx_idx, idx} end)
+      |> Enum.map(fn {idx, {tx_idx, reply_fn, _binary, _commit_mode}} -> {reply_fn, tx_idx, idx} end)
 
     successful_indices = Enum.map(successful_entries, fn {_reply_fn, _tx_idx, idx} -> idx end)
 

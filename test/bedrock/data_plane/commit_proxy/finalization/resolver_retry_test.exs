@@ -42,8 +42,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
     buffer =
       transactions
       |> Enum.with_index()
-      |> Enum.map(fn {{reply_fn, tx_binary, task}, index} ->
-        {index, reply_fn, tx_binary, task}
+      |> Enum.map(fn {{reply_fn, tx_binary, commit_mode}, index} ->
+        {index, reply_fn, tx_binary, commit_mode}
       end)
 
     %Batch{
@@ -481,13 +481,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.ResolverRetryTest do
 
       reply_fn1 = create_reply_fn(self(), :reply1)
       reply_fn2 = create_reply_fn(self(), :reply2)
-      task1 = Task.async(fn -> %{:test_resolver => tx1_binary} end)
-      task2 = Task.async(fn -> %{:test_resolver => tx2_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn1, tx1_binary, task1},
-          {reply_fn2, tx2_binary, task2}
+          {reply_fn1, tx1_binary, :system},
+          {reply_fn2, tx2_binary, :system}
         ])
 
       assert {:ok, 0, 2} =

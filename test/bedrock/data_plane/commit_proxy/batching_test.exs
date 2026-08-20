@@ -205,17 +205,17 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       transaction = sample_transaction()
       reply_fn = fn _result -> :ok end
 
-      result = Batching.add_transaction_to_batch(state, transaction, reply_fn, nil)
+      result = Batching.add_transaction_to_batch(state, transaction, reply_fn, :user)
 
       assert %State{batch: %Batch{} = batch} = result
       assert batch.n_transactions == 1
       assert length(batch.buffer) == 1
 
-      [{index, stored_reply_fn, stored_tx, stored_task}] = batch.buffer
+      [{index, stored_reply_fn, stored_tx, stored_mode}] = batch.buffer
       assert index == 0
       assert stored_reply_fn == reply_fn
       assert stored_tx == transaction
-      assert stored_task == nil
+      assert stored_mode == :user
     end
 
     test "increments index for each transaction added" do
@@ -233,8 +233,8 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       tx2 = sample_transaction()
       reply_fn = fn _result -> :ok end
 
-      state = Batching.add_transaction_to_batch(state, tx1, reply_fn, nil)
-      state = Batching.add_transaction_to_batch(state, tx2, reply_fn, nil)
+      state = Batching.add_transaction_to_batch(state, tx1, reply_fn, :user)
+      state = Batching.add_transaction_to_batch(state, tx2, reply_fn, :user)
 
       assert state.batch.n_transactions == 2
 
@@ -244,7 +244,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       assert idx2 == 1
     end
 
-    test "stores task reference when provided" do
+    test "stores the commit mode alongside the transaction" do
       existing_batch = %Batch{
         started_at: 1000,
         last_commit_version: Version.from_integer(10),
@@ -257,15 +257,11 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
 
       transaction = sample_transaction()
       reply_fn = fn _result -> :ok end
-      task = Task.async(fn -> :some_result end)
 
-      result = Batching.add_transaction_to_batch(state, transaction, reply_fn, task)
+      result = Batching.add_transaction_to_batch(state, transaction, reply_fn, :system)
 
-      [{_index, _reply_fn, _tx, stored_task}] = result.batch.buffer
-      assert stored_task == task
-
-      # Clean up task
-      Task.await(task)
+      [{_index, _reply_fn, _tx, stored_mode}] = result.batch.buffer
+      assert stored_mode == :system
     end
   end
 
@@ -274,7 +270,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       # Create batch at max capacity
       transactions =
         for i <- 0..4 do
-          {i, fn _result -> :ok end, sample_transaction(), nil}
+          {i, fn _result -> :ok end, sample_transaction(), :user}
         end
 
       batch = %Batch{
@@ -304,7 +300,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
         last_commit_version: Version.from_integer(10),
         commit_version: Version.from_integer(11),
         n_transactions: 1,
-        buffer: [{0, fn _result -> :ok end, sample_transaction(), nil}]
+        buffer: [{0, fn _result -> :ok end, sample_transaction(), :user}]
       }
 
       state = build_state(%{batch: batch, max_latency_in_ms: 100})
@@ -323,7 +319,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
         last_commit_version: Version.from_integer(10),
         commit_version: Version.from_integer(11),
         n_transactions: 1,
-        buffer: [{0, fn _result -> :ok end, sample_transaction(), nil}]
+        buffer: [{0, fn _result -> :ok end, sample_transaction(), :user}]
       }
 
       state = build_state(%{batch: batch, max_per_batch: 10, max_latency_in_ms: 10_000})
@@ -340,7 +336,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
 
       transactions =
         for i <- 0..4 do
-          {i, fn _result -> :ok end, sample_transaction(), nil}
+          {i, fn _result -> :ok end, sample_transaction(), :user}
         end
 
       batch = %Batch{
@@ -381,10 +377,10 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       tx = sample_transaction()
       reply_fn = fn _result -> :ok end
 
-      state = Batching.add_transaction_to_batch(state, tx, reply_fn, nil)
+      state = Batching.add_transaction_to_batch(state, tx, reply_fn, :user)
       assert state.batch.n_transactions == 1
 
-      state = Batching.add_transaction_to_batch(state, tx, reply_fn, nil)
+      state = Batching.add_transaction_to_batch(state, tx, reply_fn, :user)
       assert state.batch.n_transactions == 2
 
       # Policy check - not yet ready
@@ -393,7 +389,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       assert state.batch
 
       # Add third transaction - should trigger policy
-      state = Batching.add_transaction_to_batch(state, tx, reply_fn, nil)
+      state = Batching.add_transaction_to_batch(state, tx, reply_fn, :user)
       assert state.batch.n_transactions == 3
 
       {state, batch_to_finalize} = Batching.apply_finalization_policy(state)

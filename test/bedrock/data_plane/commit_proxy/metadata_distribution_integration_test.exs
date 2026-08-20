@@ -144,6 +144,19 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
 
   defp proxy_metadata(proxy), do: :sys.get_state(proxy).metadata
 
+  test "a user-mode commit writing a system key is rejected end-to-end while the proxy keeps serving", %{
+    proxy: proxy,
+    epoch: epoch
+  } do
+    bad_key = <<0xFF, "/system/forbidden">>
+    tx = encode_tx([{:set, bad_key, "x"}], "user_key")
+
+    assert {:error, {:key_out_of_range, ^bad_key}} = GenServer.call(proxy, {:commit, epoch, tx, :user}, 5_000)
+
+    # The rejection was per-transaction: the proxy is alive and commits still flow.
+    assert commit!(proxy, epoch, [{:set, "after_rejection", "v"}], "after_rejection")
+  end
+
   test "system-key mutation flows commit -> resolver accumulator -> parsed proxy metadata", %{
     proxy: proxy,
     resolver: resolver,

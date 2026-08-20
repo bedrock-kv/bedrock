@@ -36,7 +36,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
     buffer =
       transactions
       |> Enum.with_index()
-      |> Enum.map(fn {{reply_fn, binary}, idx} -> {idx, reply_fn, binary, nil} end)
+      # System mode: these batches write \xFF metadata keys, which user-mode
+      # commits are rejected for during pipeline validation.
+      |> Enum.map(fn {{reply_fn, binary}, idx} -> {idx, reply_fn, binary, :system} end)
 
     %Batch{
       commit_version: @commit_version,
@@ -299,10 +301,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
   end
 
   describe "keys outside shard coverage" do
-    test "clear_range entirely beyond shard coverage fails the batch with a coverage error and aborts the client" do
-      # Default shard layout covers ["", <<0xFF, 0xFF>>); this range starts at
-      # the exclusive upper bound, so no shard covers it. Regression: this used
-      # to crash the finalization task with ArgumentError from :ets.prev.
+    test "an out-of-bounds clear_range is rejected per-transaction, not fatal to the batch" do
+      # A range starting at the end of the keyspace is out of the commit's
+      # legal write range: pipeline validation rejects just this transaction
+      # with its specific error. (This used to fail the whole batch - and
+      # before that, crash the finalization task.)
       hostile_tx =
         Transaction.encode(%{
           mutations: [{:clear_range, <<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>}],
@@ -316,8 +319,30 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       opts = base_opts(single_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:error, {:storage_team_coverage_error, {<<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>}}} =
-               Finalization.finalize_batch(batch, opts)
+      assert {:ok, 1, 0} = Finalization.finalize_batch(batch, opts)
+
+      assert_receive {:tx0, {:error, {:key_out_of_range, <<0xFF, 0xFF>>}}}
+    end
+
+    test "an in-bounds clear_range no shard covers fails the batch with a coverage error" do
+      # The shard map covers only ["", "m"): the range ["x", "z") is legal to
+      # write but no shard owns it - a map/keyspace divergence the batch must
+      # not paper over.
+      hostile_tx =
+        Transaction.encode(%{
+          mutations: [{:clear_range, "x", "z"}],
+          write_conflicts: [{"x", "z"}],
+          read_conflicts: nil
+        })
+
+      batch = batch_with([{reply_fn(self(), :tx0), hostile_tx}])
+
+      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
+
+      opts =
+        base_opts(single_layout(), routing_data(%{shard_layout: %{"m" => {0, ""}}}), resolver_fn: resolver_fn)
+
+      assert {:error, {:storage_team_coverage_error, {"x", "z"}}} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:tx0, {:error, :aborted}}
     end

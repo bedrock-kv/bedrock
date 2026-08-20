@@ -16,11 +16,15 @@
     {
       "text": "Implemented as the second commit of the follow-up stack (branch q67.28-pipeline-validation): reject_invalid_transactions pipeline stage validates per transaction before resolution; each rejected tx replies with its specific error and is replaced by Transaction.empty_transaction() so its conflicts never enter resolver history (stronger than FDB, which lets tenant-failed ranges into history); commit mode rides each buffer entry (repurposed the always-nil task slot); batch continues, consuming its version (FDB-sanctioned). Server accept keeps only byte-free guards. Boundary matrix ported as a table-driven pipeline test + end-to-end integration test. Awaiting stack cold audit.",
       "timestamp": "2026-08-20T15:15:14Z"
+    },
+    {
+      "text": "Atomics-on-system-keys ban DROPPED from the stack (user review + FDB check): FDB never rejects atomics on system keys - isMetadataMutation admits only SetValue/ClearRange, so atomics never enter the metadata stream and no metadata view can diverge from one; Bedrock's metadata_mutation?/1 is the identical predicate, so the structural defense already exists. FDB even uses atomics legitimately on non-metadata system keys (backup/DR in \\xff\\x02), which the ban would have forbidden. Deleted: {:atomic_on_system_key} error tuple, validator clause, Repo classification branch, tests. Atomics now bounded like any other mutation. Lesson recorded: guard only hazards the structure does not already preclude.",
+      "timestamp": "2026-08-20T15:50:39Z"
     }
   ],
   "priority": 2,
   "status": "closed",
   "title": "Move proxy keyspace validation off the serialized accept loop",
   "type": "task",
-  "updated_at": "2026-08-20T15:27:28Z"
+  "updated_at": "2026-08-20T15:50:39Z"
 }

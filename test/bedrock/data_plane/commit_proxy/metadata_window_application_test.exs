@@ -106,17 +106,6 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     assert updated.applied_version == v(2)
   end
 
-  test "overlapping windows apply idempotently: entries at or below the applied version are dropped" do
-    e1 = {v(1), [log_set("log_a")]}
-    e2 = {v(2), [log_set("log_b")]}
-
-    {updated, _routing} = apply_in_order(state(), 1, v(1), {nil, v(1), [e1]})
-    {updated, routing} = apply_in_order(updated, 2, v(2), {nil, v(2), [e1, e2]})
-
-    assert routing.log_map == %{0 => "log_a", 1 => "log_b"}
-    assert updated.applied_version == v(2)
-  end
-
   test "applied version advances to the window's to_version, not just the last entry's version" do
     # The window covers through v(3) even though the last mutation is at v(1);
     # acking v(3) lets the resolver prune fully.
@@ -145,14 +134,6 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
 
     assert {:metadata_coverage_gap, _} =
              catch_exit(Server.handle_call({:apply_metadata_and_route, 1, v(6), {v(5), v(6), []}}, from, state()))
-  end
-
-  test "a nil window advances the chain without touching metadata" do
-    {updated, routing} = apply_in_order(state(), 1, v(1), nil)
-
-    assert updated.routed_seq == 1
-    assert updated.applied_version == nil
-    assert routing.log_map == %{}
   end
 
   test "the chain is keyed on the proxy-local sequence, not sequencer version numbering" do

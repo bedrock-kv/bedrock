@@ -91,7 +91,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       resolver_fn = fn ref, 1, @last_commit_version, @commit_version, transactions, metadata, _opts ->
         send(test_pid, {:resolved, ref, transactions, metadata})
-        {:ok, [], nil}
+        {:ok, [], Support.tiling_window(@last_commit_version, @commit_version)}
       end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
@@ -111,8 +111,11 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         ])
 
       resolver_fn = fn
-        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [0], nil}
-        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [1], nil}
+        :resolver_a, _epoch, last, commit, _txns, _metadata, _opts ->
+          {:ok, [0], Support.tiling_window(last, commit)}
+
+        :resolver_b, _epoch, last, commit, _txns, _metadata, _opts ->
+          {:ok, [1], Support.tiling_window(last, commit)}
       end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
@@ -130,7 +133,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
           {reply_fn(self(), :tx1), encode_tx("zebra", "v1")}
         ])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
 
@@ -148,7 +153,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         ])
 
       resolver_fn = fn
-        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil}
+        :resolver_a, _epoch, last, commit, _txns, _metadata, _opts -> {:ok, [], Support.tiling_window(last, commit)}
         :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:error, :resolver_crashed}
       end
 
@@ -172,9 +177,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       batch = batch_with([{reply_fn(test_pid, :tx0), metadata_tx}])
 
-      resolver_fn = fn ref, _epoch, _last, _commit, _txns, metadata_per_tx, _opts ->
+      resolver_fn = fn ref, _epoch, last, commit, _txns, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_at, ref, metadata_per_tx})
-        {:ok, [], nil}
+        {:ok, [], Support.tiling_window(last, commit)}
       end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
@@ -217,19 +222,18 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       assert_receive {:committed_window, {^from90, ^to96, []}}
     end
 
-    test "merged windows claim the weakest coverage and AND verdicts per transaction" do
+    test "merged windows AND verdicts per transaction across identical bounds" do
       test_pid = self()
       v = &Version.from_integer/1
       meta_a = [{:set, <<0xFF, "a">>, "1"}]
       meta_b = [{:set, <<0xFF, "b">>, "2"}]
 
-      # v(95) carries two metadata transactions; the second is vetoed at
-      # resolver_b only. resolver_a claims coverage through v(99), resolver_b
-      # through v(96): the merged window claims the weakest (min) coverage
-      # and truncates entries beyond it.
+      # Resolvers run in version lockstep, so windows to one proxy carry
+      # identical bounds; the merge is pure verdict combination. The second
+      # transaction at v(95) is vetoed at resolver_b only - the AND vetoes.
       resolver_fn = fn
         :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts ->
-          {:ok, [], {v.(90), v.(99), [{v.(95), [{meta_a, true}, {meta_b, true}]}, {v.(98), [{meta_b, true}]}]}}
+          {:ok, [], {v.(90), v.(96), [{v.(95), [{meta_a, true}, {meta_b, true}]}]}}
 
         :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts ->
           {:ok, [], {v.(90), v.(96), [{v.(95), [{meta_a, true}, {meta_b, false}]}]}}
@@ -248,6 +252,28 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       to96 = v.(96)
       v95 = v.(95)
       assert_receive {:committed_window, {^from90, ^to96, [{^v95, ^meta_a}]}}
+    end
+
+    test "diverged window bounds fail the batch rather than guess" do
+      # Exact windows to one proxy must carry identical bounds from every
+      # resolver; a mismatch means the resolvers disagree about history.
+      v = &Version.from_integer/1
+
+      resolver_fn = fn
+        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(99), []}}
+
+        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(96), []}}
+      end
+
+      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
+
+      # The raise crashes the finalization task, which kills the linked proxy
+      # into Director recovery - fail-fast, never guess.
+      assert_raise RuntimeError, ~r/windows diverged/, fn ->
+        Finalization.finalize_batch(empty_batch(), opts)
+      end
     end
 
     test "fails the batch when a resolver task exits" do
@@ -277,7 +303,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       batch = batch_with([{reply_fn(self(), :tx0), no_mutations_tx}])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       opts = base_opts(single_layout(), routing_data(), resolver_fn: resolver_fn)
 
@@ -301,7 +329,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       batch = batch_with([{reply_fn(self(), :tx0), hostile_tx}])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       opts = base_opts(single_layout(), routing_data(), resolver_fn: resolver_fn)
 
@@ -323,7 +353,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       batch = batch_with([{reply_fn(self(), :tx0), hostile_tx}])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       opts =
         base_opts(single_layout(), routing_data(%{shard_layout: %{"m" => {0, ""}}}), resolver_fn: resolver_fn)
@@ -349,7 +381,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       batch = batch_with([{reply_fn(self(), :tx0), spanning_tx}])
       test_pid = self()
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       log_push_fn = fn _last, transactions_by_log, _commit, _opts ->
         send(test_pid, {:pushed, transactions_by_log})
@@ -384,7 +418,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       batch = batch_with([{reply_fn(self(), :tx0), atomic_tx}])
       test_pid = self()
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       log_push_fn = fn _last, transactions_by_log, _commit, _opts ->
         send(test_pid, {:pushed, transactions_by_log})
@@ -408,7 +444,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
     batch = batch_with([{reply_fn(self(), :tx0), encode_tx("key", "value")}])
     test_pid = self()
 
-    resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], nil} end
+    resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+      last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+    end
 
     log_push_fn = fn _last, transactions_by_log, _commit, _opts ->
       send(test_pid, {:pushed, transactions_by_log})

@@ -290,12 +290,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     server_pid = self()
     seq = state.batch_seq + 1
 
-    %{
-      epoch: epoch,
-      sequencer: sequencer,
-      resolver_layout: resolver_layout,
-      applied_version: applied_metadata_version
-    } = state
+    %{epoch: epoch, sequencer: sequencer, resolver_layout: resolver_layout} = state
 
     Task.start_link(fn ->
       trace_metadata(trace_meta)
@@ -304,10 +299,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
              epoch: epoch,
              sequencer: sequencer,
              resolver_layout: resolver_layout,
-             # Stable proxy identity (this server, not the per-batch task) plus
-             # the metadata version this proxy has confirmed applying - the
-             # resolver keys its progress and differential windows off this.
-             metadata_ack: {server_pid, applied_metadata_version},
+             # Stable proxy identity (this server, not the per-batch task):
+             # the resolver keys this proxy's exact windows off it.
+             proxy_id: server_pid,
              # Serialized apply-and-route: the server folds this batch's
              # committed metadata into its state in commit-version order and
              # returns the immutable routing snapshot the batch pushes with.
@@ -347,44 +341,28 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     end
   end
 
-  # Folds a resolver metadata window into the proxy's structured metadata AND
-  # its routing data, in one step. Requests are served in commit-version chain
-  # order, but windows still overlap (each covers (from, to] starting at the
-  # version this proxy had confirmed when the batch spawned), so entries at or
-  # below the applied version are dropped before application - which keeps the
-  # non-idempotent parts of routing data (log index assignment) exact.
-  #
-  # A window whose from_version exceeds what this proxy has applied means the
-  # resolver pruned history this proxy never saw (only possible after this
-  # proxy was expired for lagging beyond the retention horizon). Its metadata
-  # can never be completed differentially, so fail fast: the director-driven
-  # recovery rebuilds proxies with full state.
+  # Folds one exact resolver window into the routing view and advances the
+  # applied version. Windows tile per proxy and are applied in batch-sequence
+  # order, so no filtering or overlap tolerance exists here - the tiling
+  # assertion below is the whole protocol contract on this side.
   @spec apply_metadata_window(
           State.t(),
-          {Bedrock.version() | nil, Bedrock.version(), [term()]} | nil
+          {Bedrock.version() | nil, Bedrock.version(), [term()]}
         ) :: State.t() | no_return()
-  defp apply_metadata_window(t, nil), do: t
-
   defp apply_metadata_window(t, {from_version, to_version, entries}) do
-    applied_version = t.applied_version
-
-    if from_version != nil and (applied_version == nil or from_version > applied_version) do
-      exit({:metadata_coverage_gap, %{from_version: from_version, applied_version: applied_version}})
+    # Windows are exact and applied in batch-sequence order, so they tile:
+    # this window's from is precisely what this proxy has applied. A mismatch
+    # means resolver and proxy disagree about history - unrecoverable
+    # differentially, so fail fast into director-driven recovery.
+    if from_version != t.applied_version do
+      exit({:metadata_coverage_gap, %{from_version: from_version, applied_version: t.applied_version}})
     end
 
-    new_entries =
-      if applied_version == nil,
-        do: entries,
-        else: Enum.filter(entries, fn {entry_version, _mutations} -> entry_version > applied_version end)
-
-    routing_data = RoutingData.apply_mutations(t.routing_data, new_entries)
-
-    # The window covers through to_version even when the last entry is older;
-    # acking to_version lets the resolver prune its window fully. Out-of-order
-    # windows keep this monotone.
-    version = if applied_version == nil or to_version > applied_version, do: to_version, else: applied_version
-
-    %{t | applied_version: version, routing_data: routing_data}
+    %{
+      t
+      | applied_version: to_version,
+        routing_data: RoutingData.apply_mutations(t.routing_data, entries)
+    }
   end
 
   @spec reply_fn(GenServer.from()) :: Batch.reply_fn()

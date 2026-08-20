@@ -140,6 +140,18 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   end
 
   @doc """
+  An exact metadata window with no entries that tiles correctly for a proxy
+  whose batches chain from Version.zero(): the first window's from is nil
+  (first contact), every later window's from is the batch's last_version -
+  which equals the proxy's applied version, exactly as the real resolver
+  serves them.
+  """
+  def tiling_window(last_version, commit_version) do
+    from = if last_version == Version.zero(), do: nil, else: last_version
+    {from, commit_version, []}
+  end
+
+  @doc """
   A stand-in for the commit proxy server's serialized apply-and-route step:
   applies the batch's committed window entries to the given routing data and
   returns the snapshot the batch should push with. The window arrives with

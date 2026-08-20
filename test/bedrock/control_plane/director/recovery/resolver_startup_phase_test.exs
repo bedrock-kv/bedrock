@@ -70,7 +70,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
         # Verify child spec structure and start args in one pattern match
         assert %{
                  id: {Server, TestCluster, _key_range, 42},
-                 start: {GenServer, :start_link, [Server, {100, 42, _director, 1000, 6000}]}
+                 start: {GenServer, :start_link, [Server, {100, 42, _director, 1000, 6000, _proxy_count}]}
                } = child_spec
 
         # Verify node assignment (order may vary due to non-deterministic iteration)
@@ -155,7 +155,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
       {_result, _next_phase} = ResolverStartupPhase.execute(recovery_attempt, context)
 
       assert %{
-               start: {GenServer, :start_link, [_, {200, 7, _director, 1000, 6000}]}
+               start: {GenServer, :start_link, [_, {200, 7, _director, 1000, 6000, _proxy_count}]}
              } = Agent.get(agent, & &1)
     end
   end
@@ -173,6 +173,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
 
       context = %{
         resolvers: resolver_descriptors,
+        commit_proxy_count: 1,
         epoch: 1,
         available_nodes: [:node1, :node2, :node3],
         start_supervised_fn: start_supervised_fn,
@@ -196,6 +197,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
     test "handles empty resolver list" do
       context = %{
         resolvers: [],
+        commit_proxy_count: 1,
         epoch: 1,
         available_nodes: [:node1],
         start_supervised_fn: fn _, _ -> {:ok, spawn(fn -> :ok end)} end,
@@ -211,6 +213,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhaseTest do
     test "returns error when no nodes available" do
       context = %{
         resolvers: [ResolverDescriptor.resolver_descriptor("a", {:vacancy, 1})],
+        commit_proxy_count: 1,
         epoch: 1,
         available_nodes: [],
         start_supervised_fn: fn _, _ -> {:ok, spawn(fn -> :ok end)} end,

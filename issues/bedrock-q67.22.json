@@ -7,9 +7,15 @@
   "id": "bedrock-q67.22",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "FDB design audit: mechanism CONFIRMED, mapping REFINED, and the recorded 'only works for system-only-conflict transactions' constraint REFUTED with code - state txs carry unrestricted conflict ranges routed per-shard like any other (CommitProxyServer.actor.cpp:152-217); each resolver conflict-checks only ITS slice (Resolver.actor.cpp:338-359) and records StateTransactionRef(local_verdict, mutations) (:394-401, mutations only at resolver 0); the consuming proxy ANDs verdicts across all resolvers (applyMetadataEffect :1638-1642, alignment asserted :1212-1218). AND of per-slice verdicts IS the exact global verdict: every range is checked by its owner, system histories agree everywhere, non-owners yield trivially-commit. REFINED BEDROCK DESIGN: (a) do NOT broadcast conflict sections - keep sharding as-is; (b) send metadata_per_tx to ALL resolvers in sharded calls; accumulator entries become {version, [{mutations, local_verdict}]} INCLUDING verdict-false entries (absence != veto); (c) merge_metadata_windows: per-(version, tx_index) AND replaces dedup-by-version; window alignment holds (no holds -\u003e settled==last; to_version uniform; ack-driven pruning can never prune a version still in another resolver's window); (d) own-batch metadata applied synchronously from the batch's own merged abort set - full apply (metadata+routing), ack honestly advances to commit version, FDB's applyMetadataToCommittedTransactions split; (e) DELETE: held_metadata_versions, settled_version, withhold_unsettled, apply_metadata_confirms, hold-expiry, insert_sorted, {hold?, confirms} protocol directives, proxy deferred_metadata + confirm re-send. PREREQUISITE (separate PR first): resolver stale-version retry clause (resolver/server.ex:179-194) FABRICATES an all-aborted reply; under verdict relay a lost-then-retried batch would leave commit-verdict entries in windows while clients hear aborted (today: bounded, chain-stall into recovery). Adopt FDB's outstandingBatches reply-replay cache per (proxy, version) (Resolver.actor.cpp:50, :330, :528-537). Phantom-metadata safety argument = version chaining at logs + epoch death, same as FDB.",
+      "timestamp": "2026-08-20T14:47:52Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "Evaluate replacing hold/confirm with FDB's broadcast-system-transactions-to-all-resolvers",
   "type": "task",
-  "updated_at": "2026-08-19T20:34:19Z"
+  "updated_at": "2026-08-20T14:47:52Z"
 }

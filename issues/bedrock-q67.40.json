@@ -3,13 +3,13 @@
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-20T22:39:32Z",
-  "description": "Course item D. The whole-map client projection was an explicitly named at-current-scale divergence; the sharpened arc goal (no large payloads - materializers can number in the thousands) re-opens it. FDB shape (GetKeyServerLocations, CommitProxyInterface.h:442-477, NativeAPI.actor.cpp:1246-1453): request {begin, end, limit(, reverse)}; reply bounded list of {start_key, end_key, tag, materializer_ref} with more?; proxy answers via :gb_trees iterator walk from ceiling(begin) joining materializers[tag] - O(limit log n), no to_list. Client: Link cache becomes a coalescing PARTIAL range tree merged on each fetch; LayoutIndex becomes a range-keyed partial cache whose miss path returns :not_cached (not raise) and triggers routing_fn.(key) -\u003e bounded fetch centered on the key. StorageRacing and above unchanged. Named divergence kept: coarse whole-cache invalidation (vs FDB per-range) - simpler, failures rare; revisit if thrash appears. Reconcile with q67.21 mid-epoch mutation of materializers/ (proxy view stays current via the window pipeline; stale client entries resolve through the existing invalidate+retry).",
+  "description": "Course item D (settled 2026-08-20). Cache-until-failure is already built (Link cache, invalidate-on-routing-shaped-failure) and stays exactly as is. What changes: the miss path stops fetching the WHOLE map (O(shards) - materializers can number in the thousands) and asks a commit proxy for the single covering entry: fetch_routing(key) -\u003e {:ok, {start_key, end_key, tag, materializer_ref}} - the proxy does the ceiling walk over its RoutingData (O(log n), no gb_trees.to_list). Client side: Link cache becomes a coalescing partial range tree merged per fetch; LayoutIndex miss returns :not_cached and triggers routing_fn.(key); builder accumulates fetched ranges locally for its lifetime and hits the Link only on local miss (two-tier - FDB ops share DatabaseContext in-process). Coarse whole-cache invalidation kept (named divergence from FDB's per-range: simpler, failures rare). DEFERRED to the Distributor era (q67.21+): client-side keyspace-READ resolution (single key-selector lookup against the metadata shard, possibly with the materializer ref denormalized into the shard entry - viable in Bedrock because refs are name-based, not endpoint-based, so ref churn equals assignment churn). Blocked on metadata-shard availability: today exactly one tag-0 materializer serves the system shard, and FDB's answer to 'who serves metadata questions' is N proxies each holding decoded state - concentrating cluster routing traffic on one materializer regresses that. The Distributor's replicated coverage + healing is the substrate; decide the final resolution channel there.",
   "id": "bedrock-q67.40",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
   "status": "open",
-  "title": "Bounded routing lookups: fetch_routing takes {begin, end, limit}; coalescing partial cache",
+  "title": "By-key routing resolution: proxies answer the covering entry, not the whole map",
   "type": "task",
-  "updated_at": "2026-08-20T22:39:32Z"
+  "updated_at": "2026-08-20T23:29:59Z"
 }

@@ -31,11 +31,15 @@
     {
       "text": "Distributor prerequisite now tracked as bedrock-q67.21 (port from phase-a with keyspace-mutation publication per the FDB MoveKeys/ApplyMetadataMutation model; PR #97 closed). This ticket and bedrock-q67.21 land in coordination: q67.9 owns the client read path + tsl_updated deletion, bedrock-q67.21 owns the coverage writer + healing loop.",
       "timestamp": "2026-08-19T20:24:13Z"
+    },
+    {
+      "text": "Reassessment 2026-08-20, post trim campaign (stacks #161/#166 collapsed into the integration branch): (1) The 'verify wiring/parse/merge + integration test' scope is DONE via q67.20 and superseded by better machinery - converged verdicts (q67.22), exact per-proxy window relay (q67.33), serialized apply-then-route (q67.24). Stale references in this ticket: metadata_merge_fn and the proxy MetadataAccumulator option no longer exist. (2) The open design choice 'clients read map from metadata shard or proxy MetadataAccumulator' is effectively settled by FDB + the trims: FDB serves GetKeyServerLocations FROM COMMIT PROXIES out of keyInfo (CommitProxyServer.actor.cpp:3063-3097), the commit-stream-fed view; Bedrock's keyInfo analogue is RoutingData - alive, immutable, exact-relay-fed. Read path = client asks a proxy, proxy replies with its immutable RoutingData snapshot (O(1) on BEAM). The deleted structured Metadata store was never the right vehicle; the metadata-shard read survives only as the q67.23 bootstrap seed. (3) Remaining scope here: client read path via proxy snapshot + invalidate-and-reread on staleness; delete steady-state tsl_updated broadcast + TSL shard fields; coordinate with q67.21 (coverage writer). (4) Blockers concretely: q67.20 closes when #152 lands; q67.23 awaits confirmation of the recorded seeded-recover_from proposal (now nearly free - snapshot is plain data, apply-then-use gives the epoch's first commit self-routing); q67.21 gates only the writer half - the read path can start the day #152 lands.",
+      "timestamp": "2026-08-20T18:02:30Z"
     }
   ],
   "priority": 3,
   "status": "open",
   "title": "Phase B headline: shard map out of TSL into system keys; retire TSL-delta channel",
   "type": "task",
-  "updated_at": "2026-08-19T22:13:28Z"
+  "updated_at": "2026-08-20T18:02:30Z"
 }

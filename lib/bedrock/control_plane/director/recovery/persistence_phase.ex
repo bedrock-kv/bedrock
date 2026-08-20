@@ -212,18 +212,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Creates materializer_key(tag) -> {worker_id, node} entries (strings; the
-  # reader derives the callable ref). Gated like shard_keys: an empty ref map
-  # means shard management is not active, so existing entries are untouched.
+  # reader derives the callable ref). Gated like shard_keys, on the same
+  # INPUT: shard_materializers absent/empty means shard management is not
+  # active, so existing entries are untouched. When active, the prefix is
+  # cleared even if no pid inverts to a service record - the keyspace and
+  # the unlock seed must agree, and the seed derives from the same refs.
   @spec build_materializer_keys(Tx.t(), TransactionSystemLayout.t()) :: Tx.t()
   defp build_materializer_keys(tx, transaction_system_layout) do
-    case TransactionSystemLayout.materializer_refs(transaction_system_layout) do
-      refs when map_size(refs) == 0 ->
+    case Map.get(transaction_system_layout, :shard_materializers) do
+      nil ->
         tx
 
-      refs ->
+      materializers when map_size(materializers) == 0 ->
+        tx
+
+      _active ->
         tx = clear_prefix(tx, SystemKeys.materializers_prefix())
 
-        Enum.reduce(refs, tx, fn {tag, {worker_id, node}}, tx ->
+        transaction_system_layout
+        |> TransactionSystemLayout.materializer_refs()
+        |> Enum.reduce(tx, fn {tag, {worker_id, node}}, tx ->
           Tx.set(tx, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node))
         end)
     end

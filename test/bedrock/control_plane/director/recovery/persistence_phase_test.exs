@@ -137,6 +137,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
              end)
     end
 
+    test "active shard management with zero matching service records still clears the family" do
+      # Keyspace and seed must agree: the seed would be empty, so the
+      # keyspace must end empty too - the clear fires even with no sets.
+      layout = mock_transaction_system_layout()
+      layout = Map.update!(layout, :services, &Map.drop(&1, ["wkr_sys", "wkr_user"]))
+
+      recovery_attempt = Map.put(base_recovery_attempt(), :transaction_system_layout, layout)
+      mutations = captured_system_mutations(recovery_attempt)
+
+      prefix = SystemKeys.materializers_prefix()
+      {clear_start, clear_end} = KeyRange.from_prefix(prefix)
+
+      assert Enum.any?(mutations, &match?({:clear_range, ^clear_start, ^clear_end}, &1))
+
+      refute Enum.any?(mutations, fn
+               {:set, key, _} -> String.starts_with?(key, prefix)
+               _ -> false
+             end)
+    end
+
     test "a materializer pid without a service record is skipped, not invented" do
       layout = mock_transaction_system_layout()
       orphan = spawn(fn -> Process.sleep(:infinity) end)

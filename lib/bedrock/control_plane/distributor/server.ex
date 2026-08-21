@@ -3,6 +3,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   use GenServer
 
   alias Bedrock.ControlPlane.Distributor.Placeholder
+  alias Bedrock.ControlPlane.Distributor.Recruitment
   alias Bedrock.ControlPlane.Distributor.State
   alias Bedrock.ControlPlane.Distributor.Telemetry
   alias Bedrock.ControlPlane.Distributor.Transactions
@@ -65,7 +66,9 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       director_monitor: Process.monitor(director),
       deps: deps,
       poll_interval_ms: Keyword.get(opts, :poll_interval_ms, @poll_interval_ms),
-      placeholder_start_fn: Keyword.get(opts, :placeholder_start_fn)
+      placeholder_start_fn: Keyword.get(opts, :placeholder_start_fn),
+      recruitment_ctx: Keyword.get(opts, :recruitment_ctx),
+      backoff_ms: Keyword.get(opts, :backoff_ms, 5_000)
     }
 
     {:ok, state, {:continue, :take_lock}}
@@ -115,8 +118,9 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   # Coverage demand from the placeholder: if the snapshot already names
   # a live assignment (a race between park and publish), hand the
-  # placeholder the covered ref so it drains; otherwise record the
-  # pending demand — recruitment consumes it (bedrock-q67.21.4).
+  # placeholder the covered ref so it drains; otherwise recruit —
+  # demand-driven, deduped by the in-flight set, damped by per-tag
+  # backoff (the placeholder re-demands after a coverage_failed shed).
   @impl true
   def handle_cast({:coverage_demand, tag}, %State{} = t) do
     Telemetry.emit_coverage_demand(t.cluster, tag)
@@ -127,7 +131,30 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
         {:noreply, t}
 
       _uncovered_or_placeholder ->
-        {:noreply, %{t | pending_demands: MapSet.put(t.pending_demands, tag)}}
+        {:noreply, t |> Map.update!(:pending_demands, &MapSet.put(&1, tag)) |> maybe_recruit(tag)}
+    end
+  end
+
+  # Recruitment runs in a task (the server must keep polling and
+  # answering demand); the result serializes back through this message.
+  # Success publishes the assignment under the CHECK fence from the
+  # server process — one fence evaluator, no concurrent same-owner
+  # commits from this distributor. An aborted-into-superseded publish
+  # cedes AND removes the orphan (the recruit was never fenced into the
+  # family; commit abort is the orphan-cleanup trigger).
+  @impl true
+  def handle_info({:recruitment_complete, tag, result}, %State{} = t) do
+    t = %{t | recruiting: MapSet.delete(t.recruiting, tag)}
+    # The task's DOWN (normal) follows; the ref entry is cleaned there.
+
+    case result do
+      {:ok, pid, node, worker_id} ->
+        publish_recruit(t, tag, pid, node, worker_id)
+
+      {:error, reason} ->
+        Logger.warning("Bedrock distributor (epoch #{t.epoch}): recruitment for tag #{tag} failed: #{inspect(reason)}")
+        Placeholder.notify_coverage_failed(t.placeholder, tag, reason)
+        {:noreply, start_backoff(t, tag)}
     end
   end
 
@@ -150,6 +177,21 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # recovery in progress, and the next epoch's director recruits the
   # next distributor.
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %State{director_monitor: ref} = t), do: {:stop, :normal, t}
+
+  # Recruit-task containment: a normal exit follows its completion
+  # message (just clean the ref); an abnormal exit that beat any
+  # completion synthesizes a failure so the tag leaves the in-flight set
+  # and the placeholder can re-demand.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %State{} = t) when is_map_key(t.recruit_task_refs, ref) do
+    {tag, refs} = Map.pop(t.recruit_task_refs, ref)
+    t = %{t | recruit_task_refs: refs}
+
+    if reason != :normal and MapSet.member?(t.recruiting, tag) do
+      handle_info({:recruitment_complete, tag, {:error, {:recruit_task_crashed, reason}}}, t)
+    else
+      {:noreply, t}
+    end
+  end
 
   # A crashed placeholder restarts under the SAME registered name on the
   # same node, so the committed placeholder refs stay valid — no
@@ -212,6 +254,91 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   defp default_start_placeholder(opts) do
     %{start: {m, f, a}} = Placeholder.Server.child_spec(opts)
     apply(m, f, a)
+  end
+
+  defp maybe_recruit(%State{recruitment_ctx: nil} = t, _tag), do: t
+
+  defp maybe_recruit(%State{} = t, tag) do
+    cond do
+      MapSet.member?(t.recruiting, tag) -> t
+      in_backoff?(t, tag) -> t
+      true -> start_recruitment(t, tag)
+    end
+  end
+
+  # spawn_monitor, not a bare task: a crashed recruit task that never
+  # sends its completion would otherwise leave the tag in the in-flight
+  # set forever — unrecruitable for the rest of the epoch. The DOWN
+  # handler converts an abnormal exit into a synthetic failed completion.
+  defp start_recruitment(%State{} = t, tag) do
+    server = self()
+    ctx = t.recruitment_ctx
+
+    {_pid, ref} =
+      spawn_monitor(fn ->
+        send(server, {:recruitment_complete, tag, Recruitment.recruit(tag, ctx)})
+      end)
+
+    %{t | recruiting: MapSet.put(t.recruiting, tag), recruit_task_refs: Map.put(t.recruit_task_refs, ref, tag)}
+  end
+
+  defp publish_recruit(%State{} = t, tag, pid, node, worker_id) do
+    node_string = Atom.to_string(node)
+    mutation = {:set, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node_string)}
+
+    case Transactions.commit_checked(t.lock, t.deps, [mutation]) do
+      :ok ->
+        Placeholder.notify_covered(t.placeholder, tag, {t.cluster.otp_name_for_worker(worker_id), node})
+
+        refs = Map.put(t.snapshot.materializer_refs, tag, {worker_id, node_string})
+
+        {:noreply,
+         %{
+           t
+           | snapshot: %{t.snapshot | materializer_refs: refs},
+             pending_demands: MapSet.delete(t.pending_demands, tag)
+         }}
+
+      {:error, :superseded} ->
+        # The READ verdict refused before any commit was attempted: this
+        # recruit was definitively never fenced into the family — remove
+        # the orphan and cede.
+        Recruitment.remove_orphaned_worker(worker_id, node, t.recruitment_ctx)
+        Logger.info("Bedrock distributor (epoch #{t.epoch}): superseded publishing tag #{tag}; ceding")
+        {:stop, :normal, t}
+
+      {:error, reason} ->
+        # Removal is destruction and demands an unambiguous verdict. An
+        # exhausted ABORT and a failed READ are definitive (nothing
+        # committed): the worker is a true orphan. A commit TIMEOUT is
+        # not — the commit may have landed, and removing the worker would
+        # durably name a deleted worker in the keyspace: an unhealable
+        # black hole until the next recovery. Leave the ambiguous case
+        # running; its params carry the shard assignment, so healing and
+        # the next recovery's re-adoption can reconcile it either way.
+        if commit_definitely_not_landed?(reason) do
+          Recruitment.remove_orphaned_worker(worker_id, node, t.recruitment_ctx)
+        end
+
+        Placeholder.notify_coverage_failed(t.placeholder, tag, reason)
+        _ = pid
+        {:noreply, start_backoff(t, tag)}
+    end
+  end
+
+  defp commit_definitely_not_landed?({:lock_commit_failed, :aborted}), do: true
+  defp commit_definitely_not_landed?({:lock_read_failed, _}), do: true
+  defp commit_definitely_not_landed?({:read_version_failed, _}), do: true
+  defp commit_definitely_not_landed?(_ambiguous), do: false
+
+  defp start_backoff(%State{} = t, tag),
+    do: %{t | backoff: Map.put(t.backoff, tag, System.monotonic_time(:millisecond) + t.backoff_ms)}
+
+  defp in_backoff?(%State{} = t, tag) do
+    case Map.get(t.backoff, tag) do
+      nil -> false
+      until -> System.monotonic_time(:millisecond) < until
+    end
   end
 
   defp callable_ref(cluster, worker_id, node) do

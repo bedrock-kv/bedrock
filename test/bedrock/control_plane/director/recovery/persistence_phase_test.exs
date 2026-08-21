@@ -11,16 +11,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
 
-  # Shared test data setup: the TSL is wiring only; shard topology rides
-  # the recovery attempt (and from there the keyspace).
-  defp mock_transaction_system_layout(services) do
+  # Shared test data setup: the TSL is wiring only (no membership map);
+  # shard topology and service records ride the recovery attempt (and
+  # from there the keyspace).
+  defp mock_transaction_system_layout do
     %{
       epoch: 1,
       sequencer: self(),
       proxies: [self()],
       resolvers: [{<<0>>, self()}],
-      logs: %{"log_1" => [1, 2]},
-      services: services
+      logs: %{"log_1" => [1, 2]}
     }
   end
 
@@ -28,26 +28,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     mat_sys = spawn(fn -> Process.sleep(:infinity) end)
     mat_user = spawn(fn -> Process.sleep(:infinity) end)
 
-    services = %{
-      "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
-      "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}},
-      "wkr_user" => %{status: {:up, mat_user}, kind: :materializer, last_seen: {:wkr_user_name, node()}}
-    }
-
     recovery_attempt()
     |> with_sequencer(self())
     |> with_proxies([self()])
     |> with_resolvers([{<<0>>, self()}])
     |> with_logs(%{"log_1" => [1, 2]})
     |> with_transaction_services(%{
-      "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}}
+      "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
+      "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}},
+      "wkr_user" => %{status: {:up, mat_user}, kind: :materializer, last_seen: {:wkr_user_name, node()}}
     })
     |> Map.put(:shard_layout, %{
       <<0xFF>> => {1, <<>>},
       <<0xFF, 0xFF>> => {0, <<0xFF>>}
     })
     |> Map.put(:shard_materializers, %{0 => mat_sys, 1 => mat_user})
-    |> Map.put(:transaction_system_layout, mock_transaction_system_layout(services))
+    |> Map.put(:transaction_system_layout, mock_transaction_system_layout())
   end
 
   describe "execute/2" do
@@ -138,7 +134,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       recovery_attempt =
         update_in(
           base_recovery_attempt(),
-          [Access.key!(:transaction_system_layout), :services],
+          [Access.key!(:transaction_services)],
           &Map.drop(&1, ["wkr_sys", "wkr_user"])
         )
 

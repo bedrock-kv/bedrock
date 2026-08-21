@@ -169,21 +169,46 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   describe "ghost_directory_ids/2" do
-    test "selects exactly the directory entries the layout does not reference" do
+    test "selects exactly the directory entries the completed recovery does not reference" do
+      live_mat_pid = spawn(fn -> Process.sleep(:infinity) end)
+
       services = %{
         "live_log" => {:log, {:a, :node1}},
         "live_mat" => {:materializer, {:b, :node1}},
         "ghost" => {:log, {:c, :dead@nowhere}}
       }
 
-      layout = %{services: %{"live_log" => %{}, "live_mat" => %{}}}
+      completed = %{
+        logs: %{"live_log" => []},
+        shard_materializers: %{0 => live_mat_pid},
+        transaction_services: %{
+          "live_log" => %{kind: :log, status: {:up, self()}},
+          "live_mat" => %{kind: :materializer, status: {:up, live_mat_pid}}
+        }
+      }
 
-      assert Recovery.ghost_directory_ids(services, layout) == ["ghost"]
+      assert Recovery.ghost_directory_ids(services, completed) == ["ghost"]
     end
 
-    test "an invalid layout selects nothing" do
-      assert Recovery.ghost_directory_ids(%{"x" => {:log, {:a, :n}}}, %{}) == []
-      assert Recovery.ghost_directory_ids(%{"x" => {:log, {:a, :n}}}, nil) == []
+    test "a locked-but-inactive materializer is not referenced — it is a ghost candidate" do
+      active_pid = spawn(fn -> Process.sleep(:infinity) end)
+      inactive_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      services = %{
+        "active_mat" => {:materializer, {:a, :node1}},
+        "inactive_mat" => {:materializer, {:b, :node1}}
+      }
+
+      completed = %{
+        logs: %{},
+        shard_materializers: %{0 => active_pid},
+        transaction_services: %{
+          "active_mat" => %{kind: :materializer, status: {:up, active_pid}},
+          "inactive_mat" => %{kind: :materializer, status: {:up, inactive_pid}}
+        }
+      }
+
+      assert Recovery.ghost_directory_ids(services, completed) == ["inactive_mat"]
     end
   end
 
@@ -413,16 +438,15 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # Should complete without errors
       recovery_attempt =
         recovery_attempt(%{
-          transaction_system_layout: %{
-            sequencer: spawn(fn -> :ok end),
-            proxies: [spawn(fn -> :ok end), spawn(fn -> :ok end)],
-            resolvers: [{"start", spawn(fn -> :ok end)}],
-            services: %{
-              "log_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
-              "log_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
-              "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer},
-              "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer}
-            }
+          sequencer: spawn(fn -> :ok end),
+          proxies: [spawn(fn -> :ok end), spawn(fn -> :ok end)],
+          resolvers: [{"start", spawn(fn -> :ok end)}],
+          logs: %{"log_service_1" => [], "log_service_2" => []},
+          transaction_services: %{
+            "log_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
+            "log_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
+            "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer},
+            "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer}
           }
         })
 

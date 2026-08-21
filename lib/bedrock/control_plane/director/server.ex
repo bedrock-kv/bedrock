@@ -21,11 +21,9 @@ defmodule Bedrock.ControlPlane.Director.Server do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director.State
-  alias Bedrock.Service.Worker
 
   require Logger
 
@@ -179,12 +177,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   @spec now() :: DateTime.t()
   defp now, do: DateTime.utc_now()
-
-  @spec get_services_from_transaction_system_layout(TransactionSystemLayout.t()) ::
-          %{Worker.id() => ServiceDescriptor.t()}
-  def get_services_from_transaction_system_layout(%{services: services}), do: services || %{}
-
-  def get_services_from_transaction_system_layout(_), do: %{}
 
   @spec add_services_to_directory(State.t(), [{String.t(), atom(), {atom(), node()}}]) ::
           State.t()

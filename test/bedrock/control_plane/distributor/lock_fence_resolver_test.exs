@@ -107,4 +107,30 @@ defmodule Bedrock.ControlPlane.Distributor.LockFenceResolverTest do
 
     assert aborted == []
   end
+
+  test "sequential same-owner publishes do not conflict with each other — the write key is not read" do
+    {lock, _} = Lock.take(nil, nil)
+
+    check = fn deps ->
+      deps = %{
+        deps
+        | get_fn: fn key, _v ->
+            if String.ends_with?(key, "owner"), do: {:ok, lock.my_owner}, else: {:error, :not_found}
+          end
+      }
+
+      :ok = Transactions.commit_checked(lock, deps, [{:set, SystemKeys.materializer_key(1), "payload"}])
+    end
+
+    first = encoded_fenced(check)
+    second = encoded_fenced(check)
+
+    # If the fence read-conflicted the write key unconditionally, the
+    # first publish's write-key touch (committed at 20 > read version 10)
+    # would abort the second. The steady-state branch reads only the
+    # owner key, so same-owner publishes serialize without conflicting.
+    {conflicts, []} = ConflictResolution.resolve(Conflicts.new(Version.zero()), [first], Version.from_integer(20))
+    {_conflicts, aborted} = ConflictResolution.resolve(conflicts, [second], Version.from_integer(21))
+    assert aborted == []
+  end
 end

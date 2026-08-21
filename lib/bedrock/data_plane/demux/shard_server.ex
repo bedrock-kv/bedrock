@@ -321,8 +321,11 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     # No best-effort flush: the WAL owns shutdown durability, and a partial
     # flush would produce a non-deterministic, un-cut chunk. Stopping the
     # persistence worker synchronously guarantees no chunk write can land
-    # after this server is gone (recovery deletes chunks right after
-    # tearing the Demux tree down).
+    # after this server is gone. Chunks are never deleted — deterministic
+    # replay re-produces byte-identical chunks (see shale/recovery.ex),
+    # and the shard-keyed, epoch-spanning chunk history is what lets a
+    # recruited or snapshot-restored materializer pull from arbitrarily
+    # far back.
     stop_persistence_worker(state.persistence_worker)
     :ok
   end

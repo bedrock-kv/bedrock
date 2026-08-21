@@ -129,4 +129,14 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
 
     assert log =~ "Failed to remove orphaned materializer worker"
   end
+
+  test "an empty replica set fails loudly before any worker exists — never a silent black hole" do
+    ctx =
+      ctx(%{
+        log_refs: %{},
+        create_worker_fn: fn _f, _i, _k, _o -> flunk("must not create a worker with no pull sources") end
+      })
+
+    assert {:error, {:no_pull_sources, 7}} = Recruitment.recruit(7, ctx)
+  end
 end

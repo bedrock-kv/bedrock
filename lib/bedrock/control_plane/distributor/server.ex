@@ -145,6 +145,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   @impl true
   def handle_info({:recruitment_complete, tag, result}, %State{} = t) do
     t = %{t | recruiting: MapSet.delete(t.recruiting, tag)}
+    # The task's DOWN (normal) follows; the ref entry is cleaned there.
 
     case result do
       {:ok, pid, node, worker_id} ->
@@ -176,6 +177,21 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # recovery in progress, and the next epoch's director recruits the
   # next distributor.
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %State{director_monitor: ref} = t), do: {:stop, :normal, t}
+
+  # Recruit-task containment: a normal exit follows its completion
+  # message (just clean the ref); an abnormal exit that beat any
+  # completion synthesizes a failure so the tag leaves the in-flight set
+  # and the placeholder can re-demand.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %State{} = t) when is_map_key(t.recruit_task_refs, ref) do
+    {tag, refs} = Map.pop(t.recruit_task_refs, ref)
+    t = %{t | recruit_task_refs: refs}
+
+    if reason != :normal and MapSet.member?(t.recruiting, tag) do
+      handle_info({:recruitment_complete, tag, {:error, {:recruit_task_crashed, reason}}}, t)
+    else
+      {:noreply, t}
+    end
+  end
 
   # A crashed placeholder restarts under the SAME registered name on the
   # same node, so the committed placeholder refs stay valid — no
@@ -250,16 +266,20 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     end
   end
 
+  # spawn_monitor, not a bare task: a crashed recruit task that never
+  # sends its completion would otherwise leave the tag in the in-flight
+  # set forever — unrecruitable for the rest of the epoch. The DOWN
+  # handler converts an abnormal exit into a synthetic failed completion.
   defp start_recruitment(%State{} = t, tag) do
     server = self()
     ctx = t.recruitment_ctx
 
-    {:ok, _pid} =
-      Task.start(fn ->
+    {_pid, ref} =
+      spawn_monitor(fn ->
         send(server, {:recruitment_complete, tag, Recruitment.recruit(tag, ctx)})
       end)
 
-    %{t | recruiting: MapSet.put(t.recruiting, tag)}
+    %{t | recruiting: MapSet.put(t.recruiting, tag), recruit_task_refs: Map.put(t.recruit_task_refs, ref, tag)}
   end
 
   defp publish_recruit(%State{} = t, tag, pid, node, worker_id) do
@@ -280,19 +300,36 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
          }}
 
       {:error, :superseded} ->
-        # A newer owner exists: this recruit was never fenced into the
-        # family — remove the orphan and cede.
+        # The READ verdict refused before any commit was attempted: this
+        # recruit was definitively never fenced into the family — remove
+        # the orphan and cede.
         Recruitment.remove_orphaned_worker(worker_id, node, t.recruitment_ctx)
         Logger.info("Bedrock distributor (epoch #{t.epoch}): superseded publishing tag #{tag}; ceding")
         {:stop, :normal, t}
 
       {:error, reason} ->
-        Recruitment.remove_orphaned_worker(worker_id, node, t.recruitment_ctx)
+        # Removal is destruction and demands an unambiguous verdict. An
+        # exhausted ABORT and a failed READ are definitive (nothing
+        # committed): the worker is a true orphan. A commit TIMEOUT is
+        # not — the commit may have landed, and removing the worker would
+        # durably name a deleted worker in the keyspace: an unhealable
+        # black hole until the next recovery. Leave the ambiguous case
+        # running; its params carry the shard assignment, so healing and
+        # the next recovery's re-adoption can reconcile it either way.
+        if commit_definitely_not_landed?(reason) do
+          Recruitment.remove_orphaned_worker(worker_id, node, t.recruitment_ctx)
+        end
+
         Placeholder.notify_coverage_failed(t.placeholder, tag, reason)
         _ = pid
         {:noreply, start_backoff(t, tag)}
     end
   end
+
+  defp commit_definitely_not_landed?({:lock_commit_failed, :aborted}), do: true
+  defp commit_definitely_not_landed?({:lock_read_failed, _}), do: true
+  defp commit_definitely_not_landed?({:read_version_failed, _}), do: true
+  defp commit_definitely_not_landed?(_ambiguous), do: false
 
   defp start_backoff(%State{} = t, tag),
     do: %{t | backoff: Map.put(t.backoff, tag, System.monotonic_time(:millisecond) + t.backoff_ms)}

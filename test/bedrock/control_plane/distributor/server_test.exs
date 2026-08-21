@@ -460,4 +460,103 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       assert log =~ "recruitment for tag 9 failed"
     end
   end
+
+  describe "failure containment" do
+    test "a crashed recruit task synthesizes a failed completion — the tag never wedges" do
+      test_pid = self()
+
+      placeholder =
+        spawn(fn ->
+          receive do
+            {:"$gen_cast", msg} -> send(test_pid, {:placeholder_got, msg})
+          end
+        end)
+
+      {lock, _} = Lock.take(nil, nil)
+
+      t =
+        state(%{},
+          lock: lock,
+          placeholder: placeholder,
+          snapshot: %{shard_layout: %{}, materializer_refs: %{}},
+          recruitment_ctx: %{
+            cluster: __MODULE__,
+            epoch: 3,
+            node_capabilities: %{materializer: [node()]},
+            logs: %{"log_1" => []},
+            log_refs: %{"log_1" => :ref},
+            create_worker_fn: fn _f, _i, _k, _o -> raise "task crash" end
+          }
+        )
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:noreply, t} = Server.handle_cast({:coverage_demand, 9}, t)
+        assert MapSet.member?(t.recruiting, 9)
+        assert map_size(t.recruit_task_refs) == 1
+
+        # The crash arrives as a DOWN; the server must synthesize the
+        # failed completion itself (handler-level: drive the DOWN).
+        assert_receive {:DOWN, ref, :process, _pid, {%RuntimeError{}, _}} = down
+        assert Map.fetch!(t.recruit_task_refs, ref) == 9
+
+        assert {:noreply, t2} = Server.handle_info(down, t)
+        refute MapSet.member?(t2.recruiting, 9)
+        assert t2.recruit_task_refs == %{}
+        assert_receive {:placeholder_got, {:coverage_failed, 9, {:recruit_task_crashed, _}}}
+      end)
+    end
+
+    test "an ambiguous commit failure never removes the worker; a definitive abort does" do
+      test_pid = self()
+      {lock, _} = Lock.take(nil, nil)
+      Process.put(:my_owner, lock.my_owner)
+
+      base_deps = %{
+        get_fn: fn key, _v ->
+          if String.ends_with?(key, "owner"), do: {:ok, Process.get(:my_owner)}, else: {:error, :not_found}
+        end
+      }
+
+      ctx = %{
+        cluster: __MODULE__,
+        epoch: 3,
+        node_capabilities: %{materializer: [node()]},
+        logs: %{},
+        log_refs: %{},
+        remove_worker_fn: fn _f, id, _o ->
+          send(test_pid, {:orphan_removed, id})
+          :ok
+        end
+      }
+
+      base =
+        state(base_deps,
+          lock: lock,
+          placeholder: spawn(fn -> Process.sleep(:infinity) end),
+          snapshot: %{shard_layout: %{}, materializer_refs: %{}},
+          recruitment_ctx: ctx
+        )
+
+      # Ambiguous: the commit timed out — it MAY have landed. Removing
+      # the worker would durably name a deleted worker.
+      ambiguous = %{base | deps: Map.put(base.deps, :commit_fn, fn _p, _e, _t, _o -> {:error, :timeout} end)}
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:noreply, _} =
+                 Server.handle_info({:recruitment_complete, 9, {:ok, self(), node(), "wkr_ambig"}}, ambiguous)
+      end)
+
+      refute_received {:orphan_removed, "wkr_ambig"}
+
+      # Definitive: exhausted aborts mean the commit never landed.
+      definitive = %{base | deps: Map.put(base.deps, :commit_fn, fn _p, _e, _t, _o -> {:error, :aborted} end)}
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:noreply, _} =
+                 Server.handle_info({:recruitment_complete, 9, {:ok, self(), node(), "wkr_orphan"}}, definitive)
+      end)
+
+      assert_received {:orphan_removed, "wkr_orphan"}
+    end
+  end
 end

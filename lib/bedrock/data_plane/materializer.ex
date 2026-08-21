@@ -278,6 +278,11 @@ defmodule Bedrock.DataPlane.Materializer do
           | {:error, :newer_epoch_exists}
   defdelegate lock_for_recovery(storage, epoch), to: Worker
 
+  @doc "As `lock_for_recovery/2`, with a bounded call timeout."
+  @spec lock_for_recovery(ref(), Bedrock.epoch(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          {:ok, pid(), recovery_info :: term()} | {:error, :newer_epoch_exists}
+  defdelegate lock_for_recovery(storage, epoch, opts), to: Worker
+
   @doc """
   Unlocks the materializer after recovery is complete. This allows the materializer
   to start accepting new transactions again and continue normal operation.

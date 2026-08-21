@@ -52,10 +52,11 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   @spec recruit(Bedrock.range_tag(), context()) ::
           {:ok, pid(), node(), Worker.id()} | {:error, term()}
   def recruit(tag, context) do
-    with {:ok, node} <- find_materializer_capable_node(context.node_capabilities),
+    with {:ok, sources} <- pull_sources_for_shard(tag, context),
+         {:ok, node} <- find_materializer_capable_node(context.node_capabilities),
          {:ok, worker_ref, worker_id} <- create_materializer_worker(node, tag, context) do
       with {:ok, pid, recovery_info} <- lock_materializer({worker_ref, node}, node, context),
-           :ok <- unlock_and_start_pulling(pid, tag, node, recovery_info, context) do
+           :ok <- unlock_and_start_pulling(pid, node, recovery_info, sources, context) do
         {:ok, pid, node, worker_id}
       else
         {:error, _reason} = error ->
@@ -123,12 +124,18 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
     end
   end
 
-  defp default_lock_materializer(worker, epoch), do: Materializer.lock_for_recovery(worker, epoch)
+  # Bounded, like every other call in the pipeline: a created-but-wedged
+  # worker (stuck mid snapshot download) must surface as a failed
+  # recruitment the caller can shed and back off from, not wedge the
+  # recruit task forever. (Phase-a documented exactly this hazard for
+  # its unbounded lock and bounded it the same way.)
+  defp default_lock_materializer(worker, epoch),
+    do: Materializer.lock_for_recovery(worker, epoch, timeout_in_ms: 30_000)
 
-  defp unlock_and_start_pulling(pid, tag, node, recovery_info, context) do
+  defp unlock_and_start_pulling(pid, node, recovery_info, sources, context) do
     unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/3)
 
-    case unlock_fn.(pid, start_version(recovery_info), pull_sources_for_shard(tag, context)) do
+    case unlock_fn.(pid, start_version(recovery_info), sources) do
       :ok -> :ok
       {:error, reason} -> {:error, {:unlock_failed, reason, node}}
       {:failure, reason, _ref} -> {:error, {:unlock_failed, reason, node}}
@@ -153,15 +160,24 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
 
   # The typed seed: this shard's replica set as {log_id, log_ref} pairs,
   # resolved through the same ShardRouter walk proxies route with and
-  # bootstrap seeds with — the single placement site.
+  # bootstrap seeds with — the single placement site. A materializer
+  # unlocked with an empty replica set would be published as covered yet
+  # never advance a version — fail loudly BEFORE any worker exists
+  # instead of manufacturing a silent black hole.
   defp pull_sources_for_shard(tag, %{logs: logs, log_refs: log_refs}) do
-    tag
-    |> ShardRouter.log_ids_for_tag(ShardRouter.log_map(Map.keys(logs)), max(1, map_size(logs)))
-    |> Enum.flat_map(fn log_id ->
-      case Map.get(log_refs, log_id) do
-        nil -> []
-        ref -> [{log_id, ref}]
-      end
-    end)
+    sources =
+      tag
+      |> ShardRouter.log_ids_for_tag(ShardRouter.log_map(Map.keys(logs)), max(1, map_size(logs)))
+      |> Enum.flat_map(fn log_id ->
+        case Map.get(log_refs, log_id) do
+          nil -> []
+          ref -> [{log_id, ref}]
+        end
+      end)
+
+    case sources do
+      [] -> {:error, {:no_pull_sources, tag}}
+      sources -> {:ok, sources}
+    end
   end
 end

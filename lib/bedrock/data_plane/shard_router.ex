@@ -78,23 +78,48 @@ defmodule Bedrock.DataPlane.ShardRouter do
   end
 
   @doc """
+  The index map for an epoch's logs: index → log id over the sorted ids.
+
+  Both consumers of `log_ids_for_tag/3` build their map here, so the
+  sort and indexing cannot diverge between them.
+  """
+  @spec log_map([Log.id()]) :: %{non_neg_integer() => Log.id()}
+  def log_map(log_ids) do
+    log_ids
+    |> Enum.sort()
+    |> Enum.with_index()
+    |> Map.new(fn {log_id, index} -> {index, log_id} end)
+  end
+
+  @doc """
   The replica set for a shard tag: log ids resolved through `log_map`
-  (index → log id over the epoch's sorted log ids, built once by the
-  topology phase) via the golden-ratio walk.
+  (index → log id over the epoch's sorted log ids — see `log_map/1`)
+  via the golden-ratio walk. Non-integer tags are normalized by hashing,
+  so both consumers agree on the walk's input.
 
   This is the single site for shard→log placement. Commit-proxy mutation
   routing and the director's materializer pull-source seeds both resolve
   through it, so they cannot disagree.
   """
-  @spec log_ids_for_tag(non_neg_integer(), %{non_neg_integer() => Log.id()}, non_neg_integer()) ::
+  @spec log_ids_for_tag(term(), %{non_neg_integer() => Log.id()}, non_neg_integer()) ::
           [Log.id()]
   def log_ids_for_tag(_tag, log_map, _replication_factor) when map_size(log_map) == 0, do: []
 
   def log_ids_for_tag(tag, log_map, replication_factor) do
     tag
+    |> normalize_tag()
     |> get_log_indices(map_size(log_map), replication_factor)
     |> Enum.map(&Map.fetch!(log_map, &1))
   end
+
+  @doc """
+  Normalizes a shard tag for the golden-ratio walk. Production tags are
+  integers; anything else (test fixtures) hashes to one so the walk
+  stays defined — and every consumer normalizes identically.
+  """
+  @spec normalize_tag(term()) :: integer()
+  def normalize_tag(tag) when is_integer(tag), do: tag
+  def normalize_tag(tag), do: :erlang.phash2(tag)
 
   @doc ~S"""
   Looks up the shard tag for a key using ceiling search.

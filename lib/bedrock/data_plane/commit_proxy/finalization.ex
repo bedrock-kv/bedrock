@@ -760,7 +760,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     sorted =
       tagged_mutations_list
       |> Enum.reverse()
-      |> Enum.sort_by(fn {_mutation, tag} -> tag_to_integer(tag) end, &<=/2)
+      |> Enum.sort_by(fn {_mutation, tag} -> ShardRouter.normalize_tag(tag) end, &<=/2)
 
     # 2. Build shard index from sorted list
     shard_index = build_shard_index(sorted)
@@ -781,10 +781,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   defp build_shard_index(sorted_tagged_mutations) do
     sorted_tagged_mutations
-    |> Enum.chunk_by(fn {_mutation, tag} -> tag_to_integer(tag) end)
+    |> Enum.chunk_by(fn {_mutation, tag} -> ShardRouter.normalize_tag(tag) end)
     |> Enum.map(fn chunk ->
       {_mutation, tag} = hd(chunk)
-      {tag_to_integer(tag), length(chunk)}
+      {ShardRouter.normalize_tag(tag), length(chunk)}
     end)
   end
 
@@ -865,24 +865,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           non_neg_integer()
         ) :: %{Log.id() => [term()]}
   defp add_tagged_mutation_to_logs({mutation, tag}, acc, log_map, m) do
-    log_ids = tag |> tag_to_integer() |> ShardRouter.log_ids_for_tag(log_map, m)
+    log_ids = ShardRouter.log_ids_for_tag(tag, log_map, m)
 
     Enum.reduce(log_ids, acc, fn log_id, acc_inner ->
       Map.update!(acc_inner, log_id, &[{mutation, tag} | &1])
     end)
   end
-
-  # Convert tag to integer for golden ratio algorithm
-  # Production code uses integer tags, but tests may use strings
-  @spec tag_to_integer(term()) :: non_neg_integer()
-  defp tag_to_integer(tag) when is_integer(tag), do: tag
-
-  defp tag_to_integer(tag) when is_binary(tag) do
-    # Hash string tags to integers
-    :erlang.phash2(tag)
-  end
-
-  defp tag_to_integer(tag), do: :erlang.phash2(tag)
 
   @spec mutation_to_key_or_range(
           {:set, Bedrock.key(), Bedrock.value()}

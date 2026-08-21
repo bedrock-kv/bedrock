@@ -367,22 +367,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   defp pull_sources_for_shard(shard_tag, recovery_attempt) do
     logs = recovery_attempt.logs
     services = recovery_attempt.transaction_services
+    replica_set = ShardRouter.log_ids_for_tag(shard_tag, ShardRouter.log_map(Map.keys(logs)), max(1, map_size(logs)))
 
-    log_map =
-      logs
-      |> Map.keys()
-      |> Enum.sort()
-      |> Enum.with_index()
-      |> Map.new(fn {log_id, index} -> {index, log_id} end)
+    sources =
+      Enum.flat_map(replica_set, fn log_id ->
+        case Map.get(services, log_id) do
+          %{status: {:up, ref}} -> [{log_id, ref}]
+          _ -> []
+        end
+      end)
 
-    shard_tag
-    |> ShardRouter.log_ids_for_tag(log_map, max(1, map_size(logs)))
-    |> Enum.flat_map(fn log_id ->
-      case Map.get(services, log_id) do
-        %{status: {:up, ref}} -> [{log_id, ref}]
-        _ -> []
-      end
-    end)
+    # Recruitment records every log with an up ref, so a shrunken seed
+    # means the attempt's own bookkeeping disagrees with itself — worth a
+    # trail, since the materializer would wait on the missing replicas
+    # with no director-side symptom.
+    if length(sources) < length(replica_set) do
+      missing = replica_set -- Enum.map(sources, fn {log_id, _ref} -> log_id end)
+      Logger.warning("Pull-source seed for shard #{shard_tag} is missing log refs: #{inspect(missing)}")
+    end
+
+    sources
   end
 
   # Unlock the materializer with its pull sources. The version is the

@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-21T16:55:20Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Resolver stale-window preclusion becomes a named-exit assertion",
   "type": "task",
-  "updated_at": "2026-08-21T16:55:20Z"
+  "updated_at": "2026-08-21T16:55:21Z"
 }

@@ -848,11 +848,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       {:halt, {:error, {:storage_team_coverage_error, key_or_range}}}
     else
       # For each (mutation, tag) pair, find logs and add the tagged mutation
-      n = map_size(log_map)
-
       updated_acc =
         Enum.reduce(tagged_mutations, mutations_acc, fn {split_mutation, tag}, acc ->
-          add_tagged_mutation_to_logs({split_mutation, tag}, acc, log_map, n, m)
+          add_tagged_mutation_to_logs({split_mutation, tag}, acc, log_map, m)
         end)
 
       {:cont, {:ok, updated_acc}}
@@ -864,16 +862,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {term(), non_neg_integer()},
           %{Log.id() => [term()]},
           %{non_neg_integer() => Log.id()},
-          non_neg_integer(),
           non_neg_integer()
         ) :: %{Log.id() => [term()]}
-  defp add_tagged_mutation_to_logs({mutation, tag}, acc, log_map, n, m) do
-    numeric_tag = tag_to_integer(tag)
-
-    log_ids =
-      numeric_tag
-      |> ShardRouter.get_log_indices(n, m)
-      |> Enum.map(&Map.fetch!(log_map, &1))
+  defp add_tagged_mutation_to_logs({mutation, tag}, acc, log_map, m) do
+    log_ids = tag |> tag_to_integer() |> ShardRouter.log_ids_for_tag(log_map, m)
 
     Enum.reduce(log_ids, acc, fn log_id, acc_inner ->
       Map.update!(acc_inner, log_id, &[{mutation, tag} | &1])

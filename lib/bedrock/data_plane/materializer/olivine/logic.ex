@@ -4,7 +4,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   import Bedrock.DataPlane.Materializer.Olivine.State,
     only: [update_mode: 2, update_director_and_epoch: 3, reset_puller: 1, put_puller: 2]
 
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Materializer.Olivine.CompactionWriter.SplitFile, as: SplitFileWriter
@@ -164,14 +163,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     %{t | pending_ingest: nil}
   end
 
-  @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
+  @spec unlock_after_recovery(State.t(), Bedrock.version(), Materializer.pull_sources()) ::
           {:ok, State.t()}
-  def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
+  def unlock_after_recovery(t, durable_version, pull_sources) when is_list(pull_sources) do
     t =
       t
       |> stop_pulling()
       |> rollback_uncommitted(durable_version)
-      |> Map.put(:pull_sources, {logs, services})
+      |> Map.put(:pull_sources, pull_sources)
 
     t
     |> start_pulling_from(resume_position(t))
@@ -224,14 +223,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   defp start_pulling_from(%{shard_num: nil} = t, _start_after), do: t
   defp start_pulling_from(%{pull_sources: nil} = t, _start_after), do: t
 
-  defp start_pulling_from(%{shard_num: shard_num, pull_sources: {logs, services}} = t, start_after) do
+  defp start_pulling_from(%{shard_num: shard_num, pull_sources: sources} = t, start_after) when is_list(sources) do
     # The stream puller: everything — history, recent data, and version
     # currency — comes from this shard's ShardServer. Batches are handed
     # over synchronously; the server withholds the reply for backpressure.
     server = self()
     ingest_fn = fn transactions, kcv -> GenServer.call(server, {:ingest, transactions, kcv}, :infinity) end
 
-    puller = Streaming.start_pulling(shard_num, start_after, logs, services, ingest_fn)
+    puller = Streaming.start_pulling(shard_num, start_after, sources, ingest_fn)
     put_puller(t, puller)
   end
 

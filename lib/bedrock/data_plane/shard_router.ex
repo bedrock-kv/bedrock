@@ -24,6 +24,7 @@ defmodule Bedrock.DataPlane.ShardRouter do
   """
 
   alias Bedrock.DataPlane.CommitProxy.RoutingData
+  alias Bedrock.DataPlane.Log
 
   # Golden ratio constant (2^64 / phi) for good distribution
   @golden 0x9E3779B97F4A7C15
@@ -74,6 +75,25 @@ defmodule Bedrock.DataPlane.ShardRouter do
     else
       h
     end
+  end
+
+  @doc """
+  The replica set for a shard tag: log ids resolved through `log_map`
+  (index → log id over the epoch's sorted log ids, built once by the
+  topology phase) via the golden-ratio walk.
+
+  This is the single site for shard→log placement. Commit-proxy mutation
+  routing and the director's materializer pull-source seeds both resolve
+  through it, so they cannot disagree.
+  """
+  @spec log_ids_for_tag(non_neg_integer(), %{non_neg_integer() => Log.id()}, non_neg_integer()) ::
+          [Log.id()]
+  def log_ids_for_tag(_tag, log_map, _replication_factor) when map_size(log_map) == 0, do: []
+
+  def log_ids_for_tag(tag, log_map, replication_factor) do
+    tag
+    |> get_log_indices(map_size(log_map), replication_factor)
+    |> Enum.map(&Map.fetch!(log_map, &1))
   end
 
   @doc ~S"""

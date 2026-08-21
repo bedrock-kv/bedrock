@@ -114,6 +114,25 @@ defmodule Bedrock.Cluster.Link.Server do
     reply(t, {:ok, t.descriptor})
   end
 
+  # The node-wide routing cache (FDB DatabaseContext locationCache): the Link
+  # only stores; callers fetch from a commit proxy on miss and cast the
+  # result back. No TTL - entries live until invalidated or a wiring push
+  # drops them; staleness is backstopped by the client retry loop.
+  @spec handle_call(:get_routing, GenServer.from(), State.t()) ::
+          {:reply, {:ok, map()} | {:error, :unavailable}, State.t()}
+  def handle_call(:get_routing, _, t) do
+    case t.routing do
+      nil -> reply(t, {:error, :unavailable})
+      routing -> reply(t, {:ok, routing})
+    end
+  end
+
+  @doc false
+  @impl true
+  @spec handle_cast({:cache_routing, map()} | :invalidate_routing, State.t()) :: {:noreply, State.t()}
+  def handle_cast({:cache_routing, routing}, t), do: noreply(%{t | routing: routing})
+  def handle_cast(:invalidate_routing, t), do: noreply(%{t | routing: nil})
+
   @doc false
   @impl true
   @spec handle_info({:timeout, :find_a_live_coordinator}, State.t()) ::
@@ -130,8 +149,9 @@ defmodule Bedrock.Cluster.Link.Server do
       foreman -> send(foreman, {:tsl_updated, new_tsl})
     end
 
-    updated_state = %{t | transaction_system_layout: new_tsl}
-    noreply(updated_state)
+    # A wiring push means a recovery happened: drop the routing cache so
+    # new-epoch wiring can never pair with old-epoch routing.
+    noreply(%{t | transaction_system_layout: new_tsl, routing: nil})
   end
 
   @spec handle_info({:DOWN, reference(), :process, term(), term()}, State.t()) ::

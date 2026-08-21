@@ -9,7 +9,8 @@ defmodule Bedrock.Internal.TransactionBuilder.State do
   @type t :: %__MODULE__{
           state: :valid | :committed | :rolled_back,
           transaction_system_layout: Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
-          layout_index: LayoutIndex.t(),
+          layout_index: LayoutIndex.t() | nil,
+          routing_fn: (-> {:ok, map()} | {:error, atom()}) | nil,
           #
           read_version: Bedrock.version() | nil,
           commit_version: Bedrock.version() | nil,
@@ -22,6 +23,7 @@ defmodule Bedrock.Internal.TransactionBuilder.State do
   defstruct state: nil,
             transaction_system_layout: nil,
             layout_index: nil,
+            routing_fn: nil,
             #
             read_version: nil,
             commit_version: nil,

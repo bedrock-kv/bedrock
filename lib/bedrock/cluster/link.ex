@@ -62,6 +62,32 @@ defmodule Bedrock.Cluster.Link do
   end
 
   @doc """
+  Fetch the node's cached routing projection (shard boundaries plus
+  materializer refs, as served by `Bedrock.DataPlane.CommitProxy.fetch_routing/2`).
+
+  The Link is the node-wide location cache (FDB's `DatabaseContext`
+  locationCache): it only stores. On a miss the caller fetches from a
+  commit proxy and caches the result back with `cache_routing/2`.
+  """
+  @spec fetch_cached_routing(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          {:ok, map()} | {:error, :unavailable | :timeout | :unknown}
+  def fetch_cached_routing(link, opts \\ []), do: call(link, :get_routing, opts[:timeout_in_ms] || 1000)
+
+  @doc "Caches a routing projection fetched from a commit proxy."
+  @spec cache_routing(ref(), map()) :: :ok
+  def cache_routing(link, routing), do: cast(link, {:cache_routing, routing})
+
+  @doc """
+  Drops the cached routing projection.
+
+  Called by the client retry loop when a read fails in a routing-shaped way
+  (unroutable key, dead materializer, unavailable) - a dead pid is exactly
+  what a stale snapshot looks like, so the next transaction refetches.
+  """
+  @spec invalidate_routing(ref()) :: :ok
+  def invalidate_routing(link), do: cast(link, :invalidate_routing)
+
+  @doc """
   Fetch the cluster descriptor.
   This includes the coordinator nodes and other cluster configuration.
   """

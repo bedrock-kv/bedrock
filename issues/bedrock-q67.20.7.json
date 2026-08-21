@@ -3,7 +3,7 @@
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-19T22:04:08Z",
-  "description": "Owed by bedrock-q67.20.2: the bootstrap shard_key decode keeps a narrow binary_to_term(value, [:safe]) fallback (materializer_bootstrap_phase.ex decode_legacy_shard_tag) for clusters that wrote shard keys before Bedrock.SystemKeys.Values. Every completed recovery re-encodes; remove the fallback once no supported release can carry the old encoding (one release after 0.7).",
+  "description": "Owed by bedrock-q67.20.2: the bootstrap shard_key decode keeps a narrow binary_to_term(value, [:safe]) fallback (materializer_bootstrap_phase.ex decode_legacy_shard_tag) for clusters that wrote shard keys before Bedrock.SystemKeys.Values. RETIREMENT MECHANISM CHANGED by bedrock-q67.21.2 (2026-08-21): recovery no longer rewrites shard_keys/ for existing clusters (read-and-heal), so legacy values are NEVER re-encoded by recoveries — the original 'every completed recovery re-encodes; remove one release after 0.7' plan is dead. Retiring the fallback now requires an explicit one-time migration (a system transaction re-encoding legacy entries — natural home: the distributor's first ownership pass, or a dedicated migration step), after which the fallback and the adjacency reconstruction inside it can be deleted. A legacy family stays encoding-uniform meanwhile (nothing rewrites it), which the any-legacy-falls-back-whole rule covers.",
   "id": "bedrock-q67.20.7",
   "labels": [],
   "parent": "bedrock-q67",
@@ -11,5 +11,5 @@
   "status": "open",
   "title": "Remove legacy term_to_binary shard-tag fallback from materializer bootstrap",
   "type": "task",
-  "updated_at": "2026-08-20T18:09:58Z"
+  "updated_at": "2026-08-21T20:41:29Z"
 }

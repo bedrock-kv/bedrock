@@ -213,12 +213,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     build_materializer_keys(tx, recovery_attempt)
   end
 
-  # Creates materializer_key(tag) -> {worker_id, node} entries (strings;
-  # the reader derives the callable ref). Gated like shard_keys, on the
-  # same INPUT: shard_materializers absent/empty means shard management is
-  # not active, so existing entries are untouched. Worker ids ride the
-  # assignment from creation (no services-map inversion), and the unlock
-  # seed derives from the same projection, so keyspace and seed agree.
+  # Creates materializer_key(tag) -> {worker_id, node} entries: the
+  # attempt already carries the refs in the keyspace-value shape (both
+  # strings; the reader derives the callable ref), so they are written
+  # verbatim — the routing-snapshot seed embeds the same map, so keyspace
+  # and seed are one map read twice. Gated like shard_keys, on the same
+  # INPUT: shard_materializers absent/empty means shard management is not
+  # active, so existing entries are untouched.
   @spec build_materializer_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
   defp build_materializer_keys(tx, recovery_attempt) do
     case Map.get(recovery_attempt, :shard_materializers) do
@@ -231,9 +232,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       materializers ->
         tx = clear_prefix(tx, SystemKeys.materializers_prefix())
 
-        materializers
-        |> RecoveryAttempt.materializer_refs()
-        |> Enum.reduce(tx, fn {tag, {worker_id, node}}, tx ->
+        Enum.reduce(materializers, tx, fn {tag, {worker_id, node}}, tx ->
           Tx.set(tx, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node))
         end)
     end

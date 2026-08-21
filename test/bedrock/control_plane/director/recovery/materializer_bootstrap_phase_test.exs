@@ -60,8 +60,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert Map.has_key?(updated_attempt.shard_materializers, 0)
           assert Map.has_key?(updated_attempt.shard_materializers, 1)
 
-          assert {_id, _node, ^system_materializer_pid} =
+          assert {<<_::binary>>, node_string} =
                    updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+
+          assert node_string == Atom.to_string(node())
 
           # Every creation reaches transaction_services — the layout is
           # built from it, and reconciliation retires anything the layout
@@ -129,7 +131,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert {updated_attempt, CommitProxyStartupPhase} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-      assert {_id, _node, ^system_materializer_pid} =
+      assert {<<_::binary>>, <<_::binary>>} =
                updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
 
       # Replication spans all logs today, so every shard's replica set
@@ -229,13 +231,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
           # The system-shard survivor answers the layout query...
-          assert {_id, _node, ^system_pid} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+          assert {"mat_sys", _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
           assert updated_attempt.shard_layout
 
           # ...and every shard in the layout gets its surviving
           # materializer — nothing newly created, nothing orphaned.
-          assert %{0 => {"mat_sys", _, ^system_pid}, 1 => {"mat_user", _, ^user_pid}} =
-                   updated_attempt.shard_materializers
+          assert %{0 => {"mat_sys", _}, 1 => {"mat_user", _}} = updated_attempt.shard_materializers
 
           assert map_size(updated_attempt.shard_materializers) == 2
         end)
@@ -289,8 +290,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         assert {updated_attempt, CommitProxyStartupPhase} =
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-        assert {_id, _node, ^real_pid} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
-        assert %{0 => {"mat_real", _, ^real_pid}} = updated_attempt.shard_materializers
+        assert {"mat_real", _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+        assert %{0 => {"mat_real", _}} = updated_attempt.shard_materializers
         assert map_size(updated_attempt.shard_materializers) == 1
       end)
     end
@@ -334,7 +335,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert {updated_attempt, CommitProxyStartupPhase} =
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-          assert {_id, _node, ^materializer_pid} = updated_attempt.shard_materializers[0]
+          assert {<<_::binary>>, <<_::binary>>} = updated_attempt.shard_materializers[0]
           assert updated_attempt.shard_layout
 
           # The creation is recorded: the layout will reference it, so

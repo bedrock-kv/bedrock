@@ -180,7 +180,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       completed = %{
         logs: %{"live_log" => []},
-        shard_materializers: %{0 => {"live_mat", node(), live_mat_pid}},
+        shard_materializers: %{0 => {"live_mat", Atom.to_string(node())}},
         transaction_services: %{
           "live_log" => %{kind: :log, status: {:up, self()}},
           "live_mat" => %{kind: :materializer, status: {:up, live_mat_pid}}
@@ -210,16 +210,14 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     end
 
     test "an assigned materializer with no services record is still referenced — never pruned" do
-      # Worker ids ride the assignment triple, so the reference set does
+      # Worker ids ride the assignment refs, so the reference set does
       # not depend on the services map at all; a missing record cannot
       # deregister the worker the epoch assigned.
-      assigned_pid = spawn(fn -> Process.sleep(:infinity) end)
-
       services = %{"assigned_mat" => {:materializer, {:a, :node1}}}
 
       completed = %{
         logs: %{},
-        shard_materializers: %{0 => {"assigned_mat", node(), assigned_pid}},
+        shard_materializers: %{0 => {"assigned_mat", Atom.to_string(node())}},
         transaction_services: %{}
       }
 
@@ -237,7 +235,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       completed = %{
         logs: %{},
-        shard_materializers: %{0 => {"active_mat", node(), active_pid}},
+        shard_materializers: %{0 => {"active_mat", Atom.to_string(node())}},
         transaction_services: %{
           "active_mat" => %{kind: :materializer, status: {:up, active_pid}},
           "inactive_mat" => %{kind: :materializer, status: {:up, inactive_pid}}

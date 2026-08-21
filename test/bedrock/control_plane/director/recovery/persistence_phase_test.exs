@@ -24,6 +24,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     }
   end
 
+  defp node_string, do: Atom.to_string(node())
+
   defp base_recovery_attempt do
     mat_sys = spawn(fn -> Process.sleep(:infinity) end)
     mat_user = spawn(fn -> Process.sleep(:infinity) end)
@@ -42,7 +44,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       <<0xFF>> => {1, <<>>},
       <<0xFF, 0xFF>> => {0, <<0xFF>>}
     })
-    |> Map.put(:shard_materializers, %{0 => {"wkr_sys", node(), mat_sys}, 1 => {"wkr_user", node(), mat_user}})
+    |> Map.put(:shard_materializers, %{0 => {"wkr_sys", node_string()}, 1 => {"wkr_user", node_string()}})
     |> Map.put(:transaction_system_layout, mock_transaction_system_layout())
   end
 

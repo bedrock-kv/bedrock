@@ -210,7 +210,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
       shard_layout: shard_layout || %{},
       log_map: log_map,
       log_services: log_services,
-      materializers: RecoveryAttempt.materializer_refs(Map.get(recovery_attempt, :shard_materializers)),
+      materializers: Map.get(recovery_attempt, :shard_materializers) || %{},
       replication_factor: max(1, map_size(logs))
     }
   end

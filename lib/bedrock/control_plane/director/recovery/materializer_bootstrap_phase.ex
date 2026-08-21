@@ -91,7 +91,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         updated_attempt =
           recovery_attempt
           |> Map.put(:shard_layout, shard_layout)
-          |> Map.put(:shard_materializers, shard_materializers)
+          |> Map.put(:shard_materializers, to_materializer_refs(shard_materializers))
           |> Map.update!(:transaction_services, &Map.merge(&1, created_services))
 
         {updated_attempt, CommitProxyStartupPhase}
@@ -100,6 +100,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         Logger.warning("Failed to create materializers for fresh cluster: #{inspect(reason)}")
         {recovery_attempt, {:stalled, {:materializer_creation_failed, reason}}}
     end
+  end
+
+  # The one projection, at the one boundary it belongs: the phase
+  # orchestrates with live pids (lock, unlock, catchup), but the attempt
+  # carries the refs exactly as every reader consumes them — the
+  # keyspace-value shape {worker_id, node}, both strings. The persistence
+  # writer and the routing-snapshot seed embed this map verbatim, so the
+  # seed and the keyspace are the same map read twice; ghost pruning
+  # takes its worker ids from it directly. A pid is phase-local
+  # orchestration state, not a fact any reader needs — a future consumer
+  # that wants one should ask where it lives (the directory, or the
+  # worker), not have it carried speculatively.
+  @spec to_materializer_refs(%{Bedrock.range_tag() => {Worker.id(), node(), pid()}}) ::
+          %{Bedrock.range_tag() => {Worker.id(), String.t()}}
+  defp to_materializer_refs(shard_materializers) do
+    Map.new(shard_materializers, fn {tag, {worker_id, node, _pid}} ->
+      {tag, {worker_id, Atom.to_string(node)}}
+    end)
   end
 
   # Extract unique shard tags from shard_layout
@@ -237,7 +255,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
       updated_attempt =
         recovery_attempt
         |> Map.put(:shard_layout, shard_layout)
-        |> Map.put(:shard_materializers, shard_materializers)
+        |> Map.put(:shard_materializers, to_materializer_refs(shard_materializers))
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
         |> Map.update!(:transaction_services, &Map.merge(&1, all_created))
 

@@ -181,7 +181,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     log_ids = completed_attempt.logs |> Map.keys() |> MapSet.new()
 
     materializer_ids =
-      for {_tag, {worker_id, _node, _pid}} <- completed_attempt.shard_materializers,
+      for {_tag, {worker_id, _node}} <- completed_attempt.shard_materializers,
           into: MapSet.new(),
           do: worker_id
 

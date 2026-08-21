@@ -13,10 +13,23 @@ defmodule Bedrock.SystemKeysTest do
       assert SystemKeys.parse_key(SystemKeys.layout_log("log_1")) == {:layout_log, "log_1"}
     end
 
+    test "materializer_key/1 round-trips through parse_key/1" do
+      assert SystemKeys.parse_key(SystemKeys.materializer_key(0)) == {:materializer_key, 0}
+      assert SystemKeys.parse_key(SystemKeys.materializer_key(42)) == {:materializer_key, 42}
+    end
+
+    test "materializer keys with non-integer tags parse as :unknown" do
+      assert SystemKeys.parse_key(SystemKeys.materializers_prefix() <> "not_a_tag") == :unknown
+      assert SystemKeys.parse_key(SystemKeys.materializers_prefix() <> "12x") == :unknown
+      assert SystemKeys.parse_key(SystemKeys.materializers_prefix()) == :unknown
+    end
+
     test "prefixes cover exactly their families" do
       assert String.starts_with?(SystemKeys.shard_key("x"), SystemKeys.shard_keys_prefix())
       assert String.starts_with?(SystemKeys.layout_log("x"), SystemKeys.layout_logs_prefix())
+      assert String.starts_with?(SystemKeys.materializer_key(3), SystemKeys.materializers_prefix())
       refute String.starts_with?(SystemKeys.layout_log("x"), SystemKeys.shard_keys_prefix())
+      refute String.starts_with?(SystemKeys.materializer_key(3), SystemKeys.shard_keys_prefix())
     end
 
     test "unknown system keys parse as :unknown, non-system keys as :error" do

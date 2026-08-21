@@ -36,13 +36,37 @@ defmodule Bedrock.SystemKeys.ValuesTest do
     end
   end
 
+  describe "materializer refs" do
+    test "round-trip" do
+      assert {:ok, {"wkr_abc", "node@host"}} =
+               Values.decode_materializer_ref(Values.encode_materializer_ref("wkr_abc", "node@host"))
+    end
+
+    test "encoder rejects non-binary input loudly - refs are encoded as strings, never atoms or pids" do
+      assert_raise FunctionClauseError, fn -> Values.encode_materializer_ref(:worker_name, "node@host") end
+      assert_raise FunctionClauseError, fn -> Values.encode_materializer_ref("wkr_abc", :node@host) end
+      assert_raise FunctionClauseError, fn -> Values.encode_materializer_ref(self(), "node@host") end
+    end
+
+    test "decoder never raises on garbage or wrong shapes, and never creates atoms" do
+      assert {:error, :invalid_encoding} = Values.decode_materializer_ref(<<0xEE, 0xEE>>)
+      assert {:error, :invalid_type} = Values.decode_materializer_ref(Values.encode_tag_list([1]))
+      assert {:error, :invalid_type} = Values.decode_materializer_ref(Values.encode_shard_key_entry(1, "m"))
+      assert {:error, :invalid_encoding} = Values.decode_materializer_ref(:not_binary)
+    end
+  end
+
   describe "decode_for/2 - the writer/reader contract" do
     test "dispatches by parsed key family" do
       shard_value = Values.encode_shard_key_entry(3, "a")
       log_value = Values.encode_tag_list([0, 1])
+      ref_value = Values.encode_materializer_ref("wkr_abc", "node@host")
 
       assert {:ok, {3, "a"}} = Values.decode_for(SystemKeys.parse_key(SystemKeys.shard_key("m")), shard_value)
       assert {:ok, [0, 1]} = Values.decode_for(SystemKeys.parse_key(SystemKeys.layout_log("log_1")), log_value)
+
+      assert {:ok, {"wkr_abc", "node@host"}} =
+               Values.decode_for(SystemKeys.parse_key(SystemKeys.materializer_key(7)), ref_value)
     end
 
     test "unknown families decode as errors, never raise" do

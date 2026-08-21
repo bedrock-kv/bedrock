@@ -249,7 +249,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   # turns it into its own RoutingData (`RoutingData.from_snapshot/1`); proxies
   # may live on other nodes, so nothing process- or node-local goes in here.
   @spec build_routing_snapshot(TransactionSystemLayout.t()) :: CommitProxy.RoutingData.snapshot()
-  defp build_routing_snapshot(%{logs: logs, services: services, shard_layout: shard_layout}) do
+  defp build_routing_snapshot(%{logs: logs, services: services, shard_layout: shard_layout} = layout) do
     # Build log_map: index -> log_id
     log_map =
       logs
@@ -279,6 +279,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
       shard_layout: shard_layout || %{},
       log_map: log_map,
       log_services: log_services,
+      materializers: TransactionSystemLayout.materializer_refs(layout),
       replication_factor: max(1, map_size(logs))
     }
   end

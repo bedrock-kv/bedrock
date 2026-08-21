@@ -7,6 +7,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     ceiling search (`end_key` is the shard's exclusive upper bound)
   - `log_map` - Map of index → log_id for golden ratio routing
   - `log_services` - Map of log_id → pid or {otp_name, node} for contacting logs
+  - `materializers` - Map of tag → `{worker_id, node}` (strings, as committed
+    to the `materializers/` keyspace family) for the client-facing routing
+    projection; clients derive the callable ref
   - `replication_factor` - Number of logs per mutation
 
   The value is a plain immutable term: the commit proxy server is its only
@@ -39,10 +42,14 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   @type shard_tree :: :gb_trees.tree(Bedrock.key(), {tag :: term(), start_key :: Bedrock.key()})
 
+  @typedoc "A materializer ref as committed to the keyspace: worker id and node, both strings."
+  @type materializer_ref :: {worker_id :: String.t(), node :: String.t()}
+
   @type t :: %__MODULE__{
           shards: shard_tree(),
           log_map: %{non_neg_integer() => Log.id()},
           log_services: %{Log.id() => {atom(), node()} | pid()},
+          materializers: %{Bedrock.range_tag() => materializer_ref()},
           replication_factor: pos_integer()
         }
 
@@ -51,24 +58,27 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   and nodes. `from_snapshot/1` turns it into runnable routing data.
   """
   @type snapshot :: %{
+          optional(:materializers) => %{Bedrock.range_tag() => materializer_ref()},
           shard_layout: %{Bedrock.key() => {tag :: term(), start_key :: Bedrock.key()}},
           log_map: %{non_neg_integer() => Log.id()},
           log_services: %{Log.id() => {atom(), node()} | pid()},
           replication_factor: pos_integer()
         }
 
-  defstruct [:shards, :log_map, :log_services, :replication_factor]
+  defstruct [:shards, :log_map, :log_services, :replication_factor, materializers: %{}]
 
   @doc """
   Builds routing data from a plain snapshot.
   """
   @spec from_snapshot(snapshot()) :: t()
-  def from_snapshot(%{
-        shard_layout: shard_layout,
-        log_map: log_map,
-        log_services: log_services,
-        replication_factor: replication_factor
-      }) do
+  def from_snapshot(
+        %{
+          shard_layout: shard_layout,
+          log_map: log_map,
+          log_services: log_services,
+          replication_factor: replication_factor
+        } = snapshot
+      ) do
     shards =
       Enum.reduce(shard_layout, :gb_trees.empty(), fn {end_key, {tag, start_key}}, tree ->
         :gb_trees.enter(end_key, {tag, start_key}, tree)
@@ -78,6 +88,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
       shards: shards,
       log_map: log_map,
       log_services: log_services,
+      materializers: Map.get(snapshot, :materializers, %{}),
       replication_factor: replication_factor
     }
   end
@@ -94,6 +105,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
       shards: :gb_trees.empty(),
       log_map: %{},
       log_services: %{},
+      materializers: %{},
       replication_factor: 1
     }
   end
@@ -193,9 +205,20 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         end
 
       {:layout_log, log_id} ->
-        # The value (log descriptor tags) is not needed for routing; service
-        # refs are populated at runtime by the director, not from persisted data.
+        # The value (log descriptor tags) is not needed for routing; LOG
+        # service refs are populated at runtime by the director, not from
+        # persisted data (this epoch's log wiring is runtime state - the
+        # ServerDBInfo analogue). Materializer refs below deliberately DO
+        # ride persisted data: they are client-facing hints, FDB serverList
+        # style, and the Distributor mutates them mid-epoch (bedrock-q67.21).
         insert_log(routing_data, log_id)
+
+      {:materializer_key, tag} ->
+        # Undecodable values are ignored, keeping the last good ref.
+        case Values.decode_materializer_ref(value) do
+          {:ok, ref} -> %{routing_data | materializers: Map.put(routing_data.materializers, tag, ref)}
+          {:error, _} -> routing_data
+        end
 
       _ ->
         routing_data
@@ -212,6 +235,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         |> remove_log(log_id)
         |> delete_log_service(log_id)
 
+      {:materializer_key, tag} ->
+        %{routing_data | materializers: Map.delete(routing_data.materializers, tag)}
+
       _ ->
         routing_data
     end
@@ -224,6 +250,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     routing_data
     |> clear_shards_in_range(start_key, end_key)
     |> clear_logs_in_range(start_key, end_key)
+    |> clear_materializers_in_range(start_key, end_key)
   end
 
   defp apply_mutation(_mutation, routing_data), do: routing_data
@@ -239,6 +266,16 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
       |> Enum.reduce(shards, &:gb_trees.delete_any/2)
 
     %{routing_data | shards: cleared}
+  end
+
+  defp clear_materializers_in_range(%__MODULE__{materializers: materializers} = routing_data, start_key, end_key) do
+    kept =
+      Map.reject(materializers, fn {tag, _ref} ->
+        full_key = SystemKeys.materializer_key(tag)
+        full_key >= start_key and full_key < end_key
+      end)
+
+    %{routing_data | materializers: kept}
   end
 
   defp clear_logs_in_range(%__MODULE__{log_map: log_map} = routing_data, start_key, end_key) do

@@ -5,10 +5,14 @@ defmodule Bedrock.SystemKeys do
   Every key defined here has a named reader: `shard_keys/<end_key>` feeds each
   commit proxy's routing view (through resolver metadata windows) and the next
   recovery's materializer bootstrap; `layout/logs/<log_id>` keys feed the
-  routing view's log wiring (the tag-list value is not consumed by routing).
-  A system key without a reader is inventory, not communication - families
-  return here when their readers do (config authority with bedrock-q67.25,
-  the structured proxy view with bedrock-q67.9).
+  routing view's log wiring (the tag-list value is not consumed by routing);
+  `materializers/<tag>` refs feed the client-facing routing projection served
+  by commit proxies (FDB's `serverList/` analogue - interfaces ride the
+  keyspace). Materializer refs are runtime hints for clients, never recovery
+  input: bootstrap rebuilds assignment from `shard_keys/` plus live foreman
+  discovery. A system key without a reader is inventory, not communication -
+  families return here when their readers do (config authority with
+  bedrock-q67.25).
   """
 
   @system_prefix "\xff/system"
@@ -29,14 +33,34 @@ defmodule Bedrock.SystemKeys do
   @spec layout_logs_prefix() :: Bedrock.key()
   def layout_logs_prefix, do: "#{@system_prefix}/layout/logs/"
 
+  @doc "Materializer ref entry: `materializers/<tag>` -> `{worker_id, node}` strings"
+  @spec materializer_key(Bedrock.range_tag()) :: Bedrock.key()
+  def materializer_key(tag) when is_integer(tag), do: "#{@system_prefix}/materializers/#{tag}"
+
+  @doc "Prefix covering every materializer ref entry"
+  @spec materializers_prefix() :: Bedrock.key()
+  def materializers_prefix, do: "#{@system_prefix}/materializers/"
+
   @doc """
   Parses a system key into its family. Unknown system keys parse as
   `:unknown` (forward compatibility); non-system keys as `:error`.
   """
   @spec parse_key(Bedrock.key()) ::
-          {:layout_log, String.t()} | {:shard_key, Bedrock.key()} | :unknown | :error
+          {:layout_log, String.t()}
+          | {:shard_key, Bedrock.key()}
+          | {:materializer_key, Bedrock.range_tag()}
+          | :unknown
+          | :error
   def parse_key(<<@system_prefix, "/layout/logs/", rest::binary>>), do: {:layout_log, rest}
   def parse_key(<<@system_prefix, "/shard_keys/", rest::binary>>), do: {:shard_key, rest}
+
+  def parse_key(<<@system_prefix, "/materializers/", rest::binary>>) do
+    case Integer.parse(rest) do
+      {tag, ""} -> {:materializer_key, tag}
+      _ -> :unknown
+    end
+  end
+
   def parse_key(<<@system_prefix, _rest::binary>>), do: :unknown
   def parse_key(_key), do: :error
 end

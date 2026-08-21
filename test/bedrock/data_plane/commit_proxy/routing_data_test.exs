@@ -38,6 +38,15 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert routing_data.replication_factor == 1
     end
 
+    test "carries materializer refs when present; defaults to empty when absent" do
+      base = %{shard_layout: %{}, log_map: %{}, log_services: %{}, replication_factor: 1}
+
+      assert RoutingData.from_snapshot(base).materializers == %{}
+
+      with_refs = Map.put(base, :materializers, %{0 => {"wkr_sys", "n1@host"}})
+      assert RoutingData.from_snapshot(with_refs).materializers == %{0 => {"wkr_sys", "n1@host"}}
+    end
+
     test "is a plain immutable value: derived copies do not affect the original" do
       original =
         RoutingData.from_snapshot(%{
@@ -245,6 +254,53 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
 
       assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
+    end
+
+    test "handles materializer_key set mutation - decoded refs stay strings" do
+      updates = [
+        {v(100), [{:set, SystemKeys.materializer_key(7), Values.encode_materializer_ref("wkr_a", "n1@host")}]}
+      ]
+
+      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
+
+      assert updated.materializers == %{7 => {"wkr_a", "n1@host"}}
+    end
+
+    test "skips a materializer_key set whose value does not decode, keeping the last good entry" do
+      routing_data = %{RoutingData.new_empty() | materializers: %{7 => {"wkr_a", "n1@host"}}}
+
+      updates = [{v(100), [{:set, SystemKeys.materializer_key(7), <<0xEE, 0xEE>>}]}]
+
+      assert RoutingData.apply_mutations(routing_data, updates).materializers == %{7 => {"wkr_a", "n1@host"}}
+    end
+
+    test "handles materializer_key clear mutation" do
+      routing_data = %{RoutingData.new_empty() | materializers: %{7 => {"wkr_a", "n1@host"}}}
+
+      updates = [{v(100), [{:clear, SystemKeys.materializer_key(7)}]}]
+
+      assert RoutingData.apply_mutations(routing_data, updates).materializers == %{}
+    end
+
+    test "clear_range over the materializers prefix drops covered entries only" do
+      routing_data = %{
+        RoutingData.new_empty()
+        | materializers: %{0 => {"wkr_sys", "n1@host"}, 7 => {"wkr_a", "n1@host"}, 12 => {"wkr_b", "n2@host"}}
+      }
+
+      prefix = SystemKeys.materializers_prefix()
+      updates = [{v(100), [{:clear_range, prefix, prefix <> <<0xFF>>}]}]
+
+      assert RoutingData.apply_mutations(routing_data, updates).materializers == %{}
+    end
+
+    test "clear_range over an unrelated family leaves materializers untouched" do
+      routing_data = %{RoutingData.new_empty() | materializers: %{7 => {"wkr_a", "n1@host"}}}
+
+      prefix = SystemKeys.shard_keys_prefix()
+      updates = [{v(100), [{:clear_range, prefix, prefix <> <<0xFF>>}]}]
+
+      assert RoutingData.apply_mutations(routing_data, updates).materializers == %{7 => {"wkr_a", "n1@host"}}
     end
 
     test "handles shard_key clear mutation" do

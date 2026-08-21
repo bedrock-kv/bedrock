@@ -13,7 +13,11 @@ defmodule Bedrock.SystemKeys do
   consumers and cluster-introspection tools, a queryable statement of
   which logs the current epoch runs. Materializer refs are runtime hints
   for clients, never recovery input: bootstrap rebuilds assignment from
-  `shard_keys/` plus live foreman discovery. A system key without a
+  `shard_keys/` plus live foreman discovery. `distributor_lock/{owner,
+  write}` is the distributor's write fence (FDB's MoveKeys lock,
+  bedrock-q67.21): opaque UIDs read-checked-written inside every
+  mutating distributor transaction, so ownership is enforced by the
+  commit pipeline itself. A system key without a
   reader is inventory, not communication - unread MACHINERY is deleted,
   while durable observability keys stay by decision, named as such;
   families return here when their readers do (config authority with
@@ -21,6 +25,14 @@ defmodule Bedrock.SystemKeys do
   """
 
   @system_prefix "\xff/system"
+
+  @doc "Distributor write-fence owner UID: `distributor_lock/owner` (FDB's moveKeysLockOwnerKey)"
+  @spec distributor_lock_owner() :: Bedrock.key()
+  def distributor_lock_owner, do: "#{@system_prefix}/distributor_lock/owner"
+
+  @doc "Distributor write-fence write UID: `distributor_lock/write` (FDB's moveKeysLockWriteKey)"
+  @spec distributor_lock_write() :: Bedrock.key()
+  def distributor_lock_write, do: "#{@system_prefix}/distributor_lock/write"
 
   @doc "Shard boundary entry: `shard_keys/<end_key>` -> `{tag, start_key}` (ceiling search)"
   @spec shard_key(Bedrock.key()) :: Bedrock.key()
@@ -54,8 +66,11 @@ defmodule Bedrock.SystemKeys do
           {:layout_log, String.t()}
           | {:shard_key, Bedrock.key()}
           | {:materializer_key, Bedrock.range_tag()}
+          | {:distributor_lock, :owner | :write}
           | :unknown
           | :error
+  def parse_key(<<@system_prefix, "/distributor_lock/owner">>), do: {:distributor_lock, :owner}
+  def parse_key(<<@system_prefix, "/distributor_lock/write">>), do: {:distributor_lock, :write}
   def parse_key(<<@system_prefix, "/layout/logs/", rest::binary>>), do: {:layout_log, rest}
   def parse_key(<<@system_prefix, "/shard_keys/", rest::binary>>), do: {:shard_key, rest}
 

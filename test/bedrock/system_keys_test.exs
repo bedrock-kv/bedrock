@@ -38,4 +38,19 @@ defmodule Bedrock.SystemKeysTest do
       assert SystemKeys.parse_key(:not_a_key) == :error
     end
   end
+
+  describe "distributor lock keys" do
+    test "construct under the system prefix and parse back" do
+      assert SystemKeys.distributor_lock_owner() == "\xff/system/distributor_lock/owner"
+      assert SystemKeys.distributor_lock_write() == "\xff/system/distributor_lock/write"
+
+      assert SystemKeys.parse_key(SystemKeys.distributor_lock_owner()) == {:distributor_lock, :owner}
+      assert SystemKeys.parse_key(SystemKeys.distributor_lock_write()) == {:distributor_lock, :write}
+    end
+
+    test "near-miss keys under the family prefix are unknown, not lock keys" do
+      assert SystemKeys.parse_key("\xff/system/distributor_lock/other") == :unknown
+      assert SystemKeys.parse_key("\xff/system/distributor_lock/owner2") == :unknown
+    end
+  end
 end

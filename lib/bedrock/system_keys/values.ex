@@ -72,6 +72,7 @@ defmodule Bedrock.SystemKeys.Values do
   `Bedrock.SystemKeys.parse_key/1`).
   """
   @spec decode_for(term(), binary()) :: {:ok, term()} | decode_error()
+  def decode_for({:distributor_lock, _which}, value), do: decode_lock_uid(value)
   def decode_for({:shard_key, _end_key}, value), do: decode_shard_key_entry(value)
   def decode_for({:layout_log, _log_id}, value), do: decode_tag_list(value)
   def decode_for({:materializer_key, _tag}, value), do: decode_materializer_ref(value)
@@ -90,4 +91,21 @@ defmodule Bedrock.SystemKeys.Values do
   end
 
   defp safe_unpack(_not_binary, _valid?), do: {:error, :invalid_encoding}
+
+  @doc """
+  Encodes a distributor-lock UID: an opaque 16-byte token stored raw
+  (there is nothing to structure; the value's only property is
+  freshness-and-equality).
+  """
+  @spec encode_lock_uid(binary()) :: binary()
+  def encode_lock_uid(uid) when is_binary(uid) and byte_size(uid) == 16, do: uid
+
+  def encode_lock_uid(other) do
+    raise ArgumentError, "distributor lock UID must be a 16-byte binary: #{inspect(other)}"
+  end
+
+  @doc "Decodes a distributor-lock UID; never raises, never creates atoms."
+  @spec decode_lock_uid(binary()) :: {:ok, binary()} | decode_error()
+  def decode_lock_uid(uid) when is_binary(uid) and byte_size(uid) == 16, do: {:ok, uid}
+  def decode_lock_uid(_other), do: {:error, :invalid_encoding}
 end

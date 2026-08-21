@@ -74,4 +74,23 @@ defmodule Bedrock.SystemKeys.ValuesTest do
       assert {:error, :unknown_family} = Values.decode_for(:error, "anything")
     end
   end
+
+  describe "distributor lock UIDs" do
+    test "round-trips a 16-byte token and dispatches through decode_for" do
+      uid = :crypto.strong_rand_bytes(16)
+
+      assert Values.encode_lock_uid(uid) == uid
+      assert Values.decode_lock_uid(uid) == {:ok, uid}
+      assert Values.decode_for({:distributor_lock, :owner}, uid) == {:ok, uid}
+      assert Values.decode_for({:distributor_lock, :write}, uid) == {:ok, uid}
+    end
+
+    test "the encoder refuses non-16-byte input; the decoder never raises" do
+      assert_raise ArgumentError, fn -> Values.encode_lock_uid("short") end
+      assert_raise ArgumentError, fn -> Values.encode_lock_uid(:not_a_binary) end
+
+      assert Values.decode_lock_uid("short") == {:error, :invalid_encoding}
+      assert Values.decode_lock_uid(:crypto.strong_rand_bytes(17)) == {:error, :invalid_encoding}
+    end
+  end
 end

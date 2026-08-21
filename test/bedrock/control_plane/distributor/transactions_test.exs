@@ -22,7 +22,8 @@ defmodule Bedrock.ControlPlane.Distributor.TransactionsTest do
         proxies: [:proxy_a],
         next_read_version_fn: fn -> {:ok, v} end,
         get_fn: fn _key, _version -> {:error, :not_found} end,
-        commit_fn: fn _proxy, _epoch, _encoded, _opts -> {:ok, v, 0} end
+        commit_fn: fn _proxy, _epoch, _encoded, _opts -> {:ok, v, 0} end,
+        get_range_fn: fn _start, _end, _version -> {:ok, {[], false}} end
       },
       overrides
     )
@@ -150,6 +151,150 @@ defmodule Bedrock.ControlPlane.Distributor.TransactionsTest do
 
       assert {:error, {:read_version_failed, :unavailable}} =
                Transactions.take_lock(deps(%{next_read_version_fn: fn -> {:error, :unavailable} end}))
+    end
+  end
+
+  describe "commit_checked/3" do
+    defp taken_lock do
+      {lock, _mutations} = Lock.take(nil, nil)
+      lock
+    end
+
+    test "steady state: reads the owner only, conflicts on the owner only, touches write + payload" do
+      test_pid = self()
+      lock = taken_lock()
+
+      deps =
+        deps(%{
+          get_fn: fn key, _v ->
+            send(test_pid, {:read, key})
+            if String.ends_with?(key, "owner"), do: {:ok, lock.my_owner}, else: {:error, :not_found}
+          end,
+          commit_fn: fn _p, _e, encoded, _o ->
+            send(test_pid, {:committed, encoded})
+            {:ok, Version.from_integer(5), 0}
+          end
+        })
+
+      payload = {:set, SystemKeys.materializer_key(7), "payload"}
+      assert :ok = Transactions.commit_checked(lock, deps, [payload])
+
+      owner_key = SystemKeys.distributor_lock_owner()
+      write_key = SystemKeys.distributor_lock_write()
+
+      # The runner obligation: the write key is NOT read in the
+      # steady-state branch — an unconditional read would serialize all
+      # concurrent same-owner distributor transactions.
+      assert_received {:read, ^owner_key}
+      refute_received {:read, ^write_key}
+
+      assert_received {:committed, encoded}
+      assert {:ok, {_v, conflict_ranges}} = Transaction.read_conflicts(encoded)
+      covered = fn key -> Enum.any?(conflict_ranges, fn {s, e} -> key >= s and key < e end) end
+      assert covered.(owner_key)
+      refute covered.(write_key)
+
+      assert {:ok, mutations} = Transaction.mutations(encoded)
+      mutations = Enum.to_list(mutations)
+      assert {:set, SystemKeys.materializer_key(7), "payload"} in mutations
+      assert Enum.any?(mutations, &match?({:set, ^write_key, _fresh}, &1))
+    end
+
+    test "supersession is the READ verdict and is authoritative — no commit is attempted" do
+      lock = taken_lock()
+      usurper = Lock.new_uid()
+
+      deps =
+        deps(%{
+          get_fn: fn _k, _v -> {:ok, usurper} end,
+          commit_fn: fn _p, _e, _t, _o -> flunk("a superseded fence must not commit") end
+        })
+
+      assert {:error, :superseded} = Transactions.commit_checked(lock, deps, [])
+    end
+
+    test "a commit abort retries with a fresh fence read — a usurper appearing mid-retry is caught by the read" do
+      lock = taken_lock()
+      usurper = Lock.new_uid()
+      counter = :counters.new(1, [])
+
+      deps =
+        deps(%{
+          get_fn: fn key, _v ->
+            if String.ends_with?(key, "owner") do
+              # First evaluation: still ours. After the abort: usurped.
+              if :counters.get(counter, 1) == 0, do: {:ok, lock.my_owner}, else: {:ok, usurper}
+            else
+              {:error, :not_found}
+            end
+          end,
+          commit_fn: fn _p, _e, _t, _o ->
+            :counters.add(counter, 1, 1)
+            {:error, :aborted}
+          end
+        })
+
+      assert {:error, :superseded} = Transactions.commit_checked(lock, deps, [])
+    end
+
+    test "the previous-owner branch reads and conflicts on both keys" do
+      test_pid = self()
+      prev_owner = Lock.new_uid()
+      prev_write = Lock.new_uid()
+      {lock, _} = Lock.take(prev_owner, prev_write)
+
+      deps =
+        deps(%{
+          get_fn: fn key, _v ->
+            send(test_pid, {:read, key})
+            if String.ends_with?(key, "owner"), do: {:ok, prev_owner}, else: {:ok, prev_write}
+          end,
+          commit_fn: fn _p, _e, encoded, _o ->
+            send(test_pid, {:committed, encoded})
+            {:ok, Version.from_integer(5), 0}
+          end
+        })
+
+      assert :ok = Transactions.commit_checked(lock, deps, [])
+
+      write_key = SystemKeys.distributor_lock_write()
+      assert_received {:read, ^write_key}
+
+      assert_received {:committed, encoded}
+      assert {:ok, {_v, conflict_ranges}} = Transaction.read_conflicts(encoded)
+      assert Enum.any?(conflict_ranges, fn {s, e} -> write_key >= s and write_key < e end)
+    end
+  end
+
+  describe "read_snapshot/1" do
+    test "reads both families at one pinned version and decodes them" do
+      alias Bedrock.SystemKeys.Values, as: V
+
+      test_pid = self()
+      v = Version.from_integer(77)
+
+      shard_entries = [{SystemKeys.shard_key(<<0xFF, 0xFF>>), V.encode_shard_key_entry(0, <<>>)}]
+      ref_entries = [{SystemKeys.materializer_key(0), V.encode_materializer_ref("wkr", "n@h")}]
+
+      deps =
+        deps(%{
+          next_read_version_fn: fn -> {:ok, v} end,
+          get_range_fn: fn start_key, _end_key, version ->
+            send(test_pid, {:range_read, start_key, version})
+
+            cond do
+              String.starts_with?(start_key, SystemKeys.shard_keys_prefix()) -> {:ok, {shard_entries, false}}
+              String.starts_with?(start_key, SystemKeys.materializers_prefix()) -> {:ok, {ref_entries, false}}
+            end
+          end
+        })
+
+      assert {:ok, %{shard_layout: layout, materializer_refs: refs}} = Transactions.read_snapshot(deps)
+      assert layout == %{<<0xFF, 0xFF>> => {0, <<>>}}
+      assert refs == %{0 => {"wkr", "n@h"}}
+
+      assert_received {:range_read, _shard_start, ^v}
+      assert_received {:range_read, _refs_start, ^v}
     end
   end
 

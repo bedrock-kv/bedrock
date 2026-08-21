@@ -11,7 +11,10 @@ defmodule Bedrock.Internal.WaitingList do
 
   alias Bedrock.Internal.Time
 
-  @type version :: Bedrock.version()
+  # The waiting key: version binaries for the resolver/long-pull users,
+  # shard tags for the distributor's placeholder — the structure is a
+  # generically keyed deadline map.
+  @type version :: Bedrock.version() | Bedrock.range_tag()
   @type reply_fn :: (any() -> :ok)
   @type timeout_ms :: non_neg_integer()
 

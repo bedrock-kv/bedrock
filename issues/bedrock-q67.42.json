@@ -2,14 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-21T19:50:37Z",
   "created": "2026-08-21T01:06:40Z",
   "description": "Audit note from PR #181 (2026-08-20): default_get_shard_layout (materializer_bootstrap_phase.ex) reads the shard_keys/ family with limit: 1000 and discards the _more continuation flag. Beyond 1000 shards the layout silently truncates. With carried start keys the truncation at least yields a visibly holey layout instead of a plausible-but-wrong contiguous one, but the read needs to loop the continuation (or page) before shard counts grow. Pre-existing, surfaced during bedrock-q67.41.",
   "id": "bedrock-q67.42",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Bound the bootstrap shard-layout read: consume the continuation past 1000 entries",
   "type": "task",
-  "updated_at": "2026-08-21T01:06:40Z"
+  "updated_at": "2026-08-21T19:50:37Z"
 }

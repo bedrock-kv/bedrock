@@ -105,15 +105,17 @@ defmodule Bedrock.DataPlane.CommitProxy do
           commit_proxy_ref :: ref(),
           epoch :: Bedrock.epoch(),
           transaction :: Transaction.encoded(),
-          opts :: [mode: :user | :system]
+          opts :: [mode: :user | :system, timeout_in_ms: Bedrock.timeout_in_ms()]
         ) ::
           {:ok, version :: Bedrock.version(), index :: non_neg_integer()}
           | {:error, :wrong_epoch | :locked | :aborted | :timeout | :unavailable}
           | {:error, {:key_out_of_range, Bedrock.key()}}
           | {:error, :invalid_transaction}
   def commit(commit_proxy, epoch, transaction, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout_in_ms, :infinity)
+
     case Keyword.get(opts, :mode, :user) do
-      mode when mode in [:user, :system] -> call(commit_proxy, {:commit, epoch, transaction, mode}, :infinity)
+      mode when mode in [:user, :system] -> call(commit_proxy, {:commit, epoch, transaction, mode}, timeout)
       other -> raise ArgumentError, "invalid commit mode: #{inspect(other)}"
     end
   end

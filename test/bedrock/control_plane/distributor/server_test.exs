@@ -49,10 +49,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       assert t.lock.prev_owner == nil
     end
 
-    test "a commit abort cedes — a newer owner won the race" do
+    test "exhausted take aborts stop :shutdown — the director recruits again; supersession is the poll's to deliver" do
       deps = %{commit_fn: fn _p, _e, _t, _o -> {:error, :aborted} end}
 
-      assert {:stop, :normal, _t} = Server.handle_continue(:take_lock, state(deps))
+      assert {:stop, {:shutdown, {:lock_take_failed, {:lock_commit_failed, :aborted}}}, _t} =
+               Server.handle_continue(:take_lock, state(deps))
     end
 
     test "a transient failure stops :shutdown so the director retries" do

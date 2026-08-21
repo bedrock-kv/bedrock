@@ -47,34 +47,61 @@ defmodule Bedrock.ControlPlane.Distributor.Transactions do
     %{
       epoch: epoch,
       proxies: proxies,
-      next_read_version_fn: fn -> Sequencer.next_read_version(sequencer, epoch) end,
+      # Every call is bounded: an alive-but-wedged callee must surface as
+      # a transient error the director's retry can recruit past — an
+      # unbounded call would wedge the distributor invisibly (the
+      # director sees a healthy monitored singleton forever).
+      next_read_version_fn: fn -> Sequencer.next_read_version(sequencer, epoch, timeout_in_ms: 5_000) end,
       get_fn: fn key, version ->
-        with {:ok, {_start, _end, _tag, {worker_id, node}}} <-
-               CommitProxy.fetch_routing(Enum.random(proxies), key) do
-          # The documented exception to no-atoms-on-decode: system-mode-
-          # gated writers, count bounded by cluster membership.
-          # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
-          Materializer.get({cluster.otp_name_for_worker(worker_id), String.to_atom(node)}, key, version)
+        case CommitProxy.fetch_routing(Enum.random(proxies), key) do
+          {:ok, {_start, _end, _tag, {worker_id, node}}} ->
+            # The documented exception to no-atoms-on-decode: system-
+            # mode-gated writers, count bounded by cluster membership.
+            # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
+            Materializer.get({cluster.otp_name_for_worker(worker_id), String.to_atom(node)}, key, version,
+              timeout: 5_000
+            )
+
+          # Routing's :not_found means UNROUTABLE — a different fact from
+          # a key that is readable-and-absent, which only the
+          # materializer may assert.
+          {:error, :not_found} ->
+            {:error, {:unroutable_system_key, key}}
+
+          {:error, reason} ->
+            {:error, reason}
         end
       end,
       commit_fn: fn proxy, commit_epoch, encoded, opts ->
-        CommitProxy.commit(proxy, commit_epoch, encoded, opts)
+        CommitProxy.commit(proxy, commit_epoch, encoded, Keyword.put(opts, :timeout_in_ms, 10_000))
       end
     }
   end
+
+  @take_attempts 3
 
   @doc """
   Takes the distributor lock: reads both lock keys at a pinned version
   (FDB's take reads both — the remembered write UID is the
   unobserved-take evidence), claims the owner key, and commits with read
-  conflicts on both keys at that version. `{:error, :superseded}` means
-  a newer owner won the race (commit abort); other errors are transient.
+  conflicts on both keys at that version.
+
+  An abort at TAKE time is not a verdict — FDB's `takeMoveKeysLock`
+  retries `not_committed`/`too_old` with a fresh read version, because
+  an abort here can also mean the read version fell below the
+  resolver's pruning floor. Take semantics are last-take-wins: the
+  re-take reads the interleaved winner as the new previous owner and
+  claims over it; supersession is delivered where it is authoritative —
+  by the CHECK fence on mutating transactions and the poll loop.
+  Exhausted retries surface as a transient commit failure for the
+  director's recruit-retry.
   """
   @spec take_lock(deps()) ::
           {:ok, Lock.t()}
-          | {:error, :superseded}
           | {:error, {:read_version_failed | :lock_read_failed | :lock_commit_failed, term()}}
-  def take_lock(deps) do
+  def take_lock(deps), do: take_lock(deps, @take_attempts)
+
+  defp take_lock(deps, attempts_left) do
     with {:ok, version} <- read_version(deps),
          {:ok, owner} <- read_lock_key(deps, SystemKeys.distributor_lock_owner(), version),
          {:ok, write} <- read_lock_key(deps, SystemKeys.distributor_lock_write(), version) do
@@ -82,7 +109,7 @@ defmodule Bedrock.ControlPlane.Distributor.Transactions do
 
       case commit_fenced(deps, version, mutations) do
         :ok -> {:ok, lock}
-        {:error, :aborted} -> {:error, :superseded}
+        {:error, :aborted} when attempts_left > 1 -> take_lock(deps, attempts_left - 1)
         {:error, reason} -> {:error, {:lock_commit_failed, reason}}
       end
     end

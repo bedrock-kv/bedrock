@@ -89,10 +89,56 @@ defmodule Bedrock.ControlPlane.Distributor.TransactionsTest do
       assert {:ok, %Lock{prev_owner: ^prev_owner, prev_write: ^prev_write}} = Transactions.take_lock(deps)
     end
 
-    test "a commit abort is supersession — a newer owner won the race" do
+    test "a commit abort re-takes with a fresh read version — take is last-take-wins, not a verdict" do
+      # An abort at take time can be a genuine race OR the read version
+      # falling below the resolver's pruning floor; only the CHECK fence
+      # and the poll deliver supersession. FDB's takeMoveKeysLock
+      # retries the same way.
+      test_pid = self()
+      counter = :counters.new(1, [])
+      winner = Lock.new_uid()
+
+      deps =
+        deps(%{
+          get_fn: fn key, _version ->
+            # The re-take observes the interleaved winner as previous.
+            if :counters.get(counter, 1) > 0 and String.ends_with?(key, "owner"),
+              do: {:ok, winner},
+              else: {:error, :not_found}
+          end,
+          commit_fn: fn _proxy, _epoch, encoded, _opts ->
+            send(test_pid, {:commit_attempt, encoded})
+
+            if :counters.get(counter, 1) == 0 do
+              :counters.add(counter, 1, 1)
+              {:error, :aborted}
+            else
+              {:ok, Version.from_integer(9), 0}
+            end
+          end
+        })
+
+      assert {:ok, %Lock{prev_owner: ^winner}} = Transactions.take_lock(deps)
+      assert_received {:commit_attempt, _first}
+      assert_received {:commit_attempt, _second}
+    end
+
+    test "exhausted take retries surface as a transient commit failure — the director recruits again" do
       deps = deps(%{commit_fn: fn _proxy, _epoch, _encoded, _opts -> {:error, :aborted} end})
 
-      assert {:error, :superseded} = Transactions.take_lock(deps)
+      assert {:error, {:lock_commit_failed, :aborted}} = Transactions.take_lock(deps)
+    end
+
+    test "a catching-up materializer's waitlist expiry is a transient read failure" do
+      deps = deps(%{get_fn: fn _k, _v -> {:error, :waiting_timeout} end})
+
+      assert {:error, {:lock_read_failed, :waiting_timeout}} = Transactions.take_lock(deps)
+    end
+
+    test "an unroutable system key is a read failure, never key-absence" do
+      deps = deps(%{get_fn: fn key, _v -> {:error, {:unroutable_system_key, key}} end})
+
+      assert {:error, {:lock_read_failed, {:unroutable_system_key, _key}}} = Transactions.take_lock(deps)
     end
 
     test "read and commit failures surface as themselves — transient, not verdicts" do

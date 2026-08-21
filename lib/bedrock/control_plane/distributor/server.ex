@@ -60,20 +60,18 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   end
 
   # Lock first, everything else second (FDB's DD startup order): a
-  # distributor that cannot own the fence must not exist. A commit abort
-  # means a newer owner won — cede (:normal, the director does not
-  # re-recruit); a transient failure stops :shutdown so the director's
-  # retry recruits a fresh instance.
+  # distributor that cannot own the fence must not exist. Take is
+  # last-take-wins and never a supersession verdict (Transactions
+  # retries aborts with fresh versions); any take failure stops
+  # :shutdown so the director's retry recruits a fresh instance.
+  # Supersession is delivered by the poll loop and, later, by the CHECK
+  # fence on mutating transactions.
   @impl true
   def handle_continue(:take_lock, %State{} = t) do
     case Transactions.take_lock(t.deps) do
       {:ok, lock} ->
         Logger.info("Bedrock distributor (epoch #{t.epoch}): lock taken")
         {:noreply, schedule_poll(%{t | lock: lock})}
-
-      {:error, :superseded} ->
-        Logger.info("Bedrock distributor (epoch #{t.epoch}): superseded at take; ceding")
-        {:stop, :normal, t}
 
       {:error, reason} ->
         {:stop, {:shutdown, {:lock_take_failed, reason}}, t}

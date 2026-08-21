@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-q67.21.2"
+  ],
   "blocks": [],
   "created": "2026-08-21T20:10:28Z",
   "description": "Phase 3. Director recruits the Distributor per epoch after recovery completes (phase-a supervision ports: recruit-if-absent, halt registration losers, :normal DOWN = ceded no re-recruit, otherwise retry; epoch handed in). On start: take lock -\u003e snapshot-read shard_keys/ + materializers/ under read-only lock check -\u003e run; 5s read-only poll-to-die. Placeholder ports from phase-a (parking min(caller timeout, hold_ms), shed :unavailable, per-tag demand dedupe, drain on covered) with SETTLED addressing option 2: the placeholder IS a materializer ref - sweep publishes materializers/\u003ctag\u003e = {placeholder_worker_id, distributor_node} for uncovered tags via system-mode commit under check_lock; placeholder speaks the materializer read API; nothing changes at proxy or client. NO TSL deltas, NO pids in slots (see the phase-a must-not-port list).",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Distributor singleton + placeholder-as-materializer-ref",
   "type": "task",
-  "updated_at": "2026-08-21T20:10:28Z"
+  "updated_at": "2026-08-21T20:10:35Z"
 }

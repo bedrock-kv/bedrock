@@ -60,6 +60,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   alias Bedrock.ControlPlane.Config.TSLTypeValidator
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.Service.Worker
 
   @doc """
@@ -247,13 +248,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   @spec build_routing_snapshot(TransactionSystemLayout.t(), RecoveryAttempt.t()) :: CommitProxy.RoutingData.snapshot()
   defp build_routing_snapshot(%{logs: logs, services: services}, recovery_attempt) do
     shard_layout = recovery_attempt.shard_layout
-    # Build log_map: index -> log_id
-    log_map =
-      logs
-      |> Map.keys()
-      |> Enum.sort()
-      |> Enum.with_index()
-      |> Map.new(fn {log_id, index} -> {index, log_id} end)
+    # Build log_map: index -> log_id (the shared construction — see
+    # ShardRouter.log_map/1 — so seeds and routing cannot diverge)
+    log_map = ShardRouter.log_map(Map.keys(logs))
 
     # Build log_services: log_id -> pid or {name, node}
     log_services =

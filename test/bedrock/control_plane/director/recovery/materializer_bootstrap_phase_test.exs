@@ -82,19 +82,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       :ets.delete(created_shards)
     end
 
-    test "for fresh cluster, unlocks shard materializers with empty log descriptors" do
+    test "for fresh cluster, seeds shard materializers with the epoch's pull sources" do
       system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
       user_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      log_1_pid = spawn(fn -> Process.sleep(:infinity) end)
+      log_2_pid = spawn(fn -> Process.sleep(:infinity) end)
 
       logs = %{
-        {:vacancy, 1} => [],
-        {:vacancy, 2} => []
+        "log_1" => [],
+        "log_2" => []
       }
 
       recovery_attempt =
         recovery_attempt()
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, logs)
+        |> Map.put(:transaction_services, %{
+          "log_1" => %{kind: :log, status: {:up, log_1_pid}},
+          "log_2" => %{kind: :log, status: {:up, log_2_pid}}
+        })
 
       unlocks = :ets.new(:materializer_unlocks, [:bag, :public])
 
@@ -114,8 +120,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           pid = if shard_tag == 0, do: system_materializer_pid, else: user_materializer_pid
           {:ok, pid}
         end)
-        |> Map.put(:unlock_materializer_fn, fn pid, _version, tsl ->
-          :ets.insert(unlocks, {:unlock, pid, tsl.logs})
+        |> Map.put(:unlock_materializer_fn, fn pid, _version, pull_sources ->
+          :ets.insert(unlocks, {:unlock, pid, pull_sources})
           :ok
         end)
 
@@ -124,8 +130,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       assert updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()] == system_materializer_pid
 
-      assert {:unlock, system_materializer_pid, logs} in :ets.lookup(unlocks, :unlock)
-      assert {:unlock, user_materializer_pid, logs} in :ets.lookup(unlocks, :unlock)
+      # Replication spans all logs today, so every shard's replica set
+      # covers both — each seed carries {log_id, ref} pairs, never a
+      # cluster services map.
+      expected = [{"log_1", log_1_pid}, {"log_2", log_2_pid}]
+
+      for pid <- [system_materializer_pid, user_materializer_pid] do
+        assert [{:unlock, ^pid, sources}] =
+                 unlocks |> :ets.lookup(:unlock) |> Enum.filter(&match?({:unlock, ^pid, _}, &1))
+
+        assert Enum.sort(sources) == expected
+      end
 
       :ets.delete(unlocks)
     end
@@ -444,15 +459,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert log =~ "System shard materializer not found, creating new one"
     end
 
-    test "filters logs to only system shard when unlocking" do
+    test "seeds each unlocked materializer with its replica set of pull sources" do
       materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      log_1_pid = spawn(fn -> Process.sleep(:infinity) end)
+      log_2_pid = spawn(fn -> Process.sleep(:infinity) end)
       durable_version = Version.from_integer(100)
 
-      # Logs with different shard assignments
-      # log_1 handles shard 0 (system), log_2 handles shard 1 (user)
       logs = %{
-        "log_1" => [0],
-        "log_2" => [1]
+        "log_1" => [],
+        "log_2" => []
       }
 
       recovery_attempt =
@@ -467,10 +482,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         })
         |> Map.put(:transaction_services, %{
           "mat_sys" => %{kind: :materializer, status: {:up, materializer_pid}},
-          "mat_user" => %{kind: :materializer, status: {:up, spawn(fn -> Process.sleep(:infinity) end)}}
+          "mat_user" => %{kind: :materializer, status: {:up, spawn(fn -> Process.sleep(:infinity) end)}},
+          "log_1" => %{kind: :log, status: {:up, log_1_pid}},
+          "log_2" => %{kind: :log, status: {:up, log_2_pid}}
         })
 
-      received_tsl = :ets.new(:test_tsl, [:set, :public])
+      received_sources = :ets.new(:test_sources, [:set, :public])
 
       context =
         [
@@ -481,8 +498,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> create_test_context()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
-        |> Map.put(:unlock_materializer_fn, fn pid, _version, tsl ->
-          :ets.insert(received_tsl, {pid, tsl.logs})
+        |> Map.put(:unlock_materializer_fn, fn pid, _version, pull_sources ->
+          :ets.insert(received_sources, {pid, pull_sources})
           :ok
         end)
         |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
@@ -497,15 +514,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert {_updated_attempt, CommitProxyStartupPhase} =
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-          # Verify per-shard log filtering: the system materializer got
-          # only log_1, the user materializer only log_2
-          assert [{_, sys_logs}] = :ets.lookup(received_tsl, materializer_pid)
-          assert Map.keys(sys_logs) == ["log_1"]
+          # The seed is the shard's replica set — {log_id, ref} pairs
+          # resolved by the director, not a services map for the
+          # materializer to re-derive placement from. Replication spans
+          # all logs today, so the system shard's set covers both.
+          assert [{_, sources}] = :ets.lookup(received_sources, materializer_pid)
+          assert Enum.sort(sources) == [{"log_1", log_1_pid}, {"log_2", log_2_pid}]
         end)
 
       assert log =~ "Materializer caught up to version"
 
-      :ets.delete(received_tsl)
+      :ets.delete(received_sources)
     end
   end
 

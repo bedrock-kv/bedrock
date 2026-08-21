@@ -376,12 +376,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
 
           # Test unlock after recovery
           durable_version = Version.zero()
-          transaction_system_layout = %{logs: [], services: []}
 
           unlock_result =
             GenServer.call(
               pid,
-              {:unlock_after_recovery, durable_version, transaction_system_layout},
+              {:unlock_after_recovery, durable_version, []},
               @timeout
             )
 
@@ -649,9 +648,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
 
           # Test unlock
           durable_version = Version.zero()
-          tsl = %{logs: [], services: []}
 
-          unlock_result = Materializer.unlock_after_recovery(pid, durable_version, tsl)
+          unlock_result = Materializer.unlock_after_recovery(pid, durable_version, [])
           assert unlock_result == :ok
 
         {:error, _reason} ->

@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   1. Find materializer with shard_id = 0 (system shard) in available_services
   2. If not found, create a new materializer on a capable node
   3. Lock materializer for recovery
-  4. Unlock it with system shard logs to start pulling
+  4. Unlock it with its replica set of pull sources to start pulling
   5. Wait for materializer to catch up (60s timeout)
   6. Query shard layout from `\\xff/system/shard_keys/*`
 
@@ -34,6 +34,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.DataPlane.Materializer
+  alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
   alias Bedrock.SystemKeys.Values
@@ -163,24 +164,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     lock_fn.(service, epoch)
   end
 
-  # Start materializer pulling from logs for its shard
+  # Start materializer pulling from its replica set of logs
   defp start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
-    shard_logs = filter_logs_for_shard(recovery_attempt.logs, shard_tag)
-
-    tsl = %{
-      epoch: recovery_attempt.epoch,
-      sequencer: recovery_attempt.sequencer,
-      proxies: recovery_attempt.proxies,
-      resolvers: recovery_attempt.resolvers,
-      logs: shard_logs,
-      services: recovery_attempt.transaction_services
-    }
-
     # For fresh cluster, start from version zero
     durable_version = Bedrock.DataPlane.Version.zero()
     unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/3)
 
-    case unlock_fn.(pid, durable_version, tsl) do
+    case unlock_fn.(pid, durable_version, pull_sources_for_shard(shard_tag, recovery_attempt)) do
       :ok -> :ok
       {:error, reason} -> {:error, {:unlock_failed, reason}}
       {:failure, reason, _ref} -> {:error, {:unlock_failed, reason}}
@@ -368,43 +358,52 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
-  # Filter logs to only those relevant for the given shard (by tag)
-  defp filter_logs_for_shard(logs, shard_id) do
-    logs
-    |> Enum.filter(fn {_log_id, tags} -> log_routes_to_shard?(tags, shard_id) end)
-    |> Map.new()
+  # The unlock seed: this shard's replica set as {log_id, log_ref} pairs,
+  # resolved once here through the same ShardRouter walk the commit
+  # proxies route with. The materializer receives exactly its own
+  # sources — never the cluster's services map (FDB gives each storage
+  # server its own tag and assignments, not ServerDBInfo's membership).
+  @spec pull_sources_for_shard(non_neg_integer(), RecoveryAttempt.t()) :: Materializer.pull_sources()
+  defp pull_sources_for_shard(shard_tag, recovery_attempt) do
+    logs = recovery_attempt.logs
+    services = recovery_attempt.transaction_services
+    replica_set = ShardRouter.log_ids_for_tag(shard_tag, ShardRouter.log_map(Map.keys(logs)), max(1, map_size(logs)))
+
+    sources =
+      Enum.flat_map(replica_set, fn log_id ->
+        case Map.get(services, log_id) do
+          %{status: {:up, ref}} -> [{log_id, ref}]
+          _ -> []
+        end
+      end)
+
+    # Recruitment records every log with an up ref, so a shrunken seed
+    # means the attempt's own bookkeeping disagrees with itself — worth a
+    # trail, since the materializer would wait on the missing replicas
+    # with no director-side symptom.
+    if length(sources) < length(replica_set) do
+      missing = replica_set -- Enum.map(sources, fn {log_id, _ref} -> log_id end)
+      Logger.warning("Pull-source seed for shard #{shard_tag} is missing log refs: #{inspect(missing)}")
+    end
+
+    sources
   end
 
-  defp log_routes_to_shard?([], _shard_id), do: true
-  defp log_routes_to_shard?(tags, shard_id), do: shard_id in tags
-
-  # Unlock materializer with only the logs it needs to start pulling. The
-  # version is the recovery (rollback) version — vector last — never the
-  # durable floor, which regresses to zero on restart by design.
+  # Unlock the materializer with its pull sources. The version is the
+  # recovery (rollback) version — vector last — never the durable floor,
+  # which regresses to zero on restart by design.
   defp unlock_and_start_pulling(materializer_pid, shard_tag, recovery_version, recovery_attempt, context) do
-    shard_logs = filter_logs_for_shard(recovery_attempt.logs, shard_tag)
-
-    # TransactionSystemLayout is a type, not a struct, so we build a map
-    tsl = %{
-      epoch: recovery_attempt.epoch,
-      sequencer: recovery_attempt.sequencer,
-      proxies: recovery_attempt.proxies,
-      resolvers: recovery_attempt.resolvers,
-      logs: shard_logs,
-      services: recovery_attempt.transaction_services
-    }
-
     unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/3)
 
-    case unlock_fn.(materializer_pid, recovery_version, tsl) do
+    case unlock_fn.(materializer_pid, recovery_version, pull_sources_for_shard(shard_tag, recovery_attempt)) do
       :ok -> :ok
       {:error, reason} -> {:error, {:unlock_failed, reason}}
       {:failure, reason, _ref} -> {:error, {:unlock_failed, reason}}
     end
   end
 
-  defp default_unlock_materializer(pid, durable_version, tsl) do
-    Materializer.unlock_after_recovery(pid, durable_version, tsl, timeout_in_ms: 30_000)
+  defp default_unlock_materializer(pid, durable_version, pull_sources) do
+    Materializer.unlock_after_recovery(pid, durable_version, pull_sources, timeout_in_ms: 30_000)
   end
 
   # Poll until materializer reaches target version. The label — shard and

@@ -103,6 +103,31 @@ defmodule Bedrock.DataPlane.ShardRouterTest do
     }).shards
   end
 
+  describe "log_ids_for_tag/3 - replica set resolution" do
+    test "resolves indices through the log map" do
+      log_map = %{0 => "log-a", 1 => "log-b", 2 => "log-c"}
+
+      log_ids = ShardRouter.log_ids_for_tag(7, log_map, 2)
+
+      expected = 7 |> ShardRouter.get_log_indices(3, 2) |> Enum.map(&Map.fetch!(log_map, &1))
+      assert log_ids == expected
+      assert length(log_ids) == 2
+      assert Enum.all?(log_ids, &(&1 in Map.values(log_map)))
+    end
+
+    test "full replication returns every log exactly once" do
+      log_map = %{0 => "log-a", 1 => "log-b", 2 => "log-c"}
+
+      log_ids = ShardRouter.log_ids_for_tag(3, log_map, 3)
+
+      assert Enum.sort(log_ids) == ["log-a", "log-b", "log-c"]
+    end
+
+    test "returns an empty list with no logs" do
+      assert ShardRouter.log_ids_for_tag(0, %{}, 1) == []
+    end
+  end
+
   describe "lookup_shard/2 - ceiling search" do
     setup do
       # Shard ranges are [min, max) - start inclusive, end exclusive

@@ -164,8 +164,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   end
 
   @impl true
-  def handle_call({:unlock_after_recovery, durable_version, transaction_system_layout}, {_director, _}, t) do
-    {:ok, updated_state} = Logic.unlock_after_recovery(t, durable_version, transaction_system_layout)
+  def handle_call({:unlock_after_recovery, durable_version, pull_sources}, {_director, _}, t) do
+    {:ok, updated_state} = Logic.unlock_after_recovery(t, durable_version, pull_sources)
     reply(updated_state, :ok)
   end
 

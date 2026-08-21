@@ -760,7 +760,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     sorted =
       tagged_mutations_list
       |> Enum.reverse()
-      |> Enum.sort_by(fn {_mutation, tag} -> tag_to_integer(tag) end, &<=/2)
+      |> Enum.sort_by(fn {_mutation, tag} -> ShardRouter.normalize_tag(tag) end, &<=/2)
 
     # 2. Build shard index from sorted list
     shard_index = build_shard_index(sorted)
@@ -781,10 +781,10 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   defp build_shard_index(sorted_tagged_mutations) do
     sorted_tagged_mutations
-    |> Enum.chunk_by(fn {_mutation, tag} -> tag_to_integer(tag) end)
+    |> Enum.chunk_by(fn {_mutation, tag} -> ShardRouter.normalize_tag(tag) end)
     |> Enum.map(fn chunk ->
       {_mutation, tag} = hd(chunk)
-      {tag_to_integer(tag), length(chunk)}
+      {ShardRouter.normalize_tag(tag), length(chunk)}
     end)
   end
 
@@ -848,11 +848,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       {:halt, {:error, {:storage_team_coverage_error, key_or_range}}}
     else
       # For each (mutation, tag) pair, find logs and add the tagged mutation
-      n = map_size(log_map)
-
       updated_acc =
         Enum.reduce(tagged_mutations, mutations_acc, fn {split_mutation, tag}, acc ->
-          add_tagged_mutation_to_logs({split_mutation, tag}, acc, log_map, n, m)
+          add_tagged_mutation_to_logs({split_mutation, tag}, acc, log_map, m)
         end)
 
       {:cont, {:ok, updated_acc}}
@@ -864,33 +862,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           {term(), non_neg_integer()},
           %{Log.id() => [term()]},
           %{non_neg_integer() => Log.id()},
-          non_neg_integer(),
           non_neg_integer()
         ) :: %{Log.id() => [term()]}
-  defp add_tagged_mutation_to_logs({mutation, tag}, acc, log_map, n, m) do
-    numeric_tag = tag_to_integer(tag)
-
-    log_ids =
-      numeric_tag
-      |> ShardRouter.get_log_indices(n, m)
-      |> Enum.map(&Map.fetch!(log_map, &1))
+  defp add_tagged_mutation_to_logs({mutation, tag}, acc, log_map, m) do
+    log_ids = ShardRouter.log_ids_for_tag(tag, log_map, m)
 
     Enum.reduce(log_ids, acc, fn log_id, acc_inner ->
       Map.update!(acc_inner, log_id, &[{mutation, tag} | &1])
     end)
   end
-
-  # Convert tag to integer for golden ratio algorithm
-  # Production code uses integer tags, but tests may use strings
-  @spec tag_to_integer(term()) :: non_neg_integer()
-  defp tag_to_integer(tag) when is_integer(tag), do: tag
-
-  defp tag_to_integer(tag) when is_binary(tag) do
-    # Hash string tags to integers
-    :erlang.phash2(tag)
-  end
-
-  defp tag_to_integer(tag), do: :erlang.phash2(tag)
 
   @spec mutation_to_key_or_range(
           {:set, Bedrock.key(), Bedrock.value()}

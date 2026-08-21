@@ -102,12 +102,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
   defp unlock_with_stream(pid, log_stub) do
     {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, 1})
 
-    layout = %{
-      logs: %{"log-a" => []},
-      services: %{"log-a" => %{kind: :log, status: {:up, log_stub}}}
-    }
-
-    :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), layout})
+    :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), [{"log-a", log_stub}]})
   end
 
   defp slice(version, value) do

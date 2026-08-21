@@ -86,12 +86,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamReadTest do
 
     {:ok, _pid, _info} = GenServer.call(olivine, {:lock_for_recovery, 1})
 
-    layout = %{
-      logs: %{"log-a" => []},
-      services: %{"log-a" => %{kind: :log, status: {:up, log}}}
-    }
-
-    :ok = GenServer.call(olivine, {:unlock_after_recovery, Version.zero(), layout})
+    :ok = GenServer.call(olivine, {:unlock_after_recovery, Version.zero(), [{"log-a", log}]})
 
     %{demux: demux, olivine: olivine}
   end

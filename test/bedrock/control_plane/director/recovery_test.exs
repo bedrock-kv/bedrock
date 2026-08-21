@@ -180,7 +180,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       completed = %{
         logs: %{"live_log" => []},
-        shard_materializers: %{0 => live_mat_pid},
+        shard_materializers: %{0 => {"live_mat", Atom.to_string(node())}},
         transaction_services: %{
           "live_log" => %{kind: :log, status: {:up, self()}},
           "live_mat" => %{kind: :materializer, status: {:up, live_mat_pid}}
@@ -209,6 +209,21 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert Recovery.ghost_directory_ids(services, completed) == []
     end
 
+    test "an assigned materializer with no services record is still referenced — never pruned" do
+      # Worker ids ride the assignment refs, so the reference set does
+      # not depend on the services map at all; a missing record cannot
+      # deregister the worker the epoch assigned.
+      services = %{"assigned_mat" => {:materializer, {:a, :node1}}}
+
+      completed = %{
+        logs: %{},
+        shard_materializers: %{0 => {"assigned_mat", Atom.to_string(node())}},
+        transaction_services: %{}
+      }
+
+      assert Recovery.ghost_directory_ids(services, completed) == []
+    end
+
     test "a locked-but-inactive materializer is not referenced — it is a ghost candidate" do
       active_pid = spawn(fn -> Process.sleep(:infinity) end)
       inactive_pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -220,7 +235,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       completed = %{
         logs: %{},
-        shard_materializers: %{0 => active_pid},
+        shard_materializers: %{0 => {"active_mat", Atom.to_string(node())}},
         transaction_services: %{
           "active_mat" => %{kind: :materializer, status: {:up, active_pid}},
           "inactive_mat" => %{kind: :materializer, status: {:up, inactive_pid}}

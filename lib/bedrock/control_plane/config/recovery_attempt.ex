@@ -79,7 +79,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           transaction_services: %{Worker.id() => ServiceDescriptor.t()},
           service_pids: %{Worker.id() => pid()},
           transaction_system_layout: TransactionSystemLayout.t() | nil,
-          shard_materializers: %{Bedrock.range_tag() => pid()},
+          shard_materializers: %{Bedrock.range_tag() => {Worker.id(), node_name :: String.t()}},
           lock_failed_service_ids: MapSet.t(Worker.id()),
           shard_layout: shard_layout() | nil
         }

@@ -2,15 +2,20 @@ defmodule Bedrock.SystemKeys do
   @moduledoc """
   The `\\xFF/system` keys Bedrock writes and reads.
 
-  Every key defined here has a named reader: `shard_keys/<end_key>` feeds each
-  commit proxy's routing view (through resolver metadata windows) and the next
-  recovery's materializer bootstrap; `layout/logs/<log_id>` keys feed the
-  routing view's log wiring (the tag-list value is not consumed by routing);
-  `materializers/<tag>` refs feed the client-facing routing projection served
-  by commit proxies (FDB's `serverList/` analogue - interfaces ride the
-  keyspace). Materializer refs are runtime hints for clients, never recovery
-  input: bootstrap rebuilds assignment from `shard_keys/` plus live foreman
-  discovery. A system key without a reader is inventory, not communication -
+  Every key defined here has a named purpose: `shard_keys/<end_key>` feeds
+  each commit proxy's routing view (through resolver metadata windows) and
+  the next recovery's materializer bootstrap; `materializers/<tag>` refs
+  feed the client-facing routing projection served by commit proxies
+  (FDB's `serverList/` analogue - interfaces ride the keyspace) and answer
+  worker rejoin validation. `layout/logs/<log_id>` keys have no code
+  reader by design: log wiring is epoch-constant and rides the recovery
+  unlock seed (bedrock-q67.41) - the family stays durable for other
+  consumers and cluster-introspection tools, a queryable statement of
+  which logs the current epoch runs. Materializer refs are runtime hints
+  for clients, never recovery input: bootstrap rebuilds assignment from
+  `shard_keys/` plus live foreman discovery. A system key without a
+  reader is inventory, not communication - unread MACHINERY is deleted,
+  while durable observability keys stay by decision, named as such;
   families return here when their readers do (config authority with
   bedrock-q67.25).
   """

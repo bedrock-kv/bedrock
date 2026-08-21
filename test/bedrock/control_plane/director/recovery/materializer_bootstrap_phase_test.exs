@@ -60,7 +60,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert Map.has_key?(updated_attempt.shard_materializers, 0)
           assert Map.has_key?(updated_attempt.shard_materializers, 1)
 
-          assert updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()] == system_materializer_pid
+          assert {<<_::binary>>, node_string} =
+                   updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+
+          assert node_string == Atom.to_string(node())
 
           # Every creation reaches transaction_services — the layout is
           # built from it, and reconciliation retires anything the layout
@@ -128,7 +131,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert {updated_attempt, CommitProxyStartupPhase} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-      assert updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()] == system_materializer_pid
+      assert {<<_::binary>>, <<_::binary>>} =
+               updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
 
       # Replication spans all logs today, so every shard's replica set
       # covers both — each seed carries {log_id, ref} pairs, never a
@@ -227,12 +231,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
           # The system-shard survivor answers the layout query...
-          assert updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()] == system_pid
+          assert {"mat_sys", _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
           assert updated_attempt.shard_layout
 
           # ...and every shard in the layout gets its surviving
           # materializer — nothing newly created, nothing orphaned.
-          assert updated_attempt.shard_materializers == %{0 => system_pid, 1 => user_pid}
+          assert %{0 => {"mat_sys", _}, 1 => {"mat_user", _}} = updated_attempt.shard_materializers
+
+          assert map_size(updated_attempt.shard_materializers) == 2
         end)
 
       # Both were unlocked at the recovery version (vector last), never at
@@ -284,8 +290,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         assert {updated_attempt, CommitProxyStartupPhase} =
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-        assert updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()] == real_pid
-        assert updated_attempt.shard_materializers == %{0 => real_pid}
+        assert {"mat_real", _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+        assert %{0 => {"mat_real", _}} = updated_attempt.shard_materializers
+        assert map_size(updated_attempt.shard_materializers) == 1
       end)
     end
 
@@ -328,7 +335,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert {updated_attempt, CommitProxyStartupPhase} =
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-          assert updated_attempt.shard_materializers[0] == materializer_pid
+          assert {<<_::binary>>, <<_::binary>>} = updated_attempt.shard_materializers[0]
           assert updated_attempt.shard_layout
 
           # The creation is recorded: the layout will reference it, so
@@ -552,7 +559,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     alias Bedrock.SystemKeys
     alias Bedrock.SystemKeys.Values
 
-    test "decodes tuple-encoded shard values and rebuilds contiguous start keys" do
+    test "decodes tuple-encoded shard values, consuming the carried start keys" do
       entries = [
         {SystemKeys.shard_key(<<0xFF, 0xFF>>), Values.encode_shard_key_entry(0, "m")},
         {SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "")}
@@ -562,10 +569,37 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                MaterializerBootstrapPhase.shard_layout_from_entries(entries)
     end
 
+    test "the carried start key is consumed verbatim — no adjacency reconstruction" do
+      # The value carries the fact; readers must not rebuild it. Under
+      # adjacency reconstruction this entry's start would come out as the
+      # empty key (the first shard "starts where nothing ended"), so a
+      # carried non-empty start surviving proves the value is consumed —
+      # the same meaning RoutingData.apply_mutation gives it.
+      entries = [{SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "gap")}]
+
+      assert {:ok, %{"m" => {1, "gap"}}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries(entries)
+    end
+
     test "decodes legacy term_to_binary shard values in both historical shapes" do
       entries = [
         {SystemKeys.shard_key("m"), :erlang.term_to_binary(1)},
         {SystemKeys.shard_key(<<0xFF, 0xFF>>), :erlang.term_to_binary({0, "m"})}
+      ]
+
+      assert {:ok, %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries(entries)
+    end
+
+    test "any legacy entry falls the whole snapshot back to adjacency" do
+      # Structurally precluded in production (the family rewrites
+      # atomically each epoch, so snapshots are encoding-uniform), but the
+      # branch is live: a modern entry's carried start key is discarded
+      # and its tag still extracted when a legacy sibling forces the
+      # adjacency rebuild.
+      entries = [
+        {SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "carried-start")},
+        {SystemKeys.shard_key(<<0xFF, 0xFF>>), :erlang.term_to_binary(0)}
       ]
 
       assert {:ok, %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}}} =

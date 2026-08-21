@@ -98,7 +98,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
           "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
           "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}}
         })
-        |> Map.put(:shard_materializers, %{0 => mat_sys})
+        |> Map.put(:shard_materializers, %{0 => {"wkr_sys", Atom.to_string(node())}})
 
       context =
         recovery_context()

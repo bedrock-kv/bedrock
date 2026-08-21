@@ -6,14 +6,15 @@
   "blocks": [
     "bedrock-q67.21.3"
   ],
+  "closed_at": "2026-08-21T20:44:45Z",
   "created": "2026-08-21T20:10:28Z",
   "description": "Phase 2. FDB parity: recovery never rewrites the mapping (ClusterRecovery writes it only via seedShardServers for a brand-new database). Persistence stops the blanket clear+rewrite of shard_keys/ and materializers/: shard_keys seeds only-when-absent (boundaries never change without splits); materializers seeds-when-absent and writes exactly the entries this recovery CHANGED (bootstrap re-assignments), never clearing untouched entries. Tag-0 carve-out: the metadata shard stays recovery's to seed/heal (stall-only-for-tag-0). Bootstrap keeps creating workers for uncovered data tags until phase 4 shifts that to the distributor. Bootstrap's re-adoption input is the durable materializers/ family.",
   "id": "bedrock-q67.21.2",
   "labels": [],
   "parent": "bedrock-q67.21",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Recovery reads-and-heals the mapping families; seed-only-when-absent",
   "type": "task",
-  "updated_at": "2026-08-21T20:21:18Z"
+  "updated_at": "2026-08-21T20:44:45Z"
 }

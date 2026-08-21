@@ -4,14 +4,15 @@
   "blocks": [
     "bedrock-q67.38"
   ],
+  "closed_at": "2026-08-21T00:24:05Z",
   "created": "2026-08-20T22:39:31Z",
   "description": "Course item A (side-channel completion campaign, settled 2026-08-20; see epic). The olivine unlock currently receives a synthetic TSL carrying the ENTIRE transaction_services map (O(workers), sent to every materializer) plus dead resolvers/proxies fields the pattern match ignores (materializer_bootstrap_phase.ex:170-177/388-395, olivine/logic.ex:169-180, streaming.ex:184-201). FDB gives each SS exactly its own tag and assignments, never a cluster map. Replace with a typed {recovery_version, pull_sources} seed where pull_sources is [{log_id, log_ref}] for THIS shard's replica set, computed once by the director from recovery_attempt.logs + transaction_services. Extends #140 (recovery input vs runnable layouts). Delivering the replica set outright also deletes streaming's candidate_log_ids golden-ratio re-derivation (its comment demands agreement with topology - that coupling dies here). Note: the per-shard log filter in bootstrap is vestigial (recruited descriptors are empty tag lists so every log matches) - the seed makes the replica-set choice explicit instead. No dependencies; part of removing transaction_services from every worker-facing channel.",
   "id": "bedrock-q67.37",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Typed materializer unlock seed: per-shard pull sources, not a TSL costume",
   "type": "task",
-  "updated_at": "2026-08-21T00:11:44Z"
+  "updated_at": "2026-08-21T00:24:05Z"
 }

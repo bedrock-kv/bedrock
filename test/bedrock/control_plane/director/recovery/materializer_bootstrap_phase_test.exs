@@ -555,6 +555,61 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     end
   end
 
+  describe "read_all_shard_entries/1" do
+    alias Bedrock.SystemKeys, as: Keys
+
+    # A scripted range read keyed by the start key it expects: paging must
+    # resume each page exactly after the last returned key.
+    defp scripted(script), do: fn start_key -> Map.fetch!(script, start_key) end
+
+    test "a single page under the limit passes through" do
+      entries = [{Keys.shard_key("m"), "v1"}]
+      script = %{Keys.shard_keys_prefix() => {:ok, {entries, false}}}
+
+      assert {:ok, ^entries} = MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+    end
+
+    test "pages through the continuation until the read reports no more" do
+      page1 = [{Keys.shard_key("b"), "v1"}, {Keys.shard_key("f"), "v2"}]
+      page2 = [{Keys.shard_key("m"), "v3"}]
+      page3 = [{Keys.shard_key(<<0xFF, 0xFF>>), "v4"}]
+
+      script = %{
+        Keys.shard_keys_prefix() => {:ok, {page1, true}},
+        Bedrock.Key.key_after(Keys.shard_key("f")) => {:ok, {page2, true}},
+        Bedrock.Key.key_after(Keys.shard_key("m")) => {:ok, {page3, false}}
+      }
+
+      assert {:ok, entries} = MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+      assert entries == page1 ++ page2 ++ page3
+    end
+
+    test "an empty layout is an empty list, not an error" do
+      script = %{Keys.shard_keys_prefix() => {:ok, {[], false}}}
+
+      assert {:ok, []} = MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+    end
+
+    test "a mid-continuation failure surfaces as a query failure — never a truncated layout" do
+      page1 = [{Keys.shard_key("b"), "v1"}]
+
+      script = %{
+        Keys.shard_keys_prefix() => {:ok, {page1, true}},
+        Bedrock.Key.key_after(Keys.shard_key("b")) => {:failure, :timeout, :ref}
+      }
+
+      assert {:error, {:shard_layout_query_failed, :timeout}} =
+               MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+    end
+
+    test "an empty page claiming more is a broken contract, not an infinite loop" do
+      script = %{Keys.shard_keys_prefix() => {:ok, {[], true}}}
+
+      assert {:error, {:shard_layout_query_failed, :empty_continuation_page}} =
+               MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+    end
+  end
+
   describe "shard_layout_from_entries/1" do
     alias Bedrock.SystemKeys
     alias Bedrock.SystemKeys.Values

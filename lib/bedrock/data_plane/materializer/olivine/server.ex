@@ -15,8 +15,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.Reading
   alias Bedrock.DataPlane.Materializer.Olivine.State
+  alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
   alias Bedrock.DataPlane.Materializer.Telemetry
   alias Bedrock.Service.Foreman
+
+  require Logger
 
   # Transaction count limits for adaptive batching
   # Small batches for responsiveness during normal operation
@@ -36,17 +39,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     foreman = opts[:foreman] || raise "Missing :foreman option"
     id = opts[:id] || raise "Missing :id option"
     path = opts[:path] || raise "Missing :path option"
-    cluster = opts[:cluster]
-    params = opts[:params] || %{}
-    shard_id = params["shard_id"]
-
-    # Build startup opts only if cluster and shard_id are provided
-    startup_opts =
-      if cluster && shard_id do
-        [cluster: cluster, shard_id: shard_id]
-      else
-        []
-      end
+    startup_opts = startup_opts(opts[:cluster], opts[:params] || %{})
 
     %{
       id: {__MODULE__, id},
@@ -60,12 +53,35 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     }
   end
 
+  # Builds the opts handed to Logic.startup/5 from the worker's manifest
+  # params. shard_id is ALWAYS threaded through (it identifies the
+  # worker's shard assignment for info facts and re-adoption, and must
+  # never be gated on cluster presence); the ObjectStorage snapshot
+  # handle additionally requires a cluster, which Logic guards on. Idle
+  # spin-down is opt-in per worker (bedrock-q67.21.5): without an
+  # explicit positive idle_timeout the worker never spins down, which is
+  # what exempts the system shard (its bootstrap never sets the param).
+  @spec startup_opts(cluster :: module() | nil, params :: map()) :: keyword()
+  defp startup_opts(cluster, params) do
+    base = [cluster: cluster, shard_id: params["shard_id"]]
+
+    case params["idle_timeout"] do
+      idle_timeout when is_integer(idle_timeout) and idle_timeout > 0 ->
+        Keyword.put(base, :idle_timeout, idle_timeout)
+
+      _ ->
+        base
+    end
+  end
+
   @impl true
   def init(args), do: {:ok, args, {:continue, :finish_startup}}
 
   @impl true
 
   def handle_call({:get, key, version, opts}, from, %State{} = t) do
+    t = touch_read_activity(t)
+
     # Set operation context metadata for this request
     Telemetry.trace_metadata(%{operation: :get, key: key})
 
@@ -91,6 +107,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   end
 
   def handle_call({:get_range, start_key, end_key, version, opts}, from, %State{} = t) do
+    t = touch_read_activity(t)
+
     # Set operation context metadata for this request
     Telemetry.trace_metadata(%{operation: :get_range, key: {start_key, end_key}})
 
@@ -247,6 +265,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     case Logic.startup(otp_name, foreman, id, path, opts) do
       {:ok, state} ->
         Telemetry.trace_startup_complete()
+        schedule_idle_check(state)
         noreply(state, continue: :report_health_to_foreman)
 
       {:error, reason} ->
@@ -276,7 +295,28 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   defp max_version(version, nil), do: version
   defp max_version(a, b), do: max(a, b)
 
+  # Periodic idle check (bedrock-q67.21.5): only client reads count as
+  # activity - transaction application and pulls keep a shard fresh, not
+  # hot. When the read-inactivity window expires the worker best-effort
+  # uploads a snapshot (when configured), arranges for its foreman entry
+  # (and on-disk working directory) to be removed once it has exited,
+  # and stops with {:shutdown, :idle} so the distributor swaps the
+  # placeholder in WITHOUT eager re-recruitment: demand revives the
+  # shard on the next read.
   @impl true
+  def handle_info(:idle_check, %State{idle_timeout: :infinity} = t), do: noreply(t)
+
+  def handle_info(:idle_check, %State{} = t) do
+    idle_ms = System.monotonic_time(:millisecond) - t.last_read_at
+
+    if idle_ms >= t.idle_timeout do
+      initiate_idle_spindown(t, idle_ms)
+    else
+      schedule_idle_check(t)
+      noreply(t, continue: :maybe_process_transactions)
+    end
+  end
+
   # Discard transactions when locked
   def handle_info({:apply_transactions, _encoded_transactions}, %State{mode: :locked} = t), do: noreply(t)
 
@@ -333,7 +373,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
       ) do
     # Atomic cutover to compacted files
     # Get file paths from old database
-    alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
+    alias OlivineTelemetry, as: OlivineTelemetry
 
     # The cutover rewinds the index to the durable snapshot, so the
     # running puller's position (and any batch it has in flight) is
@@ -523,6 +563,63 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
       {:error, :not_found} -> :displaced
       {:error, _not_a_verdict} -> :keep
     end
+  end
+
+  @spec touch_read_activity(State.t()) :: State.t()
+  defp touch_read_activity(%State{} = t), do: %{t | last_read_at: System.monotonic_time(:millisecond)}
+
+  # Checks run at a quarter of the timeout, so per-read cost stays a
+  # single timestamp write instead of per-request timer churn on the hot
+  # path.
+  @spec schedule_idle_check(State.t()) :: State.t()
+  defp schedule_idle_check(%State{idle_timeout: :infinity} = t), do: t
+
+  defp schedule_idle_check(%State{idle_timeout: idle_timeout} = t) do
+    Process.send_after(self(), :idle_check, max(div(idle_timeout, 4), 10))
+    t
+  end
+
+  @spec initiate_idle_spindown(State.t(), non_neg_integer()) :: {:stop, {:shutdown, :idle}, State.t()}
+  defp initiate_idle_spindown(%State{} = t, idle_ms) do
+    OlivineTelemetry.trace_idle_spindown(idle_ms,
+      n_keys: IndexManager.info(t.index_manager, :n_keys),
+      size_in_bytes: IndexManager.info(t.index_manager, :size_in_bytes)
+    )
+
+    Logic.upload_snapshot_before_spindown(t)
+    remove_worker_after_exit(t)
+    stop(t, {:shutdown, :idle})
+  end
+
+  # The foreman entry (and with it the on-disk working directory) is
+  # reclaimed by Foreman.remove_worker/3 - but only after this worker
+  # has actually exited, so the {:shutdown, :idle} exit reason reaches
+  # the distributor's monitor untainted by the supervisor's
+  # terminate_child. Calling the foreman inline would also deadlock: it
+  # calls back into this worker's supervisor.
+  @spec remove_worker_after_exit(State.t()) :: :ok
+  defp remove_worker_after_exit(%State{foreman: foreman, id: id}) do
+    worker = self()
+
+    spawn(fn ->
+      ref = Process.monitor(worker)
+
+      receive do
+        {:DOWN, ^ref, :process, ^worker, _reason} ->
+          try do
+            Foreman.remove_worker(foreman, id, timeout: 5_000)
+          catch
+            kind, reason ->
+              Logger.warning(
+                "Failed to remove idle materializer worker #{inspect(id)} from foreman: #{inspect({kind, reason})}"
+              )
+          end
+      after
+        30_000 -> :ok
+      end
+    end)
+
+    :ok
   end
 
   @impl true

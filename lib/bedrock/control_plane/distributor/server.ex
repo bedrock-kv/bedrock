@@ -221,6 +221,14 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
         Logger.warning("Bedrock distributor (epoch #{t.epoch}): materializer for tag #{tag} unreachable; verifying")
         {:noreply, schedule_reverify(t, tag)}
 
+      {:shutdown, :idle} ->
+        # A voluntary idle spin-down (bedrock-q67.21.5): the shard proved
+        # cold, so revival is demand-driven — swap the placeholder in but
+        # do NOT eagerly re-recruit; the next read parks and re-demands.
+        Logger.info("Bedrock distributor (epoch #{t.epoch}): tag #{tag} spun down idle; revival on demand")
+        Telemetry.emit_idle_spindown(t.cluster, tag)
+        park_tag(clear_unreachable(t, tag), tag)
+
       _dead ->
         Logger.warning("Bedrock distributor (epoch #{t.epoch}): materializer for tag #{tag} down (#{inspect(reason)})")
         heal_tag(clear_unreachable(t, tag), tag)
@@ -410,34 +418,46 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     end
   end
 
-  # The heal itself: make the gap keyspace-visible FIRST — publish the
-  # placeholder ref under the fence, so clients park instead of
-  # hammering the corpse and displaced-but-alive twins observe the
-  # change — then tell the placeholder the tag is uncovered (park, don't
-  # forward) and eagerly re-recruit. A superseded publish cedes: a newer
-  # owner heals, not us. On a transient publish failure the tag's LOCAL
-  # ref is dropped so a racing coverage_demand recruits instead of
-  # draining parked reads into the corpse; the keyspace still names the
-  # corpse but self-corrects at the recruit's publication.
+  # The heal itself is park + eager re-recruit; an idle spin-down parks
+  # WITHOUT the recruit (revival is demand-driven).
   defp heal_tag(%State{} = t, tag) do
+    case park_tag(t, tag) do
+      {:noreply, t2} -> {:noreply, maybe_recruit(t2, tag)}
+      stop -> stop
+    end
+  end
+
+  # The park: make the gap keyspace-visible FIRST — publish the
+  # placeholder ref under the fence, so clients park instead of
+  # hammering the departed worker and displaced-but-alive twins observe
+  # the change — then tell the placeholder the tag is uncovered (park,
+  # don't forward). A superseded publish cedes: a newer owner heals, not
+  # us. On a transient publish failure the tag's LOCAL ref is dropped so
+  # a racing coverage_demand recruits instead of draining parked reads
+  # into the departed worker; the keyspace still names it but
+  # self-corrects at the next publication.
+  defp park_tag(%State{} = t, tag) do
     Placeholder.notify_uncovered(t.placeholder, tag)
 
     case publish_placeholders(t, [tag]) do
       :ok ->
         refs = Map.put(t.snapshot.materializer_refs, tag, {@placeholder_worker_id, Atom.to_string(node())})
-        {:noreply, maybe_recruit(%{t | snapshot: %{t.snapshot | materializer_refs: refs}}, tag)}
+        {:noreply, %{t | snapshot: %{t.snapshot | materializer_refs: refs}}}
 
       {:error, :superseded} ->
-        Logger.info("Bedrock distributor (epoch #{t.epoch}): superseded healing tag #{tag}; ceding")
+        Logger.info(
+          "Bedrock distributor (epoch #{t.epoch}): superseded swapping the placeholder into tag #{tag}; ceding"
+        )
+
         {:stop, :normal, t}
 
       {:error, reason} ->
         Logger.warning(
-          "Bedrock distributor (epoch #{t.epoch}): healing publish for tag #{tag} failed: #{inspect(reason)}"
+          "Bedrock distributor (epoch #{t.epoch}): placeholder publish for tag #{tag} failed: #{inspect(reason)}"
         )
 
         refs = Map.delete(t.snapshot.materializer_refs, tag)
-        {:noreply, maybe_recruit(%{t | snapshot: %{t.snapshot | materializer_refs: refs}}, tag)}
+        {:noreply, %{t | snapshot: %{t.snapshot | materializer_refs: refs}}}
     end
   end
 

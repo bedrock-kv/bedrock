@@ -31,6 +31,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
           snapshot: Snapshot.t() | nil,
           pull_sources: [{Log.id(), Log.ref()}] | nil,
           shard_num: non_neg_integer() | nil,
+          idle_timeout: pos_integer() | :infinity,
+          last_read_at: integer() | nil,
           known_committed_version: Bedrock.version() | nil,
           pending_ingest: GenServer.from() | nil
         }
@@ -53,6 +55,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
             snapshot: nil,
             pull_sources: nil,
             shard_num: nil,
+            idle_timeout: :infinity,
+            last_read_at: nil,
             known_committed_version: nil,
             pending_ingest: nil
 

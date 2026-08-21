@@ -690,6 +690,31 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       end)
     end
 
+    test "an idle spin-down parks the tag WITHOUT re-recruiting — revival is demand-driven" do
+      test_pid = self()
+      ref = make_ref()
+      t = healing_state(test_pid, [])
+      t = %{t | assignment_monitors: %{ref => 7}}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), {:shutdown, :idle}}, t)
+
+          # The placeholder swap is published and the tag uncovered —
+          # exactly like a heal — but NO recruit task starts.
+          assert_received {:committed, _}
+          assert_receive {:placeholder_got, {:uncovered, 7}}
+          refute MapSet.member?(t2.recruiting, 7)
+          assert t2.snapshot.materializer_refs[7] == {Placeholder.worker_id(), Atom.to_string(node())}
+
+          # The next read's demand is what revives the shard.
+          assert {:noreply, t3} = Server.handle_cast({:coverage_demand, 7}, t2)
+          assert MapSet.member?(t3.recruiting, 7)
+        end)
+
+      assert log =~ "spun down idle"
+    end
+
     test "a :noconnection DOWN does not heal — the tag is verified, not stampeded" do
       test_pid = self()
       ref = make_ref()
@@ -816,7 +841,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           refute_received {:placeholder_got, {:covered, 7, _}}
         end)
 
-      assert log =~ "healing publish for tag 7 failed"
+      assert log =~ "placeholder publish for tag 7 failed"
     end
 
     test "the startup sweep monitors live assignments but never the placeholder's own refs" do

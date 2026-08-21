@@ -46,6 +46,15 @@ defmodule Bedrock.ControlPlane.Distributor.Telemetry do
     )
   end
 
+  @spec emit_idle_spindown(module(), Bedrock.range_tag()) :: :ok
+  def emit_idle_spindown(cluster, tag) do
+    :telemetry.execute(
+      [:bedrock, :distributor, :idle_spindown],
+      %{count: 1},
+      %{cluster: cluster, tag: tag}
+    )
+  end
+
   @spec emit_placeholder_published(module(), [Bedrock.range_tag()]) :: :ok
   def emit_placeholder_published(cluster, tags) do
     :telemetry.execute(

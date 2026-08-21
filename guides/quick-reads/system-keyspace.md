@@ -69,9 +69,11 @@ recovery never rewrites the mapping (bedrock-q67.21.2):
   analogue); an existing cluster's layout is read back, and boundaries
   never change without splits, so nothing is written.
 - `materializers/` — durable across epochs. Recovery reads the family
-  (it is bootstrap's re-adoption authority: a family-named worker beats
-  the most-advanced-durable contest) and writes exactly the assignments
-  it changed. Entries recovery didn't touch — including strays for tags
+  (it is bootstrap's re-adoption authority: a family-named worker that
+  this epoch locked, and whose own shard assignment agrees, beats the
+  most-advanced-durable contest — which stays the fallback, including
+  for tag 0, chosen before the family can be read) and writes exactly
+  the assignments it changed. Entries recovery didn't touch — including strays for tags
   outside the layout — are not recovery's to clean.
 
 The Distributor (bedrock-q67.21) completes the ownership transfer: a

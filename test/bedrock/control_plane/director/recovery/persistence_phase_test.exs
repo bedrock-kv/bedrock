@@ -4,7 +4,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
-  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Key
   alias Bedrock.KeyRange

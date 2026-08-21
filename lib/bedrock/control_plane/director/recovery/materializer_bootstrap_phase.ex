@@ -635,10 +635,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # this reader consumes it — the same meaning RoutingData.apply_mutation
   # gives it; two readers of one family must not disagree about what the
   # value means. Adjacency reconstruction (each shard starts where the
-  # previous ends) survives only for legacy term_to_binary snapshots that
-  # predate carried start keys; the family rewrites atomically each
-  # epoch, so a snapshot is encoding-uniform and the fallback covers the
-  # whole read. (Dies with bedrock-q67.20.7.)
+  # previous ends) survives only for legacy term_to_binary snapshots
+  # that predate carried start keys. Recovery no longer rewrites the
+  # family (read-and-heal, bedrock-q67.21.2), so a legacy family stays
+  # legacy — encoding-uniform, which the any-legacy-falls-back-whole
+  # rule covers — until bedrock-q67.20.7 retires the fallback with an
+  # explicit one-time migration.
   @spec shard_layout_from_entries([{Bedrock.key(), binary()}]) ::
           {:ok, RecoveryAttempt.shard_layout()} | {:error, {:invalid_shard_value, Bedrock.key()}}
   def shard_layout_from_entries(entries) do
@@ -692,9 +694,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
-  # Clusters created before Bedrock.SystemKeys.Values wrote shard_key values
-  # with term_to_binary; their first completed recovery re-encodes them.
-  # Remove once no supported release can carry the old encoding.
+  # Clusters created before Bedrock.SystemKeys.Values wrote shard_key
+  # values with term_to_binary. Recovery no longer rewrites the family,
+  # so these values persist AS-IS until bedrock-q67.20.7's explicit
+  # migration retires them along with this fallback.
   defp decode_legacy_shard_tag(value) do
     case :erlang.binary_to_term(value, [:safe]) do
       tag when is_integer(tag) -> {:ok, {:legacy, tag}}

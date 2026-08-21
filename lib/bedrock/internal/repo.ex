@@ -14,6 +14,10 @@ defmodule Bedrock.Internal.Repo do
   # retry: version window misses resolve with a fresh read version, and the
   # rest are routing- or liveness-shaped (FDB's wrong_shard_server model:
   # they cost the caller a retry, never surface to the user).
+  # :unknown is a rescued unexpected exception inside a routing or read
+  # call (Internal.GenServer.Calls) - transient by construction, and the
+  # by-key routing path makes several such calls per miss; raising a user
+  # transaction over it would turn a blip into an error.
   @retryable_read_failures [
     :timeout,
     :unavailable,
@@ -21,7 +25,8 @@ defmodule Bedrock.Internal.Repo do
     :version_too_old,
     :layout_lookup_failed,
     :no_servers_to_race,
-    :locked
+    :locked,
+    :unknown
   ]
 
   # Of those, the ones that look like stale routing: an unroutable key, no
@@ -29,7 +34,7 @@ defmodule Bedrock.Internal.Repo do
   # exactly what a stale snapshot looks like, so the retry drops the node's
   # routing cache and refetches from a proxy. Version window misses are not
   # routing's fault and keep the cache.
-  @routing_invalidating_failures [:layout_lookup_failed, :no_servers_to_race, :unavailable, :timeout, :locked]
+  @routing_invalidating_failures [:layout_lookup_failed, :no_servers_to_race, :unavailable, :timeout, :locked, :unknown]
 
   @type transaction :: pid()
   @type key :: term()

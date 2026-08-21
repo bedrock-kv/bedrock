@@ -24,7 +24,7 @@ defmodule Bedrock.Internal.TransactionBuilder.State do
         }
   defstruct state: nil,
             transaction_system_layout: nil,
-            layout_index: nil,
+            layout_index: LayoutIndex.new(),
             routing_fn: nil,
             #
             read_version: nil,

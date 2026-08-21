@@ -5,11 +5,17 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   proxy-served by-key routing fetches (FDB's locationCache shape - built
   from `GetKeyServerLocations` answers, never a bulk dump).
 
-  Entries are exact shard ranges keyed by exclusive `end_key`, so within
-  one routing epoch they never overlap and re-inserting a shard is
-  idempotent. Cross-epoch mixing is precluded by coarse invalidation:
-  the whole index is dropped on a wiring push or a routing-shaped read
-  failure, never patched.
+  Entries are exact shard ranges keyed by exclusive `end_key`. Today the
+  only shard-boundary writer is recovery's per-epoch rewrite, so entries
+  fetched into one index are disjoint (the lookup's correctness depends
+  on this) and re-inserting a shard is idempotent. Coarse invalidation -
+  the whole index dropped on a wiring push or a routing-shaped read
+  failure, never patched - keeps epochs from mixing; an in-flight cache
+  cast can land after an invalidation, and that stale entry self-heals
+  through the same invalidate-on-failure loop. LIABILITY (bedrock-q67.21):
+  when the Distributor mutates boundaries mid-epoch, superseded ranges
+  can coexist with their replacements in a live index - the insert must
+  become overlap-aware (or eviction per-range) before that lands.
 
   Lookups are a single O(log n) ceiling search; a key no fetched entry
   covers returns `:not_cached`, which the owner resolves through its

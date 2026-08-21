@@ -35,6 +35,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   """
 
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
 
@@ -103,30 +104,11 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   """
   @spec covering_entry(t(), Bedrock.key()) :: {:ok, covering_entry()} | {:error, :not_found}
   def covering_entry(%__MODULE__{shards: shards, materializers: materializers}, key) do
-    with {:ok, end_key, {tag, start_key}} <- ceiling_entry(shards, key),
+    with {end_key, {tag, start_key}} <- ShardRouter.ceiling_entry(shards, key),
          {:ok, ref} <- Map.fetch(materializers, tag) do
       {:ok, {start_key, end_key, tag, ref}}
     else
       _ -> {:error, :not_found}
-    end
-  end
-
-  # First entry with end_key > key (end keys are exclusive bounds).
-  defp ceiling_entry(shards, key) do
-    key
-    |> :gb_trees.iterator_from(shards)
-    |> :gb_trees.next()
-    |> case do
-      {end_key, value, _iter} when end_key > key -> {:ok, end_key, value}
-      {_same_key, _value, iter} -> next_entry(iter)
-      :none -> {:error, :not_found}
-    end
-  end
-
-  defp next_entry(iter) do
-    case :gb_trees.next(iter) do
-      {end_key, value, _iter} -> {:ok, end_key, value}
-      :none -> {:error, :not_found}
     end
   end
 

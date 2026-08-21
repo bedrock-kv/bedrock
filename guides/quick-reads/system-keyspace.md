@@ -41,10 +41,10 @@ durable bytes never creates atoms — and consumers derive the callable
 `{otp_name, node}` ref (worker OTP names are deterministic in the worker
 id, so a restart on the same node changes nothing).
 
-Readers: `RoutingData` → the client routing projection, and worker
-rejoin validation — a worker (or the proxy answering for the committed
-state) checks whether the entry for its tag still names it; absence means
-retire.
+Readers: `RoutingData` → per-key covering entries served to clients
+(`fetch_routing`), and worker rejoin validation — a worker (through the
+proxy answering for the committed state) checks whether the entry for
+its tag still names it; absence means retire.
 
 ### `layout/logs/<log_id>` → tag list
 

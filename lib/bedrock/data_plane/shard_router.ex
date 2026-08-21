@@ -224,9 +224,15 @@ defmodule Bedrock.DataPlane.ShardRouter do
     end
   end
 
-  # First entry with end_key strictly greater than key. iterator_from yields
-  # keys >= key, so at most the first entry needs skipping.
-  defp ceiling_entry(shards, key) do
+  @doc """
+  First entry with `end_key` strictly greater than `key` (end keys are
+  exclusive bounds), or `:none`. The one ceiling-walk authority: mutation
+  routing, key lookup, and the proxy's client-facing covering entry all
+  resolve through it.
+  """
+  @spec ceiling_entry(RoutingData.shard_tree(), binary()) ::
+          {Bedrock.key(), {tag :: term(), start_key :: Bedrock.key()}} | :none
+  def ceiling_entry(shards, key) do
     iter = :gb_trees.iterator_from(key, shards)
 
     case :gb_trees.next(iter) do

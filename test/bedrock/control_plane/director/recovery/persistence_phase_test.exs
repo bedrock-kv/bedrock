@@ -42,7 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       <<0xFF>> => {1, <<>>},
       <<0xFF, 0xFF>> => {0, <<0xFF>>}
     })
-    |> Map.put(:shard_materializers, %{0 => mat_sys, 1 => mat_user})
+    |> Map.put(:shard_materializers, %{0 => {"wkr_sys", node(), mat_sys}, 1 => {"wkr_user", node(), mat_user}})
     |> Map.put(:transaction_system_layout, mock_transaction_system_layout())
   end
 
@@ -128,9 +128,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
              end)
     end
 
-    test "active shard management with zero matching service records still clears the family" do
-      # Keyspace and seed must agree: the seed would be empty, so the
-      # keyspace must end empty too - the clear fires even with no sets.
+    test "assignments write from the carried refs — no services-map inversion, no skips" do
+      # Worker ids and nodes ride the assignment from creation, so the
+      # family is written even when the services map has no matching
+      # record: the keyspace names exactly what the attempt assigned.
+      # (Under the old inversion, a missing record silently dropped the
+      # entry — an orphan the seed and keyspace then disagreed about.)
       recovery_attempt =
         update_in(
           base_recovery_attempt(),
@@ -140,34 +143,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       mutations = captured_system_mutations(recovery_attempt)
 
-      prefix = SystemKeys.materializers_prefix()
-      {clear_start, clear_end} = KeyRange.from_prefix(prefix)
-
-      assert Enum.any?(mutations, &match?({:clear_range, ^clear_start, ^clear_end}, &1))
-
-      refute Enum.any?(mutations, fn
-               {:set, key, _} -> String.starts_with?(key, prefix)
-               _ -> false
-             end)
-    end
-
-    test "a materializer pid without a service record is skipped, not invented" do
-      orphan = spawn(fn -> Process.sleep(:infinity) end)
-
-      recovery_attempt =
-        update_in(base_recovery_attempt(), [Access.key!(:shard_materializers)], &Map.put(&1, 9, orphan))
-
-      mutations = captured_system_mutations(recovery_attempt)
-
-      refute Enum.any?(mutations, fn
-               {:set, key, _} -> key == SystemKeys.materializer_key(9)
-               _ -> false
-             end)
-
-      assert Enum.any?(mutations, fn
-               {:set, key, _} -> key == SystemKeys.materializer_key(0)
-               _ -> false
-             end)
+      for tag <- [0, 1] do
+        assert Enum.any?(mutations, fn
+                 {:set, key, _} -> key == SystemKeys.materializer_key(tag)
+                 _ -> false
+               end)
+      end
     end
 
     test "commits the system transaction in system mode by default" do

@@ -79,7 +79,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           transaction_services: %{Worker.id() => ServiceDescriptor.t()},
           service_pids: %{Worker.id() => pid()},
           transaction_system_layout: TransactionSystemLayout.t() | nil,
-          shard_materializers: %{Bedrock.range_tag() => pid()},
+          shard_materializers: %{Bedrock.range_tag() => {Worker.id(), node(), pid()}},
           lock_failed_service_ids: MapSet.t(Worker.id()),
           shard_layout: shard_layout() | nil
         }
@@ -121,5 +121,24 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       shard_materializers: %{},
       lock_failed_service_ids: MapSet.new()
     }
+  end
+
+  @doc """
+  The string-encoded refs the `materializers/` keyspace family carries,
+  projected from the attempt's shard assignment:
+  `%{tag => {worker_id, node}}`. Both the persistence phase (the family's
+  writer) and the routing snapshot (the recover_from seed) derive from
+  this, so the seed and the keyspace cannot disagree. Worker ids and
+  nodes are carried from creation/lock — never recovered by inverting a
+  services map.
+  """
+  @spec materializer_refs(%{Bedrock.range_tag() => {Worker.id(), node(), pid()}} | nil) ::
+          %{Bedrock.range_tag() => {String.t(), String.t()}}
+  def materializer_refs(nil), do: %{}
+
+  def materializer_refs(shard_materializers) do
+    Map.new(shard_materializers, fn {tag, {worker_id, node, _pid}} ->
+      {tag, {worker_id, Atom.to_string(node)}}
+    end)
   end
 end

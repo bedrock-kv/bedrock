@@ -43,32 +43,4 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
           required(:resolvers) => resolver_list(),
           required(:logs) => log_map()
         }
-
-  @doc """
-  Inverts a `%{tag => materializer pid}` assignment through a services map
-  into the string-encoded refs the `materializers/` keyspace family
-  carries: `%{tag => {worker_id, node}}`. Both the persistence phase (the
-  family's writer) and the routing snapshot (the recover_from seed) derive
-  from this, so the seed and the keyspace cannot disagree.
-
-  A pid without a matching materializer service record is skipped - the
-  family only names workers the layout actually references.
-  """
-  @spec materializer_refs(%{Bedrock.range_tag() => pid()} | nil, service_map()) ::
-          %{Bedrock.range_tag() => {String.t(), String.t()}}
-  def materializer_refs(shard_materializers, services) do
-    shard_materializers
-    |> Kernel.||(%{})
-    |> Enum.flat_map(fn
-      {tag, pid} when is_pid(pid) ->
-        case Enum.find(services, &match?({_, %{kind: :materializer, status: {:up, ^pid}}}, &1)) do
-          {worker_id, _descriptor} -> [{tag, {worker_id, Atom.to_string(node(pid))}}]
-          nil -> []
-        end
-
-      _ ->
-        []
-    end)
-    |> Map.new()
-  end
 end

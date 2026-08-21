@@ -118,8 +118,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   defp create_materializers_for_shards(shard_tags, recovery_attempt, context) do
     Enum.reduce_while(shard_tags, {:ok, %{}, %{}}, fn shard_tag, {:ok, by_shard, services} ->
       case create_and_start_materializer(shard_tag, recovery_attempt, context) do
-        {:ok, pid, {worker_id, descriptor}} ->
-          {:cont, {:ok, Map.put(by_shard, shard_tag, pid), Map.put(services, worker_id, descriptor)}}
+        {:ok, {_worker_id, _node, _pid} = assignment, {worker_id, descriptor}} ->
+          {:cont, {:ok, Map.put(by_shard, shard_tag, assignment), Map.put(services, worker_id, descriptor)}}
 
         {:error, reason} ->
           {:halt, {:error, {shard_tag, reason}}}
@@ -128,7 +128,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   end
 
   # Create a materializer for a specific shard and start it pulling.
-  # Returns the pid plus the service record ({id, descriptor}) that must
+  # Returns the {worker_id, node, pid} assignment (the worker id rides the
+  # assignment from creation — it is never recovered by inverting a
+  # services map) plus the service record ({id, descriptor}) that must
   # travel into transaction_services so the layout references the creation.
   defp create_and_start_materializer(shard_tag, recovery_attempt, context) do
     with {:ok, node} <- find_materializer_capable_node(context),
@@ -138,7 +140,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
            lock_new_materializer({:materializer, {worker_ref, node}, shard_tag}, recovery_attempt.epoch, context),
          :ok <- start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
       descriptor = %{kind: :materializer, last_seen: {worker_ref, node}, status: {:up, pid}}
-      {:ok, pid, {worker_id, descriptor}}
+      {:ok, {worker_id, node, pid}, {worker_id, descriptor}}
     end
   end
 
@@ -192,7 +194,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     # durable state, including the shard layout this phase exists to read.
     existing_by_shard = existing_materializers_by_shard(recovery_attempt)
 
-    with {:ok, materializer_service, created_system} <-
+    with {:ok, {system_worker_id, materializer_service}, created_system} <-
            find_or_create_materializer(existing_by_shard, recovery_attempt, context),
          {:ok, materializer_pid} <- lock_materializer(materializer_service, recovery_attempt.epoch, context),
          # Unlock with logs so it streams the replayed WAL from the demux
@@ -218,7 +220,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
            ensure_materializers_for_shards(
              shard_layout,
              existing_by_shard,
-             %{RecoveryAttempt.system_shard_id() => materializer_pid},
+             %{
+               RecoveryAttempt.system_shard_id() => {system_worker_id, node(materializer_pid), materializer_pid}
+             },
              recovery_version,
              recovery_attempt,
              context
@@ -271,15 +275,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     |> Enum.flat_map(fn {id, info} ->
       with shard_id when is_integer(shard_id) <- Map.get(info, :shard_id),
            %{status: {:up, ref}} <- Map.get(recovery_attempt.transaction_services, id) do
-        [{shard_id, Map.get(info, :durable_version), {:materializer, ref}}]
+        [{shard_id, Map.get(info, :durable_version), {id, {:materializer, ref}}}]
       else
         _ -> []
       end
     end)
-    |> Enum.group_by(fn {shard_id, _durable, _service} -> shard_id end)
+    |> Enum.group_by(fn {shard_id, _durable, _entry} -> shard_id end)
     |> Map.new(fn {shard_id, candidates} ->
-      {_shard, _durable, service} = Enum.max_by(candidates, fn {_shard, durable, _service} -> durable end)
-      {shard_id, service}
+      {_shard, _durable, entry} = Enum.max_by(candidates, fn {_shard, durable, _entry} -> durable end)
+      {shard_id, entry}
     end)
   end
 
@@ -289,8 +293,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # services once the lock provides the pid.
   defp find_or_create_materializer(existing_by_shard, recovery_attempt, context) do
     case Map.fetch(existing_by_shard, RecoveryAttempt.system_shard_id()) do
-      {:ok, service} ->
-        {:ok, service, nil}
+      {:ok, {worker_id, service}} ->
+        {:ok, {worker_id, service}, nil}
 
       :error ->
         Logger.info("System shard materializer not found, creating new one")
@@ -298,7 +302,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         with {:ok, node} <- find_materializer_capable_node(context),
              {:ok, {worker_id, worker_ref, node}} <-
                create_materializer_worker(node, RecoveryAttempt.system_shard_id(), recovery_attempt, context) do
-          {:ok, {:materializer, {worker_ref, node}}, {worker_id, {worker_ref, node}}}
+          {:ok, {worker_id, {:materializer, {worker_ref, node}}}, {worker_id, {worker_ref, node}}}
         end
     end
   end
@@ -317,15 +321,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     |> extract_shard_tags()
     |> Enum.reduce_while({:ok, already_started, %{}}, fn shard_tag, {:ok, acc, services} ->
       case Map.fetch(acc, shard_tag) do
-        {:ok, _pid} ->
+        {:ok, _assignment} ->
           {:cont, {:ok, acc, services}}
 
         :error ->
           shard_tag
           |> start_materializer_for_shard(existing_by_shard, recovery_version, recovery_attempt, context)
           |> case do
-            {:ok, pid, created} ->
-              {:cont, {:ok, Map.put(acc, shard_tag, pid), Map.merge(services, created)}}
+            {:ok, assignment, created} ->
+              {:cont, {:ok, Map.put(acc, shard_tag, assignment), Map.merge(services, created)}}
 
             {:error, reason} ->
               {:halt, {:error, {shard_tag, reason}}}
@@ -336,18 +340,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   defp start_materializer_for_shard(shard_tag, existing_by_shard, recovery_version, recovery_attempt, context) do
     case Map.fetch(existing_by_shard, shard_tag) do
-      {:ok, service} ->
+      {:ok, {worker_id, service}} ->
         with {:ok, pid} <- lock_materializer(service, recovery_attempt.epoch, context),
              :ok <- unlock_and_start_pulling(pid, shard_tag, recovery_version, recovery_attempt, context) do
-          {:ok, pid, %{}}
+          {:ok, {worker_id, node(pid), pid}, %{}}
         end
 
       :error ->
         Logger.info("Materializer for shard #{shard_tag} not found, creating new one")
 
-        with {:ok, pid, {worker_id, descriptor}} <-
+        with {:ok, assignment, {worker_id, descriptor}} <-
                create_and_start_materializer(shard_tag, recovery_attempt, context) do
-          {:ok, pid, %{worker_id => descriptor}}
+          {:ok, assignment, %{worker_id => descriptor}}
         end
     end
   end
@@ -505,36 +509,52 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   @doc false
   # Key format: \xff/system/shard_keys/<end_key>; value: {tag, start_key}
-  # (see Bedrock.SystemKeys.Values). Ranges are contiguous, so start keys
-  # are rebuilt from the sorted end keys — each shard starts where the
-  # previous one ends, the first at the empty key — which also covers
-  # legacy values that carried only the tag.
+  # (see Bedrock.SystemKeys.Values). The value CARRIES the start key and
+  # this reader consumes it — the same meaning RoutingData.apply_mutation
+  # gives it; two readers of one family must not disagree about what the
+  # value means. Adjacency reconstruction (each shard starts where the
+  # previous ends) survives only for legacy term_to_binary snapshots that
+  # predate carried start keys; the family rewrites atomically each
+  # epoch, so a snapshot is encoding-uniform and the fallback covers the
+  # whole read. (Dies with bedrock-q67.20.7.)
   @spec shard_layout_from_entries([{Bedrock.key(), binary()}]) ::
           {:ok, RecoveryAttempt.shard_layout()} | {:error, {:invalid_shard_value, Bedrock.key()}}
   def shard_layout_from_entries(entries) do
     entries
     |> Enum.reduce_while({:ok, []}, fn {key, value}, {:ok, acc} ->
-      case decode_shard_tag(value) do
-        {:ok, tag} -> {:cont, {:ok, [{extract_end_key_from_shard_key(key), tag} | acc]}}
+      case decode_shard_entry(value) do
+        {:ok, decoded} -> {:cont, {:ok, [{extract_end_key_from_shard_key(key), decoded} | acc]}}
         {:error, _} -> {:halt, {:error, {:invalid_shard_value, key}}}
       end
     end)
     |> case do
-      {:ok, tags_by_end_key} ->
-        shard_layout =
-          tags_by_end_key
-          |> Enum.sort_by(fn {end_key, _tag} -> end_key end)
-          |> Enum.map_reduce(<<>>, fn {end_key, tag}, start_key ->
-            {{end_key, {tag, start_key}}, end_key}
-          end)
-          |> elem(0)
-          |> Map.new()
-
-        {:ok, shard_layout}
-
-      error ->
-        error
+      {:ok, decoded_by_end_key} -> {:ok, build_shard_layout(decoded_by_end_key)}
+      error -> error
     end
+  end
+
+  defp build_shard_layout(decoded_by_end_key) do
+    if Enum.any?(decoded_by_end_key, &match?({_end_key, {:legacy, _tag}}, &1)) do
+      rebuild_start_keys_by_adjacency(decoded_by_end_key)
+    else
+      Map.new(decoded_by_end_key, fn {end_key, {tag, start_key}} -> {end_key, {tag, start_key}} end)
+    end
+  end
+
+  defp rebuild_start_keys_by_adjacency(decoded_by_end_key) do
+    decoded_by_end_key
+    |> Enum.sort_by(fn {end_key, _decoded} -> end_key end)
+    |> Enum.map_reduce(<<>>, fn {end_key, decoded}, start_key ->
+      tag =
+        case decoded do
+          {:legacy, tag} -> tag
+          {tag, _carried_start} -> tag
+        end
+
+      {{end_key, {tag, start_key}}, end_key}
+    end)
+    |> elem(0)
+    |> Map.new()
   end
 
   defp extract_end_key_from_shard_key(key) do
@@ -543,9 +563,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     binary_part(key, prefix_len, byte_size(key) - prefix_len)
   end
 
-  defp decode_shard_tag(value) do
+  defp decode_shard_entry(value) do
     case Values.decode_shard_key_entry(value) do
-      {:ok, {tag, _start_key}} -> {:ok, tag}
+      {:ok, {tag, start_key}} -> {:ok, {tag, start_key}}
       {:error, _} -> decode_legacy_shard_tag(value)
     end
   end
@@ -555,8 +575,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # Remove once no supported release can carry the old encoding.
   defp decode_legacy_shard_tag(value) do
     case :erlang.binary_to_term(value, [:safe]) do
-      tag when is_integer(tag) -> {:ok, tag}
-      {tag, _start_key} when is_integer(tag) -> {:ok, tag}
+      tag when is_integer(tag) -> {:ok, {:legacy, tag}}
+      {tag, _start_key} when is_integer(tag) -> {:ok, {:legacy, tag}}
       _ -> {:error, :invalid_encoding}
     end
   rescue

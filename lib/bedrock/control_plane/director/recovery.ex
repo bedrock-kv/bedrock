@@ -180,13 +180,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   defp layout_reference_ids(completed_attempt) do
     log_ids = completed_attempt.logs |> Map.keys() |> MapSet.new()
 
-    active_materializer_pids = completed_attempt.shard_materializers |> Map.values() |> MapSet.new()
-
     materializer_ids =
-      for {id, %{status: {:up, pid}}} <- completed_attempt.transaction_services,
-          MapSet.member?(active_materializer_pids, pid),
+      for {_tag, {worker_id, _node, _pid}} <- completed_attempt.shard_materializers,
           into: MapSet.new(),
-          do: id
+          do: worker_id
 
     MapSet.union(log_ids, materializer_ids)
   end

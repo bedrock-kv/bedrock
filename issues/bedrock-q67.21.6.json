@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-q67.21.4"
+  ],
   "blocks": [],
   "created": "2026-08-21T20:10:28Z",
   "description": "Phase 6. Healing introduces mid-epoch removals, un-deferring the q67.38 obligation: a displaced-but-alive materializer must learn in-band, not wait for the next recovery push. FDB shape (ApplyMetadataMutation privatization -\u003e storageserver applyPrivateData worker_removed): the proxy's apply-then-route step dual-routes the materializers/\u003ctag\u003e change to the victim's own shard tag so the worker observes its own displacement in the stream it already follows and self-retires (dispose store, exit, foreman janitors). Do not build before phase 4 exists.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "In-band retirement: the victim learns from its own stream",
   "type": "task",
-  "updated_at": "2026-08-21T20:10:28Z"
+  "updated_at": "2026-08-21T20:10:36Z"
 }

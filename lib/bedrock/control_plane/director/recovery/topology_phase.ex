@@ -184,8 +184,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
         # Not advertised yet — workers created during THIS recovery attempt
         # can't be in the directory (advertisement is async), but the
         # attempt holds their full service records. Dropping them here
-        # would strike them from the layout and reconciliation would kill
-        # the workers recovery just created.
+        # would strike them from the layout and they would self-retire on
+        # the push — workers recovery just created.
         Map.get(recovery_attempt.transaction_services, service_id)
     end
   end

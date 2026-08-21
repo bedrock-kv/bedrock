@@ -156,8 +156,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   These are ghosts: registrations left behind by workers on nodes that no
   longer exist under that name (node names change across restarts, and
   nothing on a dead node can deregister itself). Entries on live nodes need
-  no help here — their foreman retires and deregisters them through layout
-  reconciliation — but only the director can clean up for the dead.
+  no help here — displaced workers self-retire on the layout push and their
+  foreman deregisters them — but only the director can clean up for the
+  dead.
   """
   @spec ghost_directory_ids(
           services :: %{Worker.id() => term()},

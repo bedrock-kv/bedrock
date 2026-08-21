@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
   import Bedrock.Internal.GenServer.Replies
 
+  alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Materializer.Olivine.DataDatabase
   alias Bedrock.DataPlane.Materializer.Olivine.Index
@@ -468,8 +469,61 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     noreply(updated_state)
   end
 
+  # A newly durable layout, relayed by this node's foreman: rejoin
+  # validation. Unlike logs, materializer membership is not in the wiring
+  # push — it lives in the committed keyspace (materializers/<tag>) — so
+  # the worker asks a commit proxy for its tag's entry (FDB's
+  # storage-server rejoin against the proxy's txnStateStore). Absence or
+  # a different worker id is authoritative displacement: dispose and
+  # exit; nobody else decides. Errors (locked, unavailable, timeout) are
+  # not verdicts — revalidate on the next push. A layout may judge every
+  # worker it had the chance to include (pushed epoch >= ours — every
+  # recovery locks every advertised materializer into its epoch, so the
+  # completing push carries the stray's own epoch); only a push older
+  # than our lock — an in-flight recovery's past — is off-limits.
+  @impl true
+  def handle_info({:tsl_updated, %{epoch: pushed_epoch} = tsl}, %State{} = t) do
+    if validation_due?(t, pushed_epoch) do
+      case rejoin_verdict(t, Map.get(tsl, :proxies, [])) do
+        :keep ->
+          noreply(t)
+
+        :displaced ->
+          require Logger
+
+          Logger.info("Bedrock materializer #{t.id}: keyspace no longer names it for shard #{t.shard_num}; retiring")
+          Foreman.worker_retired(t.foreman, t.id)
+          {:stop, {:shutdown, :displaced}, t}
+      end
+    else
+      noreply(t)
+    end
+  end
+
   @impl true
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # Only a layout that had the chance to include us may judge us: pushed
+  # epoch at or past the one we were locked into (nil means never locked —
+  # a cold-boot resurrection any completed layout may judge). Static
+  # materializers (no shard assignment) are outside the cluster layout
+  # entirely.
+  @spec validation_due?(State.t(), Bedrock.epoch()) :: boolean()
+  defp validation_due?(%State{shard_num: nil}, _pushed_epoch), do: false
+  defp validation_due?(%State{epoch: nil}, _pushed_epoch), do: true
+  defp validation_due?(%State{epoch: my_epoch}, pushed_epoch), do: pushed_epoch >= my_epoch
+
+  @spec rejoin_verdict(State.t(), [CommitProxy.ref()]) :: :keep | :displaced
+  defp rejoin_verdict(_t, []), do: :keep
+
+  defp rejoin_verdict(%State{} = t, proxies) do
+    case CommitProxy.resolve_materializer(Enum.random(proxies), t.shard_num) do
+      {:ok, {worker_id, _node}} when worker_id == t.id -> :keep
+      {:ok, {_other_worker, _node}} -> :displaced
+      {:error, :not_found} -> :displaced
+      {:error, _not_a_verdict} -> :keep
+    end
+  end
 
   @impl true
   def terminate(reason, %State{} = t) do

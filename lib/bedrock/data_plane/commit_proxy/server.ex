@@ -218,6 +218,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   def handle_call(:fetch_routing, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
+  # Worker rejoin validation (FDB's storage-server rejoin against the
+  # proxy's txnStateStore): one tag-keyed lookup in the live routing view.
+  # Same cadence rule as :fetch_routing — the reply must not swallow an
+  # open batch's pending timeout.
+  def handle_call({:resolve_materializer, tag}, from, %{mode: :running} = t) do
+    GenServer.reply(from, RoutingData.resolve_materializer(t.routing_data, tag))
+    noreply_resuming_cadence(t)
+  end
+
+  def handle_call({:resolve_materializer, _tag}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
+
   defp accept_commit(transaction, commit_mode, from, t) do
     case start_batch_if_needed(t) do
       {:error, reason} ->

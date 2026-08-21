@@ -65,6 +65,26 @@ defmodule Bedrock.DataPlane.CommitProxy do
   def fetch_routing(commit_proxy, opts \\ []), do: call(commit_proxy, :fetch_routing, opts[:timeout_in_ms] || 5_000)
 
   @doc """
+  Resolves the committed materializer assignment for one shard tag.
+
+  This is the rejoin-validation ask (FDB's storage-server rejoin through a
+  commit proxy's txnStateStore): a materializer checks whether the
+  `materializers/<tag>` entry still names it. `{:error, :not_found}` is an
+  authoritative answer — the committed keyspace names no materializer for
+  the tag. A locked proxy replies `{:error, :locked}`; callers treat that
+  (and unavailability) as "ask again later", never as displacement.
+  """
+  @spec resolve_materializer(
+          commit_proxy_ref :: ref(),
+          tag :: non_neg_integer(),
+          opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
+        ) ::
+          {:ok, {worker_id :: String.t(), node :: String.t()}}
+          | {:error, :not_found | :locked | :timeout | :unavailable}
+  def resolve_materializer(commit_proxy, tag, opts \\ []),
+    do: call(commit_proxy, {:resolve_materializer, tag}, opts[:timeout_in_ms] || 5_000)
+
+  @doc """
   Submits a transaction for commit.
 
   By default the commit is bounded to the user keyspace: any mutation keyed

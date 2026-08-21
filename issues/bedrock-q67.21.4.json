@@ -3,7 +3,9 @@
   "blocked_by": [
     "bedrock-q67.21.3"
   ],
-  "blocks": [],
+  "blocks": [
+    "bedrock-q67.21.5"
+  ],
   "created": "2026-08-21T20:10:28Z",
   "description": "Phase 4. The distributor's mutating operations, each one transaction prefixed by check_lock: (a) recruit for a demanded/uncovered tag - phase-a pipeline (Foreman new_worker with shard_id+idle params, lock at epoch, unlock at worker-reported durable version via typed pull_sources like bootstrap), then commit materializers/\u003ctag\u003e = {worker_id, node}; commit abort replaces the old delta-rejection as both the supersession signal (stop :normal) and the orphan-cleanup trigger. (b) heal on materializer death (monitor-driven, event-based like teamTracker; slow verify sweep as insurance): recruit replacement, commit the entry. With this, bootstrap stops creating data-tag workers (gaps left ABSENT; placeholder covers) - completing stall-only-for-tag-0. Proxies fold the committed mutations; displaced-but-alive workers still self-detect at the next push until phase 6 delivers in-band.",
   "id": "bedrock-q67.21.4",
@@ -13,5 +15,5 @@
   "status": "open",
   "title": "Recruit and heal transactions under the lock",
   "type": "task",
-  "updated_at": "2026-08-21T20:10:35Z"
+  "updated_at": "2026-08-21T20:10:36Z"
 }

@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-q67.21.4"
+  ],
   "blocks": [],
   "created": "2026-08-21T20:10:28Z",
   "description": "Phase 5. Olivine idle spin-down ports from phase-a (opt-in idle_timeout worker param, client-reads-only activity, snapshot-before-spin-down, {:shutdown, :idle} exit, foreman self-removal). Distributor: idle DOWN -\u003e placeholder entry committed, NO eager re-recruit; revival on demand. Re-adoption residue only: the durable materializers/ family already feeds bootstrap re-adoption, so the distributor re-adopts only tags bootstrap left ABSENT (one-shot per sweep, pending-demand reservation, never remove a pre-existing worker).",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Idle spin-down + re-adoption residue",
   "type": "task",
-  "updated_at": "2026-08-21T20:10:28Z"
+  "updated_at": "2026-08-21T20:10:36Z"
 }

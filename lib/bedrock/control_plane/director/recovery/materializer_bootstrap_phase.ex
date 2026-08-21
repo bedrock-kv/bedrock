@@ -513,11 +513,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # degraded layout — it is a WRONG one (missing shards read as holes in
   # the keyspace), so the continuation must be drained, never dropped.
   defp default_get_shard_layout(materializer_pid, read_version) do
-    prefix = Bedrock.SystemKeys.shard_keys_prefix()
-    end_key = prefix <> <<0xFF, 0xFF, 0xFF, 0xFF>>
+    # The same bound construction the writer uses (persistence phase's
+    # clear_prefix), so reader and writer ranges are definitionally
+    # identical rather than two hand-rolled sentinels kept in agreement.
+    {_range_start, range_end} = Bedrock.KeyRange.from_prefix(Bedrock.SystemKeys.shard_keys_prefix())
 
     range_read_fn = fn start_key ->
-      Materializer.get_range(materializer_pid, start_key, end_key, read_version, limit: 1000)
+      Materializer.get_range(materializer_pid, start_key, range_end, read_version, limit: 1000)
     end
 
     case read_all_shard_entries(range_read_fn) do

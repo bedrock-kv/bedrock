@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-21T16:31:30Z",
   "created": "2026-08-21T16:23:18Z",
   "description": "Findings 1-5 and 7 from the 2026-08-21 fresh-agent acceptance review of the integration branch (ACCEPT-WITH-NOTES): (1) commit/4 @spec says {:error, :abort} but every reply site sends :aborted; (2) dead service_map type + ServiceDescriptor alias in transaction_system_layout.ex; (3) unreachable :locked clause for :apply_metadata_and_route (guard-only-real-hazards); (4) resolver stale-window preclusion enforced by clause-fallthrough needs a legible statement; (5) routing-cache eviction breadth: drop :timeout/:unknown from @routing_invalidating_failures — FDB's locationCache survives timeouts (only definitive routing-shaped signals evict); slow is not stale, and dead pids already surface as :unavailable; (7) Repo.clear_range doc line pointing at end_of_user_keyspace/0 for the :end-sentinel key_out_of_range trap.",
   "id": "bedrock-q67.43",
@@ -14,7 +15,7 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Post-merge evaluation cleanup: spec honesty, dead types, precluded-hazard residues, timeout-eviction parity",
   "type": "task",
   "updated_at": "2026-08-21T16:31:30Z"

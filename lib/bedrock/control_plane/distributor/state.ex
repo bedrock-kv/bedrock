@@ -25,6 +25,8 @@ defmodule Bedrock.ControlPlane.Distributor.State do
           recruiting: MapSet.t(Bedrock.range_tag()),
           recruit_task_refs: %{reference() => Bedrock.range_tag()},
           assignment_monitors: %{reference() => Bedrock.range_tag()},
+          unreachable_counts: %{Bedrock.range_tag() => pos_integer()},
+          reverify_interval_ms: pos_integer(),
           backoff: %{Bedrock.range_tag() => integer()},
           backoff_ms: pos_integer()
         }
@@ -45,6 +47,8 @@ defmodule Bedrock.ControlPlane.Distributor.State do
     recruiting: MapSet.new(),
     recruit_task_refs: %{},
     assignment_monitors: %{},
+    unreachable_counts: %{},
+    reverify_interval_ms: 2_000,
     backoff: %{},
     backoff_ms: 5_000
   ]

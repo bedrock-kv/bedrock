@@ -108,7 +108,7 @@ defmodule Bedrock.DataPlane.CommitProxy do
           opts :: [mode: :user | :system]
         ) ::
           {:ok, version :: Bedrock.version(), index :: non_neg_integer()}
-          | {:error, :wrong_epoch | :locked | :abort | :timeout | :unavailable}
+          | {:error, :wrong_epoch | :locked | :aborted | :timeout | :unavailable}
           | {:error, {:key_out_of_range, Bedrock.key()}}
           | {:error, :invalid_transaction}
   def commit(commit_proxy, epoch, transaction, opts \\ []) do

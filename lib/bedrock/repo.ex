@@ -247,6 +247,14 @@ defmodule Bedrock.Repo do
 
   - `:no_write_conflict` - If true, disables write conflict detection (default: false)
 
+  The range must stay inside the user keyspace: commits are bounded below
+  `Bedrock.end_of_user_keyspace/0` (`0xFF`), and a range end past it —
+  including one built with the `:end` sentinel, which converts to the
+  full-keyspace bound — is rejected at commit as a permanent
+  `{:key_out_of_range, key}` rather than clamped (FDB parity: system keys
+  are reachable only through system-mode commits). Use
+  `Bedrock.end_of_user_keyspace/0` as the widest legal end key.
+
   ## Examples
 
       transact(fn ->

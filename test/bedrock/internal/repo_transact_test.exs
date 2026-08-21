@@ -614,6 +614,37 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert_receive :routing_invalidated
     end
 
+    test "a slow materializer retries without dropping the node's routing cache — slow is not stale" do
+      test_pid = self()
+
+      # The materializer holds the call forever: the read times out. A
+      # timeout is retryable but NOT routing-shaped — FDB's locationCache
+      # survives timeouts (only definitive signals evict: an unroutable
+      # key, no servers, a dead ref). Under overload, evicting on timeout
+      # would convert latency into node-wide cache-thrash and refetch
+      # traffic. A dead materializer surfaces as :unavailable, which does
+      # evict.
+      materializer = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(materializer, :kill) end)
+      Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
+
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
+      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry()), test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      assert_raise RuntimeError, ~r/retry limit/, fn ->
+        Repo.transact(
+          RoutingCluster,
+          TestRepo,
+          fn -> Repo.get(TestRepo, "some_key") end,
+          retry_limit: 1,
+          timeout_in_ms: 2_000
+        )
+      end
+
+      refute_received :routing_invalidated
+    end
+
     test "a transaction that never reads never fetches routing" do
       test_pid = self()
 

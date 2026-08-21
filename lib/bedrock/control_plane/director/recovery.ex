@@ -125,7 +125,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
         |> persist_config()
         |> persist_new_transaction_system_layout()
-        |> prune_service_directory()
+        |> prune_service_directory(completed)
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
@@ -162,19 +162,38 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   """
   @spec ghost_directory_ids(
           services :: %{Worker.id() => term()},
-          TransactionSystemLayout.t()
+          RecoveryAttempt.t()
         ) :: [Worker.id()]
-  def ghost_directory_ids(services, %{services: layout_services}) when is_map(layout_services) do
+  def ghost_directory_ids(services, completed_attempt) do
+    referenced = layout_reference_ids(completed_attempt)
+
     services
     |> Map.keys()
-    |> Enum.reject(&Map.has_key?(layout_services, &1))
+    |> Enum.reject(&MapSet.member?(referenced, &1))
   end
 
-  def ghost_directory_ids(_services, _layout), do: []
+  # The completed layout's statement of what exists: the new-generation
+  # logs and the active shard materializers — computed from the attempt
+  # (the TSL carries no membership map). Ghost pruning treats anything
+  # the completed recovery does not reference as a candidate ghost.
+  @spec layout_reference_ids(RecoveryAttempt.t()) :: MapSet.t(Worker.id())
+  defp layout_reference_ids(completed_attempt) do
+    log_ids = completed_attempt.logs |> Map.keys() |> MapSet.new()
 
-  @spec prune_service_directory(State.t()) :: State.t()
-  defp prune_service_directory(t) do
-    case ghost_directory_ids(t.services, t.transaction_system_layout) do
+    active_materializer_pids = completed_attempt.shard_materializers |> Map.values() |> MapSet.new()
+
+    materializer_ids =
+      for {id, %{status: {:up, pid}}} <- completed_attempt.transaction_services,
+          MapSet.member?(active_materializer_pids, pid),
+          into: MapSet.new(),
+          do: id
+
+    MapSet.union(log_ids, materializer_ids)
+  end
+
+  @spec prune_service_directory(State.t(), RecoveryAttempt.t()) :: State.t()
+  defp prune_service_directory(t, completed_attempt) do
+    case ghost_directory_ids(t.services, completed_attempt) do
       [] ->
         t
 

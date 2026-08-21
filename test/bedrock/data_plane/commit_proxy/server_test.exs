@@ -71,8 +71,10 @@ defmodule Bedrock.DataPlane.CommitProxy.ServerTest do
     Map.merge(base, overrides)
   end
 
-  # Build the plain routing snapshot recover_from carries, as the director's
-  # topology phase would assemble it from a transaction system layout.
+  # Build the plain routing snapshot recover_from carries. The fixture map
+  # bundles logs + a local services map for convenience; production
+  # assembles the snapshot from the recovery attempt (the TSL carries no
+  # membership map).
   defp build_routing_snapshot(transaction_system_layout) do
     logs = Map.get(transaction_system_layout, :logs, %{})
     services = Map.get(transaction_system_layout, :services, %{})

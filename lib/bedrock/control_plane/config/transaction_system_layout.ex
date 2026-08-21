@@ -22,8 +22,13 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
     - `proxies` - The pids of the commit proxies (commits, routing fetches).
     - `resolvers` - Resolver descriptors, consumed at proxy unlock.
     - `logs` - Log descriptors: each log's id and the tags it services.
-    - `services` - Every worker the layout references (types, ids, refs);
-       the Foreman retires hosted workers absent from this map.
+
+  No membership map rides here (FDB's ServerDBInfo carries no storage
+  membership either): logs self-check against the epoch-constant log
+  set, materializers rejoin-validate against the committed keyspace
+  through a commit proxy, and director-internal readers consume the
+  recovery attempt's transaction_services. Nothing O(workers) may ever
+  be added to this broadcast.
   """
   @type process_ref :: pid() | nil
   @type proxy_list :: [pid()]
@@ -36,8 +41,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
           required(:sequencer) => process_ref(),
           required(:proxies) => proxy_list(),
           required(:resolvers) => resolver_list(),
-          required(:logs) => log_map(),
-          required(:services) => service_map()
+          required(:logs) => log_map()
         }
 
   @doc """

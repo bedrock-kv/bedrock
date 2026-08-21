@@ -231,7 +231,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         tx = clear_prefix(tx, SystemKeys.materializers_prefix())
 
         materializers
-        |> TransactionSystemLayout.materializer_refs(recovery_attempt.transaction_system_layout.services)
+        |> TransactionSystemLayout.materializer_refs(recovery_attempt.transaction_services)
         |> Enum.reduce(tx, fn {tag, {worker_id, node}}, tx ->
           Tx.set(tx, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node))
         end)

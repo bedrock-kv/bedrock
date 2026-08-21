@@ -25,28 +25,35 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
 
     monitor_fn = Map.get(context, :monitor_fn, &Process.monitor/1)
 
-    recovery_attempt.transaction_system_layout
+    recovery_attempt
     |> extract_pids_to_monitor()
     |> monitor_all_pids(monitor_fn)
 
     {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
   end
 
+  # Monitored: sequencer, proxies, resolvers, and the epoch's logs (their
+  # pids read from the attempt's transaction_services — the TSL carries no
+  # membership map). Materializers are deliberately absent: they
+  # self-organize from logs and their failure is not epoch-fatal.
   @spec extract_pids_to_monitor(map()) :: [pid()]
-  defp extract_pids_to_monitor(layout) do
+  defp extract_pids_to_monitor(recovery_attempt) do
     resolver_pids =
-      Enum.map(layout.resolvers, fn {_start_key, pid} -> pid end)
+      Enum.map(recovery_attempt.resolvers, fn {_start_key, pid} -> pid end)
 
-    service_pids =
-      layout.services
-      |> Enum.filter(fn {_service_id, service} -> service.kind != :materializer end)
-      |> Enum.map(fn {_service_id, %{status: {:up, pid}}} -> pid end)
+    # Fail fast on a log that is missing or not up: an epoch whose log
+    # cannot be monitored is an epoch that cannot detect its own failure.
+    log_pids =
+      Enum.map(Map.keys(recovery_attempt.logs), fn log_id ->
+        %{status: {:up, pid}} = Map.fetch!(recovery_attempt.transaction_services, log_id)
+        pid
+      end)
 
     Enum.concat([
-      [layout.sequencer],
-      layout.proxies,
+      [recovery_attempt.sequencer],
+      recovery_attempt.proxies,
       resolver_pids,
-      service_pids
+      log_pids
     ])
   end
 

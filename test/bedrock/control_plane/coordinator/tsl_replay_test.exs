@@ -36,7 +36,7 @@ defmodule Bedrock.ControlPlane.Coordinator.TslReplayTest do
   end
 
   test "registration replays the current layout to the new subscriber" do
-    tsl = %{id: "layout-1", epoch: 7, logs: %{}, services: %{}}
+    tsl = %{epoch: 7, sequencer: nil, proxies: [], resolvers: [], logs: %{}}
     state = follower_state(%{transaction_system_layout: tsl})
 
     assert {:noreply, updated} = register(state)
@@ -79,7 +79,7 @@ defmodule Bedrock.ControlPlane.Coordinator.TslReplayTest do
   end
 
   test "duplicate registration is idempotent: one subscription, same snapshot each time" do
-    tsl = %{id: "layout-1", epoch: 7, logs: %{}, services: %{}}
+    tsl = %{epoch: 7, sequencer: nil, proxies: [], resolvers: [], logs: %{}}
     state = follower_state(%{transaction_system_layout: tsl})
 
     assert {:noreply, state} = register(state)

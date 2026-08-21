@@ -40,11 +40,15 @@
     {
       "text": "COURSE SETTLED 2026-08-20 (supersedes the exploratory course comments above; tickets q67.37/.38/.40/.41 hold the authoritative shapes; q67.39 deleted - the TSL keeps sequencer/proxies/resolvers/logs, which is ServerDBInfo-parity and small; only services leaves). Settled shapes: A=q67.37 typed per-shard unlock seed. B=q67.38 workers self-detect displacement (FDB: every role throws worker_removed on itself - checkRemoved/isDisplaced/privatized mutations/rejoin); Foreman = push relay + supervisor + janitor, its reconciliation deleted. D=q67.40 by-key proxy resolution now (cache-until-failure already built); keyspace-read resolution deferred to the Distributor era over metadata-shard availability. E=q67.41 log wiring is epoch-constant (FDB: log topology change IS a recovery) - RoutingData's mid-epoch log handling is a guard for a precluded hazard, deleted; plus start_key consumption and worker-id carry. Key ownership insight from the FDB read: the Data Distributor OWNS key-\u003eserver (writes every assignment via MoveKeys; recovery never rewrites keyServers, only re-reads it) - Bedrock's per-epoch persistence-phase rewrite of the shard families is scaffolding standing in for the missing Distributor, to be handed over under q67.21, which is now the arc's next major work (owner of the mapping + metadata-shard coverage/healing + in-band retirement + retiring the recovery rewrite).",
       "timestamp": "2026-08-20T23:30:12Z"
+    },
+    {
+      "text": "Side-channel completion campaign implemented 2026-08-20/21 as stacked PRs #178-#182 (each cold-audited, findings applied, CI green): A=q67.37 typed pull-source seed + ShardRouter as the single placement site (#178); B=q67.38 workers self-detect displacement (epoch guard: a layout judges every worker it could include, pushed \u003e= locked — the strict guard was caught by audit making strays immortal), Foreman relay+janitor, resolve_materializer rejoin ask (#179), services leaves the TSL — ServerDBInfo parity {epoch, sequencer, proxies, resolvers, logs} (#180); E=q67.41 epoch-constant log wiring (fold deletion; layout/logs stays for introspection), carried start keys consumed, worker ids ride the assignment (#181); D=q67.40 by-key covering-entry resolution, two-tier partial coalescing cache (#182). Remaining in the arc: q67.21 Distributor port (mapping ownership + metadata-shard availability + in-band retirement + overlap-aware client cache), q67.42 bootstrap read continuation, q67.20.7 legacy fallback removal.",
+      "timestamp": "2026-08-21T01:16:57Z"
     }
   ],
   "priority": 3,
   "status": "in_progress",
   "title": "Shard-Centric Storage Architecture",
   "type": "epic",
-  "updated_at": "2026-08-20T23:30:12Z"
+  "updated_at": "2026-08-21T01:16:57Z"
 }

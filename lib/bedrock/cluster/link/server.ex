@@ -15,6 +15,7 @@ defmodule Bedrock.Cluster.Link.Server do
 
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.Cluster.Link.State
+  alias Bedrock.Internal.TransactionBuilder.LayoutIndex
 
   @spec child_spec(
           opts :: [
@@ -114,28 +115,32 @@ defmodule Bedrock.Cluster.Link.Server do
     reply(t, {:ok, t.descriptor})
   end
 
-  # The node-wide routing cache (FDB DatabaseContext locationCache): the Link
-  # only stores; callers fetch from a commit proxy on miss and cast the
-  # result back. No TTL - entries live until invalidated or a wiring push
-  # drops them; staleness is backstopped by the client retry loop.
-  @spec handle_call(:get_routing, GenServer.from(), State.t()) ::
-          {:reply, {:ok, map()} | {:error, :unavailable}, State.t()}
-  def handle_call(:get_routing, _, t) do
-    case t.routing do
-      nil -> reply(t, {:error, :unavailable})
-      routing -> reply(t, {:ok, routing})
+  # The node-wide routing cache (FDB DatabaseContext locationCache): a
+  # partial coalescing index of covering entries. The Link only stores;
+  # callers fetch the single covering entry from a commit proxy on miss
+  # and cast it back. No TTL - entries live until invalidated or a wiring
+  # push drops them; staleness is backstopped by the client retry loop.
+  @spec handle_call({:get_covering_entry, Bedrock.key()}, GenServer.from(), State.t()) ::
+          {:reply, {:ok, {Bedrock.key_range(), term()}} | {:error, :not_cached}, State.t()}
+  def handle_call({:get_covering_entry, key}, _, t) do
+    case LayoutIndex.lookup_key(t.routing, key) do
+      {:ok, entry} -> reply(t, {:ok, entry})
+      :not_cached -> reply(t, {:error, :not_cached})
     end
   end
 
-  # Synchronous: when the reply arrives the stale projection is gone -
+  # Synchronous: when the reply arrives the stale entries are gone -
   # ordering by construction, not by accident of intervening calls.
+  # Coarse (whole index): failures are rare and simple beats surgical.
   @spec handle_call(:invalidate_routing, GenServer.from(), State.t()) :: {:reply, :ok, State.t()}
-  def handle_call(:invalidate_routing, _, t), do: reply(%{t | routing: nil}, :ok)
+  def handle_call(:invalidate_routing, _, t), do: reply(%{t | routing: LayoutIndex.new()}, :ok)
 
   @doc false
   @impl true
-  @spec handle_cast({:cache_routing, map()}, State.t()) :: {:noreply, State.t()}
-  def handle_cast({:cache_routing, routing}, t), do: noreply(%{t | routing: routing})
+  @spec handle_cast({:cache_routing_entry, {Bedrock.key(), Bedrock.key(), term()}}, State.t()) ::
+          {:noreply, State.t()}
+  def handle_cast({:cache_routing_entry, {start_key, end_key, ref}}, t),
+    do: noreply(%{t | routing: LayoutIndex.insert(t.routing, start_key, end_key, ref)})
 
   @doc false
   @impl true
@@ -156,7 +161,7 @@ defmodule Bedrock.Cluster.Link.Server do
 
     # A wiring push means a recovery happened: drop the routing cache so
     # new-epoch wiring can never pair with old-epoch routing.
-    noreply(%{t | transaction_system_layout: new_tsl, routing: nil})
+    noreply(%{t | transaction_system_layout: new_tsl, routing: LayoutIndex.new()})
   end
 
   @spec handle_info({:DOWN, reference(), :process, term(), term()}, State.t()) ::

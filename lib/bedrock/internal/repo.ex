@@ -14,6 +14,10 @@ defmodule Bedrock.Internal.Repo do
   # retry: version window misses resolve with a fresh read version, and the
   # rest are routing- or liveness-shaped (FDB's wrong_shard_server model:
   # they cost the caller a retry, never surface to the user).
+  # :unknown is a rescued unexpected exception inside a routing or read
+  # call (Internal.GenServer.Calls) - transient by construction, and the
+  # by-key routing path makes several such calls per miss; raising a user
+  # transaction over it would turn a blip into an error.
   @retryable_read_failures [
     :timeout,
     :unavailable,
@@ -21,7 +25,8 @@ defmodule Bedrock.Internal.Repo do
     :version_too_old,
     :layout_lookup_failed,
     :no_servers_to_race,
-    :locked
+    :locked,
+    :unknown
   ]
 
   # Of those, the ones that look like stale routing: an unroutable key, no
@@ -29,7 +34,7 @@ defmodule Bedrock.Internal.Repo do
   # exactly what a stale snapshot looks like, so the retry drops the node's
   # routing cache and refetches from a proxy. Version window misses are not
   # routing's fault and keep the cache.
-  @routing_invalidating_failures [:layout_lookup_failed, :no_servers_to_race, :unavailable, :timeout, :locked]
+  @routing_invalidating_failures [:layout_lookup_failed, :no_servers_to_race, :unavailable, :timeout, :locked, :unknown]
 
   @type transaction :: pid()
   @type key :: term()
@@ -302,47 +307,55 @@ defmodule Bedrock.Internal.Repo do
   # A caller-provided TSL is wiring only and gets no routing_fn: the
   # builder's index stays empty and reads fail as layout_lookup_failed
   # (the escape hatch serves commit-only flows and tests). Otherwise
-  # routing is proxy-served and lazy: the builder calls this on its first
-  # read - Link cache first (the node's locationCache), fetch-through to a
-  # random commit proxy on a miss, caching the raw projection for the next
-  # transaction on this node. Runs in the builder process, so failures are
-  # returned (they surface as read failures), never thrown.
+  # routing is proxy-served, BY KEY, and lazy: the builder calls this on
+  # each local index miss - Link cache first (the node's locationCache),
+  # fetch-through to a random commit proxy for the single covering entry
+  # on a miss, caching the raw entry back for the next transaction on
+  # this node. Never a whole-map fetch: materializers can number in the
+  # thousands, and FDB's GetKeyServerLocations answers per key. Runs in
+  # the builder process, so failures are returned (they surface as read
+  # failures), never thrown.
   defp routing_fn_for_transaction(_cluster, provided_tsl, _link) when not is_nil(provided_tsl), do: nil
 
   defp routing_fn_for_transaction(cluster, nil, link) do
-    fn ->
-      case Link.fetch_cached_routing(link) do
-        {:ok, routing} -> {:ok, callable_routing(cluster, routing)}
-        {:error, _not_cached} -> fetch_and_cache_routing(cluster, link)
+    fn key ->
+      case Link.fetch_covering_entry(link, key) do
+        {:ok, {{start_key, end_key}, raw_ref}} -> {:ok, {start_key, end_key, [callable_ref(cluster, raw_ref)]}}
+        {:error, :not_cached} -> fetch_and_cache_entry(cluster, link, key)
+        {:error, reason} -> {:error, reason}
       end
     end
   end
 
-  defp fetch_and_cache_routing(cluster, link) do
+  defp fetch_and_cache_entry(cluster, link, key) do
     with {:ok, tsl} <- Link.fetch_transaction_system_layout(link),
          [_ | _] = proxies <- Map.get(tsl, :proxies, []),
-         {:ok, routing} <- proxies |> Enum.random() |> CommitProxy.fetch_routing() do
-      Link.cache_routing(link, routing)
-      {:ok, callable_routing(cluster, routing)}
+         {:ok, {start_key, end_key, _tag, raw_ref}} <- proxies |> Enum.random() |> CommitProxy.fetch_routing(key) do
+      Link.cache_routing_entry(link, {start_key, end_key, raw_ref})
+      {:ok, {start_key, end_key, [callable_ref(cluster, raw_ref)]}}
     else
-      [] -> {:error, :unavailable}
-      {:error, reason} -> {:error, reason}
+      [] ->
+        {:error, :unavailable}
+
+      # The proxy's committed state names no shard or no materializer for
+      # the key - to the client that is an unroutable key, and the retry
+      # loop's routing-shaped classification handles it.
+      {:error, :not_found} ->
+        {:error, :layout_lookup_failed}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  # Turn the proxy's string-encoded materializer refs into callable
-  # `{otp_name, node}` refs. Worker OTP names are deterministic in the
+  # Turn a string-encoded materializer ref into a callable
+  # `{otp_name, node}` ref. Worker OTP names are deterministic in the
   # worker id; the node atom conversion is the documented exception to the
   # no-atoms-on-decode rule - the values come from system-mode-gated
   # writers and the atom count is bounded by cluster membership.
-  defp callable_routing(cluster, %{shard_layout: shard_layout, materializers: materializers}) do
-    callable =
-      Map.new(materializers, fn {tag, {worker_id, node}} ->
-        # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
-        {tag, {cluster.otp_name_for_worker(worker_id), String.to_atom(node)}}
-      end)
-
-    %{shard_layout: shard_layout, materializers: callable}
+  defp callable_ref(cluster, {worker_id, node}) do
+    # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
+    {cluster.otp_name_for_worker(worker_id), String.to_atom(node)}
   end
 
   defp start_transaction_builder(tsl, routing_fn, repo) do

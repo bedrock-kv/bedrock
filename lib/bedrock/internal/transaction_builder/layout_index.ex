@@ -1,12 +1,25 @@
 defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   @moduledoc """
-  The client's shard-lookup index: a gb_tree of `end_key => {start_key,
-  [materializer ref]}` built from the proxy-served routing projection.
+  A partial, coalescing shard-lookup index: a gb_tree of `end_key =>
+  {start_key, value}` accumulated one covering entry at a time from
+  proxy-served by-key routing fetches (FDB's locationCache shape - built
+  from `GetKeyServerLocations` answers, never a bulk dump).
 
-  Shards are non-overlapping by construction, so lookups are a single
-  O(log n) ceiling search. Shards whose tag has no materializer are
-  absent - a key landing in the gap fails the lookup, which the client
-  retry loop converts into an invalidate-and-refetch.
+  Entries are exact shard ranges keyed by exclusive `end_key`. Today the
+  only shard-boundary writer is recovery's per-epoch rewrite, so entries
+  fetched into one index are disjoint (the lookup's correctness depends
+  on this) and re-inserting a shard is idempotent. Coarse invalidation -
+  the whole index dropped on a wiring push or a routing-shaped read
+  failure, never patched - keeps epochs from mixing; an in-flight cache
+  cast can land after an invalidation, and that stale entry self-heals
+  through the same invalidate-on-failure loop. LIABILITY (bedrock-q67.21):
+  when the Distributor mutates boundaries mid-epoch, superseded ranges
+  can coexist with their replacements in a live index - the insert must
+  become overlap-aware (or eviction per-range) before that lands.
+
+  Lookups are a single O(log n) ceiling search; a key no fetched entry
+  covers returns `:not_cached`, which the owner resolves through its
+  routing fetch.
   """
 
   defstruct [:tree]
@@ -15,70 +28,46 @@ defmodule Bedrock.Internal.TransactionBuilder.LayoutIndex do
   @type server_ref :: pid() | {atom(), node()}
 
   @type t :: %__MODULE__{
-          tree: :gb_trees.tree(binary(), {binary(), [server_ref()]})
+          tree: :gb_trees.tree(binary(), {binary(), term()})
         }
 
+  @doc "An empty index; entries accumulate per fetched covering entry."
+  @spec new() :: t()
+  def new, do: %__MODULE__{tree: :gb_trees.empty()}
+
   @doc """
-  Builds a segmented index from shard boundaries and materializer refs.
-
-  `shard_layout` maps each shard's exclusive `end_key` to `{tag, start_key}`;
-  `materializers` maps tags to callable refs. Shards whose tag has no
-  materializer are dropped - a key landing in one fails the lookup, which
-  the client retry loop converts into an invalidate-and-refetch.
+  Inserts one covering entry: the shard `[start_key, end_key)` and the
+  value cached for it (callable refs in the transaction builder, raw
+  keyspace refs in the Link's node-wide cache).
   """
-  @spec build_index(
-          %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}},
-          %{Bedrock.range_tag() => server_ref()}
-        ) :: t()
-  def build_index(shard_layout, materializers) when is_map(shard_layout) and is_map(materializers) do
-    # Shards are non-overlapping by construction (the layout is keyed by
-    # exclusive end_key), so the index is a direct end_key => {start_key,
-    # [ref]} tree - no segmenting pass. Shards without a materializer are
-    # dropped: a key landing in the gap fails the lookup, which the client
-    # retry loop converts into an invalidate-and-refetch.
-    tree =
-      shard_layout
-      |> Enum.flat_map(fn {end_key, {tag, start_key}} ->
-        case Map.get(materializers, tag) do
-          nil -> []
-          ref -> [{end_key, {start_key, [ref]}}]
-        end
-      end)
-      |> Enum.sort()
-      |> :gb_trees.from_orddict()
-
-    %__MODULE__{tree: tree}
+  @spec insert(t(), Bedrock.key(), Bedrock.key(), term()) :: t()
+  def insert(%__MODULE__{tree: tree} = t, start_key, end_key, value) do
+    %{t | tree: :gb_trees.enter(end_key, {start_key, value}, tree)}
   end
 
   @doc """
-  Looks up storage servers for a single key using recursive tree traversal.
-
-  Returns a {key_range, [pid]} tuple for the segment containing the key.
-  The end key will be the binary sentinel `<<0xFF, 0xFF>>` for unbounded ranges.
-  Raises if no segment is found. This is an O(log n) operation.
+  Looks up the cached covering entry for a key: `{:ok, {key_range, value}}`
+  or `:not_cached` when no fetched entry covers it. O(log n).
   """
-  @spec lookup_key!(t(), binary()) :: {{binary(), binary()}, [pid()]}
-  def lookup_key!(%__MODULE__{tree: tree}, key) do
+  @spec lookup_key(t(), binary()) :: {:ok, {Bedrock.key_range(), term()}} | :not_cached
+  def lookup_key(%__MODULE__{tree: tree}, key) do
     case segment_for_key(tree, key) do
-      {:ok, {start, end_key}, pids} ->
-        {{start, end_key}, pids}
-
-      :not_found ->
-        raise "No segment found containing key: #{inspect(key)}"
+      {:ok, key_range, value} -> {:ok, {key_range, value}}
+      :not_found -> :not_cached
     end
   end
 
   # Private implementation functions
 
-  @spec segment_for_key(:gb_trees.tree(binary(), {binary(), [pid()]}), binary()) ::
-          {:ok, {binary(), binary()}, [pid()]} | :not_found
+  @spec segment_for_key(:gb_trees.tree(binary(), {binary(), term()}), binary()) ::
+          {:ok, {binary(), binary()}, term()} | :not_found
   defp segment_for_key({0, _}, _key), do: :not_found
   defp segment_for_key({_, tree_node}, key), do: node_for_key(tree_node, key)
   defp segment_for_key(_, _key), do: :not_found
 
-  defp node_for_key({tree_end_key, {segment_start, pids}, _left, _right}, key)
+  defp node_for_key({tree_end_key, {segment_start, value}, _left, _right}, key)
        when key >= segment_start and (key < tree_end_key or (key == tree_end_key and tree_end_key == <<0xFF, 0xFF>>)),
-       do: {:ok, {segment_start, tree_end_key}, pids}
+       do: {:ok, {segment_start, tree_end_key}, value}
 
   defp node_for_key({tree_end_key, _, left, _right}, key) when key < tree_end_key, do: node_for_key(left, key)
   defp node_for_key({_tree_end_key, _, _left, right}, key), do: node_for_key(right, key)

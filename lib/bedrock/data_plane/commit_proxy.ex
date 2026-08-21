@@ -47,22 +47,27 @@ defmodule Bedrock.DataPlane.CommitProxy do
     do: call(commit_proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot}, :infinity)
 
   @doc """
-  Fetches the client-facing routing projection: shard boundaries plus
-  materializer refs.
+  Fetches the covering routing entry for one key: the shard's bounds,
+  its tag, and the raw materializer ref.
 
-  This is FDB's `GetKeyServerLocations`, answered from the proxy's live
-  routing view - at least as fresh as the proxy's most recently applied
-  commit, unversioned by design. Locations are unverified hints; staleness
-  costs the caller a retry, never a wrong answer.
+  This is FDB's `GetKeyServerLocations`, answered per key from the
+  proxy's live routing view - a ceiling walk, never a bulk projection of
+  a map that can number in the thousands. The answer is at least as
+  fresh as the proxy's most recently applied commit, unversioned by
+  design. Locations are unverified hints; staleness costs the caller a
+  retry, never a wrong answer. `{:error, :not_found}` means the
+  committed state routes the key nowhere - to the client, an unroutable
+  key.
 
   A locked proxy replies `{:error, :locked}`: FDB parks location requests
   until its state is valid, Bedrock refuses and lets the client's retry
   loop be the parking lot.
   """
-  @spec fetch_routing(commit_proxy_ref :: ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
-          {:ok, RoutingData.client_projection()}
-          | {:error, :locked | :timeout | :unavailable}
-  def fetch_routing(commit_proxy, opts \\ []), do: call(commit_proxy, :fetch_routing, opts[:timeout_in_ms] || 5_000)
+  @spec fetch_routing(commit_proxy_ref :: ref(), Bedrock.key(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          {:ok, RoutingData.covering_entry()}
+          | {:error, :not_found | :locked | :timeout | :unavailable}
+  def fetch_routing(commit_proxy, key, opts \\ []),
+    do: call(commit_proxy, {:fetch_routing, key}, opts[:timeout_in_ms] || 5_000)
 
   @doc """
   Resolves the committed materializer assignment for one shard tag.

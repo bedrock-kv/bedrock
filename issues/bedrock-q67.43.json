@@ -7,9 +7,15 @@
   "id": "bedrock-q67.43",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Cold audit of PR #183: PASS-WITH-NOTES, no blocking. Behavior change verified safe: dead-node refs evict (nodedown maps to :unavailable in Calls.ex and the Materializer catch-all), so the narrowed list cannot strand a stale cache permanently. Two recorded residuals, both pre-existing and out of scope here: (a) during node auto-connect (~net_setuptime) a call can hit its 50ms timeout before nodedown manifests - bounded seconds-long no-eviction window; (b) storage_racing degrades a timeout on the cached-fastest server via :lists.delete to an empty race -\u003e :no_servers_to_race, which IS invalidating - on today's singleton-ref shards a persistently slow server still evicts on the second read, slightly undercutting slow-is-not-stale; revisit if refetch traffic appears (same watch-item as the eviction-breadth note). choose_a_reason's hd(Map.keys) arbitrariness is moot with singleton refs.",
+      "timestamp": "2026-08-21T16:31:30Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Post-merge evaluation cleanup: spec honesty, dead types, precluded-hazard residues, timeout-eviction parity",
   "type": "task",
-  "updated_at": "2026-08-21T16:23:18Z"
+  "updated_at": "2026-08-21T16:31:30Z"
 }

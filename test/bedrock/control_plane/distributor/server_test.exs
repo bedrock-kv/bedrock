@@ -715,6 +715,28 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       assert log =~ "spun down idle"
     end
 
+    test "a degraded idle park falls back to healing — the keyspace still names the corpse and only a recruit corrects it" do
+      test_pid = self()
+      ref = make_ref()
+      t = healing_state(test_pid, [])
+
+      failing_deps = Map.put(t.deps, :commit_fn, fn _p, _e, _t, _o -> {:error, :timeout} end)
+      t = %{t | deps: failing_deps, assignment_monitors: %{ref => 7}}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), {:shutdown, :idle}}, t)
+
+          # The publish failed: clients keep routing to the departed
+          # worker via the keyspace, so no demand can ever fire — the
+          # recruit (whose own publication self-corrects) must start.
+          refute Map.has_key?(t2.snapshot.materializer_refs, 7)
+          assert MapSet.member?(t2.recruiting, 7)
+        end)
+
+      assert log =~ "placeholder publish for tag 7 failed"
+    end
+
     test "a :noconnection DOWN does not heal — the tag is verified, not stampeded" do
       test_pid = self()
       ref = make_ref()

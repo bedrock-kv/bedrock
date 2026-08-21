@@ -15,6 +15,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
   use ExUnit.Case, async: false
 
   alias Bedrock.DataPlane.Materializer.Olivine
+  alias Bedrock.DataPlane.Materializer.Olivine.Database
+  alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
+  alias Bedrock.DataPlane.Materializer.Olivine.Logic
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
@@ -58,6 +62,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     after
       5_000 -> flunk("no health report")
     end
+
+    # Workers boot :locked and only recovery's unlock makes them
+    # :running; idle spin-down defers while locked (the director is
+    # counting on a locked worker). These tests exercise the running
+    # steady state.
+    :sys.replace_state(pid, &%{&1 | mode: :running})
 
     {pid, worker_id, otp_name}
   end
@@ -187,6 +197,71 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     end
   end
 
+  describe "spin-down deferral" do
+    test "a locked worker never spins down — the idle check re-arms instead", %{tmp_dir: tmp_dir} do
+      {pid, _worker_id, _otp_name} = start_worker(tmp_dir, %{"idle_timeout" => 60_000})
+      :sys.replace_state(pid, &%{&1 | mode: :locked})
+      ref = Process.monitor(pid)
+
+      rewind_idle_clock(pid, 120_000)
+      send(pid, :idle_check)
+
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 200
+      assert Process.alive?(pid)
+    end
+
+    test "an active compaction defers the spin-down", %{tmp_dir: tmp_dir} do
+      {pid, _worker_id, _otp_name} = start_worker(tmp_dir, %{"idle_timeout" => 60_000})
+      fake_task = %Task{ref: make_ref(), pid: self(), owner: pid, mfa: {__MODULE__, :noop, 0}}
+      :sys.replace_state(pid, &%{&1 | compaction_task: fake_task})
+      ref = Process.monitor(pid)
+
+      rewind_idle_clock(pid, 120_000)
+      send(pid, :idle_check)
+
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 200
+      assert Process.alive?(pid)
+    end
+
+    test "a failed snapshot upload aborts the spin-down — the worker stays up and re-arms",
+         %{tmp_dir: tmp_dir, test_id: test_id} do
+      # An unwritable ObjectStorage root: the upload must fail, and the
+      # worker must NOT exit — the snapshot is the only durable artifact
+      # bridging spin-down to revival.
+      unwritable_root = Path.join(System.tmp_dir!(), "olivine_idle_unwritable_#{test_id}")
+      File.mkdir_p!(unwritable_root)
+      File.chmod!(unwritable_root, 0o444)
+      backend = ObjectStorage.backend(LocalFilesystem, root: unwritable_root)
+
+      old_config = Application.get_env(:bedrock, ObjectStorage)
+      Application.put_env(:bedrock, ObjectStorage, backend: backend)
+
+      on_exit(fn ->
+        if old_config,
+          do: Application.put_env(:bedrock, ObjectStorage, old_config),
+          else: Application.delete_env(:bedrock, ObjectStorage)
+
+        File.chmod(unwritable_root, 0o755)
+        File.rm_rf(unwritable_root)
+      end)
+
+      {pid, _worker_id, _otp_name} =
+        start_worker(tmp_dir, %{"idle_timeout" => 60_000, "shard_id" => 42}, cluster: TestCluster)
+
+      ref = Process.monitor(pid)
+      rewind_idle_clock(pid, 120_000)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(pid, :idle_check)
+          refute_receive {:DOWN, ^ref, :process, ^pid, _}, 300
+        end)
+
+      assert Process.alive?(pid)
+      assert log =~ "Idle spin-down aborted"
+    end
+  end
+
   describe "exemption" do
     test "a worker without an explicit idle_timeout never spins down", %{tmp_dir: tmp_dir} do
       {pid, _worker_id, _otp_name} = start_worker(tmp_dir, %{"shard_id" => 42})
@@ -197,6 +272,97 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
       refute_receive {:DOWN, ^ref, :process, ^pid, _}, 200
       assert Process.alive?(pid)
     end
+  end
+
+  describe "the spin-down snapshot restores" do
+    # The pin that matters most: the uploaded bundle must round-trip
+    # through the cold-start restore path. The live idx file is a delta
+    # chain (one record per window advance) that the bundle format
+    # cannot represent — uploading it raw restores at best partially and
+    # at worst as a silently empty shard, poisoned permanently by
+    # put-if-not-exists. The upload therefore compacts first; this test
+    # drives ≥2 window flushes to force a multi-record live chain, spins
+    # down, and restores into a FRESH directory.
+    test "a multi-window-flush shard spins down and revives from the bundle with its data intact",
+         %{tmp_dir: tmp_dir, test_id: test_id} do
+      {root, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
+      _ = root
+
+      {:ok, state} =
+        Logic.startup(:"idle_rt_a_#{test_id}", self(), "rt_wkr_a", dir_a, cluster: TestCluster, shard_id: 42)
+
+      # Two applies, each far enough apart that the 5s (in version-time)
+      # window lag evicts the earlier one — two flushes, two idx records.
+      state = apply_and_flush(state, "k1", "v1", 10_000_000)
+      state = apply_and_flush(state, "k2", "v2", 20_000_000)
+      durable = Database.durable_version(state.database)
+      assert Version.to_integer(durable) > 0
+
+      assert :ok = Logic.upload_snapshot_before_spindown(state)
+      Logic.shutdown(state)
+
+      # Cold start in a fresh directory: discovery + restore from the
+      # uploaded bundle.
+      {:ok, restored} =
+        Logic.startup(:"idle_rt_b_#{test_id}", self(), "rt_wkr_b", dir_b, cluster: TestCluster, shard_id: 42)
+
+      assert Database.durable_version(restored.database) == durable
+      assert IndexManager.info(restored.index_manager, :n_keys) >= 1
+      Logic.shutdown(restored)
+    end
+
+    test "a never-written shard's spin-down bundle does not poison revival", %{tmp_dir: tmp_dir, test_id: test_id} do
+      {_root, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
+
+      {:ok, state} =
+        Logic.startup(:"idle_empty_a_#{test_id}", self(), "empty_wkr_a", dir_a, cluster: TestCluster, shard_id: 42)
+
+      assert :ok = Logic.upload_snapshot_before_spindown(state)
+      Logic.shutdown(state)
+
+      # The revival must not hard-fail on the uploaded bundle — a
+      # poisoned version-0 object would block every recruit forever.
+      assert {:ok, restored} =
+               Logic.startup(:"idle_empty_b_#{test_id}", self(), "empty_wkr_b", dir_b,
+                 cluster: TestCluster,
+                 shard_id: 42
+               )
+
+      Logic.shutdown(restored)
+    end
+  end
+
+  defp object_storage_and_dirs(tmp_dir, test_id) do
+    root = Path.join(System.tmp_dir!(), "olivine_idle_rt_objects_#{test_id}")
+    File.mkdir_p!(root)
+    backend = ObjectStorage.backend(LocalFilesystem, root: root)
+
+    old_config = Application.get_env(:bedrock, ObjectStorage)
+    Application.put_env(:bedrock, ObjectStorage, backend: backend)
+
+    on_exit(fn ->
+      if old_config,
+        do: Application.put_env(:bedrock, ObjectStorage, old_config),
+        else: Application.delete_env(:bedrock, ObjectStorage)
+
+      File.rm_rf(root)
+    end)
+
+    dir_a = Path.join(tmp_dir, "a")
+    dir_b = Path.join(tmp_dir, "b")
+    File.mkdir_p!(dir_a)
+    File.mkdir_p!(dir_b)
+    {root, dir_a, dir_b}
+  end
+
+  defp apply_and_flush(state, key, value, version_int) do
+    encoded = Transaction.encode(%{mutations: [{:set, key, value}], read_conflicts: {nil, []}, write_conflicts: []})
+    {:ok, with_version} = Transaction.add_commit_version(encoded, Version.from_integer(version_int))
+
+    {:ok, state, _version} = Logic.apply_transactions(state, [with_version])
+    state = %{state | known_committed_version: Version.from_integer(version_int)}
+    {:ok, state} = Logic.advance_window(state)
+    state
   end
 
   defp snapshot_handle_for(shard_num) do

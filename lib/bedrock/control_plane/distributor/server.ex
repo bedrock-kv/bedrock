@@ -227,7 +227,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
         # do NOT eagerly re-recruit; the next read parks and re-demands.
         Logger.info("Bedrock distributor (epoch #{t.epoch}): tag #{tag} spun down idle; revival on demand")
         Telemetry.emit_idle_spindown(t.cluster, tag)
-        park_tag(clear_unreachable(t, tag), tag)
+        idle_tag(clear_unreachable(t, tag), tag)
 
       _dead ->
         Logger.warning("Bedrock distributor (epoch #{t.epoch}): materializer for tag #{tag} down (#{inspect(reason)})")
@@ -400,6 +400,10 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     node_atom = String.to_atom(node_string)
 
     if node_atom == node() or Node.ping(node_atom) == :pong do
+      # A worker that idle-spun-down DURING the blip re-monitors here and
+      # gets an immediate :noproc — healed eagerly, its {:shutdown, :idle}
+      # intent lost with the connection. Safe, mildly wasteful, and not
+      # worth persisting spin-down intent to avoid.
       {:noreply,
        t |> clear_unreachable(tag) |> monitor_assignment(tag, {t.cluster.otp_name_for_worker(worker_id), node_atom})}
     else
@@ -418,12 +422,30 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     end
   end
 
-  # The heal itself is park + eager re-recruit; an idle spin-down parks
-  # WITHOUT the recruit (revival is demand-driven).
+  # The heal is park + eager re-recruit — a degraded park (publish
+  # failed) recruits too, since the recruit's own publication is what
+  # self-corrects the keyspace.
   defp heal_tag(%State{} = t, tag) do
     case park_tag(t, tag) do
-      {:noreply, t2} -> {:noreply, maybe_recruit(t2, tag)}
-      stop -> stop
+      {:parked, t2} -> {:noreply, maybe_recruit(t2, tag)}
+      {:degraded, t2} -> {:noreply, maybe_recruit(t2, tag)}
+      {:stop, _reason, _t} = stop -> stop
+    end
+  end
+
+  # An idle spin-down parks WITHOUT the recruit (revival is
+  # demand-driven) — but ONLY when the park actually published. A
+  # degraded park left the committed keyspace naming the departed
+  # worker: clients keep routing to the corpse, no read ever reaches
+  # the placeholder, and coverage_demand can never fire — the tag would
+  # stay dark until the next recovery. The recruit's publication is the
+  # only self-correction available, so a degraded idle park falls back
+  # to the heal path.
+  defp idle_tag(%State{} = t, tag) do
+    case park_tag(t, tag) do
+      {:parked, t2} -> {:noreply, t2}
+      {:degraded, t2} -> {:noreply, maybe_recruit(t2, tag)}
+      {:stop, _reason, _t} = stop -> stop
     end
   end
 
@@ -432,17 +454,18 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # hammering the departed worker and displaced-but-alive twins observe
   # the change — then tell the placeholder the tag is uncovered (park,
   # don't forward). A superseded publish cedes: a newer owner heals, not
-  # us. On a transient publish failure the tag's LOCAL ref is dropped so
-  # a racing coverage_demand recruits instead of draining parked reads
-  # into the departed worker; the keyspace still names it but
-  # self-corrects at the next publication.
+  # us. A transient publish failure returns :degraded with the tag's
+  # LOCAL ref dropped, so a racing coverage_demand recruits instead of
+  # draining parked reads into the departed worker; the keyspace still
+  # names it, and every caller must arrange a correcting publication
+  # (both current callers recruit, whose publish self-corrects).
   defp park_tag(%State{} = t, tag) do
     Placeholder.notify_uncovered(t.placeholder, tag)
 
     case publish_placeholders(t, [tag]) do
       :ok ->
         refs = Map.put(t.snapshot.materializer_refs, tag, {@placeholder_worker_id, Atom.to_string(node())})
-        {:noreply, %{t | snapshot: %{t.snapshot | materializer_refs: refs}}}
+        {:parked, %{t | snapshot: %{t.snapshot | materializer_refs: refs}}}
 
       {:error, :superseded} ->
         Logger.info(
@@ -457,7 +480,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
         )
 
         refs = Map.delete(t.snapshot.materializer_refs, tag)
-        {:noreply, %{t | snapshot: %{t.snapshot | materializer_refs: refs}}}
+        {:degraded, %{t | snapshot: %{t.snapshot | materializer_refs: refs}}}
     end
   end
 

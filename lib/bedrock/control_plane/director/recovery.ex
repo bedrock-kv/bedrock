@@ -33,8 +33,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director.State
+  alias Bedrock.ControlPlane.Distributor
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Service.Worker
+
+  require Logger
 
   @type recovery_context :: %{
           cluster_config: Config.t(),
@@ -126,6 +129,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> persist_config()
         |> persist_new_transaction_system_layout()
         |> prune_service_directory(completed)
+        |> maybe_start_distributor()
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
@@ -186,6 +190,57 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           do: worker_id
 
     MapSet.union(log_ids, materializer_ids)
+  end
+
+  @doc """
+  Recruits the per-epoch Distributor singleton once the transaction
+  system is running (FDB's CC recruits DD only after recovery accepts
+  commits). Unlinked + monitored: a ceded exit (`:normal`) is final for
+  this epoch; failures are retried by the director's timer. The lock —
+  not this supervision — is what fences a stale instance's writes.
+  """
+  @spec maybe_start_distributor(State.t()) :: State.t()
+  def maybe_start_distributor(%{state: :running, distributor: nil, transaction_system_layout: tsl} = t)
+      when tsl != nil do
+    start_fn = t.distributor_start_fn || (&Distributor.Server.start/1)
+
+    case start_fn.(
+           cluster: t.cluster,
+           epoch: t.epoch,
+           director: self(),
+           sequencer: tsl.sequencer,
+           proxies: tsl.proxies
+         ) do
+      {:ok, pid} ->
+        %{t | distributor: pid, distributor_monitor: Process.monitor(pid)}
+
+      {:error, reason} ->
+        Logger.warning("Distributor start failed: #{inspect(reason)}; retrying")
+        schedule_distributor_retry(t)
+    end
+  end
+
+  def maybe_start_distributor(t), do: t
+
+  @doc false
+  @spec handle_distributor_down(State.t(), reason :: term()) :: State.t()
+  def handle_distributor_down(t, reason) do
+    t = %{t | distributor: nil, distributor_monitor: nil}
+
+    case reason do
+      # Ceded: superseded at the lock or the epoch ended — a newer owner
+      # exists, recruiting another would just lose the race again.
+      :normal ->
+        t
+
+      _failure ->
+        schedule_distributor_retry(t)
+    end
+  end
+
+  defp schedule_distributor_retry(t) do
+    Process.send_after(self(), {:timeout, :start_distributor}, t.distributor_retry_ms)
+    t
   end
 
   @spec prune_service_directory(State.t(), RecoveryAttempt.t()) :: State.t()

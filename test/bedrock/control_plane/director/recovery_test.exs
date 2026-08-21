@@ -190,6 +190,25 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert Recovery.ghost_directory_ids(services, completed) == ["ghost"]
     end
 
+    test "a worker created this attempt (not yet in the directory) is referenced — never pruned" do
+      # Attempt-created workers reach transaction_services at creation;
+      # advertisement to the coordinator directory is async and may lag.
+      # The reference set is computed from the attempt alone, so the lag
+      # can never deregister a worker the epoch references.
+      services = %{"old_log" => {:log, {:a, :node1}}}
+
+      completed = %{
+        logs: %{"old_log" => [], "brand_new_log" => []},
+        shard_materializers: %{},
+        transaction_services: %{
+          "old_log" => %{kind: :log, status: {:up, self()}},
+          "brand_new_log" => %{kind: :log, status: {:up, self()}}
+        }
+      }
+
+      assert Recovery.ghost_directory_ids(services, completed) == []
+    end
+
     test "a locked-but-inactive materializer is not referenced — it is a ghost candidate" do
       active_pid = spawn(fn -> Process.sleep(:infinity) end)
       inactive_pid = spawn(fn -> Process.sleep(:infinity) end)

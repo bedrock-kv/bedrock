@@ -12,9 +12,15 @@
   "id": "bedrock-q67.21.4",
   "labels": [],
   "parent": "bedrock-q67.21",
+  "comments": [
+    {
+      "text": "Part 1 landed as PR #191 (recruitment under the fence, audited PASS-WITH-NOTES, F1/F2 fixed: verdict-aware orphan removal, bounded lock, monitored tasks; the from-zero stream replay question verified SOUND — chunks are shard-keyed, epoch-spanning, never deleted). Remaining for part 2: death healing (monitors + heal transaction), bootstrap ceases data-tag worker creation, and the audit residuals: N2 covered-before-caught-up telemetry breadcrumb; the ambiguous-commit-leftover worker is healing's to reconcile (re-adopt by keyspace ref or retire).",
+      "timestamp": "2026-08-21T21:45:19Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Recruit and heal transactions under the lock",
   "type": "task",
-  "updated_at": "2026-08-21T21:23:51Z"
+  "updated_at": "2026-08-21T21:45:19Z"
 }

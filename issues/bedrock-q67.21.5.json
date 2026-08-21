@@ -5,7 +5,7 @@
   ],
   "blocks": [],
   "created": "2026-08-21T20:10:28Z",
-  "description": "Phase 5. Olivine idle spin-down ports from phase-a (opt-in idle_timeout worker param, client-reads-only activity, snapshot-before-spin-down, {:shutdown, :idle} exit, foreman self-removal). Distributor: idle DOWN -\u003e placeholder entry committed, NO eager re-recruit; revival on demand. Re-adoption residue only: the durable materializers/ family already feeds bootstrap re-adoption, so the distributor re-adopts only tags bootstrap left ABSENT (one-shot per sweep, pending-demand reservation, never remove a pre-existing worker).",
+  "description": "Phase 5. Olivine idle spin-down ports from phase-a (opt-in idle_timeout worker param, client-reads-only activity, snapshot-before-spin-down, {:shutdown, :idle} exit, foreman self-removal). Distributor: idle DOWN -\u003e placeholder entry committed, NO eager re-recruit; revival on demand. Re-adoption residue only: the durable materializers/ family already feeds bootstrap re-adoption, so the distributor re-adopts only tags bootstrap left ABSENT (one-shot per sweep, pending-demand reservation, never remove a pre-existing worker).\n\nNOTE for the idle path: {:shutdown, :idle} arrives at the distributor's assignment monitor as a plain DOWN — the healing handler (q67.21.4b) heals ALL non-:noconnection reasons eagerly, so idle spin-down must either be distinguished by reason ({:shutdown, :idle} -\u003e placeholder entry, no recruit, no backoff) or the worker must be deregistered from monitoring before it exits. Decide when porting.\n\nRESIDUALS inherited from bedrock-q67.21.4 (audits of PRs #190/#191):\n- N2: emit a covered-before-caught-up telemetry breadcrumb — a freshly recruited materializer is published as covered while still drinking its stream suffix; observability should distinguish covered-and-current from covered-and-catching-up.\n- Placeholder fit: for repo traffic the placeholder park is ~50ms per attempt (the builder's fetch timeout) with the repo backoff loop doing the actual waiting. Consider a hold-aware fetch timeout for known-placeholder routes, or accept retry-loop smoothing as-is; decide with measurements, not speculatively.",
   "id": "bedrock-q67.21.5",
   "labels": [],
   "parent": "bedrock-q67.21",
@@ -13,5 +13,5 @@
   "status": "open",
   "title": "Idle spin-down + re-adoption residue",
   "type": "task",
-  "updated_at": "2026-08-21T20:10:36Z"
+  "updated_at": "2026-08-21T22:04:40Z"
 }

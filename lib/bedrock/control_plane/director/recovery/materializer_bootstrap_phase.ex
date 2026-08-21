@@ -508,14 +508,51 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     get_layout_fn.(materializer_pid, read_version)
   end
 
+  # Read the shard_keys/ family via paged range reads. The family is
+  # unbounded in shard count, and a truncated boundary map is not a
+  # degraded layout — it is a WRONG one (missing shards read as holes in
+  # the keyspace), so the continuation must be drained, never dropped.
   defp default_get_shard_layout(materializer_pid, read_version) do
-    # Query the materializer for shard layout via get_range on shard_keys prefix
-    prefix = Bedrock.SystemKeys.shard_keys_prefix()
-    end_key = prefix <> <<0xFF, 0xFF, 0xFF, 0xFF>>
+    # The same bound construction the writer uses (persistence phase's
+    # clear_prefix), so reader and writer ranges are definitionally
+    # identical rather than two hand-rolled sentinels kept in agreement.
+    {_range_start, range_end} = Bedrock.KeyRange.from_prefix(Bedrock.SystemKeys.shard_keys_prefix())
 
-    case Materializer.get_range(materializer_pid, prefix, end_key, read_version, limit: 1000) do
-      {:ok, {entries, _more}} ->
-        shard_layout_from_entries(entries)
+    range_read_fn = fn start_key ->
+      Materializer.get_range(materializer_pid, start_key, range_end, read_version, limit: 1000)
+    end
+
+    case read_all_shard_entries(range_read_fn) do
+      {:ok, entries} -> shard_layout_from_entries(entries)
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc false
+  # Pages the shard_keys/ range read to exhaustion, resuming each page
+  # immediately after the last returned key. Any failure mid-continuation
+  # fails the whole read: partial success would BE the silent truncation
+  # this exists to preclude. An empty page claiming more is a broken read
+  # contract and is surfaced as an error rather than looped on.
+  @spec read_all_shard_entries((Bedrock.key() ->
+                                  {:ok, {[{Bedrock.key(), binary()}], more :: boolean()}}
+                                  | {:error, term()}
+                                  | {:failure, term(), term()})) ::
+          {:ok, [{Bedrock.key(), binary()}]} | {:error, {:shard_layout_query_failed, term()}}
+  def read_all_shard_entries(range_read_fn),
+    do: page_shard_entries(range_read_fn, Bedrock.SystemKeys.shard_keys_prefix(), [])
+
+  defp page_shard_entries(range_read_fn, start_key, pages) do
+    case range_read_fn.(start_key) do
+      {:ok, {entries, false}} ->
+        {:ok, [entries | pages] |> Enum.reverse() |> Enum.concat()}
+
+      {:ok, {[], true}} ->
+        {:error, {:shard_layout_query_failed, :empty_continuation_page}}
+
+      {:ok, {entries, true}} ->
+        {last_key, _value} = List.last(entries)
+        page_shard_entries(range_read_fn, Bedrock.Key.key_after(last_key), [entries | pages])
 
       {:error, reason} ->
         {:error, {:shard_layout_query_failed, reason}}

@@ -23,6 +23,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
 
   require Logger
@@ -91,6 +92,17 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> ping_all_coordinators()
     |> noreply()
   end
+
+  # The distributor is the one monitored process whose death is NOT
+  # epoch-fatal: it is a per-epoch singleton the director re-recruits
+  # (ceded :normal exits excepted). This clause must precede the
+  # component-failure catch-all.
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{distributor_monitor: ref} = t) when ref != nil,
+    do: t |> Recovery.handle_distributor_down(reason) |> noreply()
+
+  @impl true
+  def handle_info({:timeout, :start_distributor}, t), do: t |> Recovery.maybe_start_distributor() |> noreply()
 
   @impl true
   def handle_info({:DOWN, _monitor_ref, :process, failed_pid, reason}, t) do

@@ -130,10 +130,11 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   end
 
   @doc """
-  Creates empty routing data for dynamic population via metadata.
+  Creates empty routing data.
 
-  Starts with no shards, no logs, and replication factor of 1. All fields
-  are populated incrementally as metadata mutations arrive.
+  Starts with no shards, no logs, and replication factor of 1. Shard and
+  materializer entries populate incrementally as metadata mutations
+  arrive; log wiring is epoch-constant and only `from_snapshot/1` sets it.
   """
   @spec new_empty() :: t()
   def new_empty do

@@ -7,11 +7,12 @@ defmodule Bedrock.SystemKeys.Values do
   input; decoders handle durable bytes and never raise. Decoding durable
   bytes must never create atoms.
 
-  The surface is exactly the families with readers - `shard_keys/` entries
-  (the routing boundary map), `layout/logs/` tag lists, and `materializers/`
-  refs (worker id and node as strings; consumers derive the callable
-  `{otp_name, node}` ref, so the no-atoms rule holds through decode).
-  Families return here when their readers do.
+  The surface is exactly the written families - `shard_keys/` entries
+  (the routing boundary map), `layout/logs/` tag lists (no code reader by
+  design: kept durable for introspection, see `Bedrock.SystemKeys`), and
+  `materializers/` refs (worker id and node as strings; consumers derive
+  the callable `{otp_name, node}` ref, so the no-atoms rule holds through
+  decode). Families return here when their readers do.
   """
 
   alias Bedrock.Encoding.Tuple, as: TupleEncoding
@@ -31,10 +32,10 @@ defmodule Bedrock.SystemKeys.Values do
   @doc """
   Encodes a shard key entry: `{tag, start_key}`.
 
-  The key carries the shard's `end_key`; the value carries the tag and the
-  range's start key. (Readers currently rebuild start keys from adjacency -
-  the explicit start key exists so a future reader of a single entry does
-  not have to.)
+  The key carries the shard's `end_key`; the value carries the tag and
+  the range's start key, and readers consume the carried start key
+  verbatim - a single entry is self-describing, no adjacency
+  reconstruction.
   """
   @spec encode_shard_key_entry(Bedrock.range_tag(), Bedrock.key()) :: binary()
   def encode_shard_key_entry(tag, start_key) when is_integer(tag) and is_binary(start_key),

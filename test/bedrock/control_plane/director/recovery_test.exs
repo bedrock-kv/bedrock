@@ -209,6 +209,23 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert Recovery.ghost_directory_ids(services, completed) == []
     end
 
+    test "an assigned materializer with no services record is still referenced — never pruned" do
+      # Worker ids ride the assignment triple, so the reference set does
+      # not depend on the services map at all; a missing record cannot
+      # deregister the worker the epoch assigned.
+      assigned_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      services = %{"assigned_mat" => {:materializer, {:a, :node1}}}
+
+      completed = %{
+        logs: %{},
+        shard_materializers: %{0 => {"assigned_mat", node(), assigned_pid}},
+        transaction_services: %{}
+      }
+
+      assert Recovery.ghost_directory_ids(services, completed) == []
+    end
+
     test "a locked-but-inactive materializer is not referenced — it is a ghost candidate" do
       active_pid = spawn(fn -> Process.sleep(:infinity) end)
       inactive_pid = spawn(fn -> Process.sleep(:infinity) end)

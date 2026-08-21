@@ -188,9 +188,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     Tx.commit(tx, nil)
   end
 
-  # Every key written here has a named reader: layout/logs/ keys feed each
-  # proxy's RoutingData log wiring through resolver windows, shard_keys/
-  # feeds both RoutingData and the next recovery's materializer bootstrap,
+  # Every key written here has a named purpose: shard_keys/ feeds both
+  # RoutingData and the next recovery's materializer bootstrap,
   # and materializers/ refs feed the client-facing routing projection
   # (FDB's serverList analogue - runtime hints, never recovery input) and
   # worker rejoin validation. layout/logs/ has no code reader by design:

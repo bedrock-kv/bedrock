@@ -108,7 +108,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert decoded[{:layout_log, "log_1"}] == [1, 2]
 
       # Materializer refs: worker id + node as strings (FDB serverList
-      # analogue), derived by inverting shard_materializers through services.
+      # analogue), projected from the carried shard_materializers refs.
       node_string = Atom.to_string(node())
       assert decoded[{:materializer_key, 0}] == {"wkr_sys", node_string}
       assert decoded[{:materializer_key, 1}] == {"wkr_user", node_string}

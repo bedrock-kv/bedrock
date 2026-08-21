@@ -590,6 +590,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                MaterializerBootstrapPhase.shard_layout_from_entries(entries)
     end
 
+    test "any legacy entry falls the whole snapshot back to adjacency" do
+      # Structurally precluded in production (the family rewrites
+      # atomically each epoch, so snapshots are encoding-uniform), but the
+      # branch is live: a modern entry's carried start key is discarded
+      # and its tag still extracted when a legacy sibling forces the
+      # adjacency rebuild.
+      entries = [
+        {SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "carried-start")},
+        {SystemKeys.shard_key(<<0xFF, 0xFF>>), :erlang.term_to_binary(0)}
+      ]
+
+      assert {:ok, %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries(entries)
+    end
+
     test "rejects values that decode in neither encoding" do
       key = SystemKeys.shard_key("m")
 

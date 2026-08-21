@@ -484,8 +484,8 @@ defmodule Bedrock.Internal.RepoTransactTest do
       # The ask was by key (GetKeyServerLocations, never a bulk map), and
       # the raw (string-ref) entry was cached back for the next
       # transaction on this node - the Link is the locationCache.
-      assert_received {:proxy_asked, "some_key"}
-      assert_received {:routing_cached, ^expected_cached}
+      assert_receive {:proxy_asked, "some_key"}
+      assert_receive {:routing_cached, ^expected_cached}
     end
 
     test "a cache hit routes the read without touching any proxy" do
@@ -532,9 +532,9 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert result == "routed_value"
       # Exactly one invalidation: the failed attempt's reason fired it; the
       # first attempt (no prior failure) must not.
-      assert_received :routing_invalidated
+      assert_receive :routing_invalidated
       refute_received :routing_invalidated
-      assert_received {:routing_cached, ^expected_cached}
+      assert_receive {:routing_cached, ^expected_cached}
     end
 
     test "a second read in the same shard uses the builder-local entry — no re-ask" do
@@ -611,7 +611,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
       result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
 
       assert result == "routed_value"
-      assert_received :routing_invalidated
+      assert_receive :routing_invalidated
     end
 
     test "a transaction that never reads never fetches routing" do

@@ -18,6 +18,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
   # The test module doubles as the cluster: the placeholder registers
   # under otp_name_for_worker(placeholder_worker_id).
   def otp_name_for_worker(id), do: :"distributor_server_test_worker_#{id}"
+  def otp_name(:foreman), do: :distributor_server_test_foreman
 
   defp scripted_deps(overrides) do
     Map.merge(
@@ -314,6 +315,149 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       assert log =~ "placeholder exited"
       assert_received {:restarted_with, %{"m" => {1, <<>>}}}
+    end
+  end
+
+  describe "demand-driven recruitment" do
+    defp recruiting_state(overrides) do
+      {lock, _} = Lock.take(nil, nil)
+      Process.put(:my_owner, lock.my_owner)
+
+      deps = %{
+        get_fn: fn key, _v ->
+          if String.ends_with?(key, "owner"), do: {:ok, Process.get(:my_owner)}, else: {:error, :not_found}
+        end
+      }
+
+      state(
+        deps,
+        Keyword.merge(
+          [
+            lock: lock,
+            placeholder: Keyword.get(overrides, :placeholder, self()),
+            snapshot: %{shard_layout: %{}, materializer_refs: %{}},
+            recruitment_ctx: %{
+              cluster: __MODULE__,
+              epoch: 3,
+              node_capabilities: %{materializer: [node()]},
+              logs: %{},
+              log_refs: %{},
+              create_worker_fn: fn _f, _i, _k, _o -> {:error, :scripted_creation_failure} end,
+              remove_worker_fn: fn _f, id, _o ->
+                send(self(), :never_used)
+                {:removed_sync, id}
+              end
+            }
+          ],
+          overrides
+        )
+      )
+    end
+
+    test "an uncovered demand starts recruitment once; a second demand is deduped by the in-flight set" do
+      t = recruiting_state([])
+
+      assert {:noreply, t} = Server.handle_cast({:coverage_demand, 9}, t)
+      assert MapSet.member?(t.recruiting, 9)
+      assert_receive {:recruitment_complete, 9, {:error, _}}, 500
+
+      # Second demand while in flight: no second task.
+      assert {:noreply, t2} = Server.handle_cast({:coverage_demand, 9}, t)
+      assert t2.recruiting == t.recruiting
+      refute_receive {:recruitment_complete, 9, _}, 100
+    end
+
+    test "a successful recruit publishes under the fence, updates the view, and drains the placeholder" do
+      test_pid = self()
+
+      placeholder =
+        spawn(fn ->
+          receive do
+            {:"$gen_cast", msg} -> send(test_pid, {:placeholder_got, msg})
+          end
+        end)
+
+      commit_recorder = fn _p, _e, encoded, _o ->
+        send(test_pid, {:committed, encoded})
+        {:ok, Version.from_integer(9), 0}
+      end
+
+      t = recruiting_state(placeholder: placeholder)
+      t = %{t | deps: Map.put(t.deps, :commit_fn, commit_recorder), recruiting: MapSet.new([9])}
+
+      recruited = spawn(fn -> Process.sleep(:infinity) end)
+
+      assert {:noreply, t2} =
+               Server.handle_info({:recruitment_complete, 9, {:ok, recruited, node(), "wkr_new"}}, t)
+
+      assert_received {:committed, encoded}
+      assert {:ok, mutations} = Transaction.mutations(encoded)
+
+      assert Enum.any?(Enum.to_list(mutations), fn
+               {:set, key, _} -> key == Bedrock.SystemKeys.materializer_key(9)
+               _ -> false
+             end)
+
+      assert_receive {:placeholder_got, {:covered, 9, {_otp, _node}}}
+      assert t2.snapshot.materializer_refs[9] == {"wkr_new", Atom.to_string(node())}
+      refute MapSet.member?(t2.recruiting, 9)
+    end
+
+    test "a superseded publish removes the orphan and cedes" do
+      test_pid = self()
+
+      t = recruiting_state([])
+
+      superseding_deps =
+        Map.merge(t.deps, %{
+          get_fn: fn _k, _v -> {:ok, Lock.new_uid()} end,
+          commit_fn: fn _p, _e, _t, _o -> flunk("must not commit past a refused fence") end
+        })
+
+      ctx =
+        Map.put(t.recruitment_ctx, :remove_worker_fn, fn _f, id, _o ->
+          send(test_pid, {:orphan_removed, id})
+          :ok
+        end)
+
+      t = %{t | deps: superseding_deps, recruitment_ctx: ctx}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:stop, :normal, _t} =
+                   Server.handle_info({:recruitment_complete, 9, {:ok, self(), node(), "wkr_new"}}, t)
+
+          assert_received {:orphan_removed, "wkr_new"}
+        end)
+
+      assert log =~ "superseded publishing"
+    end
+
+    test "a failed recruit sheds the tag at the placeholder and backs off" do
+      test_pid = self()
+
+      placeholder =
+        spawn(fn ->
+          receive do
+            {:"$gen_cast", msg} -> send(test_pid, {:placeholder_got, msg})
+          end
+        end)
+
+      t = recruiting_state(placeholder: placeholder)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, t2} = Server.handle_info({:recruitment_complete, 9, {:error, :no_nodes}}, t)
+
+          assert_receive {:placeholder_got, {:coverage_failed, 9, :no_nodes}}
+          assert Map.has_key?(t2.backoff, 9)
+
+          # Backoff suppresses an immediate re-recruit.
+          assert {:noreply, t3} = Server.handle_cast({:coverage_demand, 9}, t2)
+          refute MapSet.member?(t3.recruiting, 9)
+        end)
+
+      assert log =~ "recruitment for tag 9 failed"
     end
   end
 end

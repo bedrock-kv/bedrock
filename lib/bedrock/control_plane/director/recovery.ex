@@ -129,6 +129,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> persist_config()
         |> persist_new_transaction_system_layout()
         |> prune_service_directory(completed)
+        |> remember_distributor_wiring(completed)
         |> maybe_start_distributor()
 
       {{:stalled, reason}, stalled} ->
@@ -192,6 +193,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     MapSet.union(log_ids, materializer_ids)
   end
 
+  # The runtime wiring recruitment needs — the epoch's log refs and node
+  # capabilities — is remembered at completion so retry recruits carry
+  # the same handoff (the same runtime-wiring shape recover_from hands
+  # proxies; log REFS never ride the TSL broadcast).
+  defp remember_distributor_wiring(t, completed) do
+    log_refs =
+      for {log_id, _tags} <- completed.logs,
+          %{status: {:up, ref}} <- [Map.get(completed.transaction_services, log_id)],
+          into: %{},
+          do: {log_id, ref}
+
+    %{t | distributor_wiring: %{logs: completed.logs, log_refs: log_refs}}
+  end
+
   @doc """
   Recruits the per-epoch Distributor singleton once the transaction
   system is running (FDB's CC recruits DD only after recovery accepts
@@ -203,13 +218,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   def maybe_start_distributor(%{state: :running, distributor: nil, transaction_system_layout: tsl} = t)
       when tsl != nil do
     start_fn = t.distributor_start_fn || (&Distributor.Server.start/1)
+    wiring = t.distributor_wiring || %{logs: %{}, log_refs: %{}}
 
     case start_fn.(
            cluster: t.cluster,
            epoch: t.epoch,
            director: self(),
            sequencer: tsl.sequencer,
-           proxies: tsl.proxies
+           proxies: tsl.proxies,
+           recruitment_ctx: %{
+             cluster: t.cluster,
+             epoch: t.epoch,
+             node_capabilities: t.node_capabilities,
+             logs: wiring.logs,
+             log_refs: wiring.log_refs
+           }
          ) do
       {:ok, pid} ->
         %{t | distributor: pid, distributor_monitor: Process.monitor(pid)}

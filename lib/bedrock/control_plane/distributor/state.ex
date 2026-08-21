@@ -20,7 +20,11 @@ defmodule Bedrock.ControlPlane.Distributor.State do
               materializer_refs: %{Bedrock.range_tag() => {String.t(), String.t()}}
             }
             | nil,
-          pending_demands: MapSet.t(Bedrock.range_tag())
+          pending_demands: MapSet.t(Bedrock.range_tag()),
+          recruitment_ctx: map() | nil,
+          recruiting: MapSet.t(Bedrock.range_tag()),
+          backoff: %{Bedrock.range_tag() => integer()},
+          backoff_ms: pos_integer()
         }
   @enforce_keys [:cluster, :epoch, :director, :director_monitor, :deps]
   defstruct [
@@ -34,6 +38,10 @@ defmodule Bedrock.ControlPlane.Distributor.State do
     placeholder: nil,
     placeholder_start_fn: nil,
     snapshot: nil,
-    pending_demands: MapSet.new()
+    pending_demands: MapSet.new(),
+    recruitment_ctx: nil,
+    recruiting: MapSet.new(),
+    backoff: %{},
+    backoff_ms: 5_000
   ]
 end

@@ -76,6 +76,19 @@ defmodule Bedrock.ControlPlane.Distributor.Lock do
   inside the mutating transaction; commit the returned mutations with
   it, or abandon the transaction (and the distributor) on
   `{:error, :superseded}`.
+
+  Runner obligations (bedrock-q67.21.4):
+
+  - Read the owner key first; read the write key ONLY when the owner is
+    not `my_owner` — the steady-state branch ignores `current_write`
+    (pass nil). FDB reads the write key only in the previous-owner
+    branch for a reason: an unconditional read puts a read conflict on
+    a key this same transaction writes, which would make every pair of
+    concurrent same-owner distributor transactions mutually conflict
+    and serialize.
+  - Pass an absent key through as nil, UNDECODED: nil is
+    protocol-meaningful here (fresh cluster / stomped lock), while
+    `Values.decode_lock_uid(nil)` is a decode error by design.
   """
   @spec check(t(), current_owner :: uid() | nil, current_write :: uid() | nil) ::
           {:ok, [mutation()]} | {:error, :superseded}

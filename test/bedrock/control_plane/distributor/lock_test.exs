@@ -66,6 +66,7 @@ defmodule Bedrock.ControlPlane.Distributor.LockTest do
 
       assert {:ok, mutations} = Lock.check(lock, prev_owner, prev_write)
 
+      assert length(mutations) == 2
       assert {:set, SystemKeys.distributor_lock_owner(), lock.my_owner} in mutations
 
       assert [{:set, _write_key, fresh_write}] =

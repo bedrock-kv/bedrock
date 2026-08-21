@@ -24,6 +24,7 @@ defmodule Bedrock.ControlPlane.Distributor.State do
           recruitment_ctx: map() | nil,
           recruiting: MapSet.t(Bedrock.range_tag()),
           recruit_task_refs: %{reference() => Bedrock.range_tag()},
+          assignment_monitors: %{reference() => Bedrock.range_tag()},
           backoff: %{Bedrock.range_tag() => integer()},
           backoff_ms: pos_integer()
         }
@@ -43,6 +44,7 @@ defmodule Bedrock.ControlPlane.Distributor.State do
     recruitment_ctx: nil,
     recruiting: MapSet.new(),
     recruit_task_refs: %{},
+    assignment_monitors: %{},
     backoff: %{},
     backoff_ms: 5_000
   ]

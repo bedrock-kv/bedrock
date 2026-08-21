@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-21T22:02:01Z",
+  "description": "Gap surfaced by the PR #192 cold audit (F2): a materializer worker can survive with a durable materializers/\u003ctag\u003e entry and a registered, monitorable name while never having been locked into the CURRENT epoch (e.g. an ambiguous publish timeout left it running, or a node rejoined after recovery re-adopted around it). The distributor's assignment monitor finds a live process, so death healing never fires — but the worker is not pulling for this epoch and the tag is effectively unavailable until the next recovery.\n\nDirection options: a sweep-time adoption probe (ask the monitored worker which epoch it is unlocked into; mismatch → heal exactly like a death), or read-path evidence (repeated coverage_failed/:locked shed for a covered tag escalates to a heal). Either must respect the verdict-before-destruction rule: probing is a READ; only an unambiguous not-adopted answer may displace the entry.",
+  "id": "bedrock-q67.21.7",
+  "labels": [],
+  "parent": "bedrock-q67.21",
+  "priority": 2,
+  "status": "open",
+  "title": "Heal alive-but-unadopted materializers: liveness is not adoption",
+  "type": "task",
+  "updated_at": "2026-08-21T22:02:01Z"
+}

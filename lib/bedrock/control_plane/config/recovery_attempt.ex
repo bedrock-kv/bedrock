@@ -55,6 +55,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :transaction_system_layout,
     :shard_layout,
     shard_materializers: %{},
+    seeded_layout?: false,
+    prior_materializer_refs: nil,
     lock_failed_service_ids: MapSet.new()
   ]
 
@@ -80,6 +82,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           service_pids: %{Worker.id() => pid()},
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           shard_materializers: %{Bedrock.range_tag() => {Worker.id(), node_name :: String.t()}},
+          seeded_layout?: boolean(),
+          prior_materializer_refs: %{Bedrock.range_tag() => {Worker.id(), String.t()}} | nil,
           lock_failed_service_ids: MapSet.t(Worker.id()),
           shard_layout: shard_layout() | nil
         }
@@ -119,6 +123,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       transaction_system_layout: nil,
       shard_layout: nil,
       shard_materializers: %{},
+      seeded_layout?: false,
+      prior_materializer_refs: nil,
       lock_failed_service_ids: MapSet.new()
     }
   end

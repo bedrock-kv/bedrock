@@ -4,7 +4,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
-  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Key
   alias Bedrock.KeyRange
@@ -45,6 +44,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       <<0xFF, 0xFF>> => {0, <<0xFF>>}
     })
     |> Map.put(:shard_materializers, %{0 => {"wkr_sys", node_string()}, 1 => {"wkr_user", node_string()}})
+    |> Map.put(:seeded_layout?, true)
+    |> Map.put(:prior_materializer_refs, %{})
     |> Map.put(:transaction_system_layout, mock_transaction_system_layout())
   end
 
@@ -222,81 +223,106 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     |> Enum.sort()
   end
 
-  describe "stale entry clearing on recovery rewrite" do
-    test "clears each rewritten keyed family's prefix before writing its entries" do
+  describe "read-and-heal: recovery writes what it changed, never blanket-clears" do
+    test "only layout/logs is cleared and rewritten; the mapping families are never blanket-cleared" do
       mutations = captured_system_mutations(base_recovery_attempt())
 
-      for prefix <- [
-            SystemKeys.shard_keys_prefix(),
-            SystemKeys.layout_logs_prefix(),
-            SystemKeys.materializers_prefix()
-          ] do
+      {log_clear_start, log_clear_end} = KeyRange.from_prefix(SystemKeys.layout_logs_prefix())
+
+      clear_index =
+        Enum.find_index(mutations, fn
+          {:clear_range, ^log_clear_start, ^log_clear_end} -> true
+          _ -> false
+        end)
+
+      assert clear_index, "expected clear_range over layout/logs"
+
+      first_log_set =
+        Enum.find_index(mutations, fn
+          {:set, key, _} -> String.starts_with?(key, SystemKeys.layout_logs_prefix())
+          _ -> false
+        end)
+
+      assert clear_index < first_log_set
+
+      # The mapping families are durable, distributor-era state: recovery
+      # may seed or update entries, never erase the families wholesale.
+      for prefix <- [SystemKeys.shard_keys_prefix(), SystemKeys.materializers_prefix()] do
         {clear_start, clear_end} = KeyRange.from_prefix(prefix)
 
-        clear_index =
-          Enum.find_index(mutations, fn
-            {:clear_range, ^clear_start, ^clear_end} -> true
-            _ -> false
-          end)
-
-        assert clear_index, "expected clear_range over #{inspect(prefix)}"
-
-        first_set_index =
-          Enum.find_index(mutations, fn
-            {:set, key, _} -> String.starts_with?(key, prefix)
-            _ -> false
-          end)
-
-        assert first_set_index, "expected set mutations under #{inspect(prefix)}"
-
-        assert clear_index < first_set_index,
-               "clear_range over #{inspect(prefix)} must precede its set mutations"
+        refute Enum.any?(mutations, &match?({:clear_range, ^clear_start, ^clear_end}, &1)),
+               "unexpected blanket clear over #{inspect(prefix)}"
       end
     end
 
-    test "shrinking shard layout (3 -> 2) leaves exactly 2 entries visible to the bootstrap range read" do
-      # Previous epoch persisted 3 shards; the third ends at <<0x80>>.
-      stale_store =
-        %{}
-        |> Map.put(SystemKeys.shard_key(<<0x40>>), Values.encode_shard_key_entry(2, <<>>))
-        |> Map.put(SystemKeys.shard_key(<<0x80>>), Values.encode_shard_key_entry(3, <<0x40>>))
-        |> Map.put(SystemKeys.shard_key(<<0xFF, 0xFF>>), Values.encode_shard_key_entry(4, <<0x80>>))
-        |> Map.put(SystemKeys.layout_log("old_log"), Values.encode_tag_list([9]))
-
-      # This epoch's layout has only 2 shards (see mock_transaction_system_layout/0).
+    test "a fresh cluster seeds shard_keys; the seed needs no clear (the family is definitionally empty)" do
       mutations = captured_system_mutations(base_recovery_attempt())
-      store = apply_to_store(stale_store, mutations)
 
-      # (a) Bootstrap cross-epoch read: exactly the 2 current shard_key entries.
-      assert [
-               {shard_key_1, _},
-               {shard_key_2, _}
-             ] = range_read(store, SystemKeys.shard_keys_prefix())
+      shard_sets =
+        Enum.filter(mutations, fn
+          {:set, key, _} -> String.starts_with?(key, SystemKeys.shard_keys_prefix())
+          _ -> false
+        end)
 
-      assert shard_key_1 == SystemKeys.shard_key(<<0xFF>>)
-      assert shard_key_2 == SystemKeys.shard_key(<<0xFF, 0xFF>>)
-
-      # Stale layout_log entries are gone too.
-      log_keys = store |> range_read(SystemKeys.layout_logs_prefix()) |> Enum.map(&elem(&1, 0))
-      assert log_keys == [SystemKeys.layout_log("log_1")]
+      assert length(shard_sets) == 2
     end
 
-    test "shrinking shard layout leaves exactly 2 entries visible to RoutingData" do
-      mutations = captured_system_mutations(base_recovery_attempt())
+    test "an existing cluster's recovery leaves the durable shard_keys family untouched" do
+      # Boundaries never change without splits; the family was read, not
+      # invented, so recovery writes nothing under it.
+      recovery_attempt = Map.put(base_recovery_attempt(), :seeded_layout?, false)
 
-      routing_data =
-        RoutingData.new_empty()
-        |> RoutingData.insert_shard(<<0x40>>, 2, <<>>)
-        |> RoutingData.insert_shard(<<0x80>>, 3, <<0x40>>)
-        |> RoutingData.insert_shard(<<0xFF, 0xFF>>, 4, <<0x80>>)
+      stale_store = %{
+        SystemKeys.shard_key(<<0xFF>>) => Values.encode_shard_key_entry(1, <<>>),
+        SystemKeys.shard_key(<<0xFF, 0xFF>>) => Values.encode_shard_key_entry(0, <<0xFF>>)
+      }
 
-      updated =
-        RoutingData.apply_mutations(routing_data, [{Bedrock.DataPlane.Version.from_integer(1), mutations}])
+      mutations = captured_system_mutations(recovery_attempt)
+      store = apply_to_store(stale_store, mutations)
 
-      assert :gb_trees.to_list(updated.shards) == [
-               {<<0xFF>>, {1, <<>>}},
-               {<<0xFF, 0xFF>>, {0, <<0xFF>>}}
+      refute Enum.any?(mutations, fn
+               {:set, key, _} -> String.starts_with?(key, SystemKeys.shard_keys_prefix())
+               _ -> false
+             end)
+
+      assert range_read(store, SystemKeys.shard_keys_prefix()) == Enum.sort(stale_store)
+    end
+
+    test "materializer writes are a diff against the prior family; unnamed entries are not recovery's to clean" do
+      # tag 0's assignment is unchanged (not rewritten); tag 1's changed
+      # (rewritten); tag 9's entry names a tag outside this layout and is
+      # left alone — read-and-heal means stale entries are the
+      # distributor's to reconcile, never recovery's to erase.
+      prior = %{
+        0 => {"wkr_sys", node_string()},
+        1 => {"wkr_departed", node_string()},
+        9 => {"wkr_stray", node_string()}
+      }
+
+      recovery_attempt = Map.put(base_recovery_attempt(), :prior_materializer_refs, prior)
+
+      stale_store =
+        Map.new(prior, fn {tag, {id, node}} ->
+          {SystemKeys.materializer_key(tag), Values.encode_materializer_ref(id, node)}
+        end)
+
+      mutations = captured_system_mutations(recovery_attempt)
+      store = apply_to_store(stale_store, mutations)
+
+      materializer_sets =
+        for {:set, key, value} <- mutations,
+            String.starts_with?(key, SystemKeys.materializers_prefix()),
+            do: {key, value}
+
+      assert materializer_sets == [
+               {SystemKeys.materializer_key(1), Values.encode_materializer_ref("wkr_user", node_string())}
              ]
+
+      assert {:ok, {"wkr_sys", _}} =
+               Values.decode_materializer_ref(Map.fetch!(store, SystemKeys.materializer_key(0)))
+
+      assert {:ok, {"wkr_stray", _}} =
+               Values.decode_materializer_ref(Map.fetch!(store, SystemKeys.materializer_key(9)))
     end
 
     test "cleared prefix ranges do not cover any other system-key family" do
@@ -305,7 +331,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # bytes (e.g. a "shards/" neighbor of "shard_keys/": '_' (0x5F) < 's'
       # (0x73) puts strinc("...shard_keys/") = "...shard_keys0" below it).
       cleared_prefixes = %{
-        shard_key: SystemKeys.shard_keys_prefix(),
         layout_log: SystemKeys.layout_logs_prefix()
       }
 
@@ -332,7 +357,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     end
 
     test "prefix range end is exact: a key at strinc(prefix) is not cleared" do
-      prefix = SystemKeys.shard_keys_prefix()
+      prefix = SystemKeys.layout_logs_prefix()
       boundary_key = Key.strinc(prefix)
 
       # A neighbor key exactly at the exclusive range end must survive, as must

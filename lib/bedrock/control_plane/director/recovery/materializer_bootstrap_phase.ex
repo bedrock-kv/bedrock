@@ -92,6 +92,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
           recovery_attempt
           |> Map.put(:shard_layout, shard_layout)
           |> Map.put(:shard_materializers, to_materializer_refs(shard_materializers))
+          # Provenance for the persistence phase: this recovery INVENTED
+          # the layout (fresh cluster), so it seeds the durable families;
+          # the empty prior means every assignment writes.
+          |> Map.put(:seeded_layout?, true)
+          |> Map.put(:prior_materializer_refs, %{})
           |> Map.update!(:transaction_services, &Map.merge(&1, created_services))
 
         {updated_attempt, CommitProxyStartupPhase}
@@ -234,10 +239,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
              context
            ),
          {:ok, shard_layout} <- get_shard_layout(materializer_pid, recovery_version, context),
+         {:ok, prior_refs} <- read_prior_refs(materializer_pid, recovery_version, context),
          {:ok, shard_materializers, created_services} <-
            ensure_materializers_for_shards(
              shard_layout,
-             existing_by_shard,
+             prefer_family_named(existing_by_shard, prior_refs, recovery_attempt),
              %{
                RecoveryAttempt.system_shard_id() => {system_worker_id, node(materializer_pid), materializer_pid}
              },
@@ -256,6 +262,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         recovery_attempt
         |> Map.put(:shard_layout, shard_layout)
         |> Map.put(:shard_materializers, to_materializer_refs(shard_materializers))
+        # Provenance for the persistence phase: the layout was READ from
+        # the durable family (nothing to rewrite), and the prior refs are
+        # the diff base for materializer writes.
+        |> Map.put(:seeded_layout?, false)
+        |> Map.put(:prior_materializer_refs, prior_refs)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
         |> Map.update!(:transaction_services, &Map.merge(&1, all_created))
 
@@ -372,6 +383,62 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
           {:ok, assignment, %{worker_id => descriptor}}
         end
     end
+  end
+
+  # The committed materializers/ family is the re-adoption authority: a
+  # family-named worker that this epoch's locking phase actually locked
+  # (and whose own shard assignment agrees) is preferred over the
+  # most-advanced-durable contest, which remains the fallback for tags
+  # the family does not name — and for tag 0, whose selection happens
+  # before the family can be read (the family lives IN the system shard).
+  defp prefer_family_named(existing_by_shard, prior_refs, recovery_attempt) do
+    named =
+      for {tag, {worker_id, _node}} <- prior_refs,
+          match?(%{shard_id: ^tag}, Map.get(recovery_attempt.materializer_recovery_info_by_id, worker_id)),
+          %{status: {:up, ref}} <- [Map.get(recovery_attempt.transaction_services, worker_id)],
+          into: %{},
+          do: {tag, {worker_id, {:materializer, ref}}}
+
+    Map.merge(existing_by_shard, named)
+  end
+
+  # Read the durable materializers/ family at the recovery version: the
+  # re-adoption input and the persistence phase's diff base. Read from
+  # the same materializer, at the same version, as the shard layout — a
+  # torn view is impossible (the families rewrite transactionally).
+  defp read_prior_refs(materializer_pid, read_version, context) do
+    read_fn = Map.get(context, :read_prior_refs_fn, &default_read_prior_refs/2)
+    read_fn.(materializer_pid, read_version)
+  end
+
+  defp default_read_prior_refs(materializer_pid, read_version) do
+    prefix = Bedrock.SystemKeys.materializers_prefix()
+    {_range_start, range_end} = Bedrock.KeyRange.from_prefix(prefix)
+
+    range_read_fn = fn start_key ->
+      Materializer.get_range(materializer_pid, start_key, range_end, read_version, limit: 1000)
+    end
+
+    with {:ok, entries} <- page_entries(range_read_fn, prefix, :prior_refs_query_failed, []) do
+      decode_prior_refs(entries)
+    end
+  end
+
+  @doc false
+  # Public for tests: the default in-recovery reader is injected away in
+  # unit tests, so the decode contract is pinned directly.
+  @spec decode_prior_refs([{Bedrock.key(), binary()}]) ::
+          {:ok, %{Bedrock.range_tag() => {Worker.id(), String.t()}}}
+          | {:error, {:invalid_materializer_entry, Bedrock.key()}}
+  def decode_prior_refs(entries) do
+    Enum.reduce_while(entries, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
+      with {:materializer_key, tag} <- Bedrock.SystemKeys.parse_key(key),
+           {:ok, ref} <- Values.decode_materializer_ref(value) do
+        {:cont, {:ok, Map.put(acc, tag, ref)}}
+      else
+        _ -> {:halt, {:error, {:invalid_materializer_entry, key}}}
+      end
+    end)
   end
 
   # Find a node that can host materializers
@@ -529,7 +596,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   end
 
   @doc false
-  # Pages the shard_keys/ range read to exhaustion, resuming each page
+  # Pages a system-family range read to exhaustion, resuming each page
   # immediately after the last returned key. Any failure mid-continuation
   # fails the whole read: partial success would BE the silent truncation
   # this exists to preclude. An empty page claiming more is a broken read
@@ -540,25 +607,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
                                   | {:failure, term(), term()})) ::
           {:ok, [{Bedrock.key(), binary()}]} | {:error, {:shard_layout_query_failed, term()}}
   def read_all_shard_entries(range_read_fn),
-    do: page_shard_entries(range_read_fn, Bedrock.SystemKeys.shard_keys_prefix(), [])
+    do: page_entries(range_read_fn, Bedrock.SystemKeys.shard_keys_prefix(), :shard_layout_query_failed, [])
 
-  defp page_shard_entries(range_read_fn, start_key, pages) do
+  defp page_entries(range_read_fn, start_key, error_tag, pages) do
     case range_read_fn.(start_key) do
       {:ok, {entries, false}} ->
         {:ok, [entries | pages] |> Enum.reverse() |> Enum.concat()}
 
       {:ok, {[], true}} ->
-        {:error, {:shard_layout_query_failed, :empty_continuation_page}}
+        {:error, {error_tag, :empty_continuation_page}}
 
       {:ok, {entries, true}} ->
         {last_key, _value} = List.last(entries)
-        page_shard_entries(range_read_fn, Bedrock.Key.key_after(last_key), [entries | pages])
+        page_entries(range_read_fn, Bedrock.Key.key_after(last_key), error_tag, [entries | pages])
 
       {:error, reason} ->
-        {:error, {:shard_layout_query_failed, reason}}
+        {:error, {error_tag, reason}}
 
       {:failure, reason, _ref} ->
-        {:error, {:shard_layout_query_failed, reason}}
+        {:error, {error_tag, reason}}
     end
   end
 
@@ -568,10 +635,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # this reader consumes it — the same meaning RoutingData.apply_mutation
   # gives it; two readers of one family must not disagree about what the
   # value means. Adjacency reconstruction (each shard starts where the
-  # previous ends) survives only for legacy term_to_binary snapshots that
-  # predate carried start keys; the family rewrites atomically each
-  # epoch, so a snapshot is encoding-uniform and the fallback covers the
-  # whole read. (Dies with bedrock-q67.20.7.)
+  # previous ends) survives only for legacy term_to_binary snapshots
+  # that predate carried start keys. Recovery no longer rewrites the
+  # family (read-and-heal, bedrock-q67.21.2), so a legacy family stays
+  # legacy — encoding-uniform, which the any-legacy-falls-back-whole
+  # rule covers — until bedrock-q67.20.7 retires the fallback with an
+  # explicit one-time migration.
   @spec shard_layout_from_entries([{Bedrock.key(), binary()}]) ::
           {:ok, RecoveryAttempt.shard_layout()} | {:error, {:invalid_shard_value, Bedrock.key()}}
   def shard_layout_from_entries(entries) do
@@ -625,9 +694,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
-  # Clusters created before Bedrock.SystemKeys.Values wrote shard_key values
-  # with term_to_binary; their first completed recovery re-encodes them.
-  # Remove once no supported release can carry the old encoding.
+  # Clusters created before Bedrock.SystemKeys.Values wrote shard_key
+  # values with term_to_binary. Recovery no longer rewrites the family,
+  # so these values persist AS-IS until bedrock-q67.20.7's explicit
+  # migration retires them along with this fallback.
   defp decode_legacy_shard_tag(value) do
     case :erlang.binary_to_term(value, [:safe]) do
       tag when is_integer(tag) -> {:ok, {:legacy, tag}}

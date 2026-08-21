@@ -202,6 +202,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # readers do (bedrock-q67.9, q67.25).
   @spec build_readable_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
   defp build_readable_keys(tx, recovery_attempt) do
+    # layout/logs is an epoch-scoped statement (which logs THIS epoch
+    # runs), so it alone is cleared and rewritten each recovery. The
+    # mapping families below are durable, distributor-era state: recovery
+    # reads and heals, never blanket-clears (bedrock-q67.21.2).
     tx = clear_prefix(tx, SystemKeys.layout_logs_prefix())
 
     tx =
@@ -209,17 +213,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         Tx.set(tx, SystemKeys.layout_log(log_id), Values.encode_tag_list(log_descriptor))
       end)
 
-    tx = build_shard_keys(tx, recovery_attempt.shard_layout)
+    tx = build_shard_keys(tx, recovery_attempt)
     build_materializer_keys(tx, recovery_attempt)
   end
 
-  # Creates materializer_key(tag) -> {worker_id, node} entries: the
-  # attempt already carries the refs in the keyspace-value shape (both
-  # strings; the reader derives the callable ref), so they are written
-  # verbatim — the routing-snapshot seed embeds the same map, so keyspace
-  # and seed are one map read twice. Gated like shard_keys, on the same
-  # INPUT: shard_materializers absent/empty means shard management is not
-  # active, so existing entries are untouched.
+  # Creates materializer_key(tag) -> {worker_id, node} entries as a DIFF
+  # against the prior family (read by bootstrap): only assignments this
+  # recovery changed are written; unchanged entries are left in place,
+  # and entries for tags outside this layout are not recovery's to clean
+  # — read-and-heal means stale reconciliation belongs to the
+  # distributor (bedrock-q67.21.4). A nil prior means the family was not
+  # read (fresh cluster, legacy path): every assignment writes, the safe
+  # direction. The attempt carries refs in the keyspace-value shape, so
+  # keyspace and routing-snapshot seed remain one map read twice. Gated
+  # on the same INPUT as before: shard_materializers absent/empty means
+  # shard management is not active.
   @spec build_materializer_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
   defp build_materializer_keys(tx, recovery_attempt) do
     case Map.get(recovery_attempt, :shard_materializers) do
@@ -230,16 +238,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         tx
 
       materializers ->
-        tx = clear_prefix(tx, SystemKeys.materializers_prefix())
+        prior = Map.get(recovery_attempt, :prior_materializer_refs) || %{}
 
-        Enum.reduce(materializers, tx, fn {tag, {worker_id, node}}, tx ->
+        materializers
+        |> Enum.reject(fn {tag, ref} -> Map.get(prior, tag) == ref end)
+        |> Enum.reduce(tx, fn {tag, {worker_id, node}}, tx ->
           Tx.set(tx, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node))
         end)
     end
   end
 
-  # Rewritten-every-recovery keyed families are cleared before their entries
-  # are written so a shrinking layout leaves no stale entries behind. The clear
+  # The epoch-scoped layout/logs family is cleared before its entries are
+  # written so a changed log set leaves no stale entries behind. The clear
   # and the rewrite land in the same system transaction, so readers never
   # observe a gap.
   @spec clear_prefix(Tx.t(), Bedrock.key()) :: Tx.t()
@@ -248,21 +258,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     Tx.clear_range(tx, start_key, end_key)
   end
 
-  # Creates shard_key(end_key) -> {tag, start_key} entries (ceiling search).
-  # shard_layout format: %{end_key => {tag, start_key}}
-  #
-  # A nil or empty layout means shard management is not active for this
-  # recovery, so existing entries are left untouched rather than cleared.
-  @spec build_shard_keys(Tx.t(), RecoveryAttempt.shard_layout() | nil) :: Tx.t()
-  defp build_shard_keys(tx, nil), do: tx
-  defp build_shard_keys(tx, shard_layout) when map_size(shard_layout) == 0, do: tx
+  # Creates shard_key(end_key) -> {tag, start_key} entries (ceiling
+  # search) ONLY when this recovery seeded the layout (fresh cluster —
+  # FDB's seedShardServers analogue). An existing cluster's layout was
+  # READ from the family, and boundaries never change without splits, so
+  # there is nothing to write; the family is durable across epochs. The
+  # seed writes into a definitionally empty family (a fresh cluster has
+  # no committed data), so no clear is needed.
+  @spec build_shard_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
+  defp build_shard_keys(tx, recovery_attempt) do
+    shard_layout = recovery_attempt.shard_layout
 
-  defp build_shard_keys(tx, shard_layout) when is_map(shard_layout) do
-    tx = clear_prefix(tx, SystemKeys.shard_keys_prefix())
-
-    Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
-      Tx.set(tx, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key))
-    end)
+    if Map.get(recovery_attempt, :seeded_layout?, false) and is_map(shard_layout) and map_size(shard_layout) > 0 do
+      Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
+        Tx.set(tx, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key))
+      end)
+    else
+      tx
+    end
   end
 
   @spec submit_system_transaction(Transaction.encoded(), [pid()], Bedrock.epoch(), map()) ::

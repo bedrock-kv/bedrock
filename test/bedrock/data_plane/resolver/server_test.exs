@@ -649,4 +649,25 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       assert {:error, :timeout} = result
     end
   end
+
+  describe "stale-window assertion" do
+    test "a same-epoch window below the floor exits with the named invariant" do
+      # The sequencer's strictly advancing chain plus fail-fast proxies
+      # preclude re-presenting a stale window within an epoch. If one
+      # arrives anyway, the crash must NAME the violated invariant - an
+      # anonymous FunctionClauseError would force the operator to
+      # reconstruct the preclusion from the clause list.
+      t = %State{epoch: 1, last_version: Version.from_integer(10)}
+
+      window = {Version.from_integer(5), Version.from_integer(6)}
+
+      assert {:stale_window_re_presented, %{floor: floor, got: got}} =
+               catch_exit(Server.handle_call({:resolve_transactions, 1, window, [], [], :proxy_1}, from(), t))
+
+      assert floor == Version.from_integer(10)
+      assert got == Version.from_integer(5)
+    end
+  end
+
+  defp from, do: {self(), make_ref()}
 end

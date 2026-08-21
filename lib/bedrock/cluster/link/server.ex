@@ -146,8 +146,9 @@ defmodule Bedrock.Cluster.Link.Server do
   @spec handle_info({:tsl_updated, term()}, State.t()) :: {:noreply, State.t()}
   def handle_info({:tsl_updated, new_tsl}, t) do
     # Update cached TSL when coordinator broadcasts updates, and forward to
-    # this node's foreman (if any): a newly durable layout is the trigger
-    # for retiring workers the layout no longer references.
+    # this node's foreman (if any), which relays it to hosted workers: a
+    # newly durable layout is what workers self-detect displacement
+    # against.
     case Process.whereis(t.cluster.otp_name(:foreman)) do
       nil -> :ok
       foreman -> send(foreman, {:tsl_updated, new_tsl})

@@ -77,8 +77,23 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
     refute_received {:"$gen_cast", {:worker_retired, _}}
   end
 
-  test "a push from our own epoch never validates — the epoch that recruited us may not judge us" do
-    assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(2, [])}, state([]))
+  test "the completing push of our own locked epoch validates — strays are judged, not immortal" do
+    # Every recovery locks every advertised materializer into its epoch,
+    # so a stray (bootstrap contest loser, empty leftover) sees the
+    # completing push at its own epoch. It must still be validated —
+    # otherwise it is re-locked every recovery and never retired.
+    {:ok, proxy} = StubProxy.start_link({:error, :not_found})
+
+    capture_log(fn ->
+      assert {:stop, {:shutdown, :displaced}, _t} =
+               Server.handle_info({:tsl_updated, tsl(2, [proxy])}, state([]))
+
+      assert_received {:"$gen_cast", {:worker_retired, "mat-1"}}
+    end)
+  end
+
+  test "a push older than our lock never validates — an in-flight recovery's past may not judge us" do
+    assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(1, [])}, state([]))
     refute_received {:"$gen_cast", {:worker_retired, _}}
   end
 

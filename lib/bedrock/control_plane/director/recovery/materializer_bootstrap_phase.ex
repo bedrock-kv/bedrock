@@ -112,8 +112,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   # Create materializers for multiple shards, collecting both the pid map
   # and the service records of what was created — a created worker that
-  # never reaches transaction_services never reaches the layout, and the
-  # reconciliation rule would retire the workers recovery just made.
+  # never reaches transaction_services never reaches the layout or the
+  # materializers keyspace, and rejoin validation would retire the
+  # workers recovery just made.
   defp create_materializers_for_shards(shard_tags, recovery_attempt, context) do
     Enum.reduce_while(shard_tags, {:ok, %{}, %{}}, fn shard_tag, {:ok, by_shard, services} ->
       case create_and_start_materializer(shard_tag, recovery_attempt, context) do
@@ -222,9 +223,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
              recovery_attempt,
              context
            ) do
-      # Every creation must reach transaction_services: the layout is built
-      # from it, and reconciliation retires anything the layout doesn't
-      # reference — including workers recovery itself just made.
+      # Every creation must reach transaction_services: the layout and the
+      # materializers keyspace are built from it, and workers self-retire
+      # when the committed state doesn't name them — including workers
+      # recovery itself just made.
       all_created =
         Map.merge(created_services, system_service_entry(created_system, materializer_pid))
 

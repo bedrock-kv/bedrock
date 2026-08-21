@@ -69,6 +69,21 @@ defmodule Bedrock.Service.ForemanTest do
       assert_received {:tsl_updated, ^tsl}
       refute_received {:tsl_updated, _}
     end
+
+    test "a nil layout (director-start clear broadcast) is not relayed" do
+      workers = %{"up" => worker_info("up", health: {:ok, self()}, manifest: log_manifest("up"))}
+
+      state = %State{
+        cluster: RelayCluster,
+        path: "/nonexistent",
+        health: :ok,
+        waiting_for_healthy: [],
+        workers: workers
+      }
+
+      assert Impl.do_relay_tsl(state, nil) == state
+      refute_received {:tsl_updated, _}
+    end
   end
 
   describe "do_worker_retired/2" do

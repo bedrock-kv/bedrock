@@ -198,13 +198,15 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   # A newly durable layout, relayed by this node's foreman. Log topology is
   # epoch-constant, so membership is decided by the push itself: if the
-  # layout's epoch has progressed past ours and its log set omits us, we
-  # are displaced — our WAL was already replayed into the new generation
-  # before the layout became durable. FDB's TLog computes the same verdict
-  # from ServerDBInfo (isDisplaced / 'DBInfoDoesNotContain') and throws
-  # worker_removed on itself; nobody else decides. The epoch guard keeps
-  # absence during an in-flight recovery from being a death sentence: only
-  # a layout that has actually progressed past our epoch can retire us.
+  # layout omits us, we are displaced — our WAL was already replayed into
+  # the new generation before the layout became durable. FDB's TLog
+  # computes the same verdict from ServerDBInfo (isDisplaced /
+  # 'DBInfoDoesNotContain') and throws worker_removed on itself; nobody
+  # else decides. A layout may judge every worker it had the chance to
+  # include (pushed epoch >= ours — the locking phase locks old-layout
+  # logs into the judging epoch, so the displacing push carries OUR
+  # epoch); only a push older than our lock is off-limits: that is an
+  # in-flight recovery's past, and absence there is not a death sentence.
   def handle_info({:tsl_updated, %{epoch: pushed_epoch, logs: logs}}, t) do
     if displaced?(t, pushed_epoch, logs) do
       Logger.info("Bedrock log #{t.id}: displaced by epoch #{pushed_epoch} layout; retiring")
@@ -217,13 +219,14 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   def handle_info({:tsl_updated, _}, t), do: noreply(t)
 
-  # Displacement verdict: the pushed layout's epoch progressed past ours
-  # (nil epoch means never locked into any — a cold-boot resurrection any
-  # completed layout may judge) and its log set does not name us.
+  # Displacement verdict: the pushed layout had the chance to include us
+  # (its epoch is at or past the one we were locked into; nil means never
+  # locked — a cold-boot resurrection any completed layout may judge) and
+  # its log set does not name us.
   @spec displaced?(State.t(), Bedrock.epoch(), %{Log.id() => term()}) :: boolean()
   defp displaced?(%{epoch: my_epoch, id: id}, pushed_epoch, logs) do
-    epoch_progressed? = is_nil(my_epoch) or pushed_epoch > my_epoch
-    epoch_progressed? and not Map.has_key?(logs, id)
+    may_judge? = is_nil(my_epoch) or pushed_epoch >= my_epoch
+    may_judge? and not Map.has_key?(logs, id)
   end
 
   @impl true

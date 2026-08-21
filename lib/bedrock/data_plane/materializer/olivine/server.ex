@@ -476,8 +476,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   # storage-server rejoin against the proxy's txnStateStore). Absence or
   # a different worker id is authoritative displacement: dispose and
   # exit; nobody else decides. Errors (locked, unavailable, timeout) are
-  # not verdicts — revalidate on the next push. The epoch guard keeps an
-  # in-flight recovery's push from judging the epoch that recruited us.
+  # not verdicts — revalidate on the next push. A layout may judge every
+  # worker it had the chance to include (pushed epoch >= ours — every
+  # recovery locks every advertised materializer into its epoch, so the
+  # completing push carries the stray's own epoch); only a push older
+  # than our lock — an in-flight recovery's past — is off-limits.
   @impl true
   def handle_info({:tsl_updated, %{epoch: pushed_epoch} = tsl}, %State{} = t) do
     if validation_due?(t, pushed_epoch) do
@@ -500,14 +503,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   @impl true
   def handle_info(_msg, state), do: {:noreply, state}
 
-  # Only a layout whose epoch progressed past ours may judge us (nil epoch
-  # means never locked — a cold-boot resurrection any completed layout may
-  # judge). Static materializers (no shard assignment) are outside the
-  # cluster layout entirely.
+  # Only a layout that had the chance to include us may judge us: pushed
+  # epoch at or past the one we were locked into (nil means never locked —
+  # a cold-boot resurrection any completed layout may judge). Static
+  # materializers (no shard assignment) are outside the cluster layout
+  # entirely.
   @spec validation_due?(State.t(), Bedrock.epoch()) :: boolean()
   defp validation_due?(%State{shard_num: nil}, _pushed_epoch), do: false
   defp validation_due?(%State{epoch: nil}, _pushed_epoch), do: true
-  defp validation_due?(%State{epoch: my_epoch}, pushed_epoch), do: pushed_epoch > my_epoch
+  defp validation_due?(%State{epoch: my_epoch}, pushed_epoch), do: pushed_epoch >= my_epoch
 
   @spec rejoin_verdict(State.t(), [CommitProxy.ref()]) :: :keep | :displaced
   defp rejoin_verdict(_t, []), do: :keep

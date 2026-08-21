@@ -47,8 +47,17 @@ defmodule Bedrock.Service.Foreman.Impl do
   its own retirement; no component decides another process's). One
   foreman per node makes it the natural distribution point from the
   cluster push to the workers it hosts.
+
+  Bounded by liveness: only a running worker can self-detect, so a worker
+  that cannot start (crash loop, corrupt state) keeps its directory until
+  an operator intervenes — the same property FDB has for a process that
+  cannot run its rejoin check. A nil layout (the coordinator clears and
+  broadcasts nil when a director starts) carries nothing to judge against
+  and is not relayed.
   """
-  @spec do_relay_tsl(State.t(), TransactionSystemLayout.t()) :: State.t()
+  @spec do_relay_tsl(State.t(), TransactionSystemLayout.t() | nil) :: State.t()
+  def do_relay_tsl(t, nil), do: t
+
   def do_relay_tsl(t, transaction_system_layout) do
     for {_id, %{health: {:ok, pid}}} <- t.workers do
       send(pid, {:tsl_updated, transaction_system_layout})
@@ -241,6 +250,23 @@ defmodule Bedrock.Service.Foreman.Impl do
     t
     |> load_workers_from_disk()
     |> start_workers_that_are_stopped()
+    |> relay_current_tsl()
+  end
+
+  # Cold boot composes with self-detection only if resurrected workers
+  # see a layout. The coordinator replays its push on Link subscription,
+  # which can precede this foreman (the forward is dropped when whereis
+  # finds no foreman), so pull the Link's cached layout once at spin-up —
+  # rehydrated workers self-validate immediately instead of waiting for
+  # the next recovery's push.
+  @spec relay_current_tsl(State.t()) :: State.t()
+  defp relay_current_tsl(t) do
+    case Link.fetch_transaction_system_layout(t.cluster.otp_name(:link)) do
+      {:ok, transaction_system_layout} -> do_relay_tsl(t, transaction_system_layout)
+      _ -> t
+    end
+  catch
+    _, _ -> t
   end
 
   @spec load_workers_from_disk(State.t()) :: State.t()

@@ -6,6 +6,17 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder do
   which clients already classify as retryable — when coverage does not
   arrive in time.
 
+  An honest note on what parking buys whom: the transaction builder
+  passes its fetch timeout (50ms) as the caller timeout, so for repo
+  traffic the effective park is ~50ms per attempt and the caller's own
+  clock usually expires first — the REPO's retry-with-backoff loop does
+  the actual waiting, and this process serves as a crash-absorbing,
+  demand-signaling stall (no noproc storms, gaps visible in the
+  keyspace, demand deduped per tag). The full `hold_ms` park is
+  reachable only by direct materializer callers with generous or absent
+  timeouts. Parked entries self-expire; replies to dead callers are
+  no-ops.
+
   Addressing is the settled option 2 (bedrock-q67.21): the placeholder
   IS a materializer ref. The distributor publishes
   `materializers/<tag> = {placeholder_worker_id, distributor_node}` for

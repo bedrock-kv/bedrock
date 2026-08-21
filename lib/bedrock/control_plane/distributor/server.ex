@@ -166,6 +166,14 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   def handle_info({:EXIT, _pid, _reason}, %State{} = t), do: {:noreply, t}
 
+  # An existing placeholder ref counts as covered-enough to skip
+  # republication. That rests on two invariants: the distributor runs on
+  # the director's node (a restarted placeholder re-registers the same
+  # name on the node the committed refs already name), and every
+  # recovery's bootstrap re-assigns all layout tags, so placeholder refs
+  # never survive a recovery as stale foreign-node entries. If the
+  # distributor ever detaches from the director's node, this rejection
+  # must compare the ref's node too.
   defp uncovered_tags(%{shard_layout: shard_layout, materializer_refs: refs}) do
     shard_layout
     |> Map.values()

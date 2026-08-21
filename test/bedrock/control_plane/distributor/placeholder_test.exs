@@ -253,4 +253,21 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       refute_receive {:"$gen_cast", {:coverage_demand, _tag}}, 50
     end
   end
+
+  describe "the wire boundary" do
+    test "a non-read worker-protocol shape is refused, never a crash that sheds parked calls" do
+      # hold_ms below the caller timeout so the shed (not the caller's
+      # own clock) delivers the reply — the audit-documented reality is
+      # that equal clocks race and the caller usually wins.
+      placeholder = start_placeholder(hold_ms: 50)
+      parked = async_get(placeholder, "apple", timeout: 500)
+
+      assert GenServer.call(placeholder, {:lock_for_recovery, 3}) == {:error, :unsupported}
+      assert GenServer.call(placeholder, {:info, [:kind]}) == {:error, :unsupported}
+
+      # The parked request is untouched by the refusals; it sheds only on
+      # its own deadline.
+      assert {:error, :unavailable} = Task.await(parked)
+    end
+  end
 end

@@ -266,6 +266,22 @@ defmodule Bedrock.ControlPlane.Distributor.TransactionsTest do
     end
   end
 
+  describe "commit_checked/3 exhaustion" do
+    test "persistent same-owner aborts exhaust into a transient commit failure" do
+      {lock, _} = Lock.take(nil, nil)
+
+      deps =
+        deps(%{
+          get_fn: fn key, _v ->
+            if String.ends_with?(key, "owner"), do: {:ok, lock.my_owner}, else: {:error, :not_found}
+          end,
+          commit_fn: fn _p, _e, _t, _o -> {:error, :aborted} end
+        })
+
+      assert {:error, {:lock_commit_failed, :aborted}} = Transactions.commit_checked(lock, deps, [])
+    end
+  end
+
   describe "read_snapshot/1" do
     test "reads both families at one pinned version and decodes them" do
       alias Bedrock.SystemKeys.Values, as: V

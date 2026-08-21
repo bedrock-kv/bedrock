@@ -75,6 +75,15 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder.Server do
   def handle_call({:get_range, start_key_or_selector, _end, _version, opts} = request, from, %State{} = t),
     do: handle_read(t, racing_key(start_key_or_selector), request, opts, from)
 
+  # The placeholder is a wire boundary: real workers also speak
+  # lock/info/recovery shapes, and a future or operational caller
+  # reaching this ref with one must get a refusal, not a
+  # FunctionClauseError that kills every parked request. (Recovery never
+  # targets placeholder refs — locking draws from the old TSL and
+  # re-adoption filters by locked recovery info — so this clause serves
+  # foreign callers, not a precluded internal path.)
+  def handle_call(_unsupported, _from, %State{} = t), do: reply(t, {:error, :unsupported})
+
   @impl true
   def handle_cast({:covered, tag, materializer}, %State{} = t) do
     {waiting, entries} = WaitingList.remove_all(t.waiting, tag)

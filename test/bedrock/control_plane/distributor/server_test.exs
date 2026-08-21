@@ -186,6 +186,19 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
              ]
     end
 
+    test "pre-existing placeholder refs are not republished — same name, same node, still valid" do
+      test_pid = self()
+      node_string = Atom.to_string(node())
+
+      refs_entries = [
+        {SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_sys", node_string)},
+        {SystemKeys.materializer_key(1), Values.encode_materializer_ref(Placeholder.worker_id(), node_string)}
+      ]
+
+      assert {:noreply, _t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
+      refute_received {:committed, _}
+    end
+
     test "full coverage publishes nothing" do
       test_pid = self()
 
@@ -262,6 +275,22 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
   end
 
   describe "placeholder lifecycle" do
+    test "a failed placeholder restart stops :shutdown for the director's retry" do
+      dead = spawn(fn -> :ok end)
+
+      t =
+        state(%{},
+          placeholder: dead,
+          snapshot: %{shard_layout: %{}, materializer_refs: %{}},
+          placeholder_start_fn: fn _opts -> {:error, :nope} end
+        )
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:stop, {:shutdown, {:placeholder_restart_failed, :nope}}, _t} =
+                 Server.handle_info({:EXIT, dead, :boom}, t)
+      end)
+    end
+
     test "a crashed placeholder restarts under the same name — no republication needed" do
       test_pid = self()
       dead = spawn(fn -> :ok end)

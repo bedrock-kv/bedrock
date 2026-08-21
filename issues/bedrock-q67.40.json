@@ -2,14 +2,15 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-21T01:16:57Z",
   "created": "2026-08-20T22:39:32Z",
   "description": "Course item D (settled 2026-08-20). Cache-until-failure is already built (Link cache, invalidate-on-routing-shaped-failure) and stays exactly as is. What changes: the miss path stops fetching the WHOLE map (O(shards) - materializers can number in the thousands) and asks a commit proxy for the single covering entry: fetch_routing(key) -\u003e {:ok, {start_key, end_key, tag, materializer_ref}} - the proxy does the ceiling walk over its RoutingData (O(log n), no gb_trees.to_list). Client side: Link cache becomes a coalescing partial range tree merged per fetch; LayoutIndex miss returns :not_cached and triggers routing_fn.(key); builder accumulates fetched ranges locally for its lifetime and hits the Link only on local miss (two-tier - FDB ops share DatabaseContext in-process). Coarse whole-cache invalidation kept (named divergence from FDB's per-range: simpler, failures rare). DEFERRED to the Distributor era (q67.21+): client-side keyspace-READ resolution (single key-selector lookup against the metadata shard, possibly with the materializer ref denormalized into the shard entry - viable in Bedrock because refs are name-based, not endpoint-based, so ref churn equals assignment churn). Blocked on metadata-shard availability: today exactly one tag-0 materializer serves the system shard, and FDB's answer to 'who serves metadata questions' is N proxies each holding decoded state - concentrating cluster routing traffic on one materializer regresses that. The Distributor's replicated coverage + healing is the substrate; decide the final resolution channel there.",
   "id": "bedrock-q67.40",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "By-key routing resolution: proxies answer the covering entry, not the whole map",
   "type": "task",
-  "updated_at": "2026-08-21T01:02:43Z"
+  "updated_at": "2026-08-21T01:16:57Z"
 }

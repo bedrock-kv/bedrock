@@ -127,11 +127,15 @@ defmodule Bedrock.Cluster.Link.Server do
     end
   end
 
+  # Synchronous: when the reply arrives the stale projection is gone -
+  # ordering by construction, not by accident of intervening calls.
+  @spec handle_call(:invalidate_routing, GenServer.from(), State.t()) :: {:reply, :ok, State.t()}
+  def handle_call(:invalidate_routing, _, t), do: reply(%{t | routing: nil}, :ok)
+
   @doc false
   @impl true
-  @spec handle_cast({:cache_routing, map()} | :invalidate_routing, State.t()) :: {:noreply, State.t()}
+  @spec handle_cast({:cache_routing, map()}, State.t()) :: {:noreply, State.t()}
   def handle_cast({:cache_routing, routing}, t), do: noreply(%{t | routing: routing})
-  def handle_cast(:invalidate_routing, t), do: noreply(%{t | routing: nil})
 
   @doc false
   @impl true

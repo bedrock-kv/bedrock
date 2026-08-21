@@ -21,6 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   alias Bedrock.ClusterBootstrap.Discovery
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Transaction
@@ -39,7 +40,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     transaction_system_layout = recovery_attempt.transaction_system_layout
 
-    system_transaction = build_system_transaction(transaction_system_layout)
+    system_transaction = build_system_transaction(recovery_attempt)
 
     case submit_system_transaction(system_transaction, recovery_attempt.proxies, recovery_attempt.epoch, context) do
       {:ok, _version, _sequence} ->
@@ -180,10 +181,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end)
   end
 
-  @spec build_system_transaction(TransactionSystemLayout.t()) :: Transaction.encoded()
-  defp build_system_transaction(transaction_system_layout) do
+  @spec build_system_transaction(RecoveryAttempt.t()) :: Transaction.encoded()
+  defp build_system_transaction(recovery_attempt) do
     tx = Tx.new()
-    tx = build_readable_keys(tx, transaction_system_layout)
+    tx = build_readable_keys(tx, recovery_attempt)
 
     Tx.commit(tx, nil)
   end
@@ -198,17 +199,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # cluster bootstrap, which the coordinator actually reads; services are
   # rebuilt each recovery from foreman discovery). Families return to the
   # keyspace when their readers do (bedrock-q67.9, q67.25).
-  @spec build_readable_keys(Tx.t(), TransactionSystemLayout.t()) :: Tx.t()
-  defp build_readable_keys(tx, transaction_system_layout) do
+  @spec build_readable_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
+  defp build_readable_keys(tx, recovery_attempt) do
     tx = clear_prefix(tx, SystemKeys.layout_logs_prefix())
 
     tx =
-      Enum.reduce(transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
+      Enum.reduce(recovery_attempt.transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
         Tx.set(tx, SystemKeys.layout_log(log_id), Values.encode_tag_list(log_descriptor))
       end)
 
-    tx = build_shard_keys(tx, transaction_system_layout.shard_layout)
-    build_materializer_keys(tx, transaction_system_layout)
+    tx = build_shard_keys(tx, recovery_attempt.shard_layout)
+    build_materializer_keys(tx, recovery_attempt)
   end
 
   # Creates materializer_key(tag) -> {worker_id, node} entries (strings; the
@@ -217,20 +218,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # active, so existing entries are untouched. When active, the prefix is
   # cleared even if no pid inverts to a service record - the keyspace and
   # the unlock seed must agree, and the seed derives from the same refs.
-  @spec build_materializer_keys(Tx.t(), TransactionSystemLayout.t()) :: Tx.t()
-  defp build_materializer_keys(tx, transaction_system_layout) do
-    case Map.get(transaction_system_layout, :shard_materializers) do
+  @spec build_materializer_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
+  defp build_materializer_keys(tx, recovery_attempt) do
+    case Map.get(recovery_attempt, :shard_materializers) do
       nil ->
         tx
 
       materializers when map_size(materializers) == 0 ->
         tx
 
-      _active ->
+      materializers ->
         tx = clear_prefix(tx, SystemKeys.materializers_prefix())
 
-        transaction_system_layout
-        |> TransactionSystemLayout.materializer_refs()
+        materializers
+        |> TransactionSystemLayout.materializer_refs(recovery_attempt.transaction_system_layout.services)
         |> Enum.reduce(tx, fn {tag, {worker_id, node}}, tx ->
           Tx.set(tx, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node))
         end)
@@ -252,7 +253,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   #
   # A nil or empty layout means shard management is not active for this
   # recovery, so existing entries are left untouched rather than cleared.
-  @spec build_shard_keys(Tx.t(), TransactionSystemLayout.shard_layout() | nil) :: Tx.t()
+  @spec build_shard_keys(Tx.t(), RecoveryAttempt.shard_layout() | nil) :: Tx.t()
   defp build_shard_keys(tx, nil), do: tx
   defp build_shard_keys(tx, shard_layout) when map_size(shard_layout) == 0, do: tx
 

@@ -19,7 +19,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
 
@@ -61,8 +60,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert Map.has_key?(updated_attempt.shard_materializers, 0)
           assert Map.has_key?(updated_attempt.shard_materializers, 1)
 
-          # metadata_materializer should be the system shard materializer
-          assert updated_attempt.metadata_materializer == system_materializer_pid
+          assert updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()] == system_materializer_pid
 
           # Every creation reaches transaction_services — the layout is
           # built from it, and reconciliation retires anything the layout
@@ -95,7 +93,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, logs)
 
@@ -125,7 +122,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert {updated_attempt, CommitProxyStartupPhase} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-      assert updated_attempt.metadata_materializer == system_materializer_pid
+      assert updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()] == system_materializer_pid
 
       assert {:unlock, system_materializer_pid, logs} in :ets.lookup(unlocks, :unlock)
       assert {:unlock, user_materializer_pid, logs} in :ets.lookup(unlocks, :unlock)
@@ -136,7 +133,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     test "stalls when no materializer capable nodes exist" do
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
 
@@ -177,7 +173,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       # rollback target.
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
@@ -217,7 +212,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
           # The system-shard survivor answers the layout query...
-          assert updated_attempt.metadata_materializer == system_pid
+          assert updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()] == system_pid
           assert updated_attempt.shard_layout
 
           # ...and every shard in the layout gets its surviving
@@ -241,7 +236,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       # A stray from an earlier failed recovery attempt: same shard, empty.
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
@@ -275,7 +269,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         assert {updated_attempt, CommitProxyStartupPhase} =
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-        assert updated_attempt.metadata_materializer == real_pid
+        assert updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()] == real_pid
         assert updated_attempt.shard_materializers == %{0 => real_pid}
       end)
     end
@@ -286,7 +280,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:durable_version, durable_version)
@@ -320,7 +313,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert {updated_attempt, CommitProxyStartupPhase} =
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-          assert updated_attempt.metadata_materializer == materializer_pid
+          assert updated_attempt.shard_materializers[0] == materializer_pid
           assert updated_attempt.shard_layout
 
           # The creation is recorded: the layout will reference it, so
@@ -343,7 +336,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:version_vector, {Version.from_integer(0), durable_version})
@@ -389,7 +381,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:version_vector, {Version.from_integer(0), durable_version})
@@ -424,7 +415,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:durable_version, durable_version)
@@ -467,7 +457,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, logs)
         |> Map.put(:version_vector, {Version.from_integer(0), durable_version})

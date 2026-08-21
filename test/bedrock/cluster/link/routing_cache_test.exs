@@ -25,9 +25,9 @@ defmodule Bedrock.Cluster.Link.RoutingCacheTest do
       assert {:reply, {:ok, @projection}, _} = Server.handle_call(:get_routing, self_from(), cached)
     end
 
-    test "invalidate_routing empties the cache" do
+    test "invalidate_routing empties the cache synchronously" do
       {:noreply, cached} = Server.handle_cast({:cache_routing, @projection}, state())
-      assert {:noreply, invalidated} = Server.handle_cast(:invalidate_routing, cached)
+      assert {:reply, :ok, invalidated} = Server.handle_call(:invalidate_routing, self_from(), cached)
       assert {:reply, {:error, :unavailable}, _} = Server.handle_call(:get_routing, self_from(), invalidated)
     end
 

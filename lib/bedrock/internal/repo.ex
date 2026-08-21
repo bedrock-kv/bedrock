@@ -299,11 +299,12 @@ defmodule Bedrock.Internal.Repo do
 
   defp fetch_tsl_for_transaction(_repo, tsl, _link), do: tsl
 
-  # A caller-provided TSL carries its own shard fields; the builder derives
-  # routing from them directly (no routing_fn). Otherwise routing is
-  # proxy-served and lazy: the builder calls this on its first read - Link
-  # cache first (the node's locationCache), fetch-through to a random
-  # commit proxy on a miss, caching the raw projection for the next
+  # A caller-provided TSL is wiring only and gets no routing_fn: the
+  # builder's index stays empty and reads fail as layout_lookup_failed
+  # (the escape hatch serves commit-only flows and tests). Otherwise
+  # routing is proxy-served and lazy: the builder calls this on its first
+  # read - Link cache first (the node's locationCache), fetch-through to a
+  # random commit proxy on a miss, caching the raw projection for the next
   # transaction on this node. Runs in the builder process, so failures are
   # returned (they surface as read failures), never thrown.
   defp routing_fn_for_transaction(_cluster, provided_tsl, _link) when not is_nil(provided_tsl), do: nil

@@ -83,9 +83,14 @@ defmodule Bedrock.Cluster.Link do
   Called by the client retry loop when a read fails in a routing-shaped way
   (unroutable key, dead materializer, unavailable) - a dead pid is exactly
   what a stale snapshot looks like, so the next transaction refetches.
+
+  Synchronous on purpose: the retry that invalidates must not be able to
+  read the stale projection back on its next fetch. A cast would be
+  ordered only by accident of the intervening wiring call.
   """
-  @spec invalidate_routing(ref()) :: :ok
-  def invalidate_routing(link), do: cast(link, :invalidate_routing)
+  @spec invalidate_routing(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          :ok | {:error, :unavailable | :timeout | :unknown}
+  def invalidate_routing(link, opts \\ []), do: call(link, :invalidate_routing, opts[:timeout_in_ms] || 1000)
 
   @doc """
   Fetch the cluster descriptor.

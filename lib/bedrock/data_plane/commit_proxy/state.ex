@@ -37,10 +37,9 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
             mode: :locked,
             lock_token: nil,
             routing_data: nil,
-            # The highest metadata-window to_version this proxy has applied -
-            # the ack the resolver keys its differential windows off. The
-            # structured txnStateStore analogue arrives with its first reader
-            # (bedrock-q67.9); until then a version is the whole of it.
+            # The highest metadata-window to_version this proxy has applied.
+            # Its one reader is the tiling assert: every window's from must
+            # equal it, or the proxy exits into recovery.
             applied_version: nil,
             # Proxy-local batch sequence, assigned when a batch's finalization
             # is spawned (batches are created and spawned one at a time in the

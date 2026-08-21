@@ -11,70 +11,49 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   alias Bedrock.Service.Worker
 
   @typedoc """
-  Struct representing the layout of the transaction system within the cluster.
+  The transaction system's runtime wiring, published once per recovery -
+  FDB's ClientDBInfo/ServerDBInfo analogue. Shard topology deliberately
+  does NOT ride here: the shard map lives in the `\\xFF/system` keyspace
+  and is served to clients by commit proxies (bedrock-q67.9).
 
   ## Fields
-    - `id` - The unique identifier of the layout.
-    - `director` - The full otp name of the cluster director.
-    - `sequencer` - The full otp name of the cluster sequencer.
-    - `rate_keeper` - The full otp name of the system rate-keeper.
-    - `read_version_proxies` - The full otp names of the read-version proxies.
-    - `commit_proxies` - The full otp names of the commit proxies.
-    - `resolvers` - The pids of the transaction resolvers.
-    - `logs` - A list of logs that are responsible for storing the transactions on
-       their way to the materializers. Each log contains a list of the tags
-       that it services, and the full otp name of the log worker process that
-       is responsible for the log.
-    - `services` - A list of all of the workers within the system, their types, ids and
-       the otp names used to communicate with them.
-    - `metadata_materializer` - The pid of the metadata materializer process, or nil if not yet started.
-    - `shard_layout` - A map from end_key to {tag, start_key} describing the shard boundaries.
-    - `shard_materializers` - A map from shard tag to materializer pid.
+    - `epoch` - The recovery epoch this wiring belongs to.
+    - `sequencer` - The pid of the cluster sequencer (read versions).
+    - `proxies` - The pids of the commit proxies (commits, routing fetches).
+    - `resolvers` - Resolver descriptors, consumed at proxy unlock.
+    - `logs` - Log descriptors: each log's id and the tags it services.
+    - `services` - Every worker the layout references (types, ids, refs);
+       the Foreman retires hosted workers absent from this map.
   """
   @type process_ref :: pid() | nil
   @type proxy_list :: [pid()]
   @type resolver_list :: [ResolverDescriptor.t()]
   @type log_map :: %{Log.id() => LogDescriptor.t()}
   @type service_map :: %{Worker.id() => ServiceDescriptor.t()}
-  @type shard_layout :: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}}
-  @type shard_materializers :: %{Bedrock.range_tag() => pid()}
 
   @type t :: %{
-          required(:id) => id(),
           required(:epoch) => non_neg_integer(),
-          required(:director) => process_ref() | :unavailable,
           required(:sequencer) => process_ref(),
-          required(:rate_keeper) => process_ref(),
           required(:proxies) => proxy_list(),
           required(:resolvers) => resolver_list(),
           required(:logs) => log_map(),
-          required(:services) => service_map(),
-          optional(:metadata_materializer) => process_ref(),
-          optional(:shard_layout) => shard_layout() | nil,
-          optional(:shard_materializers) => shard_materializers()
+          required(:services) => service_map()
         }
 
-  @type id :: non_neg_integer()
-
-  @spec random_id() :: id()
-  def random_id, do: :rand.uniform(1_000_000)
-
   @doc """
-  Inverts `shard_materializers` through `services` into the string-encoded
-  refs the `materializers/` keyspace family carries: `%{tag => {worker_id,
-  node}}`. Both the persistence phase (the family's writer) and the routing
-  snapshot (the recover_from seed) derive from this, so the seed and the
-  keyspace cannot disagree.
+  Inverts a `%{tag => materializer pid}` assignment through a services map
+  into the string-encoded refs the `materializers/` keyspace family
+  carries: `%{tag => {worker_id, node}}`. Both the persistence phase (the
+  family's writer) and the routing snapshot (the recover_from seed) derive
+  from this, so the seed and the keyspace cannot disagree.
 
   A pid without a matching materializer service record is skipped - the
   family only names workers the layout actually references.
   """
-  @spec materializer_refs(t()) :: %{Bedrock.range_tag() => {String.t(), String.t()}}
-  def materializer_refs(layout) do
-    services = Map.get(layout, :services, %{})
-
-    layout
-    |> Map.get(:shard_materializers)
+  @spec materializer_refs(%{Bedrock.range_tag() => pid()} | nil, service_map()) ::
+          %{Bedrock.range_tag() => {String.t(), String.t()}}
+  def materializer_refs(shard_materializers, services) do
+    shard_materializers
     |> Kernel.||(%{})
     |> Enum.flat_map(fn
       {tag, pid} when is_pid(pid) ->

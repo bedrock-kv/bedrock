@@ -48,8 +48,6 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
 
   defp shard_set(key, tag), do: {:set, SystemKeys.shard_key(key), Values.encode_shard_key_entry(tag, "")}
 
-  defp log_set(log_id), do: {:set, SystemKeys.layout_log(log_id), Values.encode_tag_list([1])}
-
   defp request(state, seq, commit_version, window) do
     from = {self(), make_ref()}
     result = Server.handle_call({:apply_metadata_and_route, seq, commit_version, window}, from, state)
@@ -63,20 +61,19 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
   end
 
   test "an in-order request applies the window and returns the routing snapshot in one step" do
-    window = {nil, v(1), [{v(1), [shard_set("a", 7), log_set("log_a")]}]}
+    window = {nil, v(1), [{v(1), [shard_set("a", 7)]}]}
 
     {updated, routing_data} = apply_in_order(state(), 1, v(1), window)
 
     assert updated.applied_version == v(1)
     assert updated.routed_seq == 1
-    assert routing_data.log_map == %{0 => "log_a"}
     assert :gb_trees.lookup("a", routing_data.shards) == {:value, {7, ""}}
     assert updated.routing_data == routing_data
   end
 
   test "an out-of-order request waits for its predecessor, then both reply in chain order" do
-    w1 = {nil, v(1), [{v(1), [log_set("log_a")]}]}
-    w2 = {v(1), v(2), [{v(2), [log_set("log_b")]}]}
+    w1 = {nil, v(1), [{v(1), [shard_set("a", 1)]}]}
+    w2 = {v(1), v(2), [{v(2), [shard_set("b", 2)]}]}
 
     # Batch 2's request arrives first: no reply, request held.
     {{:noreply, held, _timeout}, ref2} = request(state(), 2, v(2), w2)
@@ -87,8 +84,9 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
 
     assert_receive {^ref1, {:ok, routing1}}
     assert_receive {^ref2, {:ok, routing2}}
-    assert routing1.log_map == %{0 => "log_a"}
-    assert routing2.log_map == %{0 => "log_a", 1 => "log_b"}
+    assert :gb_trees.lookup("a", routing1.shards) == {:value, {1, ""}}
+    assert :gb_trees.lookup("b", routing1.shards) == :none
+    assert :gb_trees.lookup("b", routing2.shards) == {:value, {2, ""}}
     assert updated.routed_seq == 2
     assert updated.pending_applies == %{}
   end
@@ -97,11 +95,10 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     # The window covers through the batch's own commit version (verdicts
     # already resolved at the merge), so applying it gives the batch
     # same-batch visibility and honestly advances the ack to its version.
-    window = {nil, v(2), [{v(2), [shard_set("a", 3), log_set("log_a")]}]}
+    window = {nil, v(2), [{v(2), [shard_set("a", 3)]}]}
 
     {updated, routing_data} = apply_in_order(state(), 1, v(2), window)
 
-    assert routing_data.log_map == %{0 => "log_a"}
     assert :gb_trees.lookup("a", routing_data.shards) == {:value, {3, ""}}
     assert updated.applied_version == v(2)
   end
@@ -141,10 +138,10 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     # them, so this proxy's consecutive batches have non-adjacent versions.
     # The chain must still link: sequence 1 then 2, whatever the versions.
     {updated, _routing} = apply_in_order(state(), 1, v(100), {nil, v(100), []})
-    {updated, routing} = apply_in_order(updated, 2, v(250), {v(100), v(250), [{v(250), [log_set("log_a")]}]})
+    {updated, routing} = apply_in_order(updated, 2, v(250), {v(100), v(250), [{v(250), [shard_set("a", 9)]}]})
 
     assert updated.routed_seq == 2
-    assert routing.log_map == %{0 => "log_a"}
+    assert :gb_trees.lookup("a", routing.shards) == {:value, {9, ""}}
   end
 
   test "requests are rejected while locked" do

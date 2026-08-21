@@ -115,92 +115,19 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
     end
   end
 
-  describe "insert_log/2" do
-    test "adds log to empty log_map at index 0" do
-      updated = RoutingData.insert_log(RoutingData.new_empty(), "log-1")
-
-      assert updated.log_map == %{0 => "log-1"}
-    end
-
-    test "adds logs at sequential indices" do
-      updated =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-a")
-        |> RoutingData.insert_log("log-b")
-        |> RoutingData.insert_log("log-c")
-
-      assert updated.log_map == %{0 => "log-a", 1 => "log-b", 2 => "log-c"}
-    end
-
-    test "is idempotent by log id: a re-inserted log keeps its index" do
-      updated =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-a")
-        |> RoutingData.insert_log("log-b")
-        |> RoutingData.insert_log("log-a")
-
-      assert updated.log_map == %{0 => "log-a", 1 => "log-b"}
-    end
-
-    test "does not modify other fields" do
-      routing_data = RoutingData.new_empty()
-
-      updated = RoutingData.insert_log(routing_data, "log-1")
-
-      assert updated.shards == routing_data.shards
-      assert updated.log_services == %{}
-      assert updated.replication_factor == 1
-    end
-  end
-
-  describe "remove_log/2" do
-    test "removes log from log_map and reindexes to contiguous indices" do
-      updated =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-a")
-        |> RoutingData.insert_log("log-b")
-        |> RoutingData.insert_log("log-c")
-        |> RoutingData.remove_log("log-b")
-
-      assert updated.log_map == %{0 => "log-a", 1 => "log-c"}
-    end
-
-    test "removes first log and reindexes" do
-      updated =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-a")
-        |> RoutingData.insert_log("log-b")
-        |> RoutingData.insert_log("log-c")
-        |> RoutingData.remove_log("log-a")
-
-      assert updated.log_map == %{0 => "log-b", 1 => "log-c"}
-    end
-
-    test "no-op if log not found, including on an empty map" do
-      updated =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-a")
-        |> RoutingData.remove_log("nonexistent")
-
-      assert updated.log_map == %{0 => "log-a"}
-      assert RoutingData.remove_log(RoutingData.new_empty(), "nonexistent").log_map == %{}
-    end
-  end
-
   describe "integration: typical usage pattern" do
-    test "builds complete routing data incrementally and routes with it" do
+    test "builds complete routing data from the seed and routes with it" do
       routing_data =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-1")
-        |> RoutingData.insert_log("log-2")
-        |> RoutingData.insert_log("log-3")
-        |> Map.update!(:log_services, fn _ ->
-          %{"log-1" => {:log_1, :n1@host}, "log-2" => {:log_2, :n2@host}, "log-3" => {:log_3, :n3@host}}
-        end)
+        %{
+          shard_layout: %{},
+          log_map: %{0 => "log-1", 1 => "log-2", 2 => "log-3"},
+          log_services: %{"log-1" => {:log_1, :n1@host}, "log-2" => {:log_2, :n2@host}, "log-3" => {:log_3, :n3@host}},
+          replication_factor: 3
+        }
+        |> RoutingData.from_snapshot()
         |> RoutingData.insert_shard("m", 0, "")
         |> RoutingData.insert_shard("z", 1, "m")
         |> RoutingData.insert_shard(<<0xFF, 0xFF>>, 2, "z")
-        |> Map.put(:replication_factor, 3)
 
       assert routing_data.replication_factor == 3
 
@@ -214,6 +141,17 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert ShardRouter.lookup_shard(routing_data.shards, "pear") == 1
       assert ShardRouter.lookup_shard(routing_data.shards, <<0xFF, "/system/x">>) == 2
     end
+  end
+
+  # An unlock-seeded wiring fixture: log wiring arrives in the seed and is
+  # epoch-constant thereafter.
+  defp seeded_wiring do
+    RoutingData.from_snapshot(%{
+      shard_layout: %{},
+      log_map: %{0 => "log-a", 1 => "log-b"},
+      log_services: %{"log-a" => {:log_a, :n1@host}, "log-b" => {:log_b, :n2@host}},
+      replication_factor: 2
+    })
   end
 
   describe "apply_mutations/2" do
@@ -250,29 +188,26 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert shard_list(updated) == [{"m", {42, ""}}]
     end
 
-    test "handles layout_log set mutation - updates log_map only" do
-      updates = [{v(100), [{:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])}]}]
+    test "layout_log mutations are ignored — log wiring is epoch-constant and seed-only" do
+      # The recovery transaction still writes the layout/logs/ family (it
+      # stays durable for introspection), but the fold is not a reader:
+      # the only such mutations a window can carry are the rewrite of the
+      # set this proxy was seeded with, and mid-epoch topology change is
+      # precluded (changing log topology IS a recovery).
+      seeded = seeded_wiring()
 
-      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
-
-      assert updated.log_map == %{0 => "log-1"}
-      # log_services are NOT populated from persisted data
-      assert updated.log_services == %{}
-    end
-
-    test "a re-set layout_log key keeps its index" do
       updates = [
-        {v(100), [{:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])}]},
-        {v(101),
+        {v(100),
          [
-           {:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([1])},
-           {:set, SystemKeys.layout_log("log-2"), Values.encode_tag_list([2])}
+           {:set, SystemKeys.layout_log("log-x"), Values.encode_tag_list([0])},
+           {:clear, SystemKeys.layout_log("log-a")}
          ]}
       ]
 
-      updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
+      updated = RoutingData.apply_mutations(seeded, updates)
 
-      assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
+      assert updated.log_map == seeded.log_map
+      assert updated.log_services == seeded.log_services
     end
 
     test "handles materializer_key set mutation - decoded refs stay strings" do
@@ -330,20 +265,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updated = RoutingData.apply_mutations(routing_data, updates)
 
       assert shard_list(updated) == []
-    end
-
-    test "handles layout_log clear mutation" do
-      routing_data =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-123")
-        |> Map.update!(:log_services, &Map.put(&1, "log-123", {:my_log, :node@host}))
-
-      updates = [{v(100), [{:clear, SystemKeys.layout_log("log-123")}]}]
-
-      updated = RoutingData.apply_mutations(routing_data, updates)
-
-      assert updated.log_services == %{}
-      assert updated.log_map == %{}
     end
 
     test "applies updates from multiple versions in order; later version wins" do
@@ -410,37 +331,26 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert shard_list(updated) == []
     end
 
-    test "clear_range removes layout_log entries in range, reindexing log_map and dropping services" do
-      routing_data =
-        RoutingData.new_empty()
-        |> RoutingData.insert_log("log-a")
-        |> RoutingData.insert_log("log-b")
-        |> RoutingData.insert_log("log-c")
-        |> Map.update!(:log_services, fn _ ->
-          %{"log-a" => {:log_a, :n1@host}, "log-b" => {:log_b, :n2@host}}
-        end)
+    test "recovery's layout_log clear_range leaves the seeded wiring untouched" do
+      seeded = seeded_wiring()
 
-      # Clear [layout_log("log-a"), layout_log("log-c")) - "log-c" survives
       updates = [{v(100), [{:clear_range, SystemKeys.layout_log("log-a"), SystemKeys.layout_log("log-c")}]}]
 
-      updated = RoutingData.apply_mutations(routing_data, updates)
+      updated = RoutingData.apply_mutations(seeded, updates)
 
-      assert updated.log_map == %{0 => "log-c"}
-      assert updated.log_services == %{}
+      assert updated.log_map == seeded.log_map
+      assert updated.log_services == seeded.log_services
     end
 
     test "clear_range outside routing families leaves routing data unchanged" do
-      routing_data =
-        RoutingData.new_empty()
-        |> RoutingData.insert_shard("m", 1, "")
-        |> RoutingData.insert_log("log-1")
+      routing_data = RoutingData.insert_shard(seeded_wiring(), "m", 1, "")
 
       updates = [{v(100), [{:clear_range, "user/a", "user/z"}]}]
 
       updated = RoutingData.apply_mutations(routing_data, updates)
 
       assert shard_list(updated) == [{"m", {1, ""}}]
-      assert updated.log_map == %{0 => "log-1"}
+      assert updated.log_map == seeded_wiring().log_map
     end
 
     test "recovery-style rewrite: clear_range then sets shrinks 3 shards to 2" do
@@ -466,7 +376,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert shard_list(updated) == [{"m", {10, ""}}, {<<0xFF, 0xFF>>, {11, "m"}}]
     end
 
-    test "handles mixed shard_key and layout_log mutations" do
+    test "mixed mutations: shard_key entries apply, layout_log entries do not" do
       updates = [
         {v(100),
          [
@@ -480,7 +390,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       updated = RoutingData.apply_mutations(RoutingData.new_empty(), updates)
 
       assert shard_list(updated) == [{"m", {1, ""}}, {"z", {2, "m"}}]
-      assert updated.log_map == %{0 => "log-1", 1 => "log-2"}
+      assert updated.log_map == %{}
       assert updated.log_services == %{}
     end
   end

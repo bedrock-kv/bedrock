@@ -29,11 +29,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   - `insert_shard/4` - Adds or updates a shard entry
   - `delete_shard/2` - Removes a shard entry
 
-  ## Log Updates
-
-  - `insert_log/2` - Adds a log to log_map at next index (idempotent by id)
-  - `remove_log/2` - Removes a log and reindexes
-  - `delete_log_service/2` - Removes a log service reference
+  Log wiring (`log_map`, `log_services`, `replication_factor`) is
+  epoch-constant: seeded once at unlock and never mutated — changing log
+  topology IS a recovery (bedrock-q67.41).
   """
 
   alias Bedrock.DataPlane.Log
@@ -169,52 +167,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   end
 
   @doc """
-  Adds a log to the log_map at the next available index.
-
-  Idempotent by log id: a re-set of an already-known log (a legitimate
-  layout_log update, or the same entry seen again) keeps its index instead
-  of appending a duplicate that would corrupt golden-ratio routing.
-  """
-  @spec insert_log(t(), Log.id()) :: t()
-  def insert_log(%__MODULE__{log_map: log_map} = routing_data, log_id) do
-    if Enum.any?(log_map, fn {_index, id} -> id == log_id end) do
-      routing_data
-    else
-      %{routing_data | log_map: Map.put(log_map, map_size(log_map), log_id)}
-    end
-  end
-
-  @doc """
-  Removes a log from the log_map and reindexes remaining entries.
-
-  Maintains contiguous indices starting from 0.
-  """
-  @spec remove_log(t(), Log.id()) :: t()
-  def remove_log(%__MODULE__{log_map: log_map} = routing_data, log_id) do
-    new_map =
-      log_map
-      |> Enum.reject(fn {_index, id} -> id == log_id end)
-      |> Enum.sort_by(fn {index, _id} -> index end)
-      |> Enum.with_index()
-      |> Map.new(fn {{_old_index, id}, new_index} -> {new_index, id} end)
-
-    %{routing_data | log_map: new_map}
-  end
-
-  @doc """
-  Removes a log service reference.
-  """
-  @spec delete_log_service(t(), Log.id()) :: t()
-  def delete_log_service(%__MODULE__{log_services: log_services} = routing_data, log_id) do
-    %{routing_data | log_services: Map.delete(log_services, log_id)}
-  end
-
-  @doc """
   Applies metadata mutations to update routing data.
 
-  Handles shard_key and layout_log mutations:
-  - shard_key: Updates the shard tree
-  - layout_log: Updates both log_map and log_services
+  Handles shard_key and materializer_key mutations; layout_log mutations
+  are deliberately ignored (see the fold's layout_log clause).
 
   ## Parameters
 
@@ -242,14 +198,20 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
           {:error, _} -> routing_data
         end
 
-      {:layout_log, log_id} ->
-        # The value (log descriptor tags) is not needed for routing; LOG
-        # service refs are populated at runtime by the director, not from
-        # persisted data (this epoch's log wiring is runtime state - the
-        # ServerDBInfo analogue). Materializer refs below deliberately DO
-        # ride persisted data: they are client-facing hints, FDB serverList
-        # style, and the Distributor mutates them mid-epoch (bedrock-q67.21).
-        insert_log(routing_data, log_id)
+      {:layout_log, _log_id} ->
+        # Log wiring is epoch-constant and seed-only: changing log
+        # topology IS a recovery (FDB: a new generation, a new
+        # logSystemConfig), so the only layout_log mutations that ever
+        # flow through a window are the recovery transaction's rewrite of
+        # the very set this proxy was just seeded with. Folding them was
+        # a second way of managing one table, guarding a hazard the
+        # recovery boundary precludes. The layout/logs/ FAMILY stays
+        # durable for other consumers and cluster-introspection tools —
+        # this fold just isn't a reader. Materializer refs below
+        # deliberately DO ride persisted data: they are client-facing
+        # hints, FDB serverList style, and the Distributor mutates them
+        # mid-epoch (bedrock-q67.21).
+        routing_data
 
       {:materializer_key, tag} ->
         # Undecodable values are ignored, keeping the last good ref.
@@ -268,10 +230,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
       {:shard_key, end_key} ->
         delete_shard(routing_data, end_key)
 
-      {:layout_log, log_id} ->
+      {:layout_log, _log_id} ->
+        # Epoch-constant; see the set clause.
         routing_data
-        |> remove_log(log_id)
-        |> delete_log_service(log_id)
 
       {:materializer_key, tag} ->
         %{routing_data | materializers: Map.delete(routing_data.materializers, tag)}
@@ -287,7 +248,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   defp apply_mutation({:clear_range, start_key, end_key}, routing_data) do
     routing_data
     |> clear_shards_in_range(start_key, end_key)
-    |> clear_logs_in_range(start_key, end_key)
     |> clear_materializers_in_range(start_key, end_key)
   end
 
@@ -314,19 +274,5 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
       end)
 
     %{routing_data | materializers: kept}
-  end
-
-  defp clear_logs_in_range(%__MODULE__{log_map: log_map} = routing_data, start_key, end_key) do
-    log_map
-    |> Map.values()
-    |> Enum.filter(fn log_id ->
-      full_key = SystemKeys.layout_log(log_id)
-      full_key >= start_key and full_key < end_key
-    end)
-    |> Enum.reduce(routing_data, fn log_id, routing_data ->
-      routing_data
-      |> remove_log(log_id)
-      |> delete_log_service(log_id)
-    end)
   end
 end

@@ -280,7 +280,10 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     end
   end
 
-  test "routing families update the routing view; unknown system keys are ignored", %{proxy: proxy, epoch: epoch} do
+  test "routing families update the routing view; layout_log and unknown system keys are ignored",
+       %{proxy: proxy, epoch: epoch} do
+    wiring_before = :sys.get_state(proxy).routing_data.log_map
+
     mutations = [
       {:set, SystemKeys.shard_key("g"), Values.encode_shard_key_entry(3, "")},
       {:set, SystemKeys.layout_log("log-abc"), Values.encode_tag_list([0, 1])},
@@ -293,7 +296,9 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
 
     routing_data = :sys.get_state(proxy).routing_data
     assert proxy_shard(proxy, "g") == 3
-    assert "log-abc" in Map.values(routing_data.log_map)
+    # Log wiring is epoch-constant and seed-only: the durable layout_log
+    # write rides the window but the routing view does not fold it.
+    assert routing_data.log_map == wiring_before
     # Unknown families ride the window harmlessly (forward compatibility) -
     # the version still advances so the resolver can prune.
     assert proxy_applied_version(proxy) == version

@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [
     "bedrock-q67.21.3"
   ],
@@ -13,8 +13,8 @@
   "labels": [],
   "parent": "bedrock-q67.21",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Recruit and heal transactions under the lock",
   "type": "task",
-  "updated_at": "2026-08-21T21:20:36Z"
+  "updated_at": "2026-08-21T21:23:51Z"
 }

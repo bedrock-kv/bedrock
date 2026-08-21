@@ -2,14 +2,15 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-21T16:59:04Z",
   "created": "2026-08-21T16:55:20Z",
   "description": "Follow-on from the bedrock-q67.43 discussion (2026-08-21): value-level protocol violations get explicit clauses with inline structured exits (OTP idiom, precedented by metadata_coverage_gap); shape-level impossibilities keep assertive-match fallthrough. Convert the resolver's stale-window preclusion comment (same-epoch call with last_version \u003c t.last_version) into a clause exiting {:stale_window_re_presented, floor: ..., got: ...}, pinned by catch_exit. Forensics: the crash names the violated invariant instead of an anonymous FunctionClauseError requiring comment archaeology.",
   "id": "bedrock-q67.45",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Resolver stale-window preclusion becomes a named-exit assertion",
   "type": "task",
-  "updated_at": "2026-08-21T16:55:21Z"
+  "updated_at": "2026-08-21T16:59:04Z"
 }

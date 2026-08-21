@@ -56,20 +56,29 @@ statement of which logs the current epoch runs.
 
 ## Who writes, and the ownership handoff
 
-Today every family is written by recovery's **persistence phase** in one
-system transaction per epoch: each rewritten family is range-cleared and
-rewritten atomically, so shrinking layouts leave no ghosts and readers
-never observe a gap. The transaction commits in `:system` mode — user
-commits are bounded below `\xFF` (`Bedrock.end_of_user_keyspace/0`);
-system commits below `\xFF\xFF` (FDB's `ACCESS_SYSTEM_KEYS` trust model).
+Recovery's **persistence phase** commits one system transaction per
+epoch (`:system` mode — user commits are bounded below `\xFF`,
+`Bedrock.end_of_user_keyspace/0`; system commits below `\xFF\xFF`,
+FDB's `ACCESS_SYSTEM_KEYS` trust model), and follows FDB's rule that
+recovery never rewrites the mapping (bedrock-q67.21.2):
 
-The per-epoch rewrite is deliberate scaffolding. In FoundationDB the Data
-Distributor owns `keyServers/`/`serverKeys/` — it writes every
-assignment, split, and move transactionally, and recovery never rewrites
-the mapping, only re-reads it. Bedrock's Distributor (bedrock-q67.21)
-takes over the same ownership: shard and materializer entries become
-durable across epochs, mutated mid-epoch by ordinary transactions, and
-recovery's job shrinks to re-reading and healing.
+- `layout/logs/` — the one epoch-scoped family: cleared and rewritten
+  each recovery (which logs THIS epoch runs).
+- `shard_keys/` — durable across epochs. Seeded only when this recovery
+  invented the layout (fresh cluster, FDB's `seedShardServers`
+  analogue); an existing cluster's layout is read back, and boundaries
+  never change without splits, so nothing is written.
+- `materializers/` — durable across epochs. Recovery reads the family
+  (it is bootstrap's re-adoption authority: a family-named worker beats
+  the most-advanced-durable contest) and writes exactly the assignments
+  it changed. Entries recovery didn't touch — including strays for tags
+  outside the layout — are not recovery's to clean.
+
+The Distributor (bedrock-q67.21) completes the ownership transfer: a
+keyspace-enforced write fence (`distributor_lock/{owner,write}`, the
+MoveKeys-lock port) fences its mid-epoch mutations, and stale-entry
+reconciliation and data-tag healing become its job, with recovery's
+shrinking to the tag-0 metadata shard.
 
 ## How it moves
 

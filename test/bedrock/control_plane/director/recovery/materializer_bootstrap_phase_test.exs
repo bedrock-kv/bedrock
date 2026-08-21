@@ -555,6 +555,169 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     end
   end
 
+  describe "prior materializer family as re-adoption input" do
+    defp existing_context(recovery_version, overrides) do
+      base =
+        [
+          old_transaction_system_layout: %{logs: %{"log_1" => [0, 1]}}
+        ]
+        |> create_test_context()
+        |> Map.put(:available_services, %{})
+        |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _sources -> :ok end)
+        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
+          {:ok, %{current_version: recovery_version}}
+        end)
+        |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
+          {:ok, %{<<0xFF>> => {1, <<>>}, Bedrock.end_of_keyspace() => {0, <<0xFF>>}}}
+        end)
+
+      Map.merge(base, overrides)
+    end
+
+    defp two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid) do
+      recovery_attempt()
+      |> Map.put(:shard_layout, nil)
+      |> Map.put(:logs, %{"log_1" => [0, 1]})
+      |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
+      |> Map.put(:materializer_recovery_info_by_id, %{
+        "mat_sys" => %{kind: :materializer, shard_id: 0, durable_version: recovery_version},
+        "mat_named" => %{kind: :materializer, shard_id: 1, durable_version: Version.from_integer(1)},
+        "mat_stray" => %{kind: :materializer, shard_id: 1, durable_version: recovery_version}
+      })
+      |> Map.put(:transaction_services, %{
+        "mat_sys" => %{kind: :materializer, status: {:up, sys_pid}},
+        "mat_named" => %{kind: :materializer, status: {:up, named_pid}},
+        "mat_stray" => %{kind: :materializer, status: {:up, stray_pid}},
+        "log_1" => %{kind: :log, status: {:up, self()}}
+      })
+    end
+
+    test "the family-named locked survivor beats a more-advanced stray" do
+      # The committed assignment is the authority; the contest (most
+      # advanced durable state wins) is only the fallback for tags the
+      # family does not name.
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      named_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        existing_context(recovery_version, %{
+          read_prior_refs_fn: fn _pid, _version ->
+            {:ok, %{1 => {"mat_named", Atom.to_string(node())}}}
+          end
+        })
+
+      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        assert {"mat_named", _node} = updated_attempt.shard_materializers[1]
+        assert updated_attempt.prior_materializer_refs == %{1 => {"mat_named", Atom.to_string(node())}}
+        refute updated_attempt.seeded_layout?
+      end)
+    end
+
+    test "a family entry naming an unlocked worker falls back to the contest" do
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      named_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        existing_context(recovery_version, %{
+          read_prior_refs_fn: fn _pid, _version ->
+            {:ok, %{1 => {"mat_gone", Atom.to_string(node())}}}
+          end
+        })
+
+      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        # "mat_gone" was not locked this epoch: the most-advanced
+        # claimant wins as before.
+        assert {"mat_stray", _node} = updated_attempt.shard_materializers[1]
+      end)
+    end
+
+    test "a failed family read stalls the attempt — never a silently unnamed layout" do
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      named_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        existing_context(recovery_version, %{
+          read_prior_refs_fn: fn _pid, _version -> {:error, {:prior_refs_query_failed, :timeout}} end
+        })
+
+      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+
+      assert {_attempt, {:stalled, {:prior_refs_query_failed, :timeout}}} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+    end
+
+    test "the fresh path marks the layout seeded with an empty prior family" do
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0, 1]})
+
+      context =
+        [
+          old_transaction_system_layout: %{logs: %{}},
+          node_capabilities: %{log: [Node.self()], materializer: [Node.self()]}
+        ]
+        |> create_test_context()
+        |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
+          {:ok, :new_materializer_ref}
+        end)
+        |> Map.put(:lock_materializer_fn, fn {:materializer, _ref, _shard_tag}, _epoch ->
+          {:ok, spawn(fn -> Process.sleep(:infinity) end)}
+        end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _sources -> :ok end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        assert updated_attempt.seeded_layout?
+        assert updated_attempt.prior_materializer_refs == %{}
+      end)
+    end
+  end
+
+  describe "decode_prior_refs/1" do
+    alias Bedrock.SystemKeys, as: SK
+    alias Bedrock.SystemKeys.Values, as: V
+
+    test "decodes tag-keyed refs and rejects foreign or undecodable entries" do
+      entries = [
+        {SK.materializer_key(0), V.encode_materializer_ref("wkr_sys", "n@h")},
+        {SK.materializer_key(7), V.encode_materializer_ref("wkr_a", "n@h")}
+      ]
+
+      assert {:ok, %{0 => {"wkr_sys", "n@h"}, 7 => {"wkr_a", "n@h"}}} =
+               MaterializerBootstrapPhase.decode_prior_refs(entries)
+
+      bad_key = SK.shard_key("m")
+
+      assert {:error, {:invalid_materializer_entry, ^bad_key}} =
+               MaterializerBootstrapPhase.decode_prior_refs([{bad_key, "x"}])
+
+      garbage = SK.materializer_key(1)
+
+      assert {:error, {:invalid_materializer_entry, ^garbage}} =
+               MaterializerBootstrapPhase.decode_prior_refs([{garbage, <<0xEE>>}])
+    end
+  end
+
   describe "read_all_shard_entries/1" do
     alias Bedrock.SystemKeys, as: Keys
 

@@ -15,6 +15,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
 
   import Bedrock.Test.TelemetryTestHelper
 
+  alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.Server, as: CommitProxyServer
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
@@ -82,6 +83,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
       shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
       log_map: %{0 => "log_1"},
       log_services: %{"log_1" => log},
+      materializers: %{0 => {"wkr_sys", "n1@host"}},
       replication_factor: 1
     }
 
@@ -221,6 +223,61 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     assert MetadataAccumulator.entries(:sys.get_state(resolver).metadata_window) == []
     # Windows are exact and always served: the ack advances with every batch
     # even when the window is empty - but nothing polluted the stream.
+  end
+
+  describe "fetch_routing/2 - the GetKeyServerLocations analogue" do
+    test "a locked proxy refuses routing requests until recover_from seeds it", %{epoch: epoch} do
+      locked_proxy =
+        start_supervised!(
+          CommitProxyServer.child_spec(
+            cluster: TestCluster,
+            director: self(),
+            epoch: epoch,
+            instance: 1,
+            max_latency_in_ms: 1,
+            max_per_batch: 10,
+            empty_transaction_timeout_ms: 60_000,
+            lock_token: :crypto.strong_rand_bytes(32),
+            sequencer: self(),
+            resolver_layout: ResolverLayout.from_layout(%{resolvers: []})
+          ),
+          id: :locked_proxy
+        )
+
+      assert {:error, :locked} = CommitProxy.fetch_routing(locked_proxy)
+    end
+
+    test "an unlocked proxy serves the seeded projection", %{proxy: proxy} do
+      assert {:ok, projection} = CommitProxy.fetch_routing(proxy)
+
+      assert projection == %{
+               shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
+               materializers: %{0 => {"wkr_sys", "n1@host"}}
+             }
+    end
+
+    test "committed shard and materializer mutations reach the served projection", %{proxy: proxy, epoch: epoch} do
+      mutations = [
+        {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(7, "")},
+        {:set, SystemKeys.materializer_key(7), Values.encode_materializer_ref("wkr_new", "n2@host")}
+      ]
+
+      version = commit!(proxy, epoch, mutations, "routing_key")
+      wait_until(fn -> proxy_applied_version(proxy) == version end)
+
+      assert {:ok, projection} = CommitProxy.fetch_routing(proxy)
+      assert projection.shard_layout["m"] == {7, ""}
+      assert projection.materializers[7] == {"wkr_new", "n2@host"}
+
+      # The projection is exactly the client slice - no log wiring leaks.
+      assert projection |> Map.keys() |> Enum.sort() == [:materializers, :shard_layout]
+    end
+
+    test "commits still flow while routing is being served", %{proxy: proxy, epoch: epoch} do
+      assert {:ok, _} = CommitProxy.fetch_routing(proxy)
+      assert commit!(proxy, epoch, [{:set, "after_fetch", "v"}], "after_fetch")
+      assert {:ok, _} = CommitProxy.fetch_routing(proxy)
+    end
   end
 
   test "routing families update the routing view; unknown system keys are ignored", %{proxy: proxy, epoch: epoch} do

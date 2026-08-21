@@ -67,6 +67,27 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   defstruct [:shards, :log_map, :log_services, :replication_factor, materializers: %{}]
 
+  @typedoc """
+  The client-facing slice of the routing view: shard boundaries plus
+  materializer refs. Log wiring stays proxy-internal.
+  """
+  @type client_projection :: %{
+          shard_layout: %{Bedrock.key() => {tag :: term(), start_key :: Bedrock.key()}},
+          materializers: %{Bedrock.range_tag() => materializer_ref()}
+        }
+
+  @doc """
+  Projects the client-facing slice of the routing view.
+
+  Served to clients by the commit proxy (FDB's `GetKeyServerLocations`
+  answered from `keyInfo`). Locations are unverified hints: a stale
+  projection costs the client a retry, never a wrong answer.
+  """
+  @spec client_projection(t()) :: client_projection()
+  def client_projection(%__MODULE__{shards: shards, materializers: materializers}) do
+    %{shard_layout: Map.new(:gb_trees.to_list(shards)), materializers: materializers}
+  end
+
   @doc """
   Builds routing data from a plain snapshot.
   """

@@ -62,6 +62,25 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
     end
   end
 
+  describe "client_projection/1" do
+    test "exposes shard boundaries and materializer refs; log wiring stays proxy-internal" do
+      snapshot = %{
+        shard_layout: %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}},
+        log_map: %{0 => "log-a"},
+        log_services: %{"log-a" => {:log_a, :node1}},
+        materializers: %{0 => {"wkr_sys", "n1@host"}, 1 => {"wkr_a", "n1@host"}},
+        replication_factor: 1
+      }
+
+      projection = snapshot |> RoutingData.from_snapshot() |> RoutingData.client_projection()
+
+      assert projection == %{
+               shard_layout: %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}},
+               materializers: %{0 => {"wkr_sys", "n1@host"}, 1 => {"wkr_a", "n1@host"}}
+             }
+    end
+  end
+
   describe "new_empty/0" do
     test "creates empty routing data with all fields initialized" do
       routing_data = RoutingData.new_empty()

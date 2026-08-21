@@ -6,9 +6,7 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.Log
-  alias Bedrock.Service.Worker
 
   @typedoc """
   The transaction system's runtime wiring, published once per recovery -
@@ -34,7 +32,6 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
   @type proxy_list :: [pid()]
   @type resolver_list :: [ResolverDescriptor.t()]
   @type log_map :: %{Log.id() => LogDescriptor.t()}
-  @type service_map :: %{Worker.id() => ServiceDescriptor.t()}
 
   @type t :: %{
           required(:epoch) => non_neg_integer(),

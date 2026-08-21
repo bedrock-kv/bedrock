@@ -120,6 +120,14 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     )
   end
 
+  # No clause exists for a same-epoch call with last_version <
+  # t.last_version, deliberately: the hazard is structurally precluded.
+  # The sequencer hands out a strictly advancing version chain and
+  # proxies never retry a resolver call (fail-fast into recovery), so a
+  # stale window cannot be re-presented within an epoch. If one ever
+  # arrives, the chain has been violated and the FunctionClauseError
+  # crashes this resolver into recovery — the correct outcome, reached by
+  # construction rather than by a guard for a state that cannot occur.
   @impl true
   def handle_call(
         {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, proxy_id},

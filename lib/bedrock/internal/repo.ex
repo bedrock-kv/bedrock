@@ -29,12 +29,16 @@ defmodule Bedrock.Internal.Repo do
     :unknown
   ]
 
-  # Of those, the ones that look like stale routing: an unroutable key, no
-  # servers to race, or a server that stopped answering. A dead pid is
-  # exactly what a stale snapshot looks like, so the retry drops the node's
-  # routing cache and refetches from a proxy. Version window misses are not
-  # routing's fault and keep the cache.
-  @routing_invalidating_failures [:layout_lookup_failed, :no_servers_to_race, :unavailable, :timeout, :locked, :unknown]
+  # Of those, the ones that are DEFINITIVELY routing-shaped evict the
+  # node's routing cache: an unroutable key, no servers to race, a dead
+  # ref (:unavailable - a dead pid is exactly what a stale snapshot looks
+  # like), or a locked proxy (recovery in flight; the new epoch's entries
+  # must be refetched). :timeout and :unknown stay retryable but keep the
+  # cache - FDB's locationCache survives timeouts for the same reason:
+  # slow is not stale, and evicting on it converts overload latency into
+  # node-wide cache-thrash and refetch traffic. Version window misses are
+  # not routing's fault and keep the cache too.
+  @routing_invalidating_failures [:layout_lookup_failed, :no_servers_to_race, :unavailable, :locked]
 
   @type transaction :: pid()
   @type key :: term()

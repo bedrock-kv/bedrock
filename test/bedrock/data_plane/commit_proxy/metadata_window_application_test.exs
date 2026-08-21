@@ -144,8 +144,8 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
     assert :gb_trees.lookup("a", routing.shards) == {:value, {9, ""}}
   end
 
-  test "requests are rejected while locked" do
-    locked = %{state() | mode: :locked}
-    {{:reply, {:error, :locked}, _state}, _ref} = request(locked, 1, v(1), nil)
-  end
+  # There is deliberately no locked-mode test: the apply call is made only
+  # by finalization tasks a running proxy spawned, and a proxy never
+  # re-locks — the state is structurally precluded, and an arriving call
+  # would crash the proxy into recovery by FunctionClauseError.
 end

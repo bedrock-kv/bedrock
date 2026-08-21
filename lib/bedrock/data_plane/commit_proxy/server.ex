@@ -205,8 +205,13 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     noreply_resuming_cadence(%{t | pending_applies: pending})
   end
 
-  def handle_call({:apply_metadata_and_route, _seq, _cv, _window}, _from, %{mode: :locked} = t),
-    do: reply(t, {:error, :locked})
+  # No :locked clause for :apply_metadata_and_route, deliberately: the
+  # apply call is made only by finalization tasks this proxy spawned
+  # while :running, and a proxy never re-locks (a new epoch starts new
+  # proxies). If one ever arrives locked, the FunctionClauseError crashes
+  # the proxy into recovery - the correct outcome for a violated
+  # invariant, reached by construction rather than by a guard for a
+  # state that cannot occur.
 
   # Client routing requests (FDB GetKeyServerLocations): the single
   # covering entry for the asked key, answered from the live routing view

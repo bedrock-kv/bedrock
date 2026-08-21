@@ -77,6 +77,23 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         }
 
   @doc """
+  The committed materializer assignment for a shard tag, or
+  `{:error, :not_found}` when the keyspace names none.
+
+  This answers a worker's rejoin validation (FDB's storage-server rejoin
+  through the proxy's txnStateStore: absence means `worker_removed`) from
+  the same routing view that serves clients — one authority, two readers.
+  """
+  @spec resolve_materializer(t(), non_neg_integer()) ::
+          {:ok, {worker_id :: String.t(), node :: String.t()}} | {:error, :not_found}
+  def resolve_materializer(%__MODULE__{materializers: materializers}, tag) do
+    case Map.fetch(materializers, tag) do
+      {:ok, ref} -> {:ok, ref}
+      :error -> {:error, :not_found}
+    end
+  end
+
+  @doc """
   Projects the client-facing slice of the routing view.
 
   Served to clients by the commit proxy (FDB's `GetKeyServerLocations`

@@ -37,5 +37,35 @@ defmodule Bedrock.DataPlane.CommitProxy.FetchRoutingCadenceTest do
     assert_received {_ref, {:ok, %{shard_layout: %{}, materializers: %{}}}}
   end
 
+  describe "resolve_materializer" do
+    defp routing_with(materializers), do: %{RoutingData.new_empty() | materializers: materializers}
+
+    test "answers the tag's committed entry and resumes the cadence" do
+      state = running_state(batch: nil, routing_data: routing_with(%{7 => {"w7", "node@host"}}))
+
+      assert {:noreply, _t, 1_234} = Server.handle_call({:resolve_materializer, 7}, from(), state)
+      assert_received {_ref, {:ok, {"w7", "node@host"}}}
+    end
+
+    test "an unnamed tag is authoritatively :not_found" do
+      state = running_state(batch: nil, routing_data: routing_with(%{}))
+
+      assert {:noreply, _t, 1_234} = Server.handle_call({:resolve_materializer, 7}, from(), state)
+      assert_received {_ref, {:error, :not_found}}
+    end
+
+    test "with an open batch, the zero timeout is re-armed" do
+      state = running_state(batch: %Batch{}, routing_data: routing_with(%{}))
+
+      assert {:noreply, _t, 0} = Server.handle_call({:resolve_materializer, 1}, from(), state)
+    end
+
+    test "a locked proxy refuses — not a verdict" do
+      state = struct!(%State{mode: :locked}, [])
+
+      assert {:reply, {:error, :locked}, _t} = Server.handle_call({:resolve_materializer, 7}, from(), state)
+    end
+  end
+
   defp from, do: {self(), make_ref()}
 end

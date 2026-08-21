@@ -42,82 +42,67 @@ defmodule Bedrock.Service.ForemanTest do
     }
   end
 
-  describe "do_reconcile_workers/2" do
-    defmodule ReconcileCluster do
+  describe "do_relay_tsl/2" do
+    defmodule RelayCluster do
       @moduledoc false
-      def otp_name(:link), do: :reconcile_test_link_absent
-      def otp_name(:worker_supervisor), do: :reconcile_test_sup_absent
+      def otp_name(:link), do: :relay_test_link_absent
+      def otp_name(:worker_supervisor), do: :relay_test_sup_absent
     end
 
-    defp reconcile_state(workers, path) do
-      %State{
-        cluster: ReconcileCluster,
-        path: path,
+    test "forwards the push to every running hosted worker, and only those" do
+      tsl = %{epoch: 3, logs: %{"log_x" => []}}
+
+      workers = %{
+        "up" => worker_info("up", health: {:ok, self()}, manifest: log_manifest("up")),
+        "down" => worker_info("down", health: :stopped, manifest: log_manifest("down"))
+      }
+
+      state = %State{
+        cluster: RelayCluster,
+        path: "/nonexistent",
         health: :ok,
         waiting_for_healthy: [],
         workers: workers
       }
+
+      assert Impl.do_relay_tsl(state, tsl) == state
+      assert_received {:tsl_updated, ^tsl}
+      refute_received {:tsl_updated, _}
+    end
+  end
+
+  describe "do_worker_retired/2" do
+    defmodule JanitorCluster do
+      @moduledoc false
+      def otp_name(:link), do: :janitor_test_link_absent
+      def otp_name(:worker_supervisor), do: :janitor_test_sup_absent
     end
 
-    test "retires every hosted worker the layout does not reference" do
-      path = Path.join(System.tmp_dir!(), "foreman_reconcile_#{System.unique_integer([:positive])}")
-      File.mkdir_p!(Path.join(path, "keep_me"))
-      File.mkdir_p!(Path.join(path, "stray"))
+    test "disposes the retired worker's directory and entry — and does not restart it" do
+      path = Path.join(System.tmp_dir!(), "foreman_retired_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(path, "gone"))
+      File.mkdir_p!(Path.join(path, "stays"))
 
       workers = %{
-        "keep_me" => worker_info("keep_me", health: :stopped, manifest: storage_manifest("keep_me")),
-        "stray" => worker_info("stray", health: :stopped, manifest: storage_manifest("stray"))
+        "gone" => worker_info("gone", health: :stopped, manifest: log_manifest("gone")),
+        "stays" => worker_info("stays", health: :stopped, manifest: log_manifest("stays"))
       }
 
-      layout = %{services: %{"keep_me" => %{kind: :materializer}}}
+      state = %State{cluster: JanitorCluster, path: path, health: :ok, waiting_for_healthy: [], workers: workers}
 
-      state = Impl.do_reconcile_workers(reconcile_state(workers, path), layout)
+      state = Impl.do_worker_retired(state, "gone")
 
-      assert Map.keys(state.workers) == ["keep_me"]
-      assert File.dir?(Path.join(path, "keep_me"))
-      refute File.dir?(Path.join(path, "stray"))
+      assert Map.keys(state.workers) == ["stays"]
+      refute File.dir?(Path.join(path, "gone"))
+      assert File.dir?(Path.join(path, "stays"))
 
       File.rm_rf!(path)
     end
 
-    test "a layout with no services retires nothing — it is not a valid layout" do
-      workers = %{"w1" => worker_info("w1", health: :stopped, manifest: storage_manifest("w1"))}
-      state = reconcile_state(workers, "/nonexistent")
+    test "an unknown worker id is a no-op" do
+      state = %State{cluster: JanitorCluster, path: "/nonexistent", health: :ok, waiting_for_healthy: [], workers: %{}}
 
-      assert Impl.do_reconcile_workers(state, %{services: %{}}) == state
-      assert Impl.do_reconcile_workers(state, %{}) == state
-    end
-  end
-
-  describe "workers_to_retire/2" do
-    test "selects exactly the unreferenced worker ids" do
-      workers = %{
-        "a" => worker_info("a", manifest: storage_manifest("a")),
-        "b" => worker_info("b", manifest: storage_manifest("b")),
-        "c" => worker_info("c", manifest: log_manifest("c"))
-      }
-
-      services = %{"b" => %{}, "z" => %{}}
-
-      assert workers |> Impl.workers_to_retire(services) |> Enum.sort() == ["a", "c"]
-    end
-
-    test "never selects entries without a valid manifest" do
-      # Shared-path deployments put non-worker directories (raft state,
-      # the object storage root) alongside workers; the boot scan ingests
-      # them as manifest-less entries. Not the foreman's to destroy.
-      workers = %{
-        "raft" => worker_info("raft", manifest: nil, health: :stopped),
-        "object_storage" => worker_info("object_storage", manifest: nil, health: :stopped),
-        "broken" =>
-          worker_info("broken",
-            manifest: %Manifest{cluster: "test", id: "broken", worker: nil, params: %{}},
-            health: :stopped
-          ),
-        "stray" => worker_info("stray", manifest: storage_manifest("stray"), health: :stopped)
-      }
-
-      assert Impl.workers_to_retire(workers, %{"something_else" => %{}}) == ["stray"]
+      assert Impl.do_worker_retired(state, "ghost").workers == %{}
     end
   end
 

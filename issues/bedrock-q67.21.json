@@ -24,11 +24,15 @@
     {
       "text": "Obligation from the PR #182 audit (2026-08-20): the client-side LayoutIndex partial cache assumes shard-range disjointness, which holds today because recovery's per-epoch rewrite is the only boundary writer and invalidation is coarse. When the Distributor introduces mid-epoch boundary mutations, superseded ranges can coexist with their replacements in a live index with no invalidation trigger — the insert must become overlap-aware (or eviction per-range) BEFORE mid-epoch splits/moves land. Flagged in the LayoutIndex moduledoc.",
       "timestamp": "2026-08-21T01:16:57Z"
+    },
+    {
+      "text": "SETTLED with the user 2026-08-21 (supersedes open questions in earlier comments; based on the FDB DD source study + phase-a reference inventory, both 2026-08-21): (A) Distributor is director-recruited PER EPOCH initially (phase-a supervision ports near-verbatim: recruit-if-absent, halt losers, :normal DOWN = ceded); the LOCK, not the supervisor, is the write authority, so graduating to cross-epoch later is non-breaking. (B) Recovery becomes read-and-heal with a tag-0 carve-out: persistence stops blanket clear+rewrite; shard_keys seeds only-when-absent (first boot); materializers seeds-when-absent + writes exactly what recovery changed; tag 0 stays recovery's job (stall-only-for-tag-0), data-tag gaps become the distributor's to heal (bootstrap keeps creating data-tag workers until phase 4, then leaves gaps ABSENT for placeholder coverage). (C) Placeholder addressing = OPTION 2: the placeholder IS a materializer ref - distributor writes materializers/\u003ctag\u003e = {placeholder_worker_id, distributor_node}; the placeholder speaks the materializer read API; nothing changes at proxy or client; coverage gaps are visible in the keyspace. (D) Current-scale distributor = failure monitoring + per-tag coverage check + ONE mutating op (heal under check_lock); NO serverKeys dual index, teams, relocation queue, throttles, shard metrics - all premature until moves/replicas. (E) Healing un-defers in-band retirement (first mid-epoch removal): privatized membership change dual-routed to the victim's own shard stream, phase 6. q67.44 overlap obligation does NOT activate (heals change refs, not boundaries; waits for splits). Ownership fencing = MoveKeys lock port: distributor_lock/{owner,write}, take-then-snapshot, read-check-write in every mutating transaction, 5s read-only poll-to-die.",
+      "timestamp": "2026-08-21T20:10:27Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Port Distributor + placeholder from phase-a: coverage published as keyspace mutations",
   "type": "task",
-  "updated_at": "2026-08-21T01:16:57Z"
+  "updated_at": "2026-08-21T20:10:27Z"
 }

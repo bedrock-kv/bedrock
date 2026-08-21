@@ -55,10 +55,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           # Default layout has two shards: system and user
           assert map_size(updated_attempt.shard_layout) == 2
 
-          # Should have created materializers for both shards
-          assert map_size(updated_attempt.shard_materializers) == 2
+          # Only the system shard is recovery's to create: the data
+          # shard's slot stays ABSENT for the distributor to cover with
+          # the placeholder and heal by recruitment (stall-only-for-
+          # tag-0 completed).
+          assert map_size(updated_attempt.shard_materializers) == 1
           assert Map.has_key?(updated_attempt.shard_materializers, 0)
-          assert Map.has_key?(updated_attempt.shard_materializers, 1)
+          refute Map.has_key?(updated_attempt.shard_materializers, 1)
 
           assert {<<_::binary>>, node_string} =
                    updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
@@ -72,15 +75,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
             for {_id, %{kind: :materializer, status: {:up, pid}}} <- updated_attempt.transaction_services, do: pid
 
           assert system_materializer_pid in created_pids
-          assert user_materializer_pid in created_pids
+          refute user_materializer_pid in created_pids
         end)
 
       assert log =~ "Fresh cluster detected"
 
-      # Verify both shards were created
+      # Only the system shard's materializer was created.
       shards = created_shards |> :ets.lookup(:shard) |> Enum.map(fn {:shard, tag} -> tag end)
-      assert 0 in shards
-      assert 1 in shards
+      assert shards == [0]
 
       :ets.delete(created_shards)
     end
@@ -134,17 +136,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert {<<_::binary>>, <<_::binary>>} =
                updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
 
-      # Replication spans all logs today, so every shard's replica set
-      # covers both — each seed carries {log_id, ref} pairs, never a
-      # cluster services map.
+      # Replication spans all logs today, so the system shard's replica
+      # set covers both — the seed carries {log_id, ref} pairs, never a
+      # cluster services map. (The data shard is not created; its seed
+      # is the distributor's, at recruitment.)
       expected = [{"log_1", log_1_pid}, {"log_2", log_2_pid}]
 
-      for pid <- [system_materializer_pid, user_materializer_pid] do
-        assert [{:unlock, ^pid, sources}] =
-                 unlocks |> :ets.lookup(:unlock) |> Enum.filter(&match?({:unlock, ^pid, _}, &1))
+      assert [{:unlock, ^system_materializer_pid, sources}] =
+               unlocks
+               |> :ets.lookup(:unlock)
+               |> Enum.filter(&match?({:unlock, ^system_materializer_pid, _}, &1))
 
-        assert Enum.sort(sources) == expected
-      end
+      assert Enum.sort(sources) == expected
+
+      assert [] = unlocks |> :ets.lookup(:unlock) |> Enum.filter(&match?({:unlock, ^user_materializer_pid, _}, &1))
 
       :ets.delete(unlocks)
     end

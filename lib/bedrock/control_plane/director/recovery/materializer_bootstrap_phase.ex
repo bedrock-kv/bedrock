@@ -83,10 +83,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     Logger.debug("Fresh cluster detected, using default shard layout")
 
     shard_layout = default_shard_layout()
-    shard_tags = extract_shard_tags(shard_layout)
 
-    # Create materializers for all shards in the layout
-    case create_materializers_for_shards(shard_tags, recovery_attempt, context) do
+    # Only the system shard is recovery's to create (stall-only-for-tag-0
+    # completed, bedrock-q67.21.4): data-tag gaps are left ABSENT — the
+    # distributor's sweep covers them with the placeholder and demand
+    # recruits real workers. Recovery no longer manufactures data-plane
+    # coverage it does not itself need.
+    case create_materializers_for_shards([RecoveryAttempt.system_shard_id()], recovery_attempt, context) do
       {:ok, shard_materializers, created_services} ->
         updated_attempt =
           recovery_attempt
@@ -357,6 +360,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
           shard_tag
           |> start_materializer_for_shard(existing_by_shard, recovery_version, recovery_attempt, context)
           |> case do
+            {:ok, :absent, _created} ->
+              {:cont, {:ok, acc, services}}
+
             {:ok, assignment, created} ->
               {:cont, {:ok, Map.put(acc, shard_tag, assignment), Map.merge(services, created)}}
 
@@ -376,12 +382,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         end
 
       :error ->
-        Logger.info("Materializer for shard #{shard_tag} not found, creating new one")
-
-        with {:ok, assignment, {worker_id, descriptor}} <-
-               create_and_start_materializer(shard_tag, recovery_attempt, context) do
-          {:ok, assignment, %{worker_id => descriptor}}
-        end
+        # No survivor: the gap is the distributor's to heal, not
+        # recovery's to fill (stall-only-for-tag-0 completed,
+        # bedrock-q67.21.4). The slot stays ABSENT; the sweep covers it
+        # with the placeholder and demand recruits a real worker. The
+        # shard's durable history is safe regardless — chunks are
+        # shard-keyed, epoch-spanning, and never deleted.
+        Logger.info("Materializer for shard #{shard_tag} not found; leaving for the distributor to heal")
+        {:ok, :absent, %{}}
     end
   end
 

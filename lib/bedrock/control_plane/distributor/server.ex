@@ -14,6 +14,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   @placeholder_worker_id Placeholder.worker_id()
 
+  # Consecutive failed ping-verifications before unreachability is
+  # treated as death. With the default reverify interval this is ~6s of
+  # sustained unreachability — long enough to ride out a dist blip,
+  # short enough that a lost node heals promptly.
+  @max_unreachable_verifications 3
+
   # FDB's MOVEKEYS_LOCK_POLLING_DELAY: a superseded distributor exits
   # within seconds even when idle, instead of waiting to lose a commit.
   @poll_interval_ms 5_000
@@ -68,7 +74,8 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       poll_interval_ms: Keyword.get(opts, :poll_interval_ms, @poll_interval_ms),
       placeholder_start_fn: Keyword.get(opts, :placeholder_start_fn),
       recruitment_ctx: Keyword.get(opts, :recruitment_ctx),
-      backoff_ms: Keyword.get(opts, :backoff_ms, 5_000)
+      backoff_ms: Keyword.get(opts, :backoff_ms, 5_000),
+      reverify_interval_ms: Keyword.get(opts, :reverify_interval_ms, 2_000)
     }
 
     {:ok, state, {:continue, :take_lock}}
@@ -104,8 +111,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     with {:ok, snapshot} <- Transactions.read_snapshot(t.deps),
          {:ok, placeholder} <- start_placeholder(t, snapshot.shard_layout),
          t = %{t | placeholder: placeholder, snapshot: snapshot},
-         :ok <- publish_placeholders(t, uncovered_tags(snapshot)) do
-      {:noreply, t}
+         uncovered = uncovered_tags(snapshot),
+         :ok <- publish_placeholders(t, uncovered) do
+      # Eager recruitment for the swept gaps erases first-touch latency:
+      # the sweep already knows every uncovered tag, and the in-flight
+      # dedupe and backoff machinery make eagerness free.
+      {:noreply, Enum.reduce(uncovered, monitor_assignments(t), &maybe_recruit(&2, &1))}
     else
       {:error, :superseded} ->
         Logger.info("Bedrock distributor (epoch #{t.epoch}): superseded at publish; ceding")
@@ -190,6 +201,46 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       handle_info({:recruitment_complete, tag, {:error, {:recruit_task_crashed, reason}}}, t)
     else
       {:noreply, t}
+    end
+  end
+
+  # Death healing (event-driven, FDB teamTracker-style) — with FDB's
+  # distinction between connection state and failure: unreachable is NOT
+  # dead. A :noconnection DOWN fires for every remote assignment at once
+  # on any transient dist blip; healing eagerly on it would rip live
+  # workers out of the routing view and stampede recruitment (N blips →
+  # N+1 workers per shard). Instead: damp — ping-verify on a timer, heal
+  # only after the node stays unreachable across consecutive checks.
+  # Genuine death signals (:noproc, :killed, crashes) heal immediately.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %State{} = t) when is_map_key(t.assignment_monitors, ref) do
+    {tag, monitors} = Map.pop(t.assignment_monitors, ref)
+    t = %{t | assignment_monitors: monitors}
+
+    case reason do
+      :noconnection ->
+        Logger.warning("Bedrock distributor (epoch #{t.epoch}): materializer for tag #{tag} unreachable; verifying")
+        {:noreply, schedule_reverify(t, tag)}
+
+      _dead ->
+        Logger.warning("Bedrock distributor (epoch #{t.epoch}): materializer for tag #{tag} down (#{inspect(reason)})")
+        heal_tag(clear_unreachable(t, tag), tag)
+    end
+  end
+
+  # The reverify tick: reachable again means the worker was never
+  # observed dead — reset the count and re-arm the monitor (a genuinely
+  # dead worker on a reachable node yields an immediate :noproc DOWN and
+  # heals through the fast path above). Persistent unreachability
+  # escalates to a heal after @max_unreachable_verifications consecutive
+  # failed pings. A tag whose ref changed meanwhile has nothing left to
+  # verify.
+  def handle_info({:reverify_assignment, tag}, %State{} = t) do
+    case Map.get(t.snapshot.materializer_refs, tag) do
+      {worker_id, node_string} when worker_id != @placeholder_worker_id ->
+        reverify_assignment(t, tag, worker_id, node_string)
+
+      _placeholder_or_absent ->
+        {:noreply, clear_unreachable(t, tag)}
     end
   end
 
@@ -288,16 +339,21 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
     case Transactions.commit_checked(t.lock, t.deps, [mutation]) do
       :ok ->
-        Placeholder.notify_covered(t.placeholder, tag, {t.cluster.otp_name_for_worker(worker_id), node})
+        callable = {t.cluster.otp_name_for_worker(worker_id), node}
+        Placeholder.notify_covered(t.placeholder, tag, callable)
 
         refs = Map.put(t.snapshot.materializer_refs, tag, {worker_id, node_string})
 
         {:noreply,
-         %{
-           t
-           | snapshot: %{t.snapshot | materializer_refs: refs},
-             pending_demands: MapSet.delete(t.pending_demands, tag)
-         }}
+         monitor_assignment(
+           %{
+             t
+             | snapshot: %{t.snapshot | materializer_refs: refs},
+               pending_demands: MapSet.delete(t.pending_demands, tag)
+           },
+           tag,
+           callable
+         )}
 
       {:error, :superseded} ->
         # The READ verdict refused before any commit was attempted: this
@@ -330,6 +386,90 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   defp commit_definitely_not_landed?({:lock_read_failed, _}), do: true
   defp commit_definitely_not_landed?({:read_version_failed, _}), do: true
   defp commit_definitely_not_landed?(_ambiguous), do: false
+
+  defp reverify_assignment(%State{} = t, tag, worker_id, node_string) do
+    # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
+    node_atom = String.to_atom(node_string)
+
+    if node_atom == node() or Node.ping(node_atom) == :pong do
+      {:noreply,
+       t |> clear_unreachable(tag) |> monitor_assignment(tag, {t.cluster.otp_name_for_worker(worker_id), node_atom})}
+    else
+      count = Map.get(t.unreachable_counts, tag, 0) + 1
+      t = %{t | unreachable_counts: Map.put(t.unreachable_counts, tag, count)}
+
+      if count >= @max_unreachable_verifications do
+        Logger.warning(
+          "Bedrock distributor (epoch #{t.epoch}): tag #{tag} unreachable after #{count} verifications; healing"
+        )
+
+        heal_tag(clear_unreachable(t, tag), tag)
+      else
+        {:noreply, schedule_reverify(t, tag)}
+      end
+    end
+  end
+
+  # The heal itself: make the gap keyspace-visible FIRST — publish the
+  # placeholder ref under the fence, so clients park instead of
+  # hammering the corpse and displaced-but-alive twins observe the
+  # change — then tell the placeholder the tag is uncovered (park, don't
+  # forward) and eagerly re-recruit. A superseded publish cedes: a newer
+  # owner heals, not us. On a transient publish failure the tag's LOCAL
+  # ref is dropped so a racing coverage_demand recruits instead of
+  # draining parked reads into the corpse; the keyspace still names the
+  # corpse but self-corrects at the recruit's publication.
+  defp heal_tag(%State{} = t, tag) do
+    Placeholder.notify_uncovered(t.placeholder, tag)
+
+    case publish_placeholders(t, [tag]) do
+      :ok ->
+        refs = Map.put(t.snapshot.materializer_refs, tag, {@placeholder_worker_id, Atom.to_string(node())})
+        {:noreply, maybe_recruit(%{t | snapshot: %{t.snapshot | materializer_refs: refs}}, tag)}
+
+      {:error, :superseded} ->
+        Logger.info("Bedrock distributor (epoch #{t.epoch}): superseded healing tag #{tag}; ceding")
+        {:stop, :normal, t}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Bedrock distributor (epoch #{t.epoch}): healing publish for tag #{tag} failed: #{inspect(reason)}"
+        )
+
+        refs = Map.delete(t.snapshot.materializer_refs, tag)
+        {:noreply, maybe_recruit(%{t | snapshot: %{t.snapshot | materializer_refs: refs}}, tag)}
+    end
+  end
+
+  defp clear_unreachable(%State{} = t, tag), do: %{t | unreachable_counts: Map.delete(t.unreachable_counts, tag)}
+
+  defp schedule_reverify(%State{} = t, tag) do
+    Process.send_after(self(), {:reverify_assignment, tag}, t.reverify_interval_ms)
+    t
+  end
+
+  # Monitor every live (non-placeholder) assignment by its callable name
+  # — monitors on {name, node} fire on death OR unreachability, either of
+  # which is a coverage gap worth healing.
+  defp monitor_assignments(%State{} = t) do
+    Enum.reduce(t.snapshot.materializer_refs, t, fn
+      {_tag, {@placeholder_worker_id, _node}}, acc ->
+        acc
+
+      {tag, {worker_id, node}}, acc ->
+        # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
+        monitor_assignment(acc, tag, {acc.cluster.otp_name_for_worker(worker_id), String.to_atom(node)})
+    end)
+  end
+
+  defp monitor_assignment(%State{} = t, tag, {name, node_atom}) do
+    # A local name is monitored as a bare atom: the {name, node} form
+    # requires live distribution, which a single-node deployment
+    # legitimately runs without.
+    target = if node_atom == node(), do: name, else: {name, node_atom}
+    ref = Process.monitor(target)
+    %{t | assignment_monitors: Map.put(t.assignment_monitors, ref, tag)}
+  end
 
   defp start_backoff(%State{} = t, tag),
     do: %{t | backoff: Map.put(t.backoff, tag, System.monotonic_time(:millisecond) + t.backoff_ms)}

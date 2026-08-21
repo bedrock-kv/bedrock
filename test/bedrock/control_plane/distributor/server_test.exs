@@ -164,7 +164,9 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       test_pid = self()
 
       # Tag 0 is covered; tag 1 has no entry — the gap.
-      refs_entries = [{SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_sys", "n@h")}]
+      refs_entries = [
+        {SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_sys", Atom.to_string(node()))}
+      ]
 
       assert {:noreply, t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
       assert t.snapshot.shard_layout == %{"m" => {1, <<>>}, <<0xFF, 0xFF>> => {0, "m"}}
@@ -204,12 +206,40 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       test_pid = self()
 
       refs_entries = [
-        {SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_sys", "n@h")},
-        {SystemKeys.materializer_key(1), Values.encode_materializer_ref("wkr_a", "n@h")}
+        {SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_sys", Atom.to_string(node()))},
+        {SystemKeys.materializer_key(1), Values.encode_materializer_ref("wkr_a", Atom.to_string(node()))}
       ]
 
       assert {:noreply, _t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
       refute_received {:committed, _}
+    end
+
+    test "the sweep recruits its uncovered tags eagerly — no first-touch wait for demand" do
+      test_pid = self()
+      {lock, _} = Lock.take(nil, nil)
+      Process.put(:my_owner, lock.my_owner)
+
+      refs_entries = [
+        {SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_sys", Atom.to_string(node()))}
+      ]
+
+      t =
+        state(two_shard_snapshot_deps(refs_entries, test_pid),
+          lock: lock,
+          placeholder_start_fn: fn _opts -> {:ok, spawn(fn -> Process.sleep(:infinity) end)} end,
+          recruitment_ctx: %{
+            cluster: __MODULE__,
+            epoch: 3,
+            node_capabilities: %{materializer: [node()]},
+            logs: %{"log_1" => []},
+            log_refs: %{"log_1" => :ref},
+            create_worker_fn: fn _f, _i, _k, _o -> {:error, :scripted} end
+          }
+        )
+
+      assert {:noreply, t2} = Server.handle_continue(:startup_sweep, t)
+      assert MapSet.member?(t2.recruiting, 1)
+      refute MapSet.member?(t2.recruiting, 0)
     end
 
     test "supersession at the publish cedes" do
@@ -401,6 +431,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       assert_receive {:placeholder_got, {:covered, 9, {_otp, _node}}}
       assert t2.snapshot.materializer_refs[9] == {"wkr_new", Atom.to_string(node())}
       refute MapSet.member?(t2.recruiting, 9)
+
+      # The published assignment is monitored from this moment — healing
+      # coverage starts at publication, not at the next sweep.
+      assert Map.values(t2.assignment_monitors) == [9]
     end
 
     test "a superseded publish removes the orphan and cedes" do
@@ -557,6 +591,247 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       end)
 
       assert_received {:orphan_removed, "wkr_orphan"}
+    end
+  end
+
+  describe "death healing" do
+    alias Bedrock.SystemKeys, as: HealKeys
+    alias Bedrock.SystemKeys.Values, as: HealValues
+
+    defp healing_state(test_pid, overrides) do
+      {lock, _} = Lock.take(nil, nil)
+      Process.put(:my_owner, lock.my_owner)
+
+      deps = %{
+        get_fn: fn key, _v ->
+          if String.ends_with?(key, "owner"), do: {:ok, Process.get(:my_owner)}, else: {:error, :not_found}
+        end,
+        commit_fn: fn _p, _e, encoded, _o ->
+          send(test_pid, {:committed, encoded})
+          {:ok, Version.from_integer(9), 0}
+        end
+      }
+
+      placeholder =
+        spawn(fn ->
+          receive do
+            {:"$gen_cast", msg} -> send(test_pid, {:placeholder_got, msg})
+          end
+        end)
+
+      state(
+        deps,
+        Keyword.merge(
+          [
+            lock: lock,
+            placeholder: placeholder,
+            snapshot: %{
+              shard_layout: %{},
+              materializer_refs: %{7 => {"wkr_dead", Atom.to_string(node())}}
+            },
+            recruitment_ctx: %{
+              cluster: __MODULE__,
+              epoch: 3,
+              node_capabilities: %{materializer: [node()]},
+              logs: %{"log_1" => []},
+              log_refs: %{"log_1" => :ref},
+              create_worker_fn: fn _f, _i, _k, _o -> {:error, :scripted} end
+            }
+          ],
+          overrides
+        )
+      )
+    end
+
+    test "an assignment's death publishes the placeholder, uncovers the tag, and re-recruits" do
+      test_pid = self()
+      ref = make_ref()
+      t = healing_state(test_pid, [])
+      t = %{t | assignment_monitors: %{ref => 7}}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :killed}, t)
+
+          # The gap became keyspace-visible first.
+          assert_received {:committed, encoded}
+          assert {:ok, mutations} = Transaction.mutations(encoded)
+
+          placeholder_ref = HealValues.encode_materializer_ref(Placeholder.worker_id(), Atom.to_string(node()))
+          assert {:set, HealKeys.materializer_key(7), placeholder_ref} in Enum.to_list(mutations)
+
+          # Park, don't forward; and the re-recruit is in flight. (The
+          # stub forwards a cast: wait, don't demand prior arrival.)
+          assert_receive {:placeholder_got, {:uncovered, 7}}
+          assert MapSet.member?(t2.recruiting, 7)
+          assert t2.snapshot.materializer_refs[7] == {Placeholder.worker_id(), Atom.to_string(node())}
+          assert t2.assignment_monitors == %{}
+        end)
+
+      assert log =~ "materializer for tag 7 down"
+    end
+
+    test "a superseded healing publish cedes — a newer owner heals, not us" do
+      test_pid = self()
+      ref = make_ref()
+
+      t = healing_state(test_pid, [])
+
+      superseding_deps =
+        Map.merge(t.deps, %{
+          get_fn: fn _k, _v -> {:ok, Lock.new_uid()} end,
+          commit_fn: fn _p, _e, _t, _o -> flunk("must not commit past a refused fence") end
+        })
+
+      t = %{t | deps: superseding_deps, assignment_monitors: %{ref => 7}}
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:stop, :normal, _t} = Server.handle_info({:DOWN, ref, :process, self(), :killed}, t)
+      end)
+    end
+
+    test "a :noconnection DOWN does not heal — the tag is verified, not stampeded" do
+      test_pid = self()
+      ref = make_ref()
+      t = healing_state(test_pid, [])
+      t = %{t | assignment_monitors: %{ref => 7}, reverify_interval_ms: 5}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :noconnection}, t)
+
+          # Nothing destructive happened: no publish, no uncover, no
+          # recruit — the (possibly live) worker keeps its assignment...
+          refute_received {:committed, _}
+          refute_received {:placeholder_got, _}
+          refute MapSet.member?(t2.recruiting, 7)
+          assert t2.snapshot.materializer_refs[7] == {"wkr_dead", Atom.to_string(node())}
+
+          # ...and verification is armed instead.
+          assert_receive {:reverify_assignment, 7}, 100
+        end)
+
+      assert log =~ "unreachable; verifying"
+    end
+
+    test "persistent unreachability escalates to a heal after consecutive failed verifications" do
+      test_pid = self()
+
+      t =
+        healing_state(test_pid,
+          snapshot: %{shard_layout: %{}, materializer_refs: %{7 => {"wkr_gone", "gone@nowhere"}}}
+        )
+
+      t = %{t | reverify_interval_ms: 5}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          # Two failed pings only re-arm the verification timer...
+          assert {:noreply, t} = Server.handle_info({:reverify_assignment, 7}, t)
+          assert t.unreachable_counts[7] == 1
+          refute_received {:committed, _}
+          assert_receive {:reverify_assignment, 7}, 100
+
+          assert {:noreply, t} = Server.handle_info({:reverify_assignment, 7}, t)
+          assert t.unreachable_counts[7] == 2
+
+          # ...the third escalates: publish, uncover, re-recruit.
+          assert {:noreply, t3} = Server.handle_info({:reverify_assignment, 7}, t)
+          assert_received {:committed, _}
+          assert_receive {:placeholder_got, {:uncovered, 7}}
+          assert MapSet.member?(t3.recruiting, 7)
+          assert t3.unreachable_counts == %{}
+        end)
+
+      assert log =~ "unreachable after 3 verifications; healing"
+    end
+
+    test "a reachable node resets the count and re-arms the monitor; a re-assigned tag has nothing to verify" do
+      test_pid = self()
+
+      t =
+        healing_state(test_pid,
+          snapshot: %{shard_layout: %{}, materializer_refs: %{7 => {"wkr_alive", Atom.to_string(node())}}}
+        )
+
+      t = %{t | unreachable_counts: %{7 => 2}}
+
+      assert {:noreply, t2} = Server.handle_info({:reverify_assignment, 7}, t)
+      assert t2.unreachable_counts == %{}
+      assert Map.values(t2.assignment_monitors) == [7]
+      refute_received {:committed, _}
+
+      # A tag re-assigned to the placeholder meanwhile is already
+      # healing: verification just stands down.
+      t3 = %{
+        t
+        | snapshot: %{t.snapshot | materializer_refs: %{7 => {Placeholder.worker_id(), Atom.to_string(node())}}}
+      }
+
+      assert {:noreply, t4} = Server.handle_info({:reverify_assignment, 7}, t3)
+      assert t4.unreachable_counts == %{}
+      assert t4.assignment_monitors == %{}
+      refute_received {:committed, _}
+    end
+
+    test "a dead registered name heals through :noproc — monitor fires immediately, the heal chain runs" do
+      test_pid = self()
+      t = healing_state(test_pid, [])
+
+      # A monitor on a never-registered local name yields an instant
+      # :noproc DOWN — the exact signal a reachable node's dead worker
+      # produces at re-arm time.
+      ref = Process.monitor(otp_name_for_worker("wkr_dead"))
+      assert_receive {:DOWN, ^ref, :process, _, :noproc}
+
+      t = %{t | assignment_monitors: %{ref => 7}}
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, nil, :noproc}, t)
+        assert_received {:committed, _}
+        assert_receive {:placeholder_got, {:uncovered, 7}}
+        assert MapSet.member?(t2.recruiting, 7)
+      end)
+    end
+
+    test "a transiently failed healing publish drops the corpse ref — demand recruits, never serves the corpse" do
+      test_pid = self()
+      ref = make_ref()
+      t = healing_state(test_pid, [])
+
+      failing_deps = Map.put(t.deps, :commit_fn, fn _p, _e, _t, _o -> {:error, :timeout} end)
+      t = %{t | deps: failing_deps, assignment_monitors: %{ref => 7}}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :killed}, t)
+
+          # The corpse's ref left the local view even though the keyspace
+          # still names it: a racing demand falls to the recruit path
+          # instead of handing parked readers a dead callable.
+          refute Map.has_key?(t2.snapshot.materializer_refs, 7)
+
+          assert {:noreply, t3} = Server.handle_cast({:coverage_demand, 7}, t2)
+          assert MapSet.member?(t3.pending_demands, 7)
+          refute_received {:placeholder_got, {:covered, 7, _}}
+        end)
+
+      assert log =~ "healing publish for tag 7 failed"
+    end
+
+    test "the startup sweep monitors live assignments but never the placeholder's own refs" do
+      test_pid = self()
+      node_string = Atom.to_string(node())
+
+      refs_entries = [
+        {HealKeys.materializer_key(0), HealValues.encode_materializer_ref("wkr_sys", node_string)},
+        {HealKeys.materializer_key(1), HealValues.encode_materializer_ref(Placeholder.worker_id(), node_string)}
+      ]
+
+      assert {:noreply, t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
+
+      assert map_size(t.assignment_monitors) == 1
+      assert t.assignment_monitors |> Map.values() |> Enum.sort() == [0]
     end
   end
 end

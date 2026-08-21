@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-21T16:23:18Z",
@@ -8,7 +8,7 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Post-merge evaluation cleanup: spec honesty, dead types, precluded-hazard residues, timeout-eviction parity",
   "type": "task",
   "updated_at": "2026-08-21T16:23:18Z"

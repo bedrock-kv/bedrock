@@ -20,11 +20,15 @@
     {
       "text": "Deferred obligation from the 2026-08-20 side-channel campaign design: when the Distributor introduces mid-epoch materializer removal, retirement delivery goes IN-BAND, FDB-style - the proxy's apply-then-route step dual-routes a membership clear (materializers/\u003ctag\u003e) to the victim's own shard tag so the worker observes its own key cleared in the stream it already follows and self-retires (ApplyMetadataMutation.cpp privatization -\u003e storageserver applyPrivateData worker_removed). Until then, retirement is recovery-boundary-only via foreman rejoin validation (course B). Do not build the private-mutation path before removals exist.",
       "timestamp": "2026-08-20T22:39:32Z"
+    },
+    {
+      "text": "Obligation from the PR #182 audit (2026-08-20): the client-side LayoutIndex partial cache assumes shard-range disjointness, which holds today because recovery's per-epoch rewrite is the only boundary writer and invalidation is coarse. When the Distributor introduces mid-epoch boundary mutations, superseded ranges can coexist with their replacements in a live index with no invalidation trigger — the insert must become overlap-aware (or eviction per-range) BEFORE mid-epoch splits/moves land. Flagged in the LayoutIndex moduledoc.",
+      "timestamp": "2026-08-21T01:16:57Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Port Distributor + placeholder from phase-a: coverage published as keyspace mutations",
   "type": "task",
-  "updated_at": "2026-08-20T22:39:32Z"
+  "updated_at": "2026-08-21T01:16:57Z"
 }

@@ -62,30 +62,36 @@ defmodule Bedrock.Cluster.Link do
   end
 
   @doc """
-  Fetch the node's cached routing projection (shard boundaries plus
-  materializer refs, as served by `Bedrock.DataPlane.CommitProxy.fetch_routing/2`).
+  Fetch the cached covering entry for one key: the shard range and its
+  raw `{worker_id, node}` materializer ref, as fetched from
+  `Bedrock.DataPlane.CommitProxy.fetch_routing/3`.
 
   The Link is the node-wide location cache (FDB's `DatabaseContext`
-  locationCache): it only stores. On a miss the caller fetches from a
-  commit proxy and caches the result back with `cache_routing/2`.
+  locationCache), a partial coalescing index: it only stores. On a miss
+  the caller fetches the single covering entry from a commit proxy and
+  caches it back with `cache_routing_entry/2`.
   """
-  @spec fetch_cached_routing(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
-          {:ok, map()} | {:error, :unavailable | :timeout | :unknown}
-  def fetch_cached_routing(link, opts \\ []), do: call(link, :get_routing, opts[:timeout_in_ms] || 1000)
+  @spec fetch_covering_entry(ref(), Bedrock.key(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          {:ok, {Bedrock.key_range(), {String.t(), String.t()}}}
+          | {:error, :not_cached | :unavailable | :timeout | :unknown}
+  def fetch_covering_entry(link, key, opts \\ []),
+    do: call(link, {:get_covering_entry, key}, opts[:timeout_in_ms] || 1000)
 
-  @doc "Caches a routing projection fetched from a commit proxy."
-  @spec cache_routing(ref(), map()) :: :ok
-  def cache_routing(link, routing), do: cast(link, {:cache_routing, routing})
+  @doc "Caches one covering entry fetched from a commit proxy."
+  @spec cache_routing_entry(ref(), {Bedrock.key(), Bedrock.key(), {String.t(), String.t()}}) :: :ok
+  def cache_routing_entry(link, entry), do: cast(link, {:cache_routing_entry, entry})
 
   @doc """
-  Drops the cached routing projection.
+  Drops the cached routing entries — the whole index, never a patch.
 
   Called by the client retry loop when a read fails in a routing-shaped way
   (unroutable key, dead materializer, unavailable) - a dead pid is exactly
   what a stale snapshot looks like, so the next transaction refetches.
+  Coarse on purpose (a named divergence from FDB's per-range eviction):
+  failures are rare and simple beats surgical.
 
   Synchronous on purpose: the retry that invalidates must not be able to
-  read the stale projection back on its next fetch. A cast would be
+  read the stale entries back on its next fetch. A cast would be
   ordered only by accident of the intervening wiring call.
   """
   @spec invalidate_routing(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::

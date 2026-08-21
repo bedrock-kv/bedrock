@@ -24,17 +24,39 @@ defmodule Bedrock.DataPlane.CommitProxy.FetchRoutingCadenceTest do
     )
   end
 
+  defp seeded_routing do
+    RoutingData.from_snapshot(%{
+      shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
+      log_map: %{},
+      log_services: %{},
+      materializers: %{0 => {"wkr_sys", "n1@host"}},
+      replication_factor: 1
+    })
+  end
+
   test "with no open batch, the heartbeat timeout is re-armed" do
-    assert {:noreply, _t, 1_234} = Server.handle_call(:fetch_routing, from(), running_state(batch: nil))
+    assert {:noreply, _t, 1_234} = Server.handle_call({:fetch_routing, "a"}, from(), running_state(batch: nil))
   end
 
   test "with an open batch, the zero timeout is re-armed so the batch still finalizes" do
-    assert {:noreply, _t, 0} = Server.handle_call(:fetch_routing, from(), running_state(batch: %Batch{}))
+    assert {:noreply, _t, 0} = Server.handle_call({:fetch_routing, "a"}, from(), running_state(batch: %Batch{}))
   end
 
-  test "the reply arrives before the cadence resumes" do
-    Server.handle_call(:fetch_routing, from(), running_state(batch: nil))
-    assert_received {_ref, {:ok, %{shard_layout: %{}, materializers: %{}}}}
+  test "the reply is the single covering entry, and arrives before the cadence resumes" do
+    state = running_state(batch: nil, routing_data: seeded_routing())
+
+    Server.handle_call({:fetch_routing, "a"}, from(), state)
+    assert_received {_ref, {:ok, {<<>>, <<0xFF, 0xFF>>, 0, {"wkr_sys", "n1@host"}}}}
+  end
+
+  test "a key the committed state routes nowhere answers :not_found" do
+    Server.handle_call({:fetch_routing, "a"}, from(), running_state(batch: nil))
+    assert_received {_ref, {:error, :not_found}}
+  end
+
+  test "a locked proxy refuses routing fetches" do
+    assert {:reply, {:error, :locked}, _t} =
+             Server.handle_call({:fetch_routing, "a"}, from(), struct!(%State{mode: :locked}, []))
   end
 
   describe "resolve_materializer" do

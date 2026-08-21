@@ -62,22 +62,42 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
     end
   end
 
-  describe "client_projection/1" do
-    test "exposes shard boundaries and materializer refs; log wiring stays proxy-internal" do
-      snapshot = %{
+  describe "covering_entry/2" do
+    defp routing_two_shards do
+      RoutingData.from_snapshot(%{
         shard_layout: %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}},
         log_map: %{0 => "log-a"},
         log_services: %{"log-a" => {:log_a, :node1}},
         materializers: %{0 => {"wkr_sys", "n1@host"}, 1 => {"wkr_a", "n1@host"}},
         replication_factor: 1
-      }
+      })
+    end
 
-      projection = snapshot |> RoutingData.from_snapshot() |> RoutingData.client_projection()
+    test "answers one covering entry per key by ceiling walk; log wiring stays proxy-internal" do
+      routing = routing_two_shards()
 
-      assert projection == %{
-               shard_layout: %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}},
-               materializers: %{0 => {"wkr_sys", "n1@host"}, 1 => {"wkr_a", "n1@host"}}
-             }
+      assert RoutingData.covering_entry(routing, "apple") == {:ok, {"", "m", 1, {"wkr_a", "n1@host"}}}
+      # An end key is exclusive: "m" belongs to the NEXT shard.
+      assert RoutingData.covering_entry(routing, "m") == {:ok, {"m", <<0xFF, 0xFF>>, 0, {"wkr_sys", "n1@host"}}}
+      assert RoutingData.covering_entry(routing, "zebra") == {:ok, {"m", <<0xFF, 0xFF>>, 0, {"wkr_sys", "n1@host"}}}
+    end
+
+    test "a key beyond every boundary is :not_found" do
+      assert RoutingData.covering_entry(routing_two_shards(), <<0xFF, 0xFF>>) == {:error, :not_found}
+      assert RoutingData.covering_entry(RoutingData.new_empty(), "a") == {:error, :not_found}
+    end
+
+    test "a shard whose tag names no materializer is :not_found — an unroutable key" do
+      routing =
+        RoutingData.from_snapshot(%{
+          shard_layout: %{"m" => {1, ""}},
+          log_map: %{},
+          log_services: %{},
+          materializers: %{},
+          replication_factor: 1
+        })
+
+      assert RoutingData.covering_entry(routing, "apple") == {:error, :not_found}
     end
   end
 

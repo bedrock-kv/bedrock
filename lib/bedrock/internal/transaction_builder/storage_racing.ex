@@ -40,19 +40,38 @@ defmodule Bedrock.Internal.TransactionBuilder.StorageRacing do
            {:ok, {any(), Bedrock.key_range()}}
            | {:failure, %{atom() => [pid()]}}}
   def race_storage_servers(%State{} = state, key, operation_fn) do
-    state.layout_index
-    |> LayoutIndex.lookup_key!(key)
-    |> case do
-      {_key_range, []} ->
-        raise "No storage servers configured for keyspace - this indicates a layout configuration error"
-
-      {key_range, storage_pids} ->
+    case LayoutIndex.lookup_key(state.layout_index, key) do
+      {:ok, {key_range, storage_refs}} ->
         state.fastest_storage_servers
         |> Map.get(key_range)
-        |> try_fastest_server(state, key_range, storage_pids, operation_fn)
+        |> try_fastest_server(state, key_range, storage_refs, operation_fn)
+
+      :not_cached ->
+        resolve_then_race(state, key, operation_fn)
     end
-  rescue
-    RuntimeError -> {state, {:failure, %{layout_lookup_failed: []}}}
+  end
+
+  # The by-key resolve-through (FDB fetches locations per read): a local
+  # miss asks the routing fn for the single covering entry and caches it
+  # into the builder's partial index for the transaction's lifetime.
+  # Without a routing fn (caller-provided wiring, tests) resolution is
+  # impossible and the read fails as layout_lookup_failed. Fetch failures
+  # surface as read failures; the Repo retry loop classifies them.
+  defp resolve_then_race(%State{routing_fn: nil} = state, _key, _operation_fn),
+    do: {state, {:failure, %{layout_lookup_failed: []}}}
+
+  defp resolve_then_race(%State{routing_fn: routing_fn} = state, key, operation_fn) do
+    case routing_fn.(key) do
+      {:ok, {start_key, end_key, [_ | _] = storage_refs}} ->
+        state = %{state | layout_index: LayoutIndex.insert(state.layout_index, start_key, end_key, storage_refs)}
+        try_fastest_server(nil, state, {start_key, end_key}, storage_refs, operation_fn)
+
+      {:ok, {_start_key, _end_key, []}} ->
+        {state, {:failure, %{layout_lookup_failed: []}}}
+
+      {:error, reason} ->
+        {state, {:failure, %{reason => []}}}
+    end
   end
 
   # Private helper functions

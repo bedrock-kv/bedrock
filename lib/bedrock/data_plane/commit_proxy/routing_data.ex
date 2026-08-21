@@ -66,13 +66,11 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   defstruct [:shards, :log_map, :log_services, :replication_factor, materializers: %{}]
 
   @typedoc """
-  The client-facing slice of the routing view: shard boundaries plus
-  materializer refs. Log wiring stays proxy-internal.
+  The client-facing covering entry for one key: the shard's bounds, its
+  tag, and the raw materializer ref. Log wiring stays proxy-internal.
   """
-  @type client_projection :: %{
-          shard_layout: %{Bedrock.key() => {tag :: term(), start_key :: Bedrock.key()}},
-          materializers: %{Bedrock.range_tag() => materializer_ref()}
-        }
+  @type covering_entry ::
+          {start_key :: Bedrock.key(), end_key :: Bedrock.key(), tag :: term(), materializer_ref()}
 
   @doc """
   The committed materializer assignment for a shard tag, or
@@ -92,15 +90,44 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   end
 
   @doc """
-  Projects the client-facing slice of the routing view.
+  The covering entry for one key: a ceiling walk over the shard tree plus
+  the tag's committed materializer ref.
 
   Served to clients by the commit proxy (FDB's `GetKeyServerLocations`
-  answered from `keyInfo`). Locations are unverified hints: a stale
-  projection costs the client a retry, never a wrong answer.
+  answered from `keyInfo`) — one entry per ask, O(log n), never a bulk
+  projection of a map that can number in the thousands. Locations are
+  unverified hints: a stale entry costs the client a retry, never a
+  wrong answer. `{:error, :not_found}` covers both a key beyond every
+  boundary and a shard whose tag names no materializer — to the client
+  both are an unroutable key.
   """
-  @spec client_projection(t()) :: client_projection()
-  def client_projection(%__MODULE__{shards: shards, materializers: materializers}) do
-    %{shard_layout: Map.new(:gb_trees.to_list(shards)), materializers: materializers}
+  @spec covering_entry(t(), Bedrock.key()) :: {:ok, covering_entry()} | {:error, :not_found}
+  def covering_entry(%__MODULE__{shards: shards, materializers: materializers}, key) do
+    with {:ok, end_key, {tag, start_key}} <- ceiling_entry(shards, key),
+         {:ok, ref} <- Map.fetch(materializers, tag) do
+      {:ok, {start_key, end_key, tag, ref}}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  # First entry with end_key > key (end keys are exclusive bounds).
+  defp ceiling_entry(shards, key) do
+    key
+    |> :gb_trees.iterator_from(shards)
+    |> :gb_trees.next()
+    |> case do
+      {end_key, value, _iter} when end_key > key -> {:ok, end_key, value}
+      {_same_key, _value, iter} -> next_entry(iter)
+      :none -> {:error, :not_found}
+    end
+  end
+
+  defp next_entry(iter) do
+    case :gb_trees.next(iter) do
+      {end_key, value, _iter} -> {:ok, end_key, value}
+      :none -> {:error, :not_found}
+    end
   end
 
   @doc """

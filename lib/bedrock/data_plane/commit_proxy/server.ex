@@ -145,7 +145,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           | {:commit, Bedrock.epoch(), Bedrock.transaction()}
           | {:commit, Bedrock.epoch(), Bedrock.transaction(), :user | :system}
           | {:apply_metadata_and_route, pos_integer(), Bedrock.version(), term()}
-          | :fetch_routing,
+          | {:fetch_routing, Bedrock.key()},
           GenServer.from(),
           State.t()
         ) ::
@@ -208,15 +208,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   def handle_call({:apply_metadata_and_route, _seq, _cv, _window}, _from, %{mode: :locked} = t),
     do: reply(t, {:error, :locked})
 
-  # Client routing requests (FDB GetKeyServerLocations): answered from the
-  # live routing view. Replying resumes the batch cadence - a routing fetch
+  # Client routing requests (FDB GetKeyServerLocations): the single
+  # covering entry for the asked key, answered from the live routing view
+  # by ceiling walk. Replying resumes the batch cadence - a routing fetch
   # must not swallow an open batch's pending timeout.
-  def handle_call(:fetch_routing, from, %{mode: :running} = t) do
-    GenServer.reply(from, {:ok, RoutingData.client_projection(t.routing_data)})
+  def handle_call({:fetch_routing, key}, from, %{mode: :running} = t) do
+    GenServer.reply(from, RoutingData.covering_entry(t.routing_data, key))
     noreply_resuming_cadence(t)
   end
 
-  def handle_call(:fetch_routing, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
+  def handle_call({:fetch_routing, _key}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
   # Worker rejoin validation (FDB's storage-server rejoin against the
   # proxy's txnStateStore): one tag-keyed lookup in the live routing view.

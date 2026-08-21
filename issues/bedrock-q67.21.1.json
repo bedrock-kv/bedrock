@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "bedrock-q67.21.2"
+  ],
   "created": "2026-08-21T20:10:28Z",
   "description": "Phase 1 of the settled q67.21 course. Port of FDB's MoveKeys lock (MoveKeys.actor.cpp:286-391): two system keys distributor_lock/{owner,write} holding opaque UIDs, and a pure fencing protocol: take (read both, remember prev_owner/prev_write, write fresh my_owner to owner - NOT the write key), check three-way branch inside every mutating transaction (owner==prev_owner: verify write==prev_write else superseded, then assert owner=my_owner + fresh write; owner==my_owner: touch write with fresh UID; else superseded), and a read-only poll verdict for the 5s poll-to-die loop. Pure functions over read values returning mutations - the transaction runner arrives in phase 4. Every write proves inside its own serializable commit that no newer owner appeared: ownership enforcement lives in the keyspace.",
   "id": "bedrock-q67.21.1",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Distributor lock: keys + read-check-write fencing helper",
   "type": "task",
-  "updated_at": "2026-08-21T20:10:28Z"
+  "updated_at": "2026-08-21T20:10:35Z"
 }

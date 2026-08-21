@@ -4,14 +4,15 @@
     "bedrock-q67.37"
   ],
   "blocks": [],
+  "closed_at": "2026-08-21T00:54:59Z",
   "created": "2026-08-20T22:39:31Z",
   "description": "Course item B (settled 2026-08-20 after FDB source check). FDB has NO component that decides another process's retirement: every role self-detects displacement and throws worker_removed on itself - TLogs via rejoinClusterController computing isDisplaced against ServerDBInfo (TLogServer.actor.cpp:2546-2579, 'DBInfoDoesNotContain'), GRV proxies/resolvers/log routers/backup workers via per-role checkRemoved actors (GrvProxyServer.actor.cpp:1152-1160 et al.), storage servers via privatized mutations clearing their own serverTag/ key plus proxy rejoin validation (absence = worker_removed, self-dispose). The hosting worker process only observes the exit and deletes files. Bedrock shape: (1) Foreman keeps its push-relay role (one instance per node, receives the wiring push, distributes to hosted workers) and its supervision/cold-boot rehydration from manifests; do_reconcile_workers and everything under it is DELETED - the Foreman never answers a membership question. When a worker exits deliberately, the Foreman disposes the manifest and does not restart it. (2) Log workers: on the relayed push, check own id against tsl.logs with FDB's displacement guard (only displaced if the new epoch has actually progressed past mine - absence during an in-flight recovery is not a death sentence); displaced -\u003e dispose WAL, exit. (3) Materializer workers: rejoin validation on the relayed push - one tag-keyed ask to a commit proxy (resolve_materializer(tag) answered from RoutingData); absent or different worker_id -\u003e dispose local store, exit. (4) TSL loses services: with logs checked against the pushed tsl.logs and materializers asking a proxy, NOTHING consumes it (director-internal readers - topology snapshot, persistence materializer_refs, monitoring, ghost pruning, olivine seed - all read recovery_attempt.transaction_services). Cold boot composes for free: Foreman rehydrates from manifests, resurrected workers self-validate on the first replayed push, stale ones self-dispose. Depends on course A (the olivine seed must stop carrying transaction_services first). Deferred to q67.21: in-band privatized-mutation delivery for mid-epoch removals.",
   "id": "bedrock-q67.38",
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Workers self-detect displacement; Foreman becomes relay and janitor; services leaves the TSL",
   "type": "task",
-  "updated_at": "2026-08-21T00:24:05Z"
+  "updated_at": "2026-08-21T00:54:59Z"
 }

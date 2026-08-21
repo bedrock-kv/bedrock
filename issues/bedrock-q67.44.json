@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-21T16:39:16Z",
+  "description": "Residuals from the PR #183 cold audit (2026-08-21) that were wrongly parked on the closed bedrock-q67.43. The eviction doctrine after #183 is FDB locationCache parity: only definitively routing-shaped failures (layout_lookup_failed, no_servers_to_race, unavailable, locked) drop the node's routing cache; :timeout keeps it (slow is not stale). Two paths still leak slowness into eviction: (1) storage_racing.ex degrades a timeout on the cached-fastest server via :lists.delete into an empty race -\u003e {:failure, %{no_servers_to_race: []}} - on today's singleton-ref shards a persistently slow server therefore still evicts on the SECOND read of a transaction, contradicting the doctrine; distinguish exhausted-because-timeout from exhausted-because-gone, or race the full set again instead of the remainder. (2) during node auto-connect (~net_setuptime, seconds), a call can hit its 50ms fetch timeout before nodedown manifests, reporting :timeout - a bounded no-eviction window for a genuinely dead node; harmless unless refetch/latency traffic shows otherwise. Related cosmetic: choose_a_reason picks hd(Map.keys(...)) arbitrarily on mixed-reason maps - moot with singleton refs, becomes real when shards have replica sets. Act when refetch traffic or deadline burn shows up, or fold into the q67.21 client-cache rework (overlap-aware insert) which touches the same surfaces.",
+  "id": "bedrock-q67.44",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "Storage racing can evict routing on slowness: empty-race degradation undercuts slow-is-not-stale",
+  "type": "task",
+  "updated_at": "2026-08-21T16:39:16Z"
+}

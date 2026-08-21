@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [
     "bedrock-q67.21.1"
   ],
@@ -12,8 +12,8 @@
   "labels": [],
   "parent": "bedrock-q67.21",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Recovery reads-and-heals the mapping families; seed-only-when-absent",
   "type": "task",
-  "updated_at": "2026-08-21T20:10:35Z"
+  "updated_at": "2026-08-21T20:21:18Z"
 }

@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-20T22:39:32Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "By-key routing resolution: proxies answer the covering entry, not the whole map",
   "type": "task",
-  "updated_at": "2026-08-20T23:29:59Z"
+  "updated_at": "2026-08-21T01:02:43Z"
 }

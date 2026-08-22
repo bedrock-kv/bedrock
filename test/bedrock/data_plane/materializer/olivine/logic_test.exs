@@ -518,4 +518,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
         await_snapshot(snapshot, attempts_left - 1)
     end
   end
+
+  describe "the :epoch info fact (assignment verification, bedrock-q67.21.5)" do
+    test "a never-locked worker reports nil; a locked worker reports its epoch", %{test_dir: test_dir} do
+      {:ok, state} = Logic.startup(:epoch_fact_test, self(), "epoch_wkr", test_dir)
+
+      assert {:ok, %{epoch: nil}} = Logic.info(state, [:epoch])
+
+      {:ok, locked} = Logic.lock_for_recovery(state, self(), 7)
+      assert {:ok, %{epoch: 7}} = Logic.info(locked, [:epoch])
+      assert :epoch in elem(Logic.info(locked, [:supported_info]), 1).supported_info
+
+      Logic.shutdown(locked)
+    end
+  end
 end

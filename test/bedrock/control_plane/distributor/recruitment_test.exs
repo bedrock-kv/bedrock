@@ -15,6 +15,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
   defmodule TestCluster do
     @moduledoc false
     def otp_name(:foreman), do: :recruitment_test_foreman
+    def otp_name_for_worker(id), do: :"recruitment_test_worker_#{id}"
   end
 
   defp ctx(overrides) do
@@ -138,5 +139,56 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
       })
 
     assert {:error, {:no_pull_sources, 7}} = Recruitment.recruit(7, ctx)
+  end
+
+  describe "adoption: recruitment minus creation, minus destruction" do
+    test "an adopt locks at the epoch and unlocks at the worker's OWN durable version with its replica set" do
+      test_pid = self()
+      own_durable = Version.from_integer(9)
+
+      ctx =
+        ctx(%{
+          lock_materializer_fn: fn worker, epoch ->
+            send(test_pid, {:locked, worker, epoch})
+            {:ok, test_pid, %{durable_version: own_durable}}
+          end,
+          unlock_materializer_fn: fn pid, version, sources ->
+            send(test_pid, {:unlocked, pid, version, sources})
+            :ok
+          end,
+          create_worker_fn: fn _f, _i, _k, _o -> flunk("adoption must never create a worker") end
+        })
+
+      assert {:ok, _pid, :node_b@host, "wkr_named"} = Recruitment.adopt(7, "wkr_named", :node_b@host, ctx)
+
+      # Locked by its callable name on ITS node — no node selection.
+      assert_received {:locked, {:recruitment_test_worker_wkr_named, :node_b@host}, 4}
+
+      # Unlocked at the version the worker itself reports: it resumes
+      # pulling from exactly where its own store left off.
+      assert_received {:unlocked, _pid, ^own_durable, [{"log_1", :ref_1} | _]}
+    end
+
+    test "a failed adoption never removes the worker — it pre-exists this attempt and holds real state" do
+      ctx =
+        ctx(%{
+          lock_materializer_fn: fn _worker, _epoch -> {:error, :wedged} end,
+          remove_worker_fn: fn _f, _i, _o -> flunk("a pre-existing worker must never be removed") end,
+          create_worker_fn: fn _f, _i, _k, _o -> flunk("adoption must never create a worker") end
+        })
+
+      assert {:error, {:materializer_lock_failed, :wedged, :node_b@host}} =
+               Recruitment.adopt(7, "wkr_named", :node_b@host, ctx)
+    end
+
+    test "an adopt with no pull sources fails loudly before touching the worker" do
+      ctx =
+        ctx(%{
+          log_refs: %{},
+          lock_materializer_fn: fn _w, _e -> flunk("must not lock a worker it cannot feed") end
+        })
+
+      assert {:error, {:no_pull_sources, 7}} = Recruitment.adopt(7, "wkr_named", :node_b@host, ctx)
+    end
   end
 end

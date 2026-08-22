@@ -3,7 +3,7 @@
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-21T22:02:01Z",
-  "description": "Gap surfaced by the PR #192 cold audit (F2): a materializer worker can survive with a durable materializers/\u003ctag\u003e entry and a registered, monitorable name while never having been locked into the CURRENT epoch (e.g. an ambiguous publish timeout left it running, or a node rejoined after recovery re-adopted around it). The distributor's assignment monitor finds a live process, so death healing never fires — but the worker is not pulling for this epoch and the tag is effectively unavailable until the next recovery.\n\nDirection options: a sweep-time adoption probe (ask the monitored worker which epoch it is unlocked into; mismatch → heal exactly like a death), or read-path evidence (repeated coverage_failed/:locked shed for a covered tag escalates to a heal). Either must respect the verdict-before-destruction rule: probing is a READ; only an unambiguous not-adopted answer may displace the entry.",
+  "description": "RESOLVED BY assignment verification (PR pending on feature/q67.21.5b-adoption; close on merge). The gap: a materializer named by the committed materializers/ family could be alive and monitorable yet never locked into the CURRENT epoch (its node missed recovery's roll call and rejoined later) — liveness looked like membership, and the tag stayed dark until the next recovery.\n\nMechanism (collapsed with the q67.21.5 re-adoption residue after an FDB sanity check): the keyspace is the membership authority, so candidates come from the committed family — never a services side channel. At the startup sweep the distributor probes each named assignment's :epoch info fact (bounded 2s). Current → verified silently. Stale/never-locked → ADOPTED: bounded lock at the epoch, unlock at the worker's OWN durable version with its pull sources, entry re-asserted under the CHECK fence, monitored. Wedged/dead → HEALED (placeholder + fresh recruit); the worker is never removed — provenance is structural (adopt has no removal call) and the displaced worker retires itself in-band at the next layout push (the existing rejoin_verdict :displaced path). Reservation rides the recruiting set; late verdicts for re-owned tags are dropped.",
   "id": "bedrock-q67.21.7",
   "labels": [],
   "parent": "bedrock-q67.21",
@@ -11,5 +11,5 @@
   "status": "open",
   "title": "Heal alive-but-unadopted materializers: liveness is not adoption",
   "type": "task",
-  "updated_at": "2026-08-21T22:02:01Z"
+  "updated_at": "2026-08-22T02:05:57Z"
 }

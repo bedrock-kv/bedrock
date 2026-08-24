@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-24T23:06:42Z",
   "created": "2026-08-24T19:38:39Z",
   "description": "TransactionSystemLayout was doing two jobs FDB keeps in separate structures, and the seam was already a lie in the type system: the coordinator built a one-field map and handed it to recovery typed as TransactionSystemLayout.t(), which declares five fields as required. Its own comment admitted it (\"Recovery only uses the logs field\"), and consumers were defensive because they knew.\n\nSHIPPED as PR #200 (stacked on #199).\n\nFDB's divide, which Bedrock already had in STORAGE and not in types:\n- DBCoreState (DBCoreState.h:132) - DURABLE, in the coordinated state, held at recovery as cstate.prevDBState. Names what the next recovery must find to recover at all.\n- ServerDBInfo (ServerDBInfo.actor.h:41) - TRANSIENT, and its own comment says so: \"contains transient information which is broadcast to all workers for a database, permitting them to communicate with each other.\"\n\nOurs: the ClusterBootstrap record in object storage is the durable half (no pids); the TSL is the broadcast (pids). CoreState now names the first. The rule the split makes structural: what must SURVIVE goes in CoreState, what must be REACHED goes in the layout.\n\nThe naming and the predicate are FDB's: prevDBState becomes prior_core_state, and fresh?/1 is the same call FDB makes in TagPartitionedLogSystem::recoverAndEndEpoch (TagPartitionedLogSystem.actor.cpp:2416) - \"if (!prevState.tLogs.size()) { // This is a brand new database\" - the branch that MANUFACTURES a log system rather than recovering one, keyed on the prior record naming no logs.\n\nTHE SPLIT FOUND A REAL DEFECT, confirmed by dialyzer: put_transaction_system_layout/2 assigned the whole TSL into the prior-state slot, storing the epoch's pids as the NEXT recovery's durable input. It worked only because both shapes carry a :logs field of the same shape - accidental compatibility of exactly the kind the split removes. It now stores a projection, mirroring FDB's logSystem-\u003etoCoreState (ClusterRecovery.actor.cpp:466). Three modules turned out to alias TransactionSystemLayout ONLY to type the prior state; those aliases are gone.\n\nConsumers stopped reaching into the map: CoreState.log_ids/1 and fresh?/1 replaced four open-coded expressions. log_ids/1 keeps a catch-all for a record without the key, deliberately symmetric with fresh?/1 - a strict clause there would let an empty record route to the existing-cluster path and then crash the director. fresh_cluster?/1 reads its key STRICTLY, because the two answers are \"invent a default layout\" and \"read the committed one\", and a missing key must raise rather than silently pick the destructive one.\n\nThe cold/warm parity invariant (from_bootstrap through a real FlatBuffer round-trip must equal from_layout) is pinned by test: without it, a recovery would behave differently depending only on whether the coordinator process happened to survive.\n\nNAMES DEFERRED to bedrock-q67.21.14: TSLValidationPhase now validates a CoreState and the corrupted_tsl stall reason still says TSL. Its moduledoc WAS corrected here, being false independent of naming - it claimed to validate version_vector and durable_version, which validate_type_safety/1 has never checked.\n\nbedrock-q67.21.12 adds system_materializers to CoreState.",
   "id": "bedrock-q67.21.11",
@@ -22,8 +23,8 @@
     }
   ],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Split CoreState from TransactionSystemLayout: make the durable/broadcast divide honest",
   "type": "task",
-  "updated_at": "2026-08-24T21:57:03Z"
+  "updated_at": "2026-08-24T23:06:42Z"
 }

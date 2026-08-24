@@ -43,6 +43,7 @@ defmodule Bedrock.ControlPlane.Coordinator do
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @type ref :: atom() | {atom(), node()}
@@ -95,10 +96,11 @@ defmodule Bedrock.ControlPlane.Coordinator do
   """
   @spec notify_transaction_system_layout(
           coordinator_ref :: ref(),
-          transaction_system_layout :: TransactionSystemLayout.t()
+          transaction_system_layout :: TransactionSystemLayout.t(),
+          core_state :: CoreState.t()
         ) :: :ok
-  def notify_transaction_system_layout(coordinator, transaction_system_layout),
-    do: GenServer.cast(coordinator, {:notify_transaction_system_layout, transaction_system_layout})
+  def notify_transaction_system_layout(coordinator, transaction_system_layout, core_state),
+    do: GenServer.cast(coordinator, {:notify_transaction_system_layout, transaction_system_layout, core_state})
 
   @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
   @type compact_service_info :: {service_id :: String.t(), kind :: atom(), name :: atom()}

@@ -131,9 +131,33 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       current_bootstrap
       | epoch: recovery_attempt.epoch,
         logs: build_log_entries(transaction_system_layout),
+        system_materializers: build_system_materializer_entries(recovery_attempt),
         parameters: build_parameters(config),
         policies: build_policies(config)
     }
+  end
+
+  # Where the metadata lives, recorded out of band. Both durable families
+  # — the shard layout and materializer membership — are served from tag
+  # 0, so the next recovery cannot read either until it knows which
+  # workers hold it. FDB records the same indirection: its coordinated
+  # state names the tlogs that hold the txnStateStore.
+  # The full committed member SET, not just the one member this recovery
+  # adopted. FDB names a set here too and waits for a replication-policy
+  # quorum over it (TagPartitionedLogSystem.actor.cpp:2549-2585 locks
+  # every named tlog; getDurableVersion at :2070-2082 decides on a
+  # quorum of THOSE) — it never substitutes a server, but it also never
+  # depends on one specific server. Recording only the adopted member
+  # would mean losing that single node stalls recovery forever, with a
+  # healthy committed replica sitting right there.
+  defp build_system_materializer_entries(recovery_attempt) do
+    system_shard = RecoveryAttempt.system_shard_id()
+    adopted = Map.get(recovery_attempt.shard_materializers, system_shard, %{})
+    committed = recovery_attempt |> Map.get(:prior_materializer_refs) |> Kernel.||(%{}) |> Map.get(system_shard, %{})
+
+    committed
+    |> Map.merge(adopted)
+    |> Enum.map(fn {worker_id, node} -> %{id: worker_id, node: node} end)
   end
 
   defp build_initial_bootstrap(recovery_attempt, config, transaction_system_layout) do
@@ -141,6 +165,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       cluster_id: Id.random(),
       epoch: recovery_attempt.epoch,
       logs: build_log_entries(transaction_system_layout),
+      system_materializers: build_system_materializer_entries(recovery_attempt),
       coordinators: [%{node: Atom.to_string(node())}],
       parameters: build_parameters(config),
       policies: build_policies(config)

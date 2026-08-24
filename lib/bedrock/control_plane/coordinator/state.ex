@@ -92,16 +92,16 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec put_last_durable_txn_id(t :: State.t(), Raft.transaction_id()) :: State.t()
     def put_last_durable_txn_id(t, last_durable_txn_id), do: %{t | last_durable_txn_id: last_durable_txn_id}
 
-    @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t()) ::
+    @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t(), CoreState.t()) ::
             State.t()
-    def put_transaction_system_layout(t, transaction_system_layout) do
+    def put_transaction_system_layout(t, transaction_system_layout, core_state) do
       # The completed layout becomes the next recovery's PRIOR STATE, but
       # only its durable half may: the layout's pids die with this epoch,
       # and the prior-state slot exists to outlive it. (This worked
       # before only because both shapes happen to carry a :logs field.)
       updated_state = %{
         t
-        | prior_core_state: CoreState.from_layout(transaction_system_layout),
+        | prior_core_state: core_state,
           transaction_system_layout: transaction_system_layout
       }
 

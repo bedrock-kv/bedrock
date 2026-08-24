@@ -47,8 +47,12 @@ defmodule Bedrock.ControlPlane.Config.CoreState do
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log
+  alias Bedrock.Service.Worker
 
-  @type t :: %{required(:logs) => %{Log.id() => LogDescriptor.t()}}
+  @type t :: %{
+          required(:logs) => %{Log.id() => LogDescriptor.t()},
+          required(:system_materializers) => %{Worker.id() => node_name :: String.t()}
+        }
 
   @doc """
   Projects the durable cluster-bootstrap record into the prior state
@@ -67,7 +71,17 @@ defmodule Bedrock.ControlPlane.Config.CoreState do
       |> Kernel.||([])
       |> Map.new(fn log_info -> {log_info[:id], log_info[:shard_tags] || []} end)
 
-    %{logs: logs}
+    %{logs: logs, system_materializers: members_from(bootstrap)}
+  end
+
+  # A record written before this field existed names no members. That is
+  # not a crash and not a fresh cluster — it is an upgrade, and recovery
+  # says so rather than guessing where the metadata lives.
+  defp members_from(bootstrap) do
+    bootstrap
+    |> Map.get(:system_materializers)
+    |> Kernel.||([])
+    |> Map.new(fn member -> {member[:id], member[:node]} end)
   end
 
   @doc """
@@ -81,9 +95,29 @@ defmodule Bedrock.ControlPlane.Config.CoreState do
   carrying them into a record whose entire purpose is to OUTLIVE the
   epoch would be a category error — and the reason to keep these two
   types apart at all.
+
+  The system shard's members are passed IN rather than read out of the
+  layout, because the layout deliberately carries no membership at all
+  ("Nothing O(workers) may ever be added to this broadcast"). The
+  director knows them — it just persisted them — so it supplies both
+  halves at once.
   """
-  @spec from_layout(TransactionSystemLayout.t()) :: t()
-  def from_layout(layout), do: %{logs: Map.get(layout, :logs) || %{}}
+  @spec from_layout(TransactionSystemLayout.t(), %{Worker.id() => String.t()}) :: t()
+  def from_layout(layout, system_materializers),
+    do: %{logs: Map.get(layout, :logs) || %{}, system_materializers: system_materializers}
+
+  @doc """
+  The system shard's materializer members — the record that says WHERE
+  the cluster's metadata lives.
+
+  Recovery cannot read the shard layout or the materializers family
+  until it knows which workers hold tag 0, because both live IN tag 0.
+  FDB has the same indirection: its coordinated state names the tlogs
+  that hold the txnStateStore, and recovery peeks them to rebuild it.
+  """
+  @spec system_materializers(t() | nil) :: %{Worker.id() => String.t()}
+  def system_materializers(nil), do: %{}
+  def system_materializers(core_state), do: Map.get(core_state, :system_materializers) || %{}
 
   @doc """
   Whether this cluster has never completed a recovery.

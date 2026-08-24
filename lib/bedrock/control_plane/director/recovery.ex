@@ -127,7 +127,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         end)
         |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
         |> persist_config()
-        |> persist_new_transaction_system_layout()
+        |> persist_new_transaction_system_layout(completed)
         |> prune_service_directory(completed)
         |> remember_distributor_wiring(completed)
         |> maybe_start_distributor()
@@ -307,14 +307,34 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     t
   end
 
-  @spec persist_new_transaction_system_layout(State.t()) :: State.t()
-  def persist_new_transaction_system_layout(t) do
-    # Notify coordinator of new TSL directly (no Raft consensus).
-    # TSL is already persisted to object storage by the persistence phase.
-    Coordinator.notify_transaction_system_layout(t.coordinator, t.transaction_system_layout)
+  # Takes the COMPLETED attempt explicitly, as its neighbours do:
+  # `t.recovery_attempt` is the attempt as it was BEFORE the phases ran,
+  # and is never updated with the result. Reading the members from there
+  # published an empty set on every recovery — which then stalled the
+  # next warm one, the precise failure this record exists to prevent.
+  @spec persist_new_transaction_system_layout(State.t(), RecoveryAttempt.t()) :: State.t()
+  def persist_new_transaction_system_layout(t, completed) do
+    # Notify coordinator of the new epoch directly (no Raft consensus);
+    # both records are already in object storage from the persistence
+    # phase. BOTH are sent: the broadcast carries no membership by
+    # design, so the durable record has to travel with it — otherwise a
+    # warm recovery (no coordinator restart) would find no system
+    # materializers and stall.
+    core_state = CoreState.from_layout(t.transaction_system_layout, system_materializers(completed))
+
+    Coordinator.notify_transaction_system_layout(t.coordinator, t.transaction_system_layout, core_state)
     trace_recovery_layout_persisted(:notified)
     t
   end
+
+  # The system shard's members, as this recovery established them. This
+  # is the record that tells the NEXT recovery where the metadata lives:
+  # the shard layout and the materializers family are both served from
+  # tag 0, so without it recovery would have to discover tag 0 by roll
+  # call and then guess which candidate is authoritative.
+  @spec system_materializers(RecoveryAttempt.t()) :: %{Worker.id() => String.t()}
+  defp system_materializers(completed),
+    do: Map.get(completed.shard_materializers, RecoveryAttempt.system_shard_id(), %{})
 
   @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context(), module()) ::
           {:ok, RecoveryAttempt.t()}

@@ -154,19 +154,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       :ets.delete(unlocks)
     end
 
-    test "stalls when no materializer capable nodes exist" do
-      recovery_attempt =
-        recovery_attempt()
-        |> Map.put(:shard_layout, nil)
-        |> Map.put(:logs, %{"log_1" => [0, 1]})
+    test "a FRESH cluster stalls when no materializer capable nodes exist" do
+      # Creation is legitimate here and nowhere else: a fresh cluster has
+      # no prior data, so seeding the system shard invents nothing. (An
+      # EXISTING cluster stalls on :no_system_materializers instead — it
+      # must never manufacture the store its metadata lives in.)
+      recovery_attempt = Map.put(recovery_attempt(), :shard_layout, nil)
 
-      # Existing cluster - has old logs but no materializer in available_services
-      # AND no materializer capability in nodes
       context =
         [
-          prior_core_state: %{
-            logs: %{"log_1" => [0, 1]}
-          },
+          prior_core_state: %{logs: %{}},
           node_capabilities: %{
             log: [Node.self()],
             storage: [Node.self()]
@@ -176,13 +173,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> create_test_context()
         |> Map.put(:available_services, %{})
 
-      log =
-        capture_log(fn ->
-          assert {_attempt, {:stalled, :no_materializer_capable_nodes}} =
-                   MaterializerBootstrapPhase.execute(recovery_attempt, context)
-        end)
-
-      assert log =~ "System shard materializer not found, creating new one"
+      capture_log(fn ->
+        assert {_attempt, {:stalled, {:materializer_creation_failed, _}}} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+      end)
     end
 
     test "reuses the locked materializers on restart — one per shard, unlocked at the recovery version" do
@@ -213,7 +207,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         [
           prior_core_state: %{
-            logs: %{"log_1" => [0, 1]}
+            logs: %{"log_1" => [0, 1]},
+            system_materializers: %{"mat_sys" => "node@host"}
           }
         ]
         |> create_test_context()
@@ -277,7 +272,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         [
           prior_core_state: %{
-            logs: %{"log_1" => [0, 1]}
+            logs: %{"log_1" => [0, 1]},
+            system_materializers: %{"mat_real" => "node@host", "mat_stray" => "node@host"}
           }
         ]
         |> create_test_context()
@@ -301,20 +297,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       end)
     end
 
-    test "creates new materializer when not found but capable nodes exist" do
-      materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
-      durable_version = Version.from_integer(100)
-
+    test "an existing cluster does NOT create a system materializer, even with capacity to spare" do
+      # Available capacity is not a licence to invent. Recovery
+      # manufacturing the store its own metadata lives in would come up
+      # "successfully" on an empty shard layout and orphan the cluster's
+      # data. FDB is unambiguous here: it locks exactly the servers its
+      # coordinated state names and waits for a quorum of THOSE
+      # (TagPartitionedLogSystem.actor.cpp:2549-2585), never substituting
+      # another and never fabricating one.
       recovery_attempt =
         recovery_attempt()
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
-        |> Map.put(:durable_version, durable_version)
+        |> Map.put(:durable_version, Version.from_integer(100))
 
       context =
         [
           prior_core_state: %{
-            logs: %{"log_1" => [0, 1]}
+            logs: %{"log_1" => [0, 1]},
+            system_materializers: %{"mat_sys" => "node@host"}
           },
           node_capabilities: %{
             log: [Node.self()],
@@ -322,37 +323,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        # The named member is not among the services this epoch locked.
         |> Map.put(:available_services, %{})
-        |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
-          {:ok, :new_materializer_ref}
-        end)
-        |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
-        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
-          {:ok, %{current_version: durable_version}}
-        end)
-        |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
-          {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
+        |> Map.put(:create_worker_fn, fn _f, _i, :materializer, _o ->
+          flunk("recovery invented a system materializer instead of stalling")
         end)
 
-      log =
-        capture_log(fn ->
-          assert {updated_attempt, CommitProxyStartupPhase} =
-                   MaterializerBootstrapPhase.execute(recovery_attempt, context)
-
-          assert [{<<_::binary>>, <<_::binary>>}] = Map.to_list(updated_attempt.shard_materializers[0])
-          assert updated_attempt.shard_layout
-
-          # The creation is recorded: the layout will reference it, so
-          # reconciliation cannot retire the worker recovery just made.
-          assert Enum.any?(updated_attempt.transaction_services, fn
-                   {_id, %{kind: :materializer, status: {:up, ^materializer_pid}}} -> true
-                   _ -> false
-                 end)
-        end)
-
-      assert log =~ "System shard materializer not found, creating new one"
-      assert log =~ "Materializer caught up to version"
+      assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"mat_sys" => "node@host"}}}} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
     end
 
     test "stalls on catchup timeout" do
@@ -377,7 +355,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         [
           prior_core_state: %{
-            logs: %{"log_1" => [0, 1]}
+            logs: %{"log_1" => [0, 1]},
+            system_materializers: %{"mat_sys" => "node@host"}
           }
         ]
         |> create_test_context()
@@ -422,7 +401,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         [
           prior_core_state: %{
-            logs: %{"log_1" => [0, 1]}
+            logs: %{"log_1" => [0, 1]},
+            system_materializers: %{"mat_sys" => "node@host"}
           }
         ]
         |> create_test_context()
@@ -437,20 +417,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
     end
 
-    test "stalls on worker creation failure" do
-      durable_version = Version.from_integer(100)
-
-      recovery_attempt =
-        recovery_attempt()
-        |> Map.put(:shard_layout, nil)
-        |> Map.put(:logs, %{"log_1" => [0, 1]})
-        |> Map.put(:durable_version, durable_version)
+    test "a FRESH cluster stalls on worker creation failure" do
+      # Seeding tag 0 is the one creation recovery still performs, so it
+      # is the only place a creation failure can stall it.
+      recovery_attempt = Map.put(recovery_attempt(), :shard_layout, nil)
 
       context =
         [
-          prior_core_state: %{
-            logs: %{"log_1" => [0, 1]}
-          },
+          prior_core_state: %{logs: %{}},
           node_capabilities: %{
             log: [Node.self()],
             materializer: [Node.self()]
@@ -462,13 +436,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           {:error, :foreman_unavailable}
         end)
 
-      log =
-        capture_log(fn ->
-          {_attempt, {:stalled, result}} = MaterializerBootstrapPhase.execute(recovery_attempt, context)
-          assert {:failed_to_create_materializer, :foreman_unavailable, 0} = result
-        end)
-
-      assert log =~ "System shard materializer not found, creating new one"
+      capture_log(fn ->
+        {_attempt, {:stalled, result}} = MaterializerBootstrapPhase.execute(recovery_attempt, context)
+        assert {:materializer_creation_failed, {0, {:failed_to_create_materializer, :foreman_unavailable, 0}}} = result
+      end)
     end
 
     test "seeds each unlocked materializer with its replica set of pull sources" do
@@ -504,7 +475,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         [
           prior_core_state: %{
-            logs: logs
+            logs: logs,
+            system_materializers: %{"mat_sys" => "node@host"}
           }
         ]
         |> create_test_context()
@@ -564,7 +536,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     defp existing_context(recovery_version, overrides) do
       base =
         [
-          prior_core_state: %{logs: %{"log_1" => [0, 1]}}
+          prior_core_state: %{
+            logs: %{"log_1" => [0, 1]},
+            system_materializers: %{"mat_sys" => "node@host"}
+          }
         ]
         |> create_test_context()
         |> Map.put(:available_services, %{})
@@ -598,10 +573,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       })
     end
 
-    test "the family-named locked survivor beats a more-advanced stray" do
-      # The committed assignment is the authority; the contest (most
-      # advanced durable state wins) is only the fallback for tags the
-      # family does not name.
+    test "the family-named locked survivor beats a stray" do
+      # The committed assignment is the authority; the deterministic pick
+      # is only the fallback for tags the family does not name.
       recovery_version = Version.from_integer(500)
       sys_pid = spawn(fn -> Process.sleep(:infinity) end)
       named_pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -626,7 +600,33 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       end)
     end
 
-    test "a family entry naming an unlocked worker falls back to the contest" do
+    defp three_claimants_attempt(recovery_version, sys_pid, a_pid, b_pid, c_pid) do
+      # THREE claimants, with id order deliberately disagreeing with BOTH
+      # durable orders. Two candidates cannot discriminate: whichever way
+      # you arrange them, the id rule agrees with either min-durable or
+      # max-durable, so the test passes under a rule it was meant to
+      # reject. Here min-id is mat_a, min-durable is mat_b, and
+      # max-durable is mat_c — only the id rule produces mat_a.
+      recovery_attempt()
+      |> Map.put(:shard_layout, nil)
+      |> Map.put(:logs, %{"log_1" => [0, 1]})
+      |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
+      |> Map.put(:materializer_recovery_info_by_id, %{
+        "mat_sys" => %{kind: :materializer, shard_id: 0, durable_version: recovery_version},
+        "mat_a" => %{kind: :materializer, shard_id: 1, durable_version: Version.from_integer(50)},
+        "mat_b" => %{kind: :materializer, shard_id: 1, durable_version: Version.from_integer(1)},
+        "mat_c" => %{kind: :materializer, shard_id: 1, durable_version: recovery_version}
+      })
+      |> Map.put(:transaction_services, %{
+        "mat_sys" => %{kind: :materializer, status: {:up, sys_pid}},
+        "mat_a" => %{kind: :materializer, status: {:up, a_pid}},
+        "mat_b" => %{kind: :materializer, status: {:up, b_pid}},
+        "mat_c" => %{kind: :materializer, status: {:up, c_pid}},
+        "log_1" => %{kind: :log, status: {:up, self()}}
+      })
+    end
+
+    test "a family entry naming an unlocked worker falls back to the LOWEST ID, not to any durable ranking" do
       recovery_version = Version.from_integer(500)
       sys_pid = spawn(fn -> Process.sleep(:infinity) end)
       named_pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -639,15 +639,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           end
         })
 
-      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+      recovery_attempt =
+        three_claimants_attempt(
+          recovery_version,
+          sys_pid,
+          named_pid,
+          stray_pid,
+          spawn(fn -> Process.sleep(:infinity) end)
+        )
 
       ExUnit.CaptureLog.capture_log(fn ->
         assert {updated_attempt, CommitProxyStartupPhase} =
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-        # "mat_gone" was not locked this epoch: the most-advanced
-        # claimant wins as before.
-        assert %{"mat_stray" => _node} = updated_attempt.shard_materializers[1]
+        # "mat_gone" was not locked this epoch, so the fallback decides —
+        # and it decides by worker id, the same deterministic rule the
+        # client-facing pick uses. Neither durable ranking picks mat_a:
+        # durable_version measures stream POSITION, not completeness, so
+        # ranking by it could seat a worker that merely pulled the log
+        # tail over one holding the data.
+        assert %{"mat_a" => _node} = updated_attempt.shard_materializers[1]
       end)
     end
 
@@ -837,6 +848,46 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       assert {:error, {:invalid_shard_value, ^key}} =
                MaterializerBootstrapPhase.shard_layout_from_entries([{key, "garbage"}])
+    end
+  end
+
+  describe "the system shard is looked up, never discovered or invented" do
+    test "an existing cluster whose core state names no system materializer STALLS" do
+      # Recovery must never manufacture the store its own metadata lives
+      # in. FDB refuses the same way: it builds its log system from
+      # exactly the servers the coordinated state names
+      # (TagPartitionedLogSystem.actor.cpp:2549-2585) and waits for a
+      # quorum of THOSE rather than substituting others.
+      recovery_attempt = recovery_attempt()
+
+      context =
+        recovery_context()
+        |> Map.put(:prior_core_state, %{logs: %{"log_1" => [0]}, system_materializers: %{}})
+        |> Map.put(:create_worker_fn, fn _f, _i, _k, _o ->
+          flunk("recovery invented a system materializer instead of stalling")
+        end)
+
+      assert {_attempt, {:stalled, :bootstrap_names_no_system_materializers}} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+    end
+
+    test "a named system materializer that is not available STALLS rather than falling back" do
+      recovery_attempt = recovery_attempt()
+
+      context =
+        recovery_context()
+        |> Map.put(:prior_core_state, %{
+          logs: %{"log_1" => [0]},
+          system_materializers: %{"wkr_gone" => "dead@host"}
+        })
+        |> Map.put(:create_worker_fn, fn _f, _i, _k, _o ->
+          flunk("recovery invented a replacement for an unavailable named member")
+        end)
+
+      # The reason carries the members and the nodes they were last seen
+      # on: this one is retryable, and that is where to go looking.
+      assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"wkr_gone" => "dead@host"}}}} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
     end
   end
 end

@@ -8,6 +8,7 @@ defmodule Bedrock.ControlPlane.Config.CoreStateTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ControlPlane.Config.CoreState
+  alias Bedrock.SystemKeys.ClusterBootstrap
 
   describe "from_bootstrap/1 - the durable record, projected" do
     test "carries each log's id and the tags it serves" do
@@ -18,19 +19,50 @@ defmodule Bedrock.ControlPlane.Config.CoreStateTest do
         ]
       }
 
-      assert CoreState.from_bootstrap(bootstrap) == %{logs: %{"log_1" => [0, 1], "log_2" => [2]}}
+      assert %{logs: %{"log_1" => [0, 1], "log_2" => [2]}} = CoreState.from_bootstrap(bootstrap)
     end
 
     test "a log with no tags carries an empty list, not nil" do
       # Downstream does Map.keys/1 and MapSet.new/1 over these; a nil
       # would crash a recovery rather than describe a tagless log.
-      assert CoreState.from_bootstrap(%{logs: [%{id: "log_1"}]}) == %{logs: %{"log_1" => []}}
+      assert %{logs: %{"log_1" => []}} = CoreState.from_bootstrap(%{logs: [%{id: "log_1"}]})
     end
 
     test "a bootstrap with no logs at all is an empty record, never nil" do
-      assert CoreState.from_bootstrap(%{logs: []}) == %{logs: %{}}
-      assert CoreState.from_bootstrap(%{}) == %{logs: %{}}
-      assert CoreState.from_bootstrap(%{logs: nil}) == %{logs: %{}}
+      assert %{logs: %{}} = CoreState.from_bootstrap(%{logs: []})
+      assert %{logs: %{}} = CoreState.from_bootstrap(%{})
+      assert %{logs: %{}} = CoreState.from_bootstrap(%{logs: nil})
+    end
+  end
+
+  describe "system_materializers - where the cluster's metadata lives" do
+    test "from_bootstrap carries the system shard's members" do
+      bootstrap = %{
+        logs: [%{id: "log_1", shard_tags: [0]}],
+        system_materializers: [%{id: "wkr_sys", node: "n1@host"}, %{id: "wkr_sys2", node: "n2@host"}]
+      }
+
+      assert %{system_materializers: %{"wkr_sys" => "n1@host", "wkr_sys2" => "n2@host"}} =
+               CoreState.from_bootstrap(bootstrap)
+    end
+
+    test "a record written before the field existed names no members, rather than crashing" do
+      assert %{system_materializers: %{}} = CoreState.from_bootstrap(%{logs: []})
+    end
+
+    test "members survive the epoch boundary — the layout cannot supply them" do
+      # The TSL deliberately carries no membership ("Nothing O(workers)
+      # may ever be added to this broadcast"), so a completed recovery
+      # must publish the members alongside it. Dropping them here would
+      # make every WARM recovery — one with no coordinator restart —
+      # find no members and stall.
+      layout = %{epoch: 4, sequencer: self(), logs: %{"log_1" => [0]}}
+      members = %{"wkr_sys" => "n1@host"}
+
+      assert CoreState.from_layout(layout, members) == %{
+               logs: %{"log_1" => [0]},
+               system_materializers: members
+             }
     end
   end
 
@@ -48,15 +80,15 @@ defmodule Bedrock.ControlPlane.Config.CoreStateTest do
         logs: %{"log_1" => [0, 1]}
       }
 
-      core_state = CoreState.from_layout(layout)
+      core_state = CoreState.from_layout(layout, %{})
 
-      assert core_state == %{logs: %{"log_1" => [0, 1]}}
+      assert core_state == %{logs: %{"log_1" => [0, 1]}, system_materializers: %{}}
       refute core_state |> Map.values() |> Enum.any?(&is_pid/1)
     end
 
     test "a layout naming no logs projects to a fresh record" do
-      assert %{logs: %{}} = CoreState.from_layout(%{logs: %{}})
-      assert CoreState.fresh?(CoreState.from_layout(%{logs: %{}}))
+      assert %{logs: %{}} = CoreState.from_layout(%{logs: %{}}, %{})
+      assert CoreState.fresh?(CoreState.from_layout(%{logs: %{}}, %{}))
     end
   end
 
@@ -77,6 +109,39 @@ defmodule Bedrock.ControlPlane.Config.CoreStateTest do
     end
   end
 
+  describe "a bootstrap written before the field existed" do
+    test "decodes through the REAL FlatBuffer without the field, naming no members" do
+      # Not a hand-built map: the actual encoder/decoder, so this also
+      # guards the schema staying compatible. An old record must decode
+      # cleanly and simply name nobody — recovery then says so with a
+      # distinct stall rather than pretending the members are merely
+      # unreachable.
+      binary =
+        ClusterBootstrap.to_binary(%{
+          cluster_id: "c1",
+          epoch: 7,
+          logs: [%{id: "log_1", otp_ref: nil, shard_tags: [0]}]
+        })
+
+      assert {:ok, decoded} = ClusterBootstrap.read(binary)
+      assert %{system_materializers: %{}} = CoreState.from_bootstrap(decoded)
+      refute CoreState.fresh?(CoreState.from_bootstrap(decoded))
+    end
+
+    test "members round-trip through the REAL FlatBuffer when present" do
+      binary =
+        ClusterBootstrap.to_binary(%{
+          cluster_id: "c1",
+          epoch: 7,
+          logs: [],
+          system_materializers: [%{id: "wkr_sys", node: "n1@host"}]
+        })
+
+      assert {:ok, decoded} = ClusterBootstrap.read(binary)
+      assert %{system_materializers: %{"wkr_sys" => "n1@host"}} = CoreState.from_bootstrap(decoded)
+    end
+  end
+
   describe "the cold and warm paths must agree" do
     test "a layout projected directly and the same layout round-tripped through the durable record produce the SAME prior state" do
       # The invariant the whole split rests on. A coordinator that never
@@ -86,12 +151,13 @@ defmodule Bedrock.ControlPlane.Config.CoreStateTest do
       # whether the coordinator process happened to survive.
       layout = %{epoch: 4, sequencer: self(), proxies: [self()], logs: %{"log_a" => [], "log_b" => []}}
 
-      warm = CoreState.from_layout(layout)
+      warm = CoreState.from_layout(layout, %{"wkr_sys" => "n1@host"})
 
       # Exactly what the persistence phase writes into the bootstrap for
       # this layout: one entry per log, tags carried through.
       bootstrap = %{
-        logs: for({id, tags} <- layout.logs, do: %{id: id, otp_ref: nil, shard_tags: tags})
+        logs: for({id, tags} <- layout.logs, do: %{id: id, otp_ref: nil, shard_tags: tags}),
+        system_materializers: [%{id: "wkr_sys", node: "n1@host"}]
       }
 
       cold = CoreState.from_bootstrap(bootstrap)

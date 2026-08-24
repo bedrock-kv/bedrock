@@ -520,7 +520,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     test "recovery with coordinator-format services handles existing cluster (regression test)" do
       # Validates coordinator services work with existing cluster recovery
       old_layout = %{
-        logs: %{"existing_log_1" => [0, 100]}
+        logs: %{"existing_log_1" => [0, 100]},
+        system_materializers: %{"metadata_materializer" => "node1"}
       }
 
       durable_version = Version.from_integer(100)
@@ -848,5 +849,49 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     |> Map.put(:foreman_all_fn, foreman_all_fn)
     |> Map.put(:remove_workers_fn, remove_workers_fn)
     |> Map.put(:monitor_fn, monitor_fn)
+  end
+
+  describe "publishing the completed recovery to the coordinator" do
+    test "publishes the members the recovery ACTUALLY adopted, not the ones it started with" do
+      # t.recovery_attempt is the attempt as it was BEFORE the phases
+      # ran, and is never updated with the result — which is why every
+      # sibling in this pipeline takes `completed` explicitly. Reading
+      # the members from t would publish the struct default (%{}), and
+      # the next WARM recovery would then find no system materializers
+      # and stall: exactly what this record exists to prevent.
+      test_pid = self()
+      coordinator = spawn_link(fn -> relay_casts(test_pid) end)
+
+      layout = %{epoch: 3, sequencer: self(), proxies: [self()], resolvers: [], logs: %{"log_1" => [0]}}
+      adopted = %{"mat_sys" => "node1@host"}
+
+      state = %{
+        coordinator: coordinator,
+        transaction_system_layout: layout,
+        # Deliberately EMPTY here, and populated only on `completed`.
+        recovery_attempt: %RecoveryAttempt{
+          cluster: TestCluster,
+          epoch: 3,
+          attempt: 1,
+          started_at: DateTime.utc_now(),
+          shard_materializers: %{}
+        }
+      }
+
+      completed = %{state.recovery_attempt | shard_materializers: %{0 => adopted}}
+
+      Recovery.persist_new_transaction_system_layout(state, completed)
+
+      assert_receive {:cast, {:notify_transaction_system_layout, ^layout, core_state}}, 500
+      assert core_state.system_materializers == adopted
+    end
+
+    defp relay_casts(test_pid) do
+      receive do
+        {:"$gen_cast", msg} ->
+          send(test_pid, {:cast, msg})
+          relay_casts(test_pid)
+      end
+    end
   end
 end

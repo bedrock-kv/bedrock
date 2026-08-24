@@ -16,6 +16,17 @@ table CoordinatorInfo {
   node: string;
 }
 
+// The system shard's materializer members. This is the record that says
+// WHERE the cluster's metadata lives: the shard layout and the
+// materializers family are both served from tag 0, so recovery cannot
+// read either until it knows which workers hold it. FDB records the
+// equivalent out of band too — its coordinated state names the tlogs
+// that hold the txnStateStore.
+table MaterializerInfo {
+  id: string;
+  node: string;
+}
+
 // Cluster configuration parameters
 table ClusterParameters {
   desired_logs: uint;
@@ -41,6 +52,7 @@ table ClusterBootstrap {
   coordinators: [CoordinatorInfo];
   parameters: ClusterParameters;
   policies: ClusterPolicies;
+  system_materializers: [MaterializerInfo];
 }
 
 root_type ClusterBootstrap;

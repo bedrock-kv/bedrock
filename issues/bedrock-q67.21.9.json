@@ -10,9 +10,15 @@
   "id": "bedrock-q67.21.9",
   "labels": [],
   "parent": "bedrock-q67.21",
+  "comments": [
+    {
+      "text": "-m",
+      "timestamp": "2026-08-24T18:49:02Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "materializers/\u003ctag\u003e/\u003cworker_id\u003e: membership becomes a set",
   "type": "task",
-  "updated_at": "2026-08-24T18:02:31Z"
+  "updated_at": "2026-08-24T18:49:02Z"
 }

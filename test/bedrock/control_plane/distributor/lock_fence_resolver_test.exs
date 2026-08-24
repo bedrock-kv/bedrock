@@ -67,7 +67,7 @@ defmodule Bedrock.ControlPlane.Distributor.LockFenceResolverTest do
           end
       }
 
-      :ok = Transactions.commit_checked(lock, deps, [{:set, SystemKeys.materializer_key(1), "payload"}])
+      :ok = Transactions.commit_checked(lock, deps, [{:set, SystemKeys.materializer_key(1, "wkr_a"), "payload"}])
     end
 
     take = fn deps -> {:ok, _} = Transactions.take_lock(deps) end
@@ -97,7 +97,7 @@ defmodule Bedrock.ControlPlane.Distributor.LockFenceResolverTest do
           end
       }
 
-      :ok = Transactions.commit_checked(lock, deps, [{:set, SystemKeys.materializer_key(1), "payload"}])
+      :ok = Transactions.commit_checked(lock, deps, [{:set, SystemKeys.materializer_key(1, "wkr_a"), "payload"}])
     end
 
     encoded = encoded_fenced(check)
@@ -119,7 +119,7 @@ defmodule Bedrock.ControlPlane.Distributor.LockFenceResolverTest do
           end
       }
 
-      :ok = Transactions.commit_checked(lock, deps, [{:set, SystemKeys.materializer_key(1), "payload"}])
+      :ok = Transactions.commit_checked(lock, deps, [{:set, SystemKeys.materializer_key(1, "wkr_a"), "payload"}])
     end
 
     first = encoded_fenced(check)

@@ -7,9 +7,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     ceiling search (`end_key` is the shard's exclusive upper bound)
   - `log_map` - Map of index → log_id for golden ratio routing
   - `log_services` - Map of log_id → pid or {otp_name, node} for contacting logs
-  - `materializers` - Map of tag → `{worker_id, node}` (strings, as committed
-    to the `materializers/` keyspace family) for the client-facing routing
-    projection; clients derive the callable ref
+  - `materializers` - Map of tag → `%{worker_id => node}` (strings, as
+    committed to the `materializers/` keyspace family): a shard's MEMBER
+    SET, from which `covering_entry/2` picks the client-facing ref;
+    clients derive the callable ref from that pick
   - `replication_factor` - Number of logs per mutation
 
   The value is a plain immutable term: the commit proxy server is its only
@@ -41,14 +42,20 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
 
   @type shard_tree :: :gb_trees.tree(Bedrock.key(), {tag :: term(), start_key :: Bedrock.key()})
 
-  @typedoc "A materializer ref as committed to the keyspace: worker id and node, both strings."
+  @typedoc "A materializer ref handed to a client: worker id and node, both strings."
   @type materializer_ref :: {worker_id :: String.t(), node :: String.t()}
+
+  @typedoc """
+  One shard's committed members: worker id to node. A set, because a
+  shard may be served by more than one materializer (bedrock-q67.21.9).
+  """
+  @type members :: %{Bedrock.Service.Worker.id() => String.t()}
 
   @type t :: %__MODULE__{
           shards: shard_tree(),
           log_map: %{non_neg_integer() => Log.id()},
           log_services: %{Log.id() => {atom(), node()} | pid()},
-          materializers: %{Bedrock.range_tag() => materializer_ref()},
+          materializers: %{Bedrock.range_tag() => members()},
           replication_factor: pos_integer()
         }
 
@@ -57,7 +64,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   and nodes. `from_snapshot/1` turns it into runnable routing data.
   """
   @type snapshot :: %{
-          optional(:materializers) => %{Bedrock.range_tag() => materializer_ref()},
+          optional(:materializers) => %{Bedrock.range_tag() => members()},
           shard_layout: %{Bedrock.key() => {tag :: term(), start_key :: Bedrock.key()}},
           log_map: %{non_neg_integer() => Log.id()},
           log_services: %{Log.id() => {atom(), node()} | pid()},
@@ -74,19 +81,22 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
           {start_key :: Bedrock.key(), end_key :: Bedrock.key(), tag :: term(), materializer_ref()}
 
   @doc """
-  The committed materializer assignment for a shard tag, or
-  `{:error, :not_found}` when the keyspace names none.
+  A shard tag's committed members, or `{:error, :not_found}` when the
+  keyspace names none.
 
   This answers a worker's rejoin validation (FDB's storage-server rejoin
-  through the proxy's txnStateStore: absence means `worker_removed`) from
-  the same routing view that serves clients — one authority, two readers.
+  through the proxy's txnStateStore: absence from the set means
+  `worker_removed`) from the same routing view that serves clients — one
+  authority, two readers asking different questions. The worker asks
+  MEMBERSHIP, not resolution: with several members per shard, the ref a
+  client happens to be routed to says nothing about whether any other
+  member still belongs.
   """
-  @spec resolve_materializer(t(), non_neg_integer()) ::
-          {:ok, {worker_id :: String.t(), node :: String.t()}} | {:error, :not_found}
-  def resolve_materializer(%__MODULE__{materializers: materializers}, tag) do
+  @spec materializer_members(t(), non_neg_integer()) :: {:ok, members()} | {:error, :not_found}
+  def materializer_members(%__MODULE__{materializers: materializers}, tag) do
     case Map.fetch(materializers, tag) do
-      {:ok, ref} -> {:ok, ref}
-      :error -> {:error, :not_found}
+      {:ok, members} when members != %{} -> {:ok, members}
+      _ -> {:error, :not_found}
     end
   end
 
@@ -105,10 +115,33 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   @spec covering_entry(t(), Bedrock.key()) :: {:ok, covering_entry()} | {:error, :not_found}
   def covering_entry(%__MODULE__{shards: shards, materializers: materializers}, key) do
     with {end_key, {tag, start_key}} <- ShardRouter.ceiling_entry(shards, key),
-         {:ok, ref} <- Map.fetch(materializers, tag) do
+         {:ok, ref} <- pick_member(Map.get(materializers, tag, %{})) do
       {:ok, {start_key, end_key, tag, ref}}
     else
       _ -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  The client-facing pick among a shard's members: real coverage beats
+  the placeholder (which only parks), and the choice is deterministic
+  so every proxy answers alike and a client's retry lands consistently.
+
+  THE one pick. The distributor points the placeholder at a shard's
+  members through this same function, so the member recovery unlocks,
+  the member clients are routed to, and the member parked reads drain
+  into cannot disagree. Load- and locality-aware selection is
+  bedrock-q67.46's to add here, once.
+  """
+  @spec pick_member(members()) :: {:ok, materializer_ref()} | :error
+  def pick_member(members) when map_size(members) == 0, do: :error
+
+  def pick_member(members) do
+    placeholder = SystemKeys.placeholder_worker_id()
+
+    case members |> Map.delete(placeholder) |> Enum.min(fn -> nil end) do
+      nil -> {:ok, {placeholder, Map.fetch!(members, placeholder)}}
+      {worker_id, node} -> {:ok, {worker_id, node}}
     end
   end
 
@@ -223,10 +256,10 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         # mid-epoch (bedrock-q67.21).
         routing_data
 
-      {:materializer_key, tag} ->
-        # Undecodable values are ignored, keeping the last good ref.
-        case Values.decode_materializer_ref(value) do
-          {:ok, ref} -> %{routing_data | materializers: Map.put(routing_data.materializers, tag, ref)}
+      {:materializer_key, tag, worker_id} ->
+        # Undecodable values are ignored, keeping the last good member set.
+        case Values.decode_materializer_node(value) do
+          {:ok, node} -> put_member(routing_data, tag, worker_id, node)
           {:error, _} -> routing_data
         end
 
@@ -244,8 +277,8 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
         # Epoch-constant; see the set clause.
         routing_data
 
-      {:materializer_key, tag} ->
-        %{routing_data | materializers: Map.delete(routing_data.materializers, tag)}
+      {:materializer_key, tag, worker_id} ->
+        drop_member(routing_data, tag, worker_id)
 
       _ ->
         routing_data
@@ -276,12 +309,33 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     %{routing_data | shards: cleared}
   end
 
+  # A tag's entry is the member set itself; an emptied set is dropped, so
+  # "no members" and "no tag" are the same absence and coverage never
+  # hinges on which one a caller happens to observe.
+  defp put_member(%__MODULE__{materializers: materializers} = routing_data, tag, worker_id, node) do
+    members = materializers |> Map.get(tag, %{}) |> Map.put(worker_id, node)
+    %{routing_data | materializers: Map.put(materializers, tag, members)}
+  end
+
+  defp drop_member(%__MODULE__{materializers: materializers} = routing_data, tag, worker_id) do
+    case materializers |> Map.get(tag, %{}) |> Map.delete(worker_id) do
+      empty when empty == %{} -> %{routing_data | materializers: Map.delete(materializers, tag)}
+      members -> %{routing_data | materializers: Map.put(materializers, tag, members)}
+    end
+  end
+
   defp clear_materializers_in_range(%__MODULE__{materializers: materializers} = routing_data, start_key, end_key) do
     kept =
-      Map.reject(materializers, fn {tag, _ref} ->
-        full_key = SystemKeys.materializer_key(tag)
-        full_key >= start_key and full_key < end_key
+      materializers
+      |> Enum.map(fn {tag, members} ->
+        {tag,
+         Map.reject(members, fn {worker_id, _node} ->
+           full_key = SystemKeys.materializer_key(tag, worker_id)
+           full_key >= start_key and full_key < end_key
+         end)}
       end)
+      |> Enum.reject(fn {_tag, members} -> members == %{} end)
+      |> Map.new()
 
     %{routing_data | materializers: kept}
   end

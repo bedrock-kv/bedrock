@@ -63,8 +63,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert Map.has_key?(updated_attempt.shard_materializers, 0)
           refute Map.has_key?(updated_attempt.shard_materializers, 1)
 
-          assert {<<_::binary>>, node_string} =
-                   updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+          assert [{<<_::binary>>, node_string}] =
+                   Map.to_list(updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()])
 
           assert node_string == Atom.to_string(node())
 
@@ -133,8 +133,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert {updated_attempt, CommitProxyStartupPhase} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-      assert {<<_::binary>>, <<_::binary>>} =
-               updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+      assert [{<<_::binary>>, <<_::binary>>}] =
+               Map.to_list(updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()])
 
       # Replication spans all logs today, so the system shard's replica
       # set covers both — the seed carries {log_id, ref} pairs, never a
@@ -236,12 +236,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
           # The system-shard survivor answers the layout query...
-          assert {"mat_sys", _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+          assert %{"mat_sys" => _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
           assert updated_attempt.shard_layout
 
           # ...and every shard in the layout gets its surviving
           # materializer — nothing newly created, nothing orphaned.
-          assert %{0 => {"mat_sys", _}, 1 => {"mat_user", _}} = updated_attempt.shard_materializers
+          assert %{0 => %{"mat_sys" => _}, 1 => %{"mat_user" => _}} = updated_attempt.shard_materializers
 
           assert map_size(updated_attempt.shard_materializers) == 2
         end)
@@ -295,8 +295,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         assert {updated_attempt, CommitProxyStartupPhase} =
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-        assert {"mat_real", _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
-        assert %{0 => {"mat_real", _}} = updated_attempt.shard_materializers
+        assert %{"mat_real" => _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+        assert %{0 => %{"mat_real" => _}} = updated_attempt.shard_materializers
         assert map_size(updated_attempt.shard_materializers) == 1
       end)
     end
@@ -340,7 +340,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert {updated_attempt, CommitProxyStartupPhase} =
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-          assert {<<_::binary>>, <<_::binary>>} = updated_attempt.shard_materializers[0]
+          assert [{<<_::binary>>, <<_::binary>>}] = Map.to_list(updated_attempt.shard_materializers[0])
           assert updated_attempt.shard_layout
 
           # The creation is recorded: the layout will reference it, so
@@ -610,7 +610,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         existing_context(recovery_version, %{
           read_prior_refs_fn: fn _pid, _version ->
-            {:ok, %{1 => {"mat_named", Atom.to_string(node())}}}
+            {:ok, %{1 => %{"mat_named" => Atom.to_string(node())}}}
           end
         })
 
@@ -620,8 +620,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         assert {updated_attempt, CommitProxyStartupPhase} =
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-        assert {"mat_named", _node} = updated_attempt.shard_materializers[1]
-        assert updated_attempt.prior_materializer_refs == %{1 => {"mat_named", Atom.to_string(node())}}
+        assert %{"mat_named" => _node} = updated_attempt.shard_materializers[1]
+        assert updated_attempt.prior_materializer_refs == %{1 => %{"mat_named" => Atom.to_string(node())}}
         refute updated_attempt.seeded_layout?
       end)
     end
@@ -635,7 +635,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         existing_context(recovery_version, %{
           read_prior_refs_fn: fn _pid, _version ->
-            {:ok, %{1 => {"mat_gone", Atom.to_string(node())}}}
+            {:ok, %{1 => %{"mat_gone" => Atom.to_string(node())}}}
           end
         })
 
@@ -647,7 +647,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
         # "mat_gone" was not locked this epoch: the most-advanced
         # claimant wins as before.
-        assert {"mat_stray", _node} = updated_attempt.shard_materializers[1]
+        assert %{"mat_stray" => _node} = updated_attempt.shard_materializers[1]
       end)
     end
 
@@ -702,13 +702,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     alias Bedrock.SystemKeys, as: SK
     alias Bedrock.SystemKeys.Values, as: V
 
-    test "decodes tag-keyed refs and rejects foreign or undecodable entries" do
+    test "decodes members into per-tag sets and rejects foreign or undecodable entries" do
       entries = [
-        {SK.materializer_key(0), V.encode_materializer_ref("wkr_sys", "n@h")},
-        {SK.materializer_key(7), V.encode_materializer_ref("wkr_a", "n@h")}
+        {SK.materializer_key(0, "wkr_sys"), V.encode_materializer_node("n@h")},
+        {SK.materializer_key(7, "wkr_a"), V.encode_materializer_node("n@h")},
+        {SK.materializer_key(7, "wkr_b"), V.encode_materializer_node("n2@h")}
       ]
 
-      assert {:ok, %{0 => {"wkr_sys", "n@h"}, 7 => {"wkr_a", "n@h"}}} =
+      # A tag's members are a set: two entries under tag 7 are two
+      # members, not a last-writer-wins overwrite.
+      assert {:ok, %{0 => %{"wkr_sys" => "n@h"}, 7 => %{"wkr_a" => "n@h", "wkr_b" => "n2@h"}}} =
                MaterializerBootstrapPhase.decode_prior_refs(entries)
 
       bad_key = SK.shard_key("m")
@@ -716,7 +719,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert {:error, {:invalid_materializer_entry, ^bad_key}} =
                MaterializerBootstrapPhase.decode_prior_refs([{bad_key, "x"}])
 
-      garbage = SK.materializer_key(1)
+      garbage = SK.materializer_key(1, "wkr_a")
 
       assert {:error, {:invalid_materializer_entry, ^garbage}} =
                MaterializerBootstrapPhase.decode_prior_refs([{garbage, <<0xEE>>}])

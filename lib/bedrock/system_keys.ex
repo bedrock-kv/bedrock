@@ -4,7 +4,7 @@ defmodule Bedrock.SystemKeys do
 
   Every key defined here has a named purpose: `shard_keys/<end_key>` feeds
   each commit proxy's routing view (through resolver metadata windows) and
-  the next recovery's materializer bootstrap; `materializers/<tag>` refs
+  the next recovery's materializer bootstrap; `materializers/<tag>/<worker_id>` entries
   feed the client-facing routing projection served by commit proxies
   (FDB's `serverList/` analogue - interfaces ride the keyspace) and answer
   worker rejoin validation. `layout/logs/<log_id>` keys have no code
@@ -23,6 +23,8 @@ defmodule Bedrock.SystemKeys do
   families return here when their readers do (config authority with
   bedrock-q67.25).
   """
+
+  alias Bedrock.Service.Worker
 
   @system_prefix "\xff/system"
 
@@ -50,13 +52,45 @@ defmodule Bedrock.SystemKeys do
   @spec layout_logs_prefix() :: Bedrock.key()
   def layout_logs_prefix, do: "#{@system_prefix}/layout/logs/"
 
-  @doc "Materializer ref entry: `materializers/<tag>` -> `{worker_id, node}` strings"
-  @spec materializer_key(Bedrock.range_tag()) :: Bedrock.key()
-  def materializer_key(tag) when is_integer(tag), do: "#{@system_prefix}/materializers/#{tag}"
+  @doc """
+  Membership entry: `materializers/<tag>/<worker_id>` -> node string.
 
-  @doc "Prefix covering every materializer ref entry"
+  Tag-major with the worker id IN the key, so one family answers both
+  questions FDB needs two for: a prefix scan over a tag gives the shard's
+  members (FDB's range-major `keyServers/<range>` -> team), and each
+  member is individually addressable for removal (FDB's server-major
+  `serverKeys/<server>/<range>`). A worker owns exactly one shard and
+  notices broadcast on the shard's tag, so no per-worker index is needed.
+  Membership is expressed by key PRESENCE; removal is a clear.
+  """
+  @spec materializer_key(Bedrock.range_tag(), Worker.id()) :: Bedrock.key()
+  def materializer_key(tag, worker_id) when is_integer(tag) and is_binary(worker_id),
+    do: "#{@system_prefix}/materializers/#{tag}/#{worker_id}"
+
+  @doc """
+  Prefix covering one tag's members.
+
+  The family's standard triple mirrors FDB's (`SystemData.cpp`):
+  `materializers_prefix/0` is `serverKeysRange`, `materializer_key/2` is
+  `serverKeysKey`, and this is `serverKeysPrefixFor` — the scan that
+  answers "who serves this shard" without decoding the whole family.
+  """
+  @spec materializer_tag_prefix(Bedrock.range_tag()) :: Bedrock.key()
+  def materializer_tag_prefix(tag) when is_integer(tag), do: "#{@system_prefix}/materializers/#{tag}/"
+
+  @doc "Prefix covering every materializer membership entry"
   @spec materializers_prefix() :: Bedrock.key()
   def materializers_prefix, do: "#{@system_prefix}/materializers/"
+
+  @doc """
+  The reserved worker id the distributor's placeholder registers under.
+
+  A keyspace-level convention, not a distributor detail: routing reads it
+  to prefer real coverage over parking, so it belongs where the family's
+  semantics are defined rather than behind a control-plane module.
+  """
+  @spec placeholder_worker_id() :: Worker.id()
+  def placeholder_worker_id, do: "distributor-placeholder"
 
   @doc """
   Parses a system key into its family. Unknown system keys parse as
@@ -65,7 +99,7 @@ defmodule Bedrock.SystemKeys do
   @spec parse_key(Bedrock.key()) ::
           {:layout_log, String.t()}
           | {:shard_key, Bedrock.key()}
-          | {:materializer_key, Bedrock.range_tag()}
+          | {:materializer_key, Bedrock.range_tag(), Worker.id()}
           | {:distributor_lock, :owner | :write}
           | :unknown
           | :error
@@ -75,8 +109,10 @@ defmodule Bedrock.SystemKeys do
   def parse_key(<<@system_prefix, "/shard_keys/", rest::binary>>), do: {:shard_key, rest}
 
   def parse_key(<<@system_prefix, "/materializers/", rest::binary>>) do
-    case Integer.parse(rest) do
-      {tag, ""} -> {:materializer_key, tag}
+    with [tag_string, worker_id] when worker_id != "" <- String.split(rest, "/", parts: 2),
+         {tag, ""} <- Integer.parse(tag_string) do
+      {:materializer_key, tag, worker_id}
+    else
       _ -> :unknown
     end
   end

@@ -24,7 +24,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
     def init(reply), do: {:ok, reply}
 
     @impl true
-    def handle_call({:resolve_materializer, _tag}, _from, reply), do: {:reply, reply, reply}
+    def handle_call({:materializer_members, _tag}, _from, reply), do: {:reply, reply, reply}
   end
 
   defp state(overrides) do
@@ -34,7 +34,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
   defp tsl(epoch, proxies), do: %{epoch: epoch, proxies: proxies, logs: %{}, sequencer: nil, resolvers: []}
 
   test "the keyspace naming another worker retires this one" do
-    {:ok, proxy} = StubProxy.start_link({:ok, {"someone-else", "node@host"}})
+    {:ok, proxy} = StubProxy.start_link({:ok, %{"someone-else" => "node@host"}})
 
     capture_log(fn ->
       assert {:stop, {:shutdown, :displaced}, _t} =
@@ -56,7 +56,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
   end
 
   test "the keyspace still naming this worker keeps it" do
-    {:ok, proxy} = StubProxy.start_link({:ok, {"mat-1", "node@host"}})
+    {:ok, proxy} = StubProxy.start_link({:ok, %{"mat-1" => "node@host"}})
 
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(3, [proxy])}, state([]))
     refute_received {:"$gen_cast", {:worker_retired, _}}
@@ -70,7 +70,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
   end
 
   test "an unreachable proxy is not a verdict" do
-    {:ok, proxy} = StubProxy.start_link({:ok, {"mat-1", "node@host"}})
+    {:ok, proxy} = StubProxy.start_link({:ok, %{"mat-1" => "node@host"}})
     GenServer.stop(proxy)
 
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(3, [proxy])}, state([]))
@@ -114,5 +114,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
 
   test "a push with no proxies cannot validate — keep" do
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(3, [])}, state([]))
+  end
+
+  test "a sibling replica's presence is not displacement — membership, not resolution" do
+    # The set names this worker AND another materializer for the same
+    # shard. Under set-valued membership (bedrock-q67.21.9) a shard may
+    # legitimately have several materializers, so the only question is
+    # whether the set still contains ME.
+    {:ok, proxy} = StubProxy.start_link({:ok, %{"mat-1" => "node@host", "sibling" => "other@host"}})
+
+    assert {:noreply, _t} =
+             Server.handle_info({:tsl_updated, %{epoch: 2, proxies: [proxy]}}, state(id: "mat-1", shard_num: 3))
   end
 end

@@ -79,15 +79,15 @@ defmodule Bedrock.DataPlane.CommitProxy do
   the tag. A locked proxy replies `{:error, :locked}`; callers treat that
   (and unavailability) as "ask again later", never as displacement.
   """
-  @spec resolve_materializer(
-          commit_proxy_ref :: ref(),
+  @spec materializer_members(
+          commit_proxy :: ref(),
           tag :: non_neg_integer(),
           opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
         ) ::
-          {:ok, {worker_id :: String.t(), node :: String.t()}}
-          | {:error, :not_found | :locked | :timeout | :unavailable}
-  def resolve_materializer(commit_proxy, tag, opts \\ []),
-    do: call(commit_proxy, {:resolve_materializer, tag}, opts[:timeout_in_ms] || 5_000)
+          {:ok, %{Bedrock.Service.Worker.id() => String.t()}}
+          | {:error, :not_found | :locked | :unavailable | :timeout}
+  def materializer_members(commit_proxy, tag, opts \\ []),
+    do: call(commit_proxy, {:materializer_members, tag}, opts[:timeout_in_ms] || 5_000)
 
   @doc """
   Submits a transaction for commit.

@@ -4,6 +4,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
   alias Bedrock.ControlPlane.Director.Recovery.TopologyPhase
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
 
   # Helper functions for common test setup
   defp base_recovery_attempt do
@@ -98,7 +99,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
           "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
           "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}}
         })
-        |> Map.put(:shard_materializers, %{0 => {"wkr_sys", Atom.to_string(node())}})
+        |> Map.put(:shard_materializers, %{0 => %{"wkr_sys" => Atom.to_string(node())}})
 
       context =
         recovery_context()
@@ -112,11 +113,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
 
       assert_received {:routing_snapshot, snapshot}
 
-      # Refs are the same plain strings the persistence phase commits to the
+      # Refs are the same member maps the persistence phase commits to the
       # materializers/ family - the seed and the keyspace cannot disagree
-      # because both are derived from the same layout.
+      # because both are derived from the same layout. The seed must be
+      # member-shaped: RoutingData consumes it verbatim, so any other
+      # shape crashes the proxy on the first read after recovery.
       node_string = Atom.to_string(node())
-      assert snapshot.materializers == %{0 => {"wkr_sys", node_string}}
+      assert snapshot.materializers == %{0 => %{"wkr_sys" => node_string}}
+
+      # Cross the seam for real: the seed must survive the routing
+      # constructor and answer the reads a proxy actually performs.
+      routing =
+        snapshot
+        |> RoutingData.from_snapshot()
+        |> RoutingData.insert_shard("z", 0, "")
+
+      assert {:ok, %{"wkr_sys" => ^node_string}} = RoutingData.materializer_members(routing, 0)
+      assert {:ok, {"", "z", 0, {"wkr_sys", ^node_string}}} = RoutingData.covering_entry(routing, "a")
     end
 
     test "fails when commit proxy unlocking fails" do

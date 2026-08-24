@@ -18,8 +18,9 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder do
   no-ops.
 
   Addressing is the settled option 2 (bedrock-q67.21): the placeholder
-  IS a materializer ref. The distributor publishes
-  `materializers/<tag> = {placeholder_worker_id, distributor_node}` for
+  IS a materializer ref — an ordinary MEMBER of the shard's set, one
+  that parks rather than serves. The distributor publishes
+  `materializers/<tag>/<placeholder_worker_id> = distributor_node` for
   uncovered tags, and the placeholder registers under
   `cluster.otp_name_for_worker(placeholder_worker_id)` — so proxies and
   clients need no special case at all; coverage gaps are visible in the
@@ -40,7 +41,9 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder do
   # The stable worker id the keyspace names for uncovered tags. Worker
   # OTP names are deterministic in the id, so the callable ref is
   # derivable everywhere from the committed {worker_id, node} pair.
-  @worker_id "distributor-placeholder"
+  # One source of truth: routing reads this convention too, so it lives
+  # with the family's semantics rather than behind the control plane.
+  @worker_id Bedrock.SystemKeys.placeholder_worker_id()
 
   @doc "The reserved worker id placeholder entries carry in the keyspace."
   @spec worker_id() :: String.t()

@@ -583,9 +583,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   defp rejoin_verdict(_t, []), do: :keep
 
   defp rejoin_verdict(%State{} = t, proxies) do
-    case CommitProxy.resolve_materializer(Enum.random(proxies), t.shard_num) do
-      {:ok, {worker_id, _node}} when worker_id == t.id -> :keep
-      {:ok, {_other_worker, _node}} -> :displaced
+    # Membership, not resolution: a shard may have several materializers,
+    # so the question is whether the committed set still contains ME —
+    # another member's presence is not my displacement (FDB's
+    # matchesThisServer, asked of the set).
+    case CommitProxy.materializer_members(Enum.random(proxies), t.shard_num) do
+      {:ok, members} -> if Map.has_key?(members, t.id), do: :keep, else: :displaced
       {:error, :not_found} -> :displaced
       {:error, _not_a_verdict} -> :keep
     end

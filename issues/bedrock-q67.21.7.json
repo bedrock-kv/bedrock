@@ -2,14 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-24T15:41:19Z",
   "created": "2026-08-21T22:02:01Z",
   "description": "RESOLVED BY assignment verification (PR pending on feature/q67.21.5b-adoption; close on merge). The gap: a materializer named by the committed materializers/ family could be alive and monitorable yet never locked into the CURRENT epoch (its node missed recovery's roll call and rejoined later) — liveness looked like membership, and the tag stayed dark until the next recovery.\n\nMechanism (collapsed with the q67.21.5 re-adoption residue after an FDB sanity check): the keyspace is the membership authority, so candidates come from the committed family — never a services side channel. At the startup sweep the distributor probes each named assignment's :epoch info fact (bounded 2s). Current → verified silently. Stale/never-locked → ADOPTED: bounded lock at the epoch, unlock at the worker's OWN durable version with its pull sources, entry re-asserted under the CHECK fence, monitored. Wedged/dead → HEALED (placeholder + fresh recruit); the worker is never removed — provenance is structural (adopt has no removal call) and the displaced worker retires itself in-band at the next layout push (the existing rejoin_verdict :displaced path). Reservation rides the recruiting set; late verdicts for re-owned tags are dropped.",
   "id": "bedrock-q67.21.7",
   "labels": [],
   "parent": "bedrock-q67.21",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Heal alive-but-unadopted materializers: liveness is not adoption",
   "type": "task",
-  "updated_at": "2026-08-22T02:05:57Z"
+  "updated_at": "2026-08-24T15:41:19Z"
 }

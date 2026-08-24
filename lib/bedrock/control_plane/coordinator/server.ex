@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       put_epoch: 2,
       put_leader_startup_state: 2,
       put_config: 2,
-      put_transaction_system_layout: 2,
+      put_transaction_system_layout: 3,
       update_raft: 2,
       add_tsl_subscriber: 2,
       replay_tsl_to: 2,
@@ -293,11 +293,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     noreply(t)
   end
 
-  def handle_cast({:notify_transaction_system_layout, transaction_system_layout}, t) do
-    # Direct notification from Director - update state and broadcast to subscribers
-    # No Raft consensus needed - TSL is persisted to object storage by Director
+  def handle_cast({:notify_transaction_system_layout, transaction_system_layout, core_state}, t) do
+    # Direct notification from Director - update state and broadcast to subscribers.
+    # No Raft consensus needed: the director has already persisted BOTH
+    # records to object storage, and it sends both for the same reason it
+    # writes both — the broadcast cannot carry membership, so the durable
+    # record has to arrive alongside it or a warm recovery would find
+    # none.
     t
-    |> put_transaction_system_layout(transaction_system_layout)
+    |> put_transaction_system_layout(transaction_system_layout, core_state)
     |> put_epoch(transaction_system_layout.epoch)
     |> noreply()
   end

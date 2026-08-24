@@ -520,7 +520,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     test "recovery with coordinator-format services handles existing cluster (regression test)" do
       # Validates coordinator services work with existing cluster recovery
       old_layout = %{
-        logs: %{"existing_log_1" => [0, 100]}
+        logs: %{"existing_log_1" => [0, 100]},
+        system_materializers: %{"metadata_materializer" => "node1"}
       }
 
       durable_version = Version.from_integer(100)

@@ -131,9 +131,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       current_bootstrap
       | epoch: recovery_attempt.epoch,
         logs: build_log_entries(transaction_system_layout),
+        system_materializers: build_system_materializer_entries(recovery_attempt),
         parameters: build_parameters(config),
         policies: build_policies(config)
     }
+  end
+
+  # Where the metadata lives, recorded out of band. Both durable families
+  # — the shard layout and materializer membership — are served from tag
+  # 0, so the next recovery cannot read either until it knows which
+  # workers hold it. FDB records the same indirection: its coordinated
+  # state names the tlogs that hold the txnStateStore.
+  defp build_system_materializer_entries(recovery_attempt) do
+    recovery_attempt
+    |> Map.get(:shard_materializers, %{})
+    |> Kernel.||(%{})
+    |> Map.get(RecoveryAttempt.system_shard_id(), %{})
+    |> Enum.map(fn {worker_id, node} -> %{id: worker_id, node: node} end)
   end
 
   defp build_initial_bootstrap(recovery_attempt, config, transaction_system_layout) do
@@ -141,6 +155,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       cluster_id: Id.random(),
       epoch: recovery_attempt.epoch,
       logs: build_log_entries(transaction_system_layout),
+      system_materializers: build_system_materializer_entries(recovery_attempt),
       coordinators: [%{node: Atom.to_string(node())}],
       parameters: build_parameters(config),
       policies: build_policies(config)

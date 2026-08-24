@@ -44,10 +44,15 @@ defmodule Bedrock.ControlPlane.Coordinator.StateTest do
           tsl_subscribers: MapSet.new([self()])
         )
 
-      result = Changes.put_transaction_system_layout(state, runnable_layout)
+      # The director sends BOTH records: the broadcast, and the durable
+      # core state it just persisted. The broadcast cannot carry
+      # membership by design, so the members have to arrive with it.
+      core_state = %{logs: %{"new-log" => [0]}, system_materializers: %{"wkr_sys" => "n1@host"}}
+
+      result = Changes.put_transaction_system_layout(state, runnable_layout, core_state)
 
       assert result.transaction_system_layout == runnable_layout
-      assert result.prior_core_state == %{logs: %{"new-log" => [0]}}
+      assert result.prior_core_state == core_state
       refute Map.has_key?(result.prior_core_state, :sequencer)
       assert_receive {:tsl_updated, ^runnable_layout}
     end

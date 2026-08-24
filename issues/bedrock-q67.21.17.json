@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-24T20:35:21Z",
+  "description": "ObjectStorage.list/3 returns a bare Enumerable (object_storage.ex:112-113), and the S3 backend turns ANY fetch failure into a silently truncated stream: next_list_item/1 (s3.ex:154-161) matches {:error, _reason} and returns {:halt, ...}. A network blip, throttle, auth failure or 500 is therefore indistinguishable from 'this prefix is empty'.\n\nCONCRETE CHAIN, all real code:\n1. S3 ListObjectsV2 fails transiently -\u003e stream halts -\u003e caller sees []\n2. Snapshot.read_latest/1 (snapshot.ex:97-107) does list(prefix, limit: 1) |\u003e Enum.take(1), matches [] -\u003e {:error, :not_found}\n3. Olivine Logic.load_snapshot_from_object_storage/2 (logic.ex:117-120) matches {:error, :not_found} -\u003e logs 'No snapshot discovered in ObjectStorage, starting fresh' -\u003e :ok\n4. The materializer opens an EMPTY database for a populated shard and begins serving reads\n5. Every key in that shard reads as absent\n\nA transient object-storage error becomes silent, cluster-visible data absence. Note step 3 already distinguishes {:error, reason} (which correctly fails startup) from {:error, :not_found} (which shrugs) — the distinction is right, but the value reaching it is a lie.\n\nThe LocalFilesystem backend is less exposed but not clean: init_list_state/4 (local_filesystem.ex:138-150) falls back to an empty stream when the prefix path is not a directory, so a permissions error also reads as emptiness.\n\nFIX: snapshot discovery needs a primitive that can FAIL. Add an explicit discovery call to the ObjectStorage behaviour returning {:ok, key} | {:error, :not_found} | {:error, reason} (two backends implement it: s3.ex, local_filesystem.ex), and have Snapshot.read_latest/1 use it so :not_found is authoritative rather than inferred from an empty stream. Leave list/3's streaming contract alone for iteration callers, or fix it separately — the point is that ABSENCE must be distinguishable from IGNORANCE at the one call site whose answer decides whether a shard has data.\n\nRELATIONSHIP TO bedrock-q67.21.16: readability downgrades this from silent corruption to visible unavailability — a materializer that wrongly starts empty is refused by the log (version_too_old) and marks itself unreadable instead of serving empty results. That is a containment, not a fix: this bug still causes needless full replays, spurious unreadable shards, and misleading 'starting fresh' logs on a populated cluster. Both are wanted.",
+  "id": "bedrock-q67.21.17",
+  "labels": [],
+  "parent": "bedrock-q67.21",
+  "priority": 1,
+  "status": "open",
+  "title": "[BUG] S3 list swallows every backend error as an empty listing",
+  "type": "bug",
+  "updated_at": "2026-08-24T20:35:21Z"
+}

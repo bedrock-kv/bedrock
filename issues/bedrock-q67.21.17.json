@@ -7,9 +7,9 @@
   "id": "bedrock-q67.21.17",
   "labels": [],
   "parent": "bedrock-q67.21",
-  "priority": 1,
+  "priority": 0,
   "status": "open",
   "title": "[BUG] S3 list swallows every backend error as an empty listing",
   "type": "bug",
-  "updated_at": "2026-08-24T20:35:21Z"
+  "updated_at": "2026-08-24T20:58:32Z"
 }

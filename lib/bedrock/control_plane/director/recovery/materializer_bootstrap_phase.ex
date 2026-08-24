@@ -76,9 +76,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   # Private implementation
 
-  # FDB's neverCreated: a prior record naming no logs means there is no
-  # prior epoch's data to recover, so recovery seeds instead of reading.
-  defp fresh_cluster?(context), do: context |> Map.get(:prior_core_state) |> CoreState.fresh?()
+  # A prior record naming no logs means there is no prior epoch's data to
+  # recover, so recovery seeds instead of reading. Read the key
+  # STRICTLY: the context type declares it required, and the two answers
+  # here are "invent a default layout" and "read the committed one" — a
+  # missing key must raise, not silently pick the destructive one.
+  defp fresh_cluster?(context), do: CoreState.fresh?(context.prior_core_state)
 
   defp handle_fresh_cluster(recovery_attempt, context) do
     Logger.debug("Fresh cluster detected, using default shard layout")

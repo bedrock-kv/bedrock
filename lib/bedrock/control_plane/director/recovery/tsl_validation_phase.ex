@@ -3,17 +3,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   Early recovery phase that type-checks the PRIOR CORE STATE before any
   later phase trusts it.
 
-  The record is durable: it was written by a previous epoch, possibly a
-  previous version of this software, and read back off object storage.
-  Everything after this point locks and copies from the logs it names,
-  so a type mismatch here (integer ranges arriving as Version.t()
-  binaries, say) surfaces later as an MVCC lookup failure far from its
-  cause. Validating at the boundary makes the durable record the thing
-  that fails, with diagnostics naming it.
+  On a cold boot the record is genuinely durable — written by a previous
+  epoch, possibly by a previous version of this software, and read back
+  off object storage. (On a warm relaunch it is projected in memory from
+  this coordinator's own last layout and never round-trips storage, so
+  the check is cheap there and meaningful here.) Everything after this
+  point locks and copies from the logs it names, so a type mismatch
+  (integer tag ranges arriving as Version.t() binaries, say) would
+  otherwise surface as an MVCC lookup failure far from its cause.
+  Validating at the boundary makes the durable record the thing that
+  fails, with diagnostics naming it.
 
-  It validates the `logs` field: each entry's tag ranges must be
-  integers, not binaries. That is the whole prior record today
-  (`Bedrock.ControlPlane.Config.CoreState`), so it is the whole check.
+  What it checks is the `logs` field: each entry's tag ranges must be
+  integers, not binaries. The validator also has a `resolvers` check,
+  which is vacuous against this record — the prior core state carries no
+  resolvers, and the previous epoch's resolver pids would be worthless
+  if it did.
 
   ## Error Handling
 

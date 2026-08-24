@@ -110,7 +110,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     end
   end
 
-  defp get_old_system_log_ids(context), do: context |> Map.get(:prior_core_state) |> CoreState.log_ids()
+  defp get_old_system_log_ids(context), do: CoreState.log_ids(context.prior_core_state)
 
   defp get_available_log_ids(%{available_services: available_services}) do
     available_services

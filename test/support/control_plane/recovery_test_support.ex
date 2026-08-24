@@ -272,27 +272,6 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
   end
 
   @doc """
-  Sets old transaction system layout.
-  """
-  def with_old_layout(context, opts) do
-    layout = %{
-      logs:
-        case Keyword.get(opts, :logs) do
-          nil ->
-            %{}
-
-          count when is_integer(count) ->
-            for i <- 1..count, into: %{}, do: {{:log, i}, ["tag_#{i}"]}
-
-          logs when is_map(logs) ->
-            logs
-        end
-    }
-
-    Map.put(context, :prior_core_state, layout)
-  end
-
-  @doc """
   Sets available services of a specific type.
   """
   def with_available_services(context, service_type, spec) do

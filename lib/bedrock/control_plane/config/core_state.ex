@@ -33,10 +33,11 @@ defmodule Bedrock.ControlPlane.Config.CoreState do
   consumed as recovery's prior state — so projecting them here would
   add fields with no reader.
 
-  Log LOCATIONS are likewise absent: the bootstrap stores an `otp_ref`
-  per log, but recovery discovers live services through foreman
-  registration rather than trusting a durable address. The record says
-  WHICH logs, never where they were last seen.
+  Log LOCATIONS are likewise absent: the bootstrap schema HAS an
+  `otp_ref` per log, but the writer always sets it to nil
+  (`persistence_phase.ex`), because recovery discovers live services
+  through foreman registration rather than trusting a durable address.
+  The record says WHICH logs, never where they were last seen.
 
   Materializer membership joins this record in bedrock-q67.21.12, for
   the one shard recovery cannot do without: the system shard, whose
@@ -44,6 +45,7 @@ defmodule Bedrock.ControlPlane.Config.CoreState do
   """
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.DataPlane.Log
 
   @type t :: %{required(:logs) => %{Log.id() => LogDescriptor.t()}}
@@ -80,13 +82,18 @@ defmodule Bedrock.ControlPlane.Config.CoreState do
   epoch would be a category error — and the reason to keep these two
   types apart at all.
   """
-  @spec from_layout(map()) :: t()
+  @spec from_layout(TransactionSystemLayout.t()) :: t()
   def from_layout(layout), do: %{logs: Map.get(layout, :logs) || %{}}
 
   @doc """
-  Whether this cluster has never completed a recovery — FDB's
-  `neverCreated`, set when `!cstate.prevDBState.tLogs.size()`
-  (`ClusterRecovery.actor.cpp:981`).
+  Whether this cluster has never completed a recovery.
+
+  FDB makes the same call on the same evidence, in
+  `TagPartitionedLogSystem::recoverAndEndEpoch`
+  (`TagPartitionedLogSystem.actor.cpp:2416`): `if (!prevState.tLogs.size())
+  { // This is a brand new database` — the branch that MANUFACTURES a
+  log system rather than recovering one, keyed on the prior core state
+  naming no logs.
 
   A missing record and a record naming no logs mean the same thing:
   there is no prior epoch's data to recover, so recovery seeds rather
@@ -102,7 +109,12 @@ defmodule Bedrock.ControlPlane.Config.CoreState do
   The log ids the prior epoch ran — the services recovery must lock and
   copy from. A fresh cluster names none.
   """
-  @spec log_ids(t() | nil) :: MapSet.t(Log.id())
+  @spec log_ids(t() | nil | map()) :: MapSet.t(Log.id())
   def log_ids(nil), do: MapSet.new()
   def log_ids(%{logs: logs}), do: logs |> Map.keys() |> MapSet.new()
+  # A record without the key names no logs, exactly as every open-coded
+  # predecessor of this function assumed. Kept symmetric with fresh?/1:
+  # a strict clause here would let fresh?(%{}) route an empty record to
+  # the existing-cluster path and then crash the director on it.
+  def log_ids(_no_logs_key), do: MapSet.new()
 end

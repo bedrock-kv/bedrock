@@ -30,13 +30,13 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
           prior_core_state :: CoreState.t() | nil
         ) :: :ok
   def trace_director_launch(epoch, prior_core_state) do
+    # The prior core state names logs and nothing else — no epoch, no
+    # layout. The epoch below is this launch's, which is the one an
+    # operator wants anyway; reading a nonexistent :epoch off the record
+    # printed an empty string.
     config_summary =
       if prior_core_state do
-        %{
-          epoch: prior_core_state[:epoch],
-          has_transaction_system_layout: true,
-          logs_count: map_size(prior_core_state[:logs] || %{})
-        }
+        %{prior_logs_count: map_size(prior_core_state[:logs] || %{})}
       end
 
     Telemetry.execute([:bedrock, :control_plane, :coordinator, :director_launch], %{}, %{

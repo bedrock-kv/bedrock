@@ -77,6 +77,40 @@ defmodule Bedrock.ControlPlane.Config.CoreStateTest do
     end
   end
 
+  describe "the cold and warm paths must agree" do
+    test "a layout projected directly and the same layout round-tripped through the durable record produce the SAME prior state" do
+      # The invariant the whole split rests on. A coordinator that never
+      # restarts projects the layout in memory (from_layout); one that
+      # cold-boots reads the bootstrap it wrote (from_bootstrap). If
+      # these disagree, a recovery behaves differently depending only on
+      # whether the coordinator process happened to survive.
+      layout = %{epoch: 4, sequencer: self(), proxies: [self()], logs: %{"log_a" => [], "log_b" => []}}
+
+      warm = CoreState.from_layout(layout)
+
+      # Exactly what the persistence phase writes into the bootstrap for
+      # this layout: one entry per log, tags carried through.
+      bootstrap = %{
+        logs: for({id, tags} <- layout.logs, do: %{id: id, otp_ref: nil, shard_tags: tags})
+      }
+
+      cold = CoreState.from_bootstrap(bootstrap)
+
+      assert warm == cold
+    end
+  end
+
+  describe "a record missing its :logs key names nothing" do
+    test "log_ids/1 and fresh?/1 agree, so an empty record cannot crash a recovery" do
+      # These two must stay symmetric: if fresh?/1 tolerates a map with
+      # no :logs (answering 'not fresh') while log_ids/1 raises on it,
+      # that record routes to the existing-cluster path and then crashes
+      # the director on the very next call.
+      assert CoreState.log_ids(%{}) == MapSet.new()
+      refute CoreState.fresh?(%{})
+    end
+  end
+
   describe "log_ids/1 - the services recovery must lock" do
     test "names exactly the logs the prior epoch ran" do
       assert CoreState.log_ids(%{logs: %{"log_1" => [0], "log_2" => [1]}}) == MapSet.new(["log_1", "log_2"])

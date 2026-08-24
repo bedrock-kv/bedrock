@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-q67.21.9"
+  ],
   "blocks": [],
   "created": "2026-08-24T18:02:07Z",
   "description": "Enabled by bedrock-q67.21.9 (membership becomes a set). Once a shard can name N materializers, the distributor-class component can place them by observed demand rather than by a fixed replica count: seeing disproportionate read traffic for shard N originating from one node, spin up an instance near that node (or migrate an existing one), and retire surplus instances when demand subsides. Explicitly a POLICY divergence from FDB, whose team size is fixed by the replication factor and whose DD rebalances which servers hold a shard rather than adding one for read locality; the underlying mechanism (set-valued membership, key-addressed removal, in-band retirement) is FDB's and lands with q67.21.9/q67.21.6.\n\nScope sketch (not yet designed): demand signal (where does per-node, per-shard read traffic get observed — proxy, materializer, or repo?), placement policy and hysteresis (avoid thrash), the read path's selection rule (locality- and load-aware pick, natural home StorageRacing — q67.21.9 lands only a deterministic pick), surplus retirement (an instance is removed by clearing its key; in-band retirement already delivers the notice), and interaction with idle spin-down (a replica that goes cold should spin down without the shard losing coverage).\n\nDo not start before q67.21.9 and q67.21.6 land.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "[EPIC] Elastic materializer replicas: placement by load and locality",
   "type": "task",
-  "updated_at": "2026-08-24T18:02:07Z"
+  "updated_at": "2026-08-24T18:02:31Z"
 }

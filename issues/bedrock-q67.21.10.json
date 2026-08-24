@@ -11,11 +11,15 @@
     {
       "text": "-m",
       "timestamp": "2026-08-24T19:33:43Z"
+    },
+    {
+      "text": "-m",
+      "timestamp": "2026-08-24T19:46:48Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Delete the layout/logs keyspace family: a write with no reader",
   "type": "task",
-  "updated_at": "2026-08-24T19:33:43Z"
+  "updated_at": "2026-08-24T19:46:48Z"
 }

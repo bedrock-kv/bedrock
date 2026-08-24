@@ -7,9 +7,15 @@
   "id": "bedrock-q67.21.11",
   "labels": [],
   "parent": "bedrock-q67.21",
+  "comments": [
+    {
+      "text": "-m",
+      "timestamp": "2026-08-24T19:40:13Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Split CoreState from TransactionSystemLayout: make the durable/broadcast divide honest",
   "type": "task",
-  "updated_at": "2026-08-24T19:38:39Z"
+  "updated_at": "2026-08-24T19:40:13Z"
 }

@@ -11,11 +11,15 @@
     {
       "text": "-m",
       "timestamp": "2026-08-24T19:40:13Z"
+    },
+    {
+      "text": "-m",
+      "timestamp": "2026-08-24T20:09:22Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Split CoreState from TransactionSystemLayout: make the durable/broadcast divide honest",
   "type": "task",
-  "updated_at": "2026-08-24T19:40:13Z"
+  "updated_at": "2026-08-24T20:09:22Z"
 }

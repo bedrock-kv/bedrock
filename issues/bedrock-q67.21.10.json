@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-24T19:28:10Z",
+  "description": "The recovery system transaction clears and rewrites \\xFF/system/layout/logs/\u003clog_id\u003e = [tag] on every recovery. Nothing reads it. The persistence phase says so outright: 'layout/logs/ has no code reader by design: log wiring is epoch-constant and rides the unlock seed (bedrock-q67.41); the family stays durable for other consumers and cluster-introspection tools.' Those consumers do not exist.\n\nSettled with the user 2026-08-24: trash it.\n\nWHY IT IS NOT MERELY DEAD WEIGHT: the log set is recorded in THREE places today — this keyspace family, the ClusterBootstrap FlatBuffer in object storage (which the coordinator actually reads at cold start), and the TransactionSystemLayout broadcast. FDB has two: DBCoreState (coordinators, durable, what recovery locks and reads) and ServerDBInfo/logSystemConfig (transient broadcast). The keyspace copy is the one with no analogue and no audience. Removing it is a prerequisite for making the CoreState/TSL split honest, because a split forces the question 'which record wins' and a third record with no reader has no answer worth writing.\n\nCOST TODAY: a clear_range plus N sets in every recovery's system transaction; two dead {:layout_log, _} clauses in RoutingData.apply_mutation carrying comments that explain why they do nothing; and a key family in the parse surface.\n\nSCOPE (all of these exist only for this path):\n- SystemKeys: layout_log/1, layout_logs_prefix/0, the parse_key clause for /layout/logs/, and {:layout_log, String.t()} in the parse_key return type\n- SystemKeys.Values: decode_for({:layout_log, _}, _), encode_tag_list/1, decode_tag_list/1 (no other callers)\n- PersistencePhase.build_readable_keys: the clear_prefix and the reduce that writes the family, plus the comment paragraph justifying it\n- RoutingData.apply_mutation: the {:layout_log, _} set and clear clauses\n\nTESTS: routing_data_test and metadata_distribution_integration_test use layout_log mutations to pin 'irrelevant metadata mutations do not disturb routing'. That property is real and must survive — re-point those cases at a genuinely foreign system key so they exercise the generic unknown-key path instead of a special-cased one. system_keys_test and values_test lose their layout_log cases.\n\nMIGRATION: none needed. Existing clusters carry stale layout/logs keys that nothing reads; they are inert. Recovery stops rewriting them. A later sweep can clear the prefix if anyone cares, but nothing depends on it.",
+  "id": "bedrock-q67.21.10",
+  "labels": [],
+  "parent": "bedrock-q67.21",
+  "priority": 2,
+  "status": "open",
+  "title": "Delete the layout/logs keyspace family: a write with no reader",
+  "type": "task",
+  "updated_at": "2026-08-24T19:28:10Z"
+}

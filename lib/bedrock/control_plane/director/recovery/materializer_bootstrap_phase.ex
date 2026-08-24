@@ -113,18 +113,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # The one projection, at the one boundary it belongs: the phase
   # orchestrates with live pids (lock, unlock, catchup), but the attempt
   # carries the refs exactly as every reader consumes them — the
-  # keyspace-value shape {worker_id, node}, both strings. The persistence
-  # writer and the routing-snapshot seed embed this map verbatim, so the
-  # seed and the keyspace are the same map read twice; ghost pruning
-  # takes its worker ids from it directly. A pid is phase-local
+  # family's MEMBER shape, %{worker_id => node}, all strings. The
+  # persistence writer and the routing-snapshot seed embed this map
+  # verbatim, so the seed and the keyspace are the same map read twice;
+  # ghost pruning takes its worker ids from it directly. Recovery adopts
+  # exactly one member per tag (see prefer_family_named/3), so the map
+  # it builds is a singleton per tag — but it is member-SHAPED, because
+  # the family is a set and every reader treats it as one. A pid is phase-local
   # orchestration state, not a fact any reader needs — a future consumer
   # that wants one should ask where it lives (the directory, or the
   # worker), not have it carried speculatively.
   @spec to_materializer_refs(%{Bedrock.range_tag() => {Worker.id(), node(), pid()}}) ::
-          %{Bedrock.range_tag() => {Worker.id(), String.t()}}
+          %{Bedrock.range_tag() => %{Worker.id() => String.t()}}
   defp to_materializer_refs(shard_materializers) do
     Map.new(shard_materializers, fn {tag, {worker_id, node, _pid}} ->
-      {tag, {worker_id, Atom.to_string(node)}}
+      {tag, %{worker_id => Atom.to_string(node)}}
     end)
   end
 
@@ -399,14 +402,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # most-advanced-durable contest, which remains the fallback for tags
   # the family does not name — and for tag 0, whose selection happens
   # before the family can be read (the family lives IN the system shard).
+  # Recovery adopts exactly ONE member per tag. The family may name
+  # several (the distributor can place replicas), but recovery's job is
+  # to get each shard served, not to re-establish every replica; the
+  # members it does not adopt keep their committed keys and the
+  # distributor's sweep verifies and adopts them into this epoch. The
+  # pick is the LOWEST worker id — the same deterministic rule
+  # RoutingData.pick_member/1 uses, so the member recovery unlocks is
+  # the member clients are routed to, with no window where the pick
+  # names a materializer still locked at the prior epoch.
   defp prefer_family_named(existing_by_shard, prior_refs, recovery_attempt) do
     named =
       for {tag, members} <- prior_refs,
-          {worker_id, _node} <- members,
+          {worker_id, _node} <- Enum.sort(members),
           match?(%{shard_id: ^tag}, Map.get(recovery_attempt.materializer_recovery_info_by_id, worker_id)),
           %{status: {:up, ref}} <- [Map.get(recovery_attempt.transaction_services, worker_id)],
-          into: %{},
-          do: {tag, {worker_id, {:materializer, ref}}}
+          reduce: %{} do
+        acc -> Map.put_new(acc, tag, {worker_id, {:materializer, ref}})
+      end
 
     Map.merge(existing_by_shard, named)
   end
@@ -435,7 +448,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   @doc false
   @spec decode_prior_refs([{Bedrock.key(), binary()}]) ::
-          {:ok, %{Bedrock.range_tag() => {Worker.id(), String.t()}}}
+          {:ok, %{Bedrock.range_tag() => %{Worker.id() => String.t()}}}
           | {:error, {:invalid_materializer_entry, Bedrock.key()}}
   defdelegate decode_prior_refs(entries), to: Reader, as: :decode_materializer_members
 

@@ -7,6 +7,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   alias Bedrock.ControlPlane.Distributor.State
   alias Bedrock.ControlPlane.Distributor.Telemetry
   alias Bedrock.ControlPlane.Distributor.Transactions
+  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
@@ -22,8 +23,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   @max_unreachable_verifications 3
 
   # Deadline for the sweep's per-assignment epoch PROBE (the adopt that
-  # may follow carries its own 30s lock/unlock bounds — the tag's
-  # reservation is held for that long, deliberately). Monitors and
+  # may follow carries its own 30s lock/unlock bounds). Monitors and
   # placeholder coverage are already live, so the probe itself must
   # never wait on a wedged worker.
   @verification_timeout_ms 2_000
@@ -120,7 +120,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
          {:ok, placeholder} <- start_placeholder(t, snapshot.shard_layout),
          t = %{t | placeholder: placeholder, snapshot: snapshot},
          uncovered = uncovered_tags(snapshot),
-         :ok <- publish_placeholders(t, uncovered) do
+         {:ok, t} <- publish_placeholders(t, uncovered) do
       # Eager recruitment for the swept gaps erases first-touch latency:
       # the sweep already knows every uncovered tag, and the in-flight
       # dedupe and backoff machinery make eagerness free. Named
@@ -147,12 +147,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   def handle_cast({:coverage_demand, tag}, %State{} = t) do
     Telemetry.emit_coverage_demand(t.cluster, tag)
 
-    case t |> real_members(tag) |> Enum.min(fn -> nil end) do
-      {worker_id, node} ->
+    case t |> coverage_members(tag) |> RoutingData.pick_member() do
+      {:ok, {worker_id, node}} ->
         Placeholder.notify_covered(t.placeholder, tag, callable_ref(t.cluster, worker_id, node))
         {:noreply, t}
 
-      nil ->
+      :error ->
         {:noreply, t |> Map.update!(:pending_demands, &MapSet.put(&1, tag)) |> maybe_recruit(tag)}
     end
   end
@@ -263,10 +263,15 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   # A retirement whose commit failed transiently: retry until the
   # keyspace stops naming a worker that is gone.
+  # ...unless the member was legitimately re-published in the meantime
+  # (an adoption verdict for a worker that turned out to be alive and
+  # this epoch's). "Still a member" alone cannot tell that apart from
+  # "never retired", so the pending entry is the token: publishing
+  # clears it, and a retry without one is stale.
   def handle_info({:retire_member, tag, worker_id}, %State{} = t) do
-    if Map.has_key?(real_members(t, tag), worker_id),
-      do: retire_member(t, tag, worker_id),
-      else: {:noreply, t}
+    if Map.has_key?(real_members(t, tag), worker_id) and Map.has_key?(t.pending_retires, {tag, worker_id}),
+      do: retire_member(%{t | pending_retires: Map.delete(t.pending_retires, {tag, worker_id})}, tag, worker_id),
+      else: {:noreply, %{t | pending_retires: Map.delete(t.pending_retires, {tag, worker_id})}}
   end
 
   # Death healing (event-driven, FDB teamTracker-style) — with FDB's
@@ -338,35 +343,57 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     |> Map.values()
     |> Enum.map(fn {tag, _start_key} -> tag end)
     |> Enum.uniq()
-    |> Enum.reject(fn tag -> refs |> Map.get(tag, %{}) |> Map.delete(@placeholder_worker_id) != %{} end)
+    |> Enum.filter(fn tag -> refs |> Map.get(tag, %{}) |> Map.delete(@placeholder_worker_id) == %{} end)
   end
 
-  defp publish_placeholders(_t, []), do: :ok
+  defp publish_placeholders(%State{} = t, []), do: {:ok, t}
 
   defp publish_placeholders(%State{} = t, tags) do
-    # A tag already carrying the placeholder needs no write: the entry is
-    # the same name on the same node, and re-setting it would be a commit
-    # that changes nothing.
-    case Enum.reject(tags, &Map.has_key?(members(t, &1), @placeholder_worker_id)) do
+    # A tag already carrying OUR placeholder needs no write: same name,
+    # same node, so re-setting it would be a commit that changes
+    # nothing. A placeholder naming a different node is a prior epoch's
+    # leak — it parks nothing we can reach, so it must be overwritten,
+    # not trusted.
+    case Enum.reject(tags, &placeholder_here?(t, &1)) do
       [] ->
-        :ok
+        {:ok, t}
 
       missing ->
         with :ok <- Transactions.commit_checked(t.lock, t.deps, Enum.map(missing, &placeholder_mutation/1)) do
           Telemetry.emit_placeholder_published(t.cluster, missing)
-          :ok
+          # Record what we just committed: every later placeholder
+          # decision reads this view, and a view that omits a committed
+          # placeholder omits its clear when a real member lands.
+          {:ok, Enum.reduce(missing, t, &put_member(&2, &1, @placeholder_worker_id, our_node_string()))}
         end
     end
   end
 
+  # Coverage the placeholder can actually provide: the entry must name
+  # this distributor's own node, because a parked read is held by the
+  # local placeholder process. A placeholder key naming a dead node
+  # routes clients at nothing.
+  defp placeholder_here?(%State{} = t, tag), do: Map.get(members(t, tag), @placeholder_worker_id) == our_node_string()
+
+  defp our_node_string, do: Atom.to_string(node())
+
   defp placeholder_mutation(tag) do
-    {:set, SystemKeys.materializer_key(tag, @placeholder_worker_id),
-     Values.encode_materializer_node(Atom.to_string(node()))}
+    {:set, SystemKeys.materializer_key(tag, @placeholder_worker_id), Values.encode_materializer_node(our_node_string())}
   end
 
   defp members(%State{} = t, tag), do: Map.get(t.snapshot.materializer_refs, tag, %{})
 
   defp real_members(%State{} = t, tag), do: t |> members(tag) |> Map.delete(@placeholder_worker_id)
+
+  # Members that can actually serve a read: a member whose retirement is
+  # awaiting a retry is still committed (the keyspace names it, honestly)
+  # but it is known-gone, so draining parked reads into it would undo the
+  # park for nothing.
+  defp coverage_members(%State{} = t, tag) do
+    t
+    |> real_members(tag)
+    |> Map.reject(fn {worker_id, _node} -> Map.has_key?(t.pending_retires, {tag, worker_id}) end)
+  end
 
   defp put_member(%State{} = t, tag, worker_id, node_string) do
     refs =
@@ -452,6 +479,9 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
          t
          |> put_member(tag, worker_id, node_string)
          |> drop_member(tag, @placeholder_worker_id)
+         # This member is legitimately in the set again; any retirement
+         # still awaiting a retry is now stale and must not fire.
+         |> cancel_retire(tag, worker_id)
          |> Map.update!(:pending_demands, &MapSet.delete(&1, tag))
          |> monitor_assignment(tag, worker_id, callable)}
 
@@ -493,7 +523,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   end
 
   defp placeholder_retirement(%State{} = t, tag) do
-    if t |> members(tag) |> Map.has_key?(@placeholder_worker_id),
+    if Map.has_key?(members(t, tag), @placeholder_worker_id),
       do: [{:clear, SystemKeys.materializer_key(tag, @placeholder_worker_id)}],
       else: []
   end
@@ -549,10 +579,19 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   # A heal is retirement plus an eager replacement; an idle spin-down is
   # retirement alone (the shard proved cold — the next read revives it).
+  # Healing is retire-then-recruit, guarded on membership: a signal for
+  # a member the committed set no longer names is STALE (some other
+  # mechanism already retired it), and healing it would recruit a
+  # replica nothing asked for — unboundedly, since every redundant
+  # member is itself monitored.
   defp heal_member(%State{} = t, tag, worker_id) do
-    case retire_member(t, tag, worker_id) do
-      {:noreply, t2} -> {:noreply, maybe_recruit(t2, tag)}
-      {:stop, _reason, _t} = stop -> stop
+    if Map.has_key?(real_members(t, tag), worker_id) do
+      case retire_member(t, tag, worker_id) do
+        {:noreply, t2} -> {:noreply, maybe_recruit(t2, tag)}
+        {:stop, _reason, _t} = stop -> stop
+      end
+    else
+      {:noreply, t}
     end
   end
 
@@ -564,23 +603,28 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # A superseded commit cedes. A transient failure keeps the local view
   # honest (the keyspace still names the departed worker) and schedules
   # a retry: nothing else would revisit this tag, and an uncleared
-  # corpse can be handed to clients by the deterministic pick.
+  # corpse can be handed to clients by the deterministic pick. Until
+  # that retry resolves, the member is listed in `pending_retires` — it
+  # is still committed, but it is not coverage, so the demand path skips
+  # it and a legitimate re-publication cancels the retry.
   defp retire_member(%State{} = t, tag, worker_id) do
     remaining = t |> real_members(tag) |> Map.delete(worker_id)
     parking? = remaining == %{}
 
-    if parking?, do: Placeholder.notify_uncovered(t.placeholder, tag)
+    if parking?,
+      do: Placeholder.notify_uncovered(t.placeholder, tag),
+      else: notify_covered_pick(t, tag, remaining)
 
     mutations =
       [{:clear, SystemKeys.materializer_key(tag, worker_id)}] ++
-        if parking? and not Map.has_key?(members(t, tag), @placeholder_worker_id),
+        if parking? and not placeholder_here?(t, tag),
           do: [placeholder_mutation(tag)],
           else: []
 
     case Transactions.commit_checked(t.lock, t.deps, mutations) do
       :ok ->
-        t = drop_member(t, tag, worker_id)
-        t = if parking?, do: put_member(t, tag, @placeholder_worker_id, Atom.to_string(node())), else: t
+        t = t |> drop_member(tag, worker_id) |> demonitor_member(tag, worker_id) |> cancel_retire(tag, worker_id)
+        t = if parking?, do: put_member(t, tag, @placeholder_worker_id, our_node_string()), else: t
         {:noreply, t}
 
       {:error, :superseded} ->
@@ -593,9 +637,49 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
             "#{inspect(reason)}; retrying"
         )
 
-        Process.send_after(self(), {:retire_member, tag, worker_id}, t.backoff_ms)
-        {:noreply, t}
+        timer = Process.send_after(self(), {:retire_member, tag, worker_id}, t.backoff_ms)
+        {:noreply, %{t | pending_retires: Map.put(t.pending_retires, {tag, worker_id}, timer)}}
     end
+  end
+
+  # A partial retirement leaves the shard covered, but the placeholder
+  # may still be forwarding to the member that just left (an earlier
+  # notify_covered named it). Point it at the survivor the client-facing
+  # pick would choose.
+  defp notify_covered_pick(%State{} = t, tag, remaining) do
+    case RoutingData.pick_member(remaining) do
+      {:ok, {worker_id, node_string}} ->
+        Placeholder.notify_covered(t.placeholder, tag, callable_ref(t.cluster, worker_id, node_string))
+
+      :error ->
+        :ok
+    end
+  end
+
+  # Retirement disarms the member's monitor: an armed monitor for a
+  # member no longer in the set turns that member's eventual death into
+  # a heal, and a heal into a redundant replica.
+  defp demonitor_member(%State{} = t, tag, worker_id) do
+    case Enum.find(t.assignment_monitors, fn {_ref, member} -> member == {tag, worker_id} end) do
+      {ref, _member} ->
+        Process.demonitor(ref, [:flush])
+        %{t | assignment_monitors: Map.delete(t.assignment_monitors, ref)}
+
+      nil ->
+        t
+    end
+  end
+
+  defp cancel_retire(%State{} = t, tag, worker_id) do
+    case Map.pop(t.pending_retires, {tag, worker_id}) do
+      {nil, _} -> t
+      {timer, rest} -> cancel_timer(t, timer, rest)
+    end
+  end
+
+  defp cancel_timer(%State{} = t, timer, rest) do
+    Process.cancel_timer(timer)
+    %{t | pending_retires: rest}
   end
 
   defp clear_unreachable(%State{} = t, tag, worker_id),
@@ -616,8 +700,9 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # under the fence. Anything else (wedged, dead, unreachable beyond the
   # monitor's damping) is healed; the worker itself is never removed —
   # it retires in-band when it observes the replacing entry. One shot,
-  # at the sweep; tags are reserved in `recruiting` while in flight so
-  # demand recruitment cannot double-cover.
+  # at the sweep. Nothing is reserved while a probe runs: membership is
+  # a set, so a concurrent recruit costs a redundant worker, never a
+  # lost heal.
   defp verify_assignments(%State{recruitment_ctx: nil} = t), do: t
 
   defp verify_assignments(%State{} = t) do

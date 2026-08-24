@@ -28,6 +28,7 @@ defmodule Bedrock.ControlPlane.Distributor.State do
           verification_task_refs: %{reference() => {Bedrock.range_tag(), Worker.id()}},
           assignment_monitors: %{reference() => {Bedrock.range_tag(), Worker.id()}},
           unreachable_counts: %{{Bedrock.range_tag(), Worker.id()} => pos_integer()},
+          pending_retires: %{{Bedrock.range_tag(), Worker.id()} => reference()},
           reverify_interval_ms: pos_integer(),
           backoff: %{Bedrock.range_tag() => integer()},
           backoff_ms: pos_integer()
@@ -51,6 +52,7 @@ defmodule Bedrock.ControlPlane.Distributor.State do
     verification_task_refs: %{},
     assignment_monitors: %{},
     unreachable_counts: %{},
+    pending_retires: %{},
     reverify_interval_ms: 2_000,
     backoff: %{},
     backoff_ms: 5_000

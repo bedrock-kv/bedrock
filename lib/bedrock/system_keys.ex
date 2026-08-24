@@ -67,7 +67,14 @@ defmodule Bedrock.SystemKeys do
   def materializer_key(tag, worker_id) when is_integer(tag) and is_binary(worker_id),
     do: "#{@system_prefix}/materializers/#{tag}/#{worker_id}"
 
-  @doc "Prefix covering one tag's members"
+  @doc """
+  Prefix covering one tag's members.
+
+  The family's standard triple mirrors FDB's (`SystemData.cpp`):
+  `materializers_prefix/0` is `serverKeysRange`, `materializer_key/2` is
+  `serverKeysKey`, and this is `serverKeysPrefixFor` — the scan that
+  answers "who serves this shard" without decoding the whole family.
+  """
   @spec materializer_tag_prefix(Bedrock.range_tag()) :: Bedrock.key()
   def materializer_tag_prefix(tag) when is_integer(tag), do: "#{@system_prefix}/materializers/#{tag}/"
 

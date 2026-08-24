@@ -18,8 +18,9 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder do
   no-ops.
 
   Addressing is the settled option 2 (bedrock-q67.21): the placeholder
-  IS a materializer ref. The distributor publishes
-  `materializers/<tag> = {placeholder_worker_id, distributor_node}` for
+  IS a materializer ref — an ordinary MEMBER of the shard's set, one
+  that parks rather than serves. The distributor publishes
+  `materializers/<tag>/<placeholder_worker_id> = distributor_node` for
   uncovered tags, and the placeholder registers under
   `cluster.otp_name_for_worker(placeholder_worker_id)` — so proxies and
   clients need no special case at all; coverage gaps are visible in the

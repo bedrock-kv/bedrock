@@ -187,6 +187,50 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       assert placeholder_sets == [
                {SystemKeys.materializer_key(1, Placeholder.worker_id()), {:ok, node_string}}
              ]
+
+      # The local view must record what the commit just wrote. Every
+      # later placeholder decision reads this map; a stale view omits
+      # the clear when a real member lands and leaks the key forever.
+      assert t.snapshot.materializer_refs[1] == %{Placeholder.worker_id() => node_string}
+    end
+
+    test "publishing a real member clears the placeholder the sweep committed" do
+      test_pid = self()
+      node_string = Atom.to_string(node())
+
+      refs_entries = [
+        {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(node_string)}
+      ]
+
+      assert {:noreply, t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
+
+      # Drain the sweep's own commit; the recruit for tag 1 is next.
+      assert_received {:committed, _}
+
+      assert {:noreply, t2} =
+               Server.handle_info({:recruitment_complete, 1, {:ok, self(), node(), "wkr_new"}}, %{
+                 t
+                 | recruiting: MapSet.new([1])
+               })
+
+      assert_received {:committed, encoded}
+      assert {:ok, mutations} = Transaction.mutations(encoded)
+      mutations = Enum.to_list(mutations)
+
+      assert Enum.any?(mutations, fn
+               {:set, key, _} -> key == SystemKeys.materializer_key(1, "wkr_new")
+               _ -> false
+             end)
+
+      # The placeholder key must be cleared in the SAME commit — the set
+      # format makes this mandatory, where the old single-key format got
+      # it for free by overwriting.
+      assert Enum.any?(mutations, fn
+               {:clear, key} -> key == SystemKeys.materializer_key(1, Placeholder.worker_id())
+               _ -> false
+             end)
+
+      assert t2.snapshot.materializer_refs[1] == %{"wkr_new" => node_string}
     end
 
     test "pre-existing placeholder refs are not republished — same name, same node, still valid" do
@@ -1090,6 +1134,212 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         end)
 
       assert log =~ "retiring wkr_dead"
+    end
+
+    test "a placeholder left by a PRIOR epoch's node is replaced, not trusted" do
+      test_pid = self()
+      ref = make_ref()
+
+      # A previous distributor on a now-dead node leaked its placeholder
+      # key. Presence alone must not count as coverage: parking against
+      # a dead node fails reads instead of holding them, and no local
+      # placeholder ever hears the demand.
+      t =
+        test_pid
+        |> healing_state(
+          snapshot: %{
+            shard_layout: %{},
+            materializer_refs: %{
+              7 => %{"wkr_dead" => Atom.to_string(node()), Placeholder.worker_id() => "gone@elsewhere"}
+            }
+          }
+        )
+        |> Map.put(:assignment_monitors, %{ref => {7, "wkr_dead"}})
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :killed}, t)
+
+        assert_received {:committed, encoded}
+        assert {:ok, mutations} = Transaction.mutations(encoded)
+
+        assert Enum.any?(Enum.to_list(mutations), fn
+                 {:set, key, value} ->
+                   key == HealKeys.materializer_key(7, Placeholder.worker_id()) and
+                     HealValues.decode_materializer_node(value) == {:ok, Atom.to_string(node())}
+
+                 _ ->
+                   false
+               end)
+
+        assert t2.snapshot.materializer_refs[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
+      end)
+    end
+
+    # A placeholder stub that keeps relaying every cast, so a test can
+    # observe more than one notification.
+    defp relaying_placeholder(test_pid) do
+      spawn(fn ->
+        relay = fn relay ->
+          receive do
+            {:"$gen_cast", msg} ->
+              send(test_pid, {:placeholder_got, msg})
+              relay.(relay)
+          end
+        end
+
+        relay.(relay)
+      end)
+    end
+
+    test "retiring one of several members leaves the tag covered and points the placeholder at the survivor" do
+      test_pid = self()
+      ref = make_ref()
+      node_string = Atom.to_string(node())
+
+      t =
+        test_pid
+        |> healing_state(
+          snapshot: %{
+            shard_layout: %{},
+            materializer_refs: %{7 => %{"wkr_dead" => node_string, "wkr_live" => node_string}}
+          },
+          placeholder: relaying_placeholder(test_pid)
+        )
+        |> Map.put(:assignment_monitors, %{ref => {7, "wkr_dead"}})
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :killed}, t)
+
+        assert_received {:committed, encoded}
+        assert {:ok, mutations} = Transaction.mutations(encoded)
+        mutations = Enum.to_list(mutations)
+
+        # The survivor still covers the shard, so no placeholder is added.
+        refute Enum.any?(mutations, fn
+                 {:set, key, _} -> key == HealKeys.materializer_key(7, Placeholder.worker_id())
+                 _ -> false
+               end)
+
+        assert Enum.any?(mutations, fn
+                 {:clear, key} -> key == HealKeys.materializer_key(7, "wkr_dead")
+                 _ -> false
+               end)
+
+        # The placeholder must learn the survivor: it may still be
+        # forwarding to the corpse from an earlier notify_covered.
+        assert_receive {:placeholder_got, {:covered, 7, _survivor_ref}}
+        refute_received {:placeholder_got, {:uncovered, 7}}
+
+        assert t2.snapshot.materializer_refs[7] == %{"wkr_live" => node_string}
+      end)
+    end
+
+    test "retiring a member disarms its monitor — a later death cannot re-heal a tag that already healed" do
+      test_pid = self()
+      ref = make_ref()
+      node_string = Atom.to_string(node())
+
+      t =
+        test_pid
+        |> healing_state(
+          snapshot: %{
+            shard_layout: %{},
+            materializer_refs: %{7 => %{"wkr_dead" => node_string, "wkr_live" => node_string}}
+          },
+          placeholder: relaying_placeholder(test_pid)
+        )
+        |> Map.put(:assignment_monitors, %{ref => {7, "wkr_dead"}})
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        # Retire via a verification failure: this path does NOT pop the
+        # monitor the way a DOWN does, so a stale monitor would survive.
+        assert {:noreply, t2} =
+                 Server.handle_info({:assignment_verified, 7, "wkr_dead", {:error, :wrong_epoch}}, t)
+
+        assert_received {:committed, _}
+        refute Map.has_key?(t2.snapshot.materializer_refs[7], "wkr_dead")
+
+        # The monitor for the retired member must be gone; otherwise its
+        # eventual death recruits a redundant replica, unboundedly.
+        refute Enum.any?(t2.assignment_monitors, fn {_ref, member} -> member == {7, "wkr_dead"} end)
+      end)
+    end
+
+    test "a stale DOWN for an already-retired member is ignored, not healed into a redundant replica" do
+      test_pid = self()
+      ref = make_ref()
+
+      # The member is no longer in the committed set; the monitor is a
+      # leftover. Healing here would recruit a replica nothing asked for.
+      t =
+        test_pid
+        |> healing_state(
+          snapshot: %{shard_layout: %{}, materializer_refs: %{7 => %{"wkr_live" => Atom.to_string(node())}}}
+        )
+        |> Map.put(:assignment_monitors, %{ref => {7, "wkr_gone"}})
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :killed}, t)
+
+        refute_received {:committed, _}
+        refute MapSet.member?(t2.recruiting, 7)
+      end)
+    end
+
+    test "a pending retirement is cancelled when the member is legitimately re-published" do
+      test_pid = self()
+      ref = make_ref()
+      node_string = Atom.to_string(node())
+
+      t = healing_state(test_pid, [])
+      good_deps = t.deps
+      failing = Map.put(good_deps, :commit_fn, fn _p, _e, _t, _o -> {:error, :timeout} end)
+      t = Map.merge(t, %{deps: failing, assignment_monitors: %{ref => {7, "wkr_dead"}}, backoff_ms: 5})
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        # The retirement commit fails transiently and schedules a retry.
+        assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :killed}, t)
+        assert_receive {:retire_member, 7, "wkr_dead"}, 200
+
+        # ...but the worker turns out to be alive and IS this epoch's:
+        # the verification probe adopts it and re-publishes its key.
+        t3 = %{t2 | deps: good_deps}
+
+        assert {:noreply, t4} =
+                 Server.handle_info(
+                   {:assignment_verified, 7, "wkr_dead", {:adopted, self(), node(), "wkr_dead"}},
+                   t3
+                 )
+
+        # The stale retry must not retire the freshly adopted worker.
+        assert {:noreply, t5} = Server.handle_info({:retire_member, 7, "wkr_dead"}, t4)
+        assert t5.snapshot.materializer_refs[7] == %{"wkr_dead" => node_string}
+      end)
+    end
+
+    test "a member awaiting retirement is never handed to the placeholder as coverage" do
+      test_pid = self()
+      ref = make_ref()
+
+      t = healing_state(test_pid, placeholder: relaying_placeholder(test_pid))
+
+      t =
+        Map.merge(t, %{
+          deps: Map.put(t.deps, :commit_fn, fn _p, _e, _t, _o -> {:error, :timeout} end),
+          assignment_monitors: %{ref => {7, "wkr_dead"}},
+          backoff_ms: 50
+        })
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :killed}, t)
+
+        # The local view still names the corpse (honest: so does the
+        # keyspace). A demand must NOT drain parked reads into it.
+        assert {:noreply, t3} = Server.handle_cast({:coverage_demand, 7}, t2)
+
+        refute_received {:placeholder_got, {:covered, 7, _}}
+        assert MapSet.member?(t3.recruiting, 7)
+      end)
     end
 
     test "a retirement retry for a member already gone is a no-op" do

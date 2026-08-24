@@ -53,6 +53,13 @@ defmodule Bedrock.SystemKeys.Reader do
   map `%{tag => %{worker_id => node}}` - a shard's members are a set, and
   absence of a key is absence of a member. Foreign or undecodable entries
   fail the whole decode.
+
+  This is deliberately the loud edge of the format change: a keyspace
+  still holding single-valued `materializers/<tag>` entries fails here
+  rather than being read as an empty family. An empty family reads as
+  "no shard has any member", which would silently re-recruit every
+  shard and orphan the live ones — a wrong answer is worse than a
+  failed recovery that names the offending key.
   """
   @spec decode_materializer_members([{Bedrock.key(), binary()}]) ::
           {:ok, %{Bedrock.range_tag() => %{Bedrock.Service.Worker.id() => String.t()}}}

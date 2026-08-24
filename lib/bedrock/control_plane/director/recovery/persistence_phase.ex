@@ -217,14 +217,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     build_materializer_keys(tx, recovery_attempt)
   end
 
-  # Creates materializer_key(tag) -> {worker_id, node} entries as a DIFF
+  # Creates materializer_key(tag, worker_id) -> node entries as a DIFF
   # against the prior family (read by bootstrap): only assignments this
   # recovery changed are written; unchanged entries are left in place,
   # and entries for tags outside this layout are not recovery's to clean
   # — read-and-heal means stale reconciliation belongs to the
   # distributor (bedrock-q67.21.4). A nil prior means the family was not
   # read (fresh cluster, legacy path): every assignment writes, the safe
-  # direction. The attempt carries refs in the keyspace-value shape, so
+  # direction. The attempt carries refs in the family's member shape, so
   # keyspace and routing-snapshot seed remain one map read twice. Gated
   # on the same INPUT as before: shard_materializers absent/empty means
   # shard management is not active.
@@ -245,13 +245,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         # and members recovery never touched (other replicas of the same
         # shard) keep their keys — the family is a set, so writing one
         # member never implies removing another.
-        Enum.reduce(materializers, tx, fn {tag, {worker_id, node}}, tx ->
-          if prior |> Map.get(tag, %{}) |> Map.get(worker_id) == node do
-            tx
-          else
-            Tx.set(tx, SystemKeys.materializer_key(tag, worker_id), Values.encode_materializer_node(node))
-          end
-        end)
+        for {tag, members} <- materializers, {worker_id, node} <- members, reduce: tx do
+          tx ->
+            if prior |> Map.get(tag, %{}) |> Map.get(worker_id) == node do
+              tx
+            else
+              Tx.set(tx, SystemKeys.materializer_key(tag, worker_id), Values.encode_materializer_node(node))
+            end
+        end
     end
   end
 

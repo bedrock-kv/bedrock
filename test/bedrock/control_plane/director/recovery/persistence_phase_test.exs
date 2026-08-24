@@ -43,7 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       <<0xFF>> => {1, <<>>},
       <<0xFF, 0xFF>> => {0, <<0xFF>>}
     })
-    |> Map.put(:shard_materializers, %{0 => {"wkr_sys", node_string()}, 1 => {"wkr_user", node_string()}})
+    |> Map.put(:shard_materializers, %{0 => %{"wkr_sys" => node_string()}, 1 => %{"wkr_user" => node_string()}})
     |> Map.put(:seeded_layout?, true)
     |> Map.put(:prior_materializer_refs, %{})
     |> Map.put(:transaction_system_layout, mock_transaction_system_layout())

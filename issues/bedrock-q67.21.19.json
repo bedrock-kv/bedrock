@@ -6,10 +6,10 @@
   "description": "The same bug class bedrock-q67.21.17 removed from listings survives one layer up: a listed key whose version will not parse is silently discarded, so the caller reads a shorter history as fact.\n\n- chunk_reader.ex:269 — latest_version/1 returns nil when no key parses, which callers read as 'no chunks exist'.\n- snapshot.ex:149 — Stream.reject(\u0026is_nil/1) drops entries whose version did not extract.\n\nBoth make a shard look OLDER or EMPTIER than it is. A corrupt key name, or one written in a future format this build does not understand, is indistinguishable from absence — which is precisely the conflation q67.21.17 eliminated at the listing boundary.\n\nChunkReader already refuses this elsewhere and states why: list_chunk_metadata/2 raises ChunkReader.ReadError on a header that will not decode 'to avoid silent replay gaps' (chunk_reader.ex:90), with an explicit :on_error option for callers that genuinely want tolerance. The key-parse path should follow the same convention rather than deciding silently on the caller's behalf.\n\nFound by the PR #202 cold audit while sweeping for other instances; these were the only two in object_storage/, demux/ and materializer/.",
   "id": "bedrock-q67.21.19",
   "labels": [],
-  "parent": "bedrock-q67.21",
+  "parent": "bedrock-q67",
   "priority": 2,
   "status": "open",
   "title": "[BUG] Unparseable object keys are silently dropped, making shards look older or emptier",
   "type": "bug",
-  "updated_at": "2026-08-24T21:15:40Z"
+  "updated_at": "2026-08-24T23:06:49Z"
 }

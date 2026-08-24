@@ -7,9 +7,15 @@
   "id": "bedrock-q67.21.18",
   "labels": [],
   "parent": "bedrock-q67.21",
+  "comments": [
+    {
+      "text": "-m",
+      "timestamp": "2026-08-24T21:18:32Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "An unreadable materializer exits so it can be replaced (the snapshot is our fetchKeys)",
   "type": "task",
-  "updated_at": "2026-08-24T20:56:15Z"
+  "updated_at": "2026-08-24T21:18:32Z"
 }

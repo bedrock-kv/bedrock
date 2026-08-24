@@ -13,8 +13,8 @@
   "labels": [],
   "parent": "bedrock-q67.21",
   "priority": 2,
-  "status": "in_progress",
+  "status": "open",
   "title": "In-band retirement: the victim learns from its own stream",
   "type": "task",
-  "updated_at": "2026-08-24T18:02:32Z"
+  "updated_at": "2026-08-24T18:03:37Z"
 }

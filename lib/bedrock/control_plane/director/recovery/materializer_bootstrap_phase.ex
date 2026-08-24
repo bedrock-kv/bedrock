@@ -15,15 +15,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   ## Existing Cluster
 
   For an existing cluster:
-  1. Find materializer with shard_id = 0 (system shard) in available_services
-  2. If not found, create a new materializer on a capable node
-  3. Lock materializer for recovery
-  4. Unlock it with its replica set of pull sources to start pulling
-  5. Wait for materializer to catch up (60s timeout)
-  6. Query shard layout from `\\xff/system/shard_keys/*`
+  1. Resolve the system materializer BY NAME from the prior core state —
+     it is looked up, never invented (bedrock-q67.21.12)
+  2. Lock it for recovery
+  3. Unlock it with its replica set of pull sources to start pulling
+  4. Wait for it to catch up (60s timeout)
+  5. Query the shard layout from `\\xff/system/shard_keys/*`
 
-  Stalls if the materializer is unavailable and cannot be created, or if catchup
-  times out. Transitions to CommitProxyStartupPhase with the materializer pid and
+  Stalls if the named members are unavailable, if catchup times out, or if
+  the recovered layout reads empty. Records written before the core state
+  carried system materializers take a one-time migration: recovery adopts
+  the sole locked worker claiming tag 0, and refuses to choose when
+  several do (bedrock-q67.21.21).
+
+  Transitions to CommitProxyStartupPhase with the materializer pid and
   shard layout.
   """
 
@@ -249,6 +254,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
              context
            ),
          {:ok, shard_layout} <- get_shard_layout(materializer_pid, recovery_version, context),
+         :ok <- reject_empty_layout(shard_layout),
          {:ok, prior_refs} <- read_prior_refs(materializer_pid, recovery_version, context),
          {:ok, shard_materializers, created_services} <-
            ensure_materializers_for_shards(
@@ -284,6 +290,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         {recovery_attempt, {:stalled, reason}}
     end
   end
+
+  # An empty shard_keys family decodes as a SUCCESSFUL read of no shards
+  # (Reader.shard_layout_from_entries([]) returns {:ok, %{}}), and nothing
+  # downstream objects — resolvers for zero ranges is {:ok, []} too. So
+  # recovery would complete on a cluster with no keyspace map at all,
+  # silently, and the next recovery would inherit it.
+  #
+  # A cluster with committed logs has a committed layout: the same
+  # recovery writes both, and boundaries never change without splits. An
+  # empty read is therefore never an empty cluster — it is a materializer
+  # that cannot answer for the system shard, and adopting its silence
+  # would orphan every shard the cluster owns. Stalling is retryable; the
+  # materializer may simply still be catching up.
+  @spec reject_empty_layout(RecoveryAttempt.shard_layout()) :: :ok | {:error, :recovered_shard_layout_is_empty}
+  defp reject_empty_layout(shard_layout) when map_size(shard_layout) == 0,
+    do: {:error, :recovered_shard_layout_is_empty}
+
+  defp reject_empty_layout(_shard_layout), do: :ok
 
   # Resolvers are recreated each epoch, one per shard range in the
   # recovered layout — the same construction the fresh-cluster path uses,
@@ -328,7 +352,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end)
   end
 
-  # The system shard is LOOKED UP, never discovered and never invented.
+  # The system shard is LOOKED UP by name. Discovery exists only as
+  # the one-time migration for records that predate the field, and it
+  # refuses to choose when the answer is ambiguous.
   #
   # The prior core state names its members, because both durable
   # families — the shard layout and materializer membership — are served
@@ -370,22 +396,44 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
-  # The legacy path only. Recovery reads which locked worker claims the
-  # system shard; it never creates one, so a cluster with nothing to
-  # adopt still stalls rather than coming up on an empty layout and
-  # orphaning its data.
+  # The legacy path only, and it adopts exactly one UNAMBIGUOUS survivor.
+  #
+  # Recovery reads which locked worker claims the system shard; it never
+  # creates one. But it also refuses to CHOOSE. This path runs only on
+  # records written before the field existed — precisely the clusters
+  # whose recovery could invent a replacement when a tag-0 node missed
+  # the 2s roll call, so empty strays claiming shard 0 are the expected
+  # population here, not an exotic case. Picking among them by lowest
+  # RANDOM worker id would be a coin toss, and the winner is then written
+  # to the durable record and resolved by name forever: one wrong flip is
+  # permanent.
+  #
+  # So ambiguity stalls, naming the candidates. An operator can see the
+  # choice and make it; recovery cannot make it silently.
   defp discover_system_materializer(recovery_attempt) do
-    case recovery_attempt
-         |> existing_materializers_by_shard()
-         |> Map.fetch(RecoveryAttempt.system_shard_id()) do
-      {:ok, {worker_id, service}} ->
-        Logger.info("Bootstrap record names no system materializers; adopting locked survivor #{worker_id}")
+    case tag_zero_claimants(recovery_attempt) do
+      [{worker_id, service}] ->
+        Logger.info("Bootstrap record names no system materializers; adopting sole locked survivor #{worker_id}")
 
         {:ok, {worker_id, service}}
 
-      :error ->
+      [] ->
         {:error, :no_system_materializer_found}
+
+      several ->
+        {:error, {:ambiguous_system_materializer, Enum.map(several, fn {worker_id, _} -> worker_id end)}}
     end
+  end
+
+  # Every locked worker that reports itself serving the system shard,
+  # ordered so the stall reason is stable across attempts.
+  defp tag_zero_claimants(recovery_attempt) do
+    system_shard = RecoveryAttempt.system_shard_id()
+
+    for {worker_id, info} <- Enum.sort(recovery_attempt.materializer_recovery_info_by_id),
+        Map.get(info, :shard_id) == system_shard,
+        %{status: {:up, ref}} <- [Map.get(recovery_attempt.transaction_services, worker_id)],
+        do: {worker_id, {:materializer, ref}}
   end
 
   # A named member counts only if this epoch actually locked it and it

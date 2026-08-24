@@ -851,7 +851,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     end
   end
 
-  describe "the system shard is looked up, never discovered or invented" do
+  describe "the system shard is looked up; discovery is the legacy migration only" do
     test "an existing cluster whose core state names no system materializer, and has none to adopt, STALLS" do
       # Recovery must never manufacture the store its own metadata lives
       # in. FDB refuses the same way: it builds its log system from
@@ -940,6 +940,78 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       # on: this one is retryable, and that is where to go looking.
       assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"wkr_gone" => "dead@host"}}}} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
+    end
+
+    test "legacy discovery STALLS when more than one worker claims tag 0" do
+      # The migration runs only on pre-q67.21.12 records — precisely the
+      # clusters whose recovery could invent a replacement when a tag-0
+      # node missed the 2s roll call. So empty strays claiming shard 0
+      # are exactly the population here, and picking by lowest RANDOM
+      # worker id would be a coin toss whose result is then written to
+      # the durable record and resolved by name forever.
+      #
+      # Ambiguity is not a decision recovery gets to make silently.
+      a = spawn(fn -> Process.sleep(:infinity) end)
+      b = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:materializer_recovery_info_by_id, %{
+          "mat_a" => %{kind: :materializer, shard_id: 0, durable_version: Version.from_integer(500)},
+          "mat_b" => %{kind: :materializer, shard_id: 0, durable_version: Version.from_integer(500)}
+        })
+        |> Map.put(:transaction_services, %{
+          "mat_a" => %{kind: :materializer, status: {:up, a}},
+          "mat_b" => %{kind: :materializer, status: {:up, b}}
+        })
+
+      context = Map.put(recovery_context(), :prior_core_state, %{logs: %{"log_1" => [0]}})
+
+      assert {_attempt, {:stalled, {:ambiguous_system_materializer, ["mat_a", "mat_b"]}}} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+    end
+
+    test "a recovered shard layout that reads EMPTY stalls instead of completing" do
+      # An empty shard_keys family decodes as a successful read of no
+      # shards (Reader.shard_layout_from_entries([]) -> {:ok, %{}}), and
+      # nothing downstream objects: resolvers for zero ranges is also
+      # {:ok, []}. So recovery would COMPLETE on a cluster with no
+      # keyspace map at all.
+      #
+      # A cluster with committed logs has a committed layout — the same
+      # recovery writes both. So an empty read is never an empty cluster;
+      # it is a materializer that cannot answer for the system shard, and
+      # adopting its silence would orphan every shard the cluster owns.
+      system_pid = spawn(fn -> Process.sleep(:infinity) end)
+      recovery_version = Version.from_integer(500)
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0]})
+        |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
+        |> Map.put(:materializer_recovery_info_by_id, %{
+          "mat_empty" => %{kind: :materializer, shard_id: 0, durable_version: recovery_version}
+        })
+        |> Map.put(:transaction_services, %{"mat_empty" => %{kind: :materializer, status: {:up, system_pid}}})
+
+      context =
+        recovery_context()
+        |> Map.put(:prior_core_state, %{
+          logs: %{"log_1" => [0]},
+          system_materializers: %{"mat_empty" => "n@host"}
+        })
+        |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _v, _s -> :ok end)
+        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
+          {:ok, %{current_version: recovery_version}}
+        end)
+        |> Map.put(:get_shard_layout_fn, fn _pid, _v -> {:ok, %{}} end)
+
+      capture_log(fn ->
+        assert {_attempt, {:stalled, :recovered_shard_layout_is_empty}} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+      end)
     end
 
     test "a NAMED-but-unavailable record never falls back to a healthy stranger" do

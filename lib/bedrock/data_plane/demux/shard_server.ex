@@ -500,6 +500,12 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     {:ok, transactions}
   rescue
     e in ChunkReader.ReadError -> {:error, {:storage_read_failed, e.reason}}
+    # A listing that could not be completed is the same class of fact as
+    # a chunk that could not be read, and must report the same SHAPE:
+    # operators and telemetry match on the reason, not on an exception
+    # struct. Named explicitly so it does not ride the catch-all below,
+    # which exists for genuine bugs and should stay visible as such.
+    e in ObjectStorage.ListError -> {:error, {:storage_read_failed, e.reason}}
     e -> {:error, {:storage_read_failed, e}}
   end
 

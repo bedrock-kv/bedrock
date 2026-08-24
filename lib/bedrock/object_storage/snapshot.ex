@@ -105,6 +105,12 @@ defmodule Bedrock.ObjectStorage.Snapshot do
       [] -> {:error, :not_found}
       {:error, reason} -> {:error, reason}
     end
+  rescue
+    # :not_found is a FACT — this shard has no durable baseline, and a
+    # materializer may legitimately start empty on it. A listing that
+    # failed knows nothing, and must never be able to say that: it
+    # surfaces as an ordinary error so callers fail rather than assume.
+    e in ObjectStorage.ListError -> {:error, {:list_failed, e.reason}}
   end
 
   @doc """
@@ -153,8 +159,11 @@ defmodule Bedrock.ObjectStorage.Snapshot do
 
   - `{:ok, version}` - Latest version
   - `{:error, :not_found}` - No snapshots exist
+  - `{:error, {:list_failed, reason}}` - The listing could not be
+    completed, so whether snapshots exist is UNKNOWN. Distinct from
+    `:not_found`, which is a fact.
   """
-  @spec latest_version(t()) :: {:ok, version()} | {:error, :not_found}
+  @spec latest_version(t()) :: {:ok, version()} | {:error, :not_found} | {:error, {:list_failed, term()}}
   def latest_version(%__MODULE__{} = snapshot) do
     prefix = Keys.snapshots_prefix(snapshot.shard_tag)
 
@@ -165,6 +174,8 @@ defmodule Bedrock.ObjectStorage.Snapshot do
       [] ->
         {:error, :not_found}
     end
+  rescue
+    e in ObjectStorage.ListError -> {:error, {:list_failed, e.reason}}
   end
 
   @doc """
@@ -215,12 +226,18 @@ defmodule Bedrock.ObjectStorage.Snapshot do
 
   @doc """
   Checks if any snapshots exist for this shard.
+
+  RAISES `ObjectStorage.ListError` if the listing cannot be completed.
+  There is no honest boolean for "I could not look": returning `false`
+  would be the very lie this module exists to prevent — a caller would
+  read it as "no baseline" and start a materializer empty.
   """
   @spec exists?(t()) :: boolean()
   def exists?(%__MODULE__{} = snapshot) do
     case latest_version(snapshot) do
       {:ok, _} -> true
       {:error, :not_found} -> false
+      {:error, {:list_failed, reason}} -> raise ObjectStorage.ListError, reason: reason, prefix: snapshot.shard_tag
     end
   end
 
@@ -229,6 +246,9 @@ defmodule Bedrock.ObjectStorage.Snapshot do
 
   Note: This reads the full list, so it's not efficient for shards with
   many snapshots. Use `exists?/1` to just check for presence.
+
+  RAISES `ObjectStorage.ListError` if the listing cannot be completed:
+  no count is honest when the listing is incomplete.
   """
   @spec count(t()) :: non_neg_integer()
   def count(%__MODULE__{} = snapshot) do

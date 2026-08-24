@@ -18,6 +18,8 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
 
   @behaviour Bedrock.ObjectStorage
 
+  alias Bedrock.ObjectStorage
+
   @impl true
   def put(config, key, data, _opts \\ []) do
     root = Keyword.fetch!(config, :root)
@@ -177,12 +179,33 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
           |> Enum.split_with(&File.regular?/1)
 
         sorted_files = Enum.sort(files)
-        sorted_subdirs = Enum.sort(subdirs)
+        sorted_subdirs = subdirs |> Enum.filter(&may_contain_prefix?(&1, root, prefix)) |> Enum.sort()
 
         list_next({root, sorted_subdirs ++ rest_dirs, sorted_files, prefix, limit})
 
-      {:error, _} ->
+      # Absence, not ignorance: a directory that is not there (or is not
+      # a directory at all) contributes nothing, and either can happen
+      # benignly mid-walk. The module already treats :enotdir as
+      # absence — see normalize_reason/1.
+      {:error, reason} when reason in [:enoent, :enotdir] ->
         list_next({root, rest_dirs, [], prefix, limit})
+
+      # Anything else (permissions, I/O) means we cannot see what is
+      # there, and skipping it would report those keys as absent without
+      # ever having looked.
+      {:error, reason} ->
+        raise ObjectStorage.ListError, reason: reason, prefix: prefix
     end
+  end
+
+  # Descend only into subtrees that could hold a matching key: either we
+  # are still walking DOWN toward the prefix, or we are already INSIDE
+  # it. Without this the walk descends into sibling shards whose keys can
+  # never match — which was merely wasteful while listing failures were
+  # silent, and is now a false alarm: one unreadable shard directory
+  # would abort a healthy shard's listing.
+  defp may_contain_prefix?(dir, root, prefix) do
+    relative = Path.relative_to(dir, root)
+    String.starts_with?(prefix, relative) or String.starts_with?(relative, prefix)
   end
 end

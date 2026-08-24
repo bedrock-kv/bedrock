@@ -126,15 +126,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
-  defp build_updated_bootstrap(current_bootstrap, recovery_attempt, config, transaction_system_layout) do
-    %{
-      current_bootstrap
-      | epoch: recovery_attempt.epoch,
-        logs: build_log_entries(transaction_system_layout),
-        system_materializers: build_system_materializer_entries(recovery_attempt),
-        parameters: build_parameters(config),
-        policies: build_policies(config)
-    }
+  # MERGE, not %{record | ...}. The update operator raises badkey for a
+  # key the map does not already have, and a record written before a
+  # field existed decodes without it — so updating in place crashes the
+  # director on exactly the clusters that most need to be upgraded. Merge
+  # adds what is missing and overwrites what is not, which is what
+  # "rewrite these fields" actually means.
+  @doc false
+  @spec build_updated_bootstrap(map(), RecoveryAttempt.t(), map(), map()) :: map()
+  def build_updated_bootstrap(current_bootstrap, recovery_attempt, config, transaction_system_layout) do
+    Map.merge(current_bootstrap, %{
+      epoch: recovery_attempt.epoch,
+      logs: build_log_entries(transaction_system_layout),
+      system_materializers: build_system_materializer_entries(recovery_attempt),
+      parameters: build_parameters(config),
+      policies: build_policies(config)
+    })
   end
 
   # Where the metadata lives, recorded out of band. Both durable families

@@ -310,4 +310,61 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
                Values.decode_materializer_node(Map.fetch!(store, SystemKeys.materializer_key(9, "wkr_stray")))
     end
   end
+
+  describe "rewriting a bootstrap record that predates a field" do
+    alias Bedrock.ControlPlane.Config.RecoveryAttempt
+    alias Bedrock.SystemKeys.ClusterBootstrap
+
+    test "a legacy record without system_materializers is rewritten, not crashed on" do
+      # The real decoded shape, not a hand-built map: a record written
+      # before the field existed comes back WITHOUT the key, and
+      # %{record | key: ...} raises badkey for a key the map lacks. That
+      # crashed the director in a tight retry loop on every cluster
+      # created before bedrock-q67.21.12 — the ones an upgrade must
+      # carry, not brick.
+      legacy =
+        %{
+          cluster_id: "abc",
+          epoch: 3,
+          logs: [%{id: "log_1", otp_ref: nil, shard_tags: []}],
+          coordinators: [%{node: "a@host"}],
+          parameters: %{
+            desired_logs: 1,
+            desired_replication_factor: 1,
+            desired_commit_proxies: 1,
+            desired_coordinators: 1,
+            desired_read_version_proxies: 1,
+            ping_rate_in_hz: 10,
+            retransmission_rate_in_hz: 20,
+            transaction_window_in_ms: 5000,
+            empty_transaction_timeout_ms: 1000
+          },
+          policies: %{allow_volunteer_nodes_to_join: true}
+        }
+        |> ClusterBootstrap.to_binary()
+        |> ClusterBootstrap.read()
+        |> then(fn {:ok, decoded} -> decoded end)
+
+      refute Map.has_key?(legacy, :system_materializers)
+
+      attempt =
+        %RecoveryAttempt{cluster: nil, epoch: 4, attempt: 1}
+        |> Map.put(:shard_materializers, %{0 => %{"mat_sys" => "a@host"}})
+        |> Map.put(:prior_materializer_refs, %{})
+
+      config = %{
+        parameters: legacy.parameters,
+        policies: legacy.policies
+      }
+
+      updated =
+        PersistencePhase.build_updated_bootstrap(legacy, attempt, config, %{logs: %{"log_1" => []}})
+
+      assert updated.epoch == 4
+      assert updated.system_materializers == [%{id: "mat_sys", node: "a@host"}]
+      # Untouched fields survive the merge.
+      assert updated.cluster_id == "abc"
+      assert updated.coordinators == [%{node: "a@host"}]
+    end
+  end
 end

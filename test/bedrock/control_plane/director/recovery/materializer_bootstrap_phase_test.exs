@@ -852,7 +852,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   end
 
   describe "the system shard is looked up, never discovered or invented" do
-    test "an existing cluster whose core state names no system materializer STALLS" do
+    test "an existing cluster whose core state names no system materializer, and has none to adopt, STALLS" do
       # Recovery must never manufacture the store its own metadata lives
       # in. FDB refuses the same way: it builds its log system from
       # exactly the servers the coordinated state names
@@ -867,8 +867,60 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           flunk("recovery invented a system materializer instead of stalling")
         end)
 
-      assert {_attempt, {:stalled, :bootstrap_names_no_system_materializers}} =
+      assert {_attempt, {:stalled, :no_system_materializer_found}} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
+    end
+
+    test "a legacy record naming NO members adopts a locked tag-0 survivor instead of stalling forever" do
+      # The upgrade path. A bootstrap written before system_materializers
+      # existed names nobody, and treating that as unrecoverable bricks
+      # every cluster created before the field: recovery stalls, the
+      # director retries the stall, and every client read hangs.
+      #
+      # The information is not actually lost. The locking phase has
+      # already locked every advertised materializer and each reports its
+      # own shard_id, so tag 0 can be READ from evidence rather than
+      # invented. Recovery then records what it adopted, and the next
+      # recovery takes the named path — a one-time, self-healing
+      # migration.
+      system_pid = spawn(fn -> Process.sleep(:infinity) end)
+      recovery_version = Version.from_integer(500)
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0]})
+        |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
+        |> Map.put(:materializer_recovery_info_by_id, %{
+          "mat_legacy" => %{kind: :materializer, shard_id: 0, durable_version: recovery_version}
+        })
+        |> Map.put(:transaction_services, %{"mat_legacy" => %{kind: :materializer, status: {:up, system_pid}}})
+
+      context =
+        recovery_context()
+        # The legacy shape: the field is simply absent from the record.
+        |> Map.put(:prior_core_state, %{logs: %{"log_1" => [0]}})
+        |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _v, _s -> :ok end)
+        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
+          {:ok, %{current_version: recovery_version}}
+        end)
+        |> Map.put(:get_shard_layout_fn, fn _pid, _v ->
+          {:ok, %{Bedrock.end_of_keyspace() => {0, <<0xFF>>}}}
+        end)
+        |> Map.put(:create_worker_fn, fn _f, _i, _k, _o ->
+          flunk("the migration invented a materializer instead of adopting the survivor")
+        end)
+
+      capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        # Recorded, so the persistence phase writes the field and the NEXT
+        # recovery resolves by name. That is what makes it one-time.
+        assert %{"mat_legacy" => _node} =
+                 updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+      end)
     end
 
     test "a named system materializer that is not available STALLS rather than falling back" do
@@ -886,6 +938,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       # The reason carries the members and the nodes they were last seen
       # on: this one is retryable, and that is where to go looking.
+      assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"wkr_gone" => "dead@host"}}}} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+    end
+
+    test "a NAMED-but-unavailable record never falls back to a healthy stranger" do
+      # The invariant the legacy migration must not weaken. Discovery is
+      # for a record that names NOBODY; a record that names someone is
+      # authoritative, and substituting a different worker is exactly the
+      # fabrication FDB refuses. Here a perfectly healthy tag-0
+      # materializer is locked and available — and recovery must still
+      # stall, because the record does not name it.
+      stranger_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:materializer_recovery_info_by_id, %{
+          "mat_stranger" => %{kind: :materializer, shard_id: 0, durable_version: Version.from_integer(500)}
+        })
+        |> Map.put(:transaction_services, %{"mat_stranger" => %{kind: :materializer, status: {:up, stranger_pid}}})
+
+      context =
+        Map.put(recovery_context(), :prior_core_state, %{
+          logs: %{"log_1" => [0]},
+          system_materializers: %{"wkr_gone" => "dead@host"}
+        })
+
       assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"wkr_gone" => "dead@host"}}}} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
     end

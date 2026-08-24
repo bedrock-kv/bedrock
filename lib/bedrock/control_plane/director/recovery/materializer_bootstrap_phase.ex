@@ -350,17 +350,41 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
       {worker_id, service} ->
         {:ok, {worker_id, service}}
 
-      # Two different situations, told apart so an operator is not left
-      # guessing. A record that names members means they are unreachable
-      # — retry, and the nodes they were last on say where to look. A
-      # record that names NONE on a non-fresh cluster means the bootstrap
-      # predates this field: recovery cannot learn where the metadata
-      # lives, and no retry will change that.
+      # A record that names NONE predates this field. That is not a lost
+      # cause: the locking phase has already locked every advertised
+      # materializer, and each one reports its own shard_id, so tag 0 can
+      # be READ from evidence rather than invented. Recovery adopts it,
+      # the persistence phase records it, and the next recovery resolves
+      # by name — the migration is one-time and self-healing.
       nil when named == %{} ->
-        {:error, :bootstrap_names_no_system_materializers}
+        discover_system_materializer(recovery_attempt)
 
+      # A record that DOES name members is authoritative, and substituting
+      # a different worker is the fabrication FDB refuses: it locks
+      # exactly the servers its coordinated state names
+      # (TagPartitionedLogSystem.actor.cpp:2549-2585) and waits for a
+      # quorum of THOSE. So this stalls even with a healthy stranger
+      # available, and the reason carries the nodes to go looking on.
       nil ->
         {:error, {:system_materializers_unavailable, named}}
+    end
+  end
+
+  # The legacy path only. Recovery reads which locked worker claims the
+  # system shard; it never creates one, so a cluster with nothing to
+  # adopt still stalls rather than coming up on an empty layout and
+  # orphaning its data.
+  defp discover_system_materializer(recovery_attempt) do
+    case recovery_attempt
+         |> existing_materializers_by_shard()
+         |> Map.fetch(RecoveryAttempt.system_shard_id()) do
+      {:ok, {worker_id, service}} ->
+        Logger.info("Bootstrap record names no system materializers; adopting locked survivor #{worker_id}")
+
+        {:ok, {worker_id, service}}
+
+      :error ->
+        {:error, :no_system_materializer_found}
     end
   end
 

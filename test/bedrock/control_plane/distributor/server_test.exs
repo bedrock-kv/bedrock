@@ -329,10 +329,12 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
                Server.handle_info({:assignment_verified, 1, worker, {:adopted, adopted, node(), "wkr_stale"}}, t2)
 
       # The adoption re-asserts the same entry under the fence (supersession
-      # check) and the assignment is monitored from this moment.
+      # check); the assignment stays monitored — and exactly ONCE: the
+      # sweep armed it, and publish must not double it (a doubled monitor
+      # doubles every DOWN into a double heal).
       assert_received {:committed, _}
       refute MapSet.member?(t3.recruiting, 1)
-      assert 1 in Map.values(t3.assignment_monitors)
+      assert Enum.count(Map.values(t3.assignment_monitors), &(&1 == 1)) == 1
       assert t3.snapshot.materializer_refs[1] == {"wkr_stale", node_string}
     end
 
@@ -347,17 +349,22 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         {SystemKeys.materializer_key(1), Values.encode_materializer_ref("wkr_wedged", node_string)}
       ]
 
+      # A stale answer whose adoption then definitively fails: wedged
+      # mid-adopt, alive — heal, never remove.
       info_fn = fn
         {name, _node}, [:epoch], _opts ->
-          if name == otp_name_for_worker("wkr_wedged"), do: {:error, :timeout}, else: {:ok, %{epoch: 3}}
+          if name == otp_name_for_worker("wkr_wedged"), do: {:ok, %{epoch: 2}}, else: {:ok, %{epoch: 3}}
       end
 
       t = verified_sweep_state(refs_entries, test_pid, info_fn)
 
       ctx =
-        Map.put(t.recruitment_ctx, :remove_worker_fn, fn _f, _i, _o ->
-          flunk("a pre-existing worker must never be removed")
-        end)
+        Map.merge(t.recruitment_ctx, %{
+          lock_materializer_fn: fn _worker, _epoch -> {:error, :wedged_mid_lock} end,
+          remove_worker_fn: fn _f, _i, _o ->
+            flunk("a pre-existing worker must never be removed")
+          end
+        })
 
       t = %{t | recruitment_ctx: ctx}
 
@@ -365,8 +372,14 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         ExUnit.CaptureLog.capture_log(fn ->
           assert {:noreply, t2} = Server.handle_continue(:startup_sweep, t)
 
-          assert_receive {:assignment_verified, 1, worker, {:error, :timeout}}
-          assert {:noreply, t3} = Server.handle_info({:assignment_verified, 1, worker, {:error, :timeout}}, t2)
+          assert_receive {:assignment_verified, 1, worker, {:error, {:materializer_lock_failed, :wedged_mid_lock, _}}}
+
+          assert {:noreply, t3} =
+                   Server.handle_info(
+                     {:assignment_verified, 1, worker,
+                      {:error, {:materializer_lock_failed, :wedged_mid_lock, :nonode@nohost}}},
+                     t2
+                   )
 
           # Healed: placeholder published over the wedged worker's entry,
           # replacement recruiting.
@@ -376,6 +389,187 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         end)
 
       assert log =~ "failed verification"
+    end
+
+    test "DOWN-before-verdict: the heal's recruit is suppressed by the reservation and re-issued when the park degraded" do
+      test_pid = self()
+      node_string = Atom.to_string(node())
+      ref = make_ref()
+
+      refs_entries = [{SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_dead", node_string)}]
+      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 2}} end)
+
+      # Simulate the common order for a dead named worker: monitor and
+      # reservation armed by the sweep, then the :noproc DOWN lands while
+      # the probe is still in flight — with the publish failing (the
+      # degraded park deletes the local ref).
+      t = %{
+        t
+        | placeholder: spawn(fn -> Process.sleep(:infinity) end),
+          snapshot: %{shard_layout: %{}, materializer_refs: %{0 => {"wkr_dead", node_string}}},
+          recruiting: MapSet.new([0]),
+          assignment_monitors: %{ref => 0},
+          deps: Map.put(t.deps, :commit_fn, fn _p, _e, _t, _o -> {:error, :timeout} end)
+      }
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :noproc}, t)
+
+          # The reservation suppressed the heal's recruit and the park
+          # degraded: refs is now ABSENT for the tag.
+          refute Map.has_key?(t2.snapshot.materializer_refs, 0)
+          assert t2.recruiting == MapSet.new([0])
+
+          # The late verdict re-issues the suppressed recruit — without
+          # this the committed keyspace names a corpse until the next
+          # recovery.
+          assert {:noreply, t3} =
+                   Server.handle_info({:assignment_verified, 0, {"wkr_dead", node_string}, {:error, :noproc}}, t2)
+
+          assert MapSet.member?(t3.recruiting, 0)
+        end)
+
+      assert log =~ "placeholder publish"
+    end
+
+    test "unreachable-shaped probe verdicts damp instead of healing, and escalate to a heal" do
+      test_pid = self()
+      node_string = Atom.to_string(node())
+
+      refs_entries = [{SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_far", node_string)}]
+      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+
+      t = %{
+        t
+        | placeholder: spawn(fn -> Process.sleep(:infinity) end),
+          snapshot: %{shard_layout: %{}, materializer_refs: %{0 => {"wkr_far", node_string}}},
+          reverify_interval_ms: 5
+      }
+
+      worker = {"wkr_far", node_string}
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          # Two unreachable-shaped verdicts: no heal, no commit — the
+          # damping counter climbs and the reverify tick re-arms.
+          assert {:noreply, t} = Server.handle_info({:assignment_verified, 0, worker, {:error, :unavailable}}, t)
+          assert t.unreachable_counts[0] == 1
+          refute_received {:committed, _}
+          assert_receive {:reverify_assignment, 0}, 100
+
+          assert {:noreply, t} = Server.handle_info({:assignment_verified, 0, worker, {:error, :timeout}}, t)
+          assert t.unreachable_counts[0] == 2
+          refute_received {:committed, _}
+
+          # The third escalates to the heal.
+          assert {:noreply, t} = Server.handle_info({:assignment_verified, 0, worker, {:error, :timeout}}, t)
+          assert_received {:committed, _}
+          assert t.unreachable_counts == %{}
+          assert MapSet.member?(t.recruiting, 0)
+        end)
+
+      assert log =~ "unreachable during verification; damping"
+    end
+
+    test "a :preexisting transient re-assert failure monitors without backoff and never removes" do
+      test_pid = self()
+      node_string = Atom.to_string(node())
+      adopted = spawn(fn -> Process.sleep(:infinity) end)
+
+      refs_entries = [{SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_adopt", node_string)}]
+      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+
+      ctx =
+        Map.put(t.recruitment_ctx, :remove_worker_fn, fn _f, _i, _o ->
+          flunk("a pre-existing worker must never be removed")
+        end)
+
+      t = %{
+        t
+        | recruitment_ctx: ctx,
+          snapshot: %{shard_layout: %{}, materializer_refs: %{0 => {"wkr_adopt", node_string}}},
+          deps: Map.put(t.deps, :commit_fn, fn _p, _e, _t, _o -> {:error, :timeout} end)
+      }
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, t2} =
+                   Server.handle_info(
+                     {:assignment_verified, 0, {"wkr_adopt", node_string}, {:adopted, adopted, node(), "wkr_adopt"}},
+                     t
+                   )
+
+          # The entry already names the worker and it is serving: only
+          # the fence confirmation was lost. Monitor; no backoff.
+          assert 0 in Map.values(t2.assignment_monitors)
+          assert t2.backoff == %{}
+        end)
+
+      assert log =~ "adoption re-assert"
+    end
+
+    test "a superseded :preexisting re-assert cedes WITHOUT removing the worker" do
+      test_pid = self()
+      node_string = Atom.to_string(node())
+      adopted = spawn(fn -> Process.sleep(:infinity) end)
+
+      refs_entries = [{SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_adopt", node_string)}]
+      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+
+      ctx =
+        Map.put(t.recruitment_ctx, :remove_worker_fn, fn _f, _i, _o ->
+          flunk("a pre-existing worker must never be removed, even ceding")
+        end)
+
+      superseding_deps =
+        Map.merge(t.deps, %{
+          get_fn: fn _k, _v -> {:ok, Lock.new_uid()} end,
+          commit_fn: fn _p, _e, _t, _o -> flunk("must not commit past a refused fence") end
+        })
+
+      t = %{
+        t
+        | recruitment_ctx: ctx,
+          deps: superseding_deps,
+          snapshot: %{shard_layout: %{}, materializer_refs: %{0 => {"wkr_adopt", node_string}}}
+      }
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:stop, :normal, _t} =
+                 Server.handle_info(
+                   {:assignment_verified, 0, {"wkr_adopt", node_string}, {:adopted, adopted, node(), "wkr_adopt"}},
+                   t
+                 )
+      end)
+    end
+
+    test "a reachable reverify re-runs verification — reachability is not membership" do
+      test_pid = self()
+      node_string = Atom.to_string(node())
+
+      refs_entries = [{SystemKeys.materializer_key(0), Values.encode_materializer_ref("wkr_back", node_string)}]
+
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o ->
+          send(test_pid, :probed)
+          {:ok, %{epoch: 3}}
+        end)
+
+      t = %{
+        t
+        | snapshot: %{shard_layout: %{}, materializer_refs: %{0 => {"wkr_back", node_string}}},
+          unreachable_counts: %{0 => 1}
+      }
+
+      assert {:noreply, t2} = Server.handle_info({:reverify_assignment, 0}, t)
+
+      # Monitor re-armed AND a fresh probe launched; the count survives
+      # until the verdict clears it.
+      assert 0 in Map.values(t2.assignment_monitors)
+      assert t2.unreachable_counts == %{0 => 1}
+      assert_receive :probed
+      assert_receive {:assignment_verified, 0, _worker, :current}
     end
 
     test "a verification verdict for a tag another mechanism re-owned is dropped" do
@@ -985,7 +1179,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       assert log =~ "unreachable after 3 verifications; healing"
     end
 
-    test "a reachable node resets the count and re-arms the monitor; a re-assigned tag has nothing to verify" do
+    test "a reachable node re-arms the monitor and re-verifies; the VERDICT clears the count, not the ping" do
       test_pid = self()
 
       t =
@@ -993,11 +1187,19 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           snapshot: %{shard_layout: %{}, materializer_refs: %{7 => {"wkr_alive", Atom.to_string(node())}}}
         )
 
-      t = %{t | unreachable_counts: %{7 => 2}}
+      ctx = Map.put(t.recruitment_ctx, :info_fn, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+      t = %{t | recruitment_ctx: ctx, unreachable_counts: %{7 => 2}}
 
       assert {:noreply, t2} = Server.handle_info({:reverify_assignment, 7}, t)
-      assert t2.unreachable_counts == %{}
+
+      # Reachability alone is not membership: the count survives the
+      # pong; verification re-runs and its :current verdict clears it.
+      assert t2.unreachable_counts == %{7 => 2}
       assert Map.values(t2.assignment_monitors) == [7]
+
+      assert_receive {:assignment_verified, 7, worker, :current}
+      assert {:noreply, t2b} = Server.handle_info({:assignment_verified, 7, worker, :current}, t2)
+      assert t2b.unreachable_counts == %{}
       refute_received {:committed, _}
 
       # A tag re-assigned to the placeholder meanwhile is already

@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-24T23:06:42Z",
   "created": "2026-08-24T19:28:10Z",
   "description": "Recovery cleared and rewrote the layout/logs keyspace family on every recovery. Nothing read it - the code said so outright: \"layout/logs/ has no code reader by design ... the family stays durable for other consumers and cluster-introspection tools.\" Those consumers never arrived.\n\nSHIPPED as PR #199 (stacked on #198).\n\nTHE FDB ARGUMENT, CORRECTED. An earlier draft claimed our keyspace copy had \"no analogue\" in FDB. That was wrong: FDB keeps one too, at \\xff/logs (SystemData.cpp:1171), written by the recovery transaction itself (ClusterRecovery.actor.cpp:1728). The deleted family WAS its analogue.\n\nWhat separates them is READERS, and FDB's has three we have no equivalent of: recovery's stale-master fence, which rejects a superseded master's write (\"old master attempted to change logsKey\", ClusterRecovery.actor.cpp:770-801); exclusion safety (ManagementAPI.actor.cpp:2394); and the in-progress-exclusion special-key module (SpecialKeySpace.actor.cpp:1294). Ours had none, and the tag mapping it held survives in the cluster bootstrap the coordinator actually loads. So this is an instance of the project's \"families return when their readers do\" convention rather than an exception to it - and it names which reader would bring it back. See bedrock-q67.21.15.\n\nTHE WRITER WAS THE SMALLER HALF. Also deleted, each having had no other caller: SystemKeys.layout_log/1 and layout_logs_prefix/0 plus a parse_key clause; Values.encode_tag_list/1 and decode_tag_list/1 plus a decode_for/2 clause; two RoutingData.apply_mutation clauses whose entire body was a comment explaining why they did nothing; and PersistencePhase.clear_prefix/2 with its last caller - which was recovery's ONLY blanket clear. Recovery now writes nothing it does not read back, pinned directly by test.\n\nMIGRATION: none. Stale layout/logs keys are inert - proven, not assumed: every family scan is bounded by KeyRange.from_prefix, and the family sorts strictly below both scanned families, so the decoders that halt on an unparseable entry never see one.\n\nTESTS: two pins went vacuous with the clear (both were about the bounds of a clear_range that no longer exists) and were removed rather than propped up; their properties are already pinned in key_test and key_range_test. But one existed to catch an over-broad prefix DEFINITION, and that was restored as a direct property on each family's prefix RANGE, independent of clearing, and verified falsifiable.",
   "id": "bedrock-q67.21.10",
@@ -18,8 +19,8 @@
     }
   ],
   "priority": 2,
-  "status": "in-progress",
+  "status": "closed",
   "title": "Delete the layout/logs keyspace family: a write with no reader",
   "type": "task",
-  "updated_at": "2026-08-24T21:57:03Z"
+  "updated_at": "2026-08-24T23:06:42Z"
 }

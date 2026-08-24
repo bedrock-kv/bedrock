@@ -16,23 +16,8 @@ defmodule Bedrock.SystemKeys.ValuesTest do
 
     test "decoder never raises on garbage or wrong shapes" do
       assert {:error, :invalid_encoding} = Values.decode_shard_key_entry(<<0xEE, 0xEE>>)
-      assert {:error, :invalid_type} = Values.decode_shard_key_entry(Values.encode_tag_list([1]))
+      assert {:error, :invalid_type} = Values.decode_shard_key_entry(Values.encode_materializer_node("n"))
       assert {:error, :invalid_encoding} = Values.decode_shard_key_entry(:not_binary)
-    end
-  end
-
-  describe "tag lists" do
-    test "round-trip, including empty" do
-      assert {:ok, [1, 2, 3]} = Values.decode_tag_list(Values.encode_tag_list([1, 2, 3]))
-      assert {:ok, []} = Values.decode_tag_list(Values.encode_tag_list([]))
-    end
-
-    test "encoder rejects non-integer tags loudly" do
-      assert_raise ArgumentError, fn -> Values.encode_tag_list([1, "two"]) end
-    end
-
-    test "decoder never raises on garbage" do
-      assert {:error, :invalid_encoding} = Values.decode_tag_list(<<0xEE>>)
     end
   end
 
@@ -50,7 +35,6 @@ defmodule Bedrock.SystemKeys.ValuesTest do
 
     test "decoder never raises on garbage or wrong shapes, and never creates atoms" do
       assert {:error, :invalid_encoding} = Values.decode_materializer_node(<<0xEE, 0xEE>>)
-      assert {:error, :invalid_type} = Values.decode_materializer_node(Values.encode_tag_list([1]))
       assert {:error, :invalid_type} = Values.decode_materializer_node(Values.encode_shard_key_entry(1, "m"))
       assert {:error, :invalid_encoding} = Values.decode_materializer_node(:not_binary)
     end
@@ -59,11 +43,9 @@ defmodule Bedrock.SystemKeys.ValuesTest do
   describe "decode_for/2 - the writer/reader contract" do
     test "dispatches by parsed key family" do
       shard_value = Values.encode_shard_key_entry(3, "a")
-      log_value = Values.encode_tag_list([0, 1])
       ref_value = Values.encode_materializer_node("node@host")
 
       assert {:ok, {3, "a"}} = Values.decode_for(SystemKeys.parse_key(SystemKeys.shard_key("m")), shard_value)
-      assert {:ok, [0, 1]} = Values.decode_for(SystemKeys.parse_key(SystemKeys.layout_log("log_1")), log_value)
 
       assert {:ok, "node@host"} =
                Values.decode_for(SystemKeys.parse_key(SystemKeys.materializer_key(7, "wkr_abc")), ref_value)

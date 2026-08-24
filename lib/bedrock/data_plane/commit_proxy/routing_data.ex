@@ -212,8 +212,9 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
   @doc """
   Applies metadata mutations to update routing data.
 
-  Handles shard_key and materializer_key mutations; layout_log mutations
-  are deliberately ignored (see the fold's layout_log clause).
+  Handles shard_key and materializer_key mutations. Any other system key
+  is ignored: log wiring is epoch-constant and rides the unlock seed, and
+  an unrecognized family is forward-compatibility, not an error.
 
   ## Parameters
 
@@ -241,21 +242,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
           {:error, _} -> routing_data
         end
 
-      {:layout_log, _log_id} ->
-        # Log wiring is epoch-constant and seed-only: changing log
-        # topology IS a recovery (FDB: a new generation, a new
-        # logSystemConfig), so the only layout_log mutations that ever
-        # flow through a window are the recovery transaction's rewrite of
-        # the very set this proxy was just seeded with. Folding them was
-        # a second way of managing one table, guarding a hazard the
-        # recovery boundary precludes. The layout/logs/ FAMILY stays
-        # durable for other consumers and cluster-introspection tools —
-        # this fold just isn't a reader. Materializer refs below
-        # deliberately DO ride persisted data: they are client-facing
-        # hints, FDB serverList style, and the Distributor mutates them
-        # mid-epoch (bedrock-q67.21).
-        routing_data
-
       {:materializer_key, tag, worker_id} ->
         # Undecodable values are ignored, keeping the last good member set.
         case Values.decode_materializer_node(value) do
@@ -272,10 +258,6 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingData do
     case SystemKeys.parse_key(key) do
       {:shard_key, end_key} ->
         delete_shard(routing_data, end_key)
-
-      {:layout_log, _log_id} ->
-        # Epoch-constant; see the set clause.
-        routing_data
 
       {:materializer_key, tag, worker_id} ->
         drop_member(routing_data, tag, worker_id)

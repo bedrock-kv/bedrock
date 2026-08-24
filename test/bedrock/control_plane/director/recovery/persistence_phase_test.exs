@@ -5,7 +5,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.Key
   alias Bedrock.KeyRange
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
@@ -107,8 +106,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # the shape the materializer bootstrap cross-epoch read depends on.
       assert decoded[{:shard_key, <<0xFF>>}] == {1, <<>>}
       assert decoded[{:shard_key, <<0xFF, 0xFF>>}] == {0, <<0xFF>>}
-
-      assert decoded[{:layout_log, "log_1"}] == [1, 2]
 
       # Membership: the worker id is in the KEY and the value carries the
       # node (FDB serverKeys analogue), projected from the carried
@@ -225,35 +222,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   end
 
   describe "read-and-heal: recovery writes what it changed, never blanket-clears" do
-    test "only layout/logs is cleared and rewritten; the mapping families are never blanket-cleared" do
+    test "recovery clears nothing: every family it writes is read-and-healed" do
       mutations = captured_system_mutations(base_recovery_attempt())
 
-      {log_clear_start, log_clear_end} = KeyRange.from_prefix(SystemKeys.layout_logs_prefix())
+      # The epoch-scoped layout/logs family was the only thing recovery
+      # ever blanket-cleared, and it had no reader (bedrock-q67.21.10).
+      # What remains is durable, distributor-era state: recovery may seed
+      # or update entries, never erase a family wholesale.
+      refute Enum.any?(mutations, &match?({:clear_range, _, _}, &1)),
+             "recovery emitted a blanket clear: #{inspect(Enum.filter(mutations, &match?({:clear_range, _, _}, &1)))}"
 
-      clear_index =
-        Enum.find_index(mutations, fn
-          {:clear_range, ^log_clear_start, ^log_clear_end} -> true
-          _ -> false
-        end)
-
-      assert clear_index, "expected clear_range over layout/logs"
-
-      first_log_set =
-        Enum.find_index(mutations, fn
-          {:set, key, _} -> String.starts_with?(key, SystemKeys.layout_logs_prefix())
-          _ -> false
-        end)
-
-      assert clear_index < first_log_set
-
-      # The mapping families are durable, distributor-era state: recovery
-      # may seed or update entries, never erase the families wholesale.
-      for prefix <- [SystemKeys.shard_keys_prefix(), SystemKeys.materializers_prefix()] do
-        {clear_start, clear_end} = KeyRange.from_prefix(prefix)
-
-        refute Enum.any?(mutations, &match?({:clear_range, ^clear_start, ^clear_end}, &1)),
-               "unexpected blanket clear over #{inspect(prefix)}"
-      end
+      refute Enum.any?(mutations, &match?({:clear, _}, &1))
     end
 
     test "a fresh cluster seeds shard_keys; the seed needs no clear (the family is definitionally empty)" do
@@ -329,54 +308,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert {:ok, _node} =
                Values.decode_materializer_node(Map.fetch!(store, SystemKeys.materializer_key(9, "wkr_stray")))
-    end
-
-    test "cleared prefix ranges do not cover any other system-key family" do
-      # The strinc bound must keep each cleared range strictly within its own
-      # family, including against future sibling families that share prefix
-      # bytes (e.g. a "shards/" neighbor of "shard_keys/": '_' (0x5F) < 's'
-      # (0x73) puts strinc("...shard_keys/") = "...shard_keys0" below it).
-      cleared_prefixes = %{
-        layout_log: SystemKeys.layout_logs_prefix()
-      }
-
-      keys_by_family = %{
-        shard_key: [SystemKeys.shard_key(<<>>), SystemKeys.shard_key(<<0xFF, 0xFF>>)],
-        shard_sibling: ["\xff/system/shards/0"],
-        layout_log: [SystemKeys.layout_log("log_1")],
-        layout_sibling: ["\xff/system/layout/id", "\xff/system/layout/services"]
-      }
-
-      # Foreignness is decided by family identity, not by whether the key
-      # happens to share the prefix's bytes — so an over-broad prefix
-      # definition (e.g. layout_logs_prefix returning "layout/") fails here
-      # instead of being filtered out of the comparison.
-      for {cleared_family, prefix} <- cleared_prefixes,
-          {family, keys} <- keys_by_family,
-          family != cleared_family,
-          key <- keys do
-        range = KeyRange.from_prefix(prefix)
-
-        refute KeyRange.contains?(range, key),
-               "clear_range over #{inspect(prefix)} would clear #{family} key #{inspect(key)}"
-      end
-    end
-
-    test "prefix range end is exact: a key at strinc(prefix) is not cleared" do
-      prefix = SystemKeys.layout_logs_prefix()
-      boundary_key = Key.strinc(prefix)
-
-      # A neighbor key exactly at the exclusive range end must survive, as must
-      # the key just below the prefix (the prefix itself minus the trailing "/").
-      below_key = binary_part(prefix, 0, byte_size(prefix) - 1)
-
-      store = %{boundary_key => "at-range-end", below_key => "below-range-start"}
-
-      mutations = captured_system_mutations(base_recovery_attempt())
-      store = apply_to_store(store, mutations)
-
-      assert store[boundary_key] == "at-range-end"
-      assert store[below_key] == "below-range-start"
     end
   end
 end

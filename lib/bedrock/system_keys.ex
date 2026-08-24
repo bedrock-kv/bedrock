@@ -44,14 +44,6 @@ defmodule Bedrock.SystemKeys do
   @spec shard_keys_prefix() :: Bedrock.key()
   def shard_keys_prefix, do: "#{@system_prefix}/shard_keys/"
 
-  @doc "Log layout entry: `layout/logs/<log_id>` -> tag list"
-  @spec layout_log(Bedrock.range_tag() | String.t()) :: Bedrock.key()
-  def layout_log(log_id), do: "#{@system_prefix}/layout/logs/#{log_id}"
-
-  @doc "Prefix covering every log layout entry"
-  @spec layout_logs_prefix() :: Bedrock.key()
-  def layout_logs_prefix, do: "#{@system_prefix}/layout/logs/"
-
   @doc """
   Membership entry: `materializers/<tag>/<worker_id>` -> node string.
 
@@ -97,15 +89,13 @@ defmodule Bedrock.SystemKeys do
   `:unknown` (forward compatibility); non-system keys as `:error`.
   """
   @spec parse_key(Bedrock.key()) ::
-          {:layout_log, String.t()}
-          | {:shard_key, Bedrock.key()}
+          {:shard_key, Bedrock.key()}
           | {:materializer_key, Bedrock.range_tag(), Worker.id()}
           | {:distributor_lock, :owner | :write}
           | :unknown
           | :error
   def parse_key(<<@system_prefix, "/distributor_lock/owner">>), do: {:distributor_lock, :owner}
   def parse_key(<<@system_prefix, "/distributor_lock/write">>), do: {:distributor_lock, :write}
-  def parse_key(<<@system_prefix, "/layout/logs/", rest::binary>>), do: {:layout_log, rest}
   def parse_key(<<@system_prefix, "/shard_keys/", rest::binary>>), do: {:shard_key, rest}
 
   def parse_key(<<@system_prefix, "/materializers/", rest::binary>>) do

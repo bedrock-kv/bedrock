@@ -9,10 +9,6 @@ defmodule Bedrock.SystemKeysTest do
       assert SystemKeys.parse_key(SystemKeys.shard_key(<<0xFF, 0xFF>>)) == {:shard_key, <<0xFF, 0xFF>>}
     end
 
-    test "layout_log/1 round-trips through parse_key/1" do
-      assert SystemKeys.parse_key(SystemKeys.layout_log("log_1")) == {:layout_log, "log_1"}
-    end
-
     test "materializer_key/2 round-trips through parse_key/1, carrying tag AND worker" do
       assert SystemKeys.parse_key(SystemKeys.materializer_key(0, "wkr_sys")) == {:materializer_key, 0, "wkr_sys"}
       assert SystemKeys.parse_key(SystemKeys.materializer_key(42, "abc12def")) == {:materializer_key, 42, "abc12def"}
@@ -39,9 +35,7 @@ defmodule Bedrock.SystemKeysTest do
 
     test "prefixes cover exactly their families" do
       assert String.starts_with?(SystemKeys.shard_key("x"), SystemKeys.shard_keys_prefix())
-      assert String.starts_with?(SystemKeys.layout_log("x"), SystemKeys.layout_logs_prefix())
       assert String.starts_with?(SystemKeys.materializer_key(3, "wkr_a"), SystemKeys.materializers_prefix())
-      refute String.starts_with?(SystemKeys.layout_log("x"), SystemKeys.shard_keys_prefix())
       refute String.starts_with?(SystemKeys.materializer_key(3, "wkr_a"), SystemKeys.shard_keys_prefix())
     end
 

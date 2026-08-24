@@ -266,8 +266,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
       # when the committed state doesn't name them. The system shard needs
       # no synthetic entry — it is never created here, only looked up, so
       # it is already in transaction_services from the locking phase.
-      all_created = created_services
-
       updated_attempt =
         recovery_attempt
         |> Map.put(:shard_layout, shard_layout)
@@ -278,7 +276,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         |> Map.put(:seeded_layout?, false)
         |> Map.put(:prior_materializer_refs, prior_refs)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
-        |> Map.update!(:transaction_services, &Map.merge(&1, all_created))
+        |> Map.update!(:transaction_services, &Map.merge(&1, created_services))
 
       {updated_attempt, CommitProxyStartupPhase}
     else
@@ -346,15 +344,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # "successfully" on an empty layout and orphan the cluster's data;
   # stalling is retried by the director, and an operator can see why.
   defp resolve_system_materializer(recovery_attempt, context) do
-    named = context |> Map.get(:prior_core_state) |> CoreState.system_materializers()
-    available = available_named_members(named, recovery_attempt)
+    named = CoreState.system_materializers(context.prior_core_state)
 
-    case Enum.min(available, fn -> nil end) do
+    case Enum.min(available_named_members(named, recovery_attempt), fn -> nil end) do
       {worker_id, service} ->
         {:ok, {worker_id, service}}
 
+      # Two different situations, told apart so an operator is not left
+      # guessing. A record that names members means they are unreachable
+      # — retry, and the nodes they were last on say where to look. A
+      # record that names NONE on a non-fresh cluster means the bootstrap
+      # predates this field: recovery cannot learn where the metadata
+      # lives, and no retry will change that.
+      nil when named == %{} ->
+        {:error, :bootstrap_names_no_system_materializers}
+
       nil ->
-        {:error, {:no_system_materializers, Map.keys(named)}}
+        {:error, {:system_materializers_unavailable, named}}
     end
   end
 

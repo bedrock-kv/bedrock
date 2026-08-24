@@ -8,6 +8,7 @@ defmodule Bedrock.ControlPlane.Config.CoreStateTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ControlPlane.Config.CoreState
+  alias Bedrock.SystemKeys.ClusterBootstrap
 
   describe "from_bootstrap/1 - the durable record, projected" do
     test "carries each log's id and the tags it serves" do
@@ -105,6 +106,39 @@ defmodule Bedrock.ControlPlane.Config.CoreStateTest do
 
     test "a prior record naming any log is NOT fresh - its data must be recovered" do
       refute CoreState.fresh?(%{logs: %{"log_1" => [0]}})
+    end
+  end
+
+  describe "a bootstrap written before the field existed" do
+    test "decodes through the REAL FlatBuffer without the field, naming no members" do
+      # Not a hand-built map: the actual encoder/decoder, so this also
+      # guards the schema staying compatible. An old record must decode
+      # cleanly and simply name nobody — recovery then says so with a
+      # distinct stall rather than pretending the members are merely
+      # unreachable.
+      binary =
+        ClusterBootstrap.to_binary(%{
+          cluster_id: "c1",
+          epoch: 7,
+          logs: [%{id: "log_1", otp_ref: nil, shard_tags: [0]}]
+        })
+
+      assert {:ok, decoded} = ClusterBootstrap.read(binary)
+      assert %{system_materializers: %{}} = CoreState.from_bootstrap(decoded)
+      refute CoreState.fresh?(CoreState.from_bootstrap(decoded))
+    end
+
+    test "members round-trip through the REAL FlatBuffer when present" do
+      binary =
+        ClusterBootstrap.to_binary(%{
+          cluster_id: "c1",
+          epoch: 7,
+          logs: [],
+          system_materializers: [%{id: "wkr_sys", node: "n1@host"}]
+        })
+
+      assert {:ok, decoded} = ClusterBootstrap.read(binary)
+      assert %{system_materializers: %{"wkr_sys" => "n1@host"}} = CoreState.from_bootstrap(decoded)
     end
   end
 

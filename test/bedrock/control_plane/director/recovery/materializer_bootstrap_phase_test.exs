@@ -329,7 +329,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           flunk("recovery invented a system materializer instead of stalling")
         end)
 
-      assert {_attempt, {:stalled, {:no_system_materializers, ["mat_sys"]}}} =
+      assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"mat_sys" => "node@host"}}}} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
     end
 
@@ -600,7 +600,33 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       end)
     end
 
-    test "a family entry naming an unlocked worker falls back to the LOWEST ID, not the most advanced" do
+    defp three_claimants_attempt(recovery_version, sys_pid, a_pid, b_pid, c_pid) do
+      # THREE claimants, with id order deliberately disagreeing with BOTH
+      # durable orders. Two candidates cannot discriminate: whichever way
+      # you arrange them, the id rule agrees with either min-durable or
+      # max-durable, so the test passes under a rule it was meant to
+      # reject. Here min-id is mat_a, min-durable is mat_b, and
+      # max-durable is mat_c — only the id rule produces mat_a.
+      recovery_attempt()
+      |> Map.put(:shard_layout, nil)
+      |> Map.put(:logs, %{"log_1" => [0, 1]})
+      |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
+      |> Map.put(:materializer_recovery_info_by_id, %{
+        "mat_sys" => %{kind: :materializer, shard_id: 0, durable_version: recovery_version},
+        "mat_a" => %{kind: :materializer, shard_id: 1, durable_version: Version.from_integer(50)},
+        "mat_b" => %{kind: :materializer, shard_id: 1, durable_version: Version.from_integer(1)},
+        "mat_c" => %{kind: :materializer, shard_id: 1, durable_version: recovery_version}
+      })
+      |> Map.put(:transaction_services, %{
+        "mat_sys" => %{kind: :materializer, status: {:up, sys_pid}},
+        "mat_a" => %{kind: :materializer, status: {:up, a_pid}},
+        "mat_b" => %{kind: :materializer, status: {:up, b_pid}},
+        "mat_c" => %{kind: :materializer, status: {:up, c_pid}},
+        "log_1" => %{kind: :log, status: {:up, self()}}
+      })
+    end
+
+    test "a family entry naming an unlocked worker falls back to the LOWEST ID, not to any durable ranking" do
       recovery_version = Version.from_integer(500)
       sys_pid = spawn(fn -> Process.sleep(:infinity) end)
       named_pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -613,7 +639,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           end
         })
 
-      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+      recovery_attempt =
+        three_claimants_attempt(
+          recovery_version,
+          sys_pid,
+          named_pid,
+          stray_pid,
+          spawn(fn -> Process.sleep(:infinity) end)
+        )
 
       ExUnit.CaptureLog.capture_log(fn ->
         assert {updated_attempt, CommitProxyStartupPhase} =
@@ -621,12 +654,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
         # "mat_gone" was not locked this epoch, so the fallback decides —
         # and it decides by worker id, the same deterministic rule the
-        # client-facing pick uses. "mat_stray" is the MORE ADVANCED
-        # claimant (durable at the recovery version, against mat_named's
-        # version 1) and it loses anyway: durable_version measures stream
-        # position, not completeness, so ranking by it could seat a
-        # worker that pulled the log tail over one holding the data.
-        assert %{"mat_named" => _node} = updated_attempt.shard_materializers[1]
+        # client-facing pick uses. Neither durable ranking picks mat_a:
+        # durable_version measures stream POSITION, not completeness, so
+        # ranking by it could seat a worker that merely pulled the log
+        # tail over one holding the data.
+        assert %{"mat_a" => _node} = updated_attempt.shard_materializers[1]
       end)
     end
 
@@ -835,7 +867,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           flunk("recovery invented a system materializer instead of stalling")
         end)
 
-      assert {_attempt, {:stalled, {:no_system_materializers, _}}} =
+      assert {_attempt, {:stalled, :bootstrap_names_no_system_materializers}} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
     end
 
@@ -852,7 +884,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           flunk("recovery invented a replacement for an unavailable named member")
         end)
 
-      assert {_attempt, {:stalled, {:no_system_materializers, _}}} =
+      # The reason carries the members and the nodes they were last seen
+      # on: this one is retryable, and that is where to go looking.
+      assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"wkr_gone" => "dead@host"}}}} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
     end
   end

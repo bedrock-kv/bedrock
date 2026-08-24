@@ -1,6 +1,7 @@
 {
   "assignee": "",
   "blocked_by": [
+    "bedrock-q67.21.6",
     "bedrock-q67.21.9"
   ],
   "blocks": [],
@@ -13,5 +14,5 @@
   "status": "open",
   "title": "[EPIC] Elastic materializer replicas: placement by load and locality",
   "type": "task",
-  "updated_at": "2026-08-24T18:02:31Z"
+  "updated_at": "2026-08-24T18:02:32Z"
 }

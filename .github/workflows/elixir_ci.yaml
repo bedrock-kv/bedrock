@@ -24,18 +24,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Oldest supported toolchain (mix.exs requires ~> 1.17)
           - elixir: "1.17.3"
-            otp: "27.2"
+            otp: "27.3"
+          - elixir: "1.19.5"
+            otp: "28.3"
+          # Newest toolchain; matches local development. The lint cell runs
+          # the version-independent checks (format, audit, credo) once.
           # Exactly one cell reports coverage: coveralls closes a PR's build
           # on the first non-parallel upload, so a second reporting cell
           # would 422 whenever finish times diverge (e.g. uneven caches)
-          - elixir: "1.19.4"
-            otp: "28.3"
+          - elixir: "1.20.3"
+            otp: "29.0"
             coverage: true
-          - elixir: "1.19.5"
-            otp: "28.3"
-          - elixir: "1.20.2"
-            otp: "28.3"
+            lint: true
     steps:
 
     - name: Checkout code
@@ -73,15 +75,16 @@ jobs:
       run: mix compile --warnings-as-errors
 
     - name: Check Formatting
-      if: matrix.elixir == '1.19.4'
+      if: matrix.lint
       run: mix format --check-formatted
 
     # One cell is enough: the advisory database is the same everywhere.
     - name: Audit dependencies for known vulnerabilities
-      if: matrix.elixir == '1.19.4'
+      if: matrix.lint
       run: mix deps.audit
 
     - name: Credo
+      if: matrix.lint
       run: mix credo --strict
 
     # Define how to cache the `plts` directory. After the first run,
@@ -102,7 +105,7 @@ jobs:
   s3_test:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
-    name: S3 MinIO tests (OTP 28 / Elixir 1.19)
+    name: S3 MinIO tests (OTP 29 / Elixir 1.20)
     env:
       MIX_ENV: test
     steps:
@@ -112,8 +115,8 @@ jobs:
     - name: Install Elixir and Erlang
       uses: erlef/setup-beam@v1
       with:
-        elixir-version: "1.19.4"
-        otp-version: "28.3"
+        elixir-version: "1.20.3"
+        otp-version: "29.0"
         install-hex: true
         install-rebar: true
 
@@ -123,9 +126,9 @@ jobs:
         path: |
           deps
           _build
-        key: s3-${{ runner.os }}-1.19.4-28.3-${{ hashFiles('**/mix.lock') }}
+        key: s3-${{ runner.os }}-1.20.3-29.0-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
-          s3-${{ runner.os }}-1.19.4-28.3-
+          s3-${{ runner.os }}-1.20.3-29.0-
 
     - name: Install dependencies
       run: mix deps.get
@@ -157,8 +160,8 @@ jobs:
     - name: Install Elixir and Erlang
       uses: erlef/setup-beam@v1
       with:
-        elixir-version: "1.19.4"
-        otp-version: "28.3"
+        elixir-version: "1.20.3"
+        otp-version: "29.0"
         install-hex: true
         install-rebar: true
 
@@ -168,9 +171,9 @@ jobs:
         path: |
           deps
           _build
-        key: distributed-${{ runner.os }}-1.19.4-28.3-${{ hashFiles('**/mix.lock') }}
+        key: distributed-${{ runner.os }}-1.20.3-29.0-${{ hashFiles('**/mix.lock') }}
         restore-keys: |
-          distributed-${{ runner.os }}-1.19.4-28.3-
+          distributed-${{ runner.os }}-1.20.3-29.0-
 
     - name: Install dependencies
       run: mix deps.get

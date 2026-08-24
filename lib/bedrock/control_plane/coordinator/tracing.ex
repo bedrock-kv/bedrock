@@ -54,10 +54,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Tracing do
   def trace(:director_changed, _, %{director: director}), do: info("Director changed to #{inspect(director)}")
 
   def trace(:director_launch, _, %{epoch: epoch, config_summary: nil}),
-    do: info("Starting director for epoch #{epoch} with NO CONFIG")
+    do: info("Starting director for epoch #{epoch} with NO PRIOR STATE (fresh cluster)")
 
   def trace(:director_launch, _, %{epoch: epoch, config_summary: summary}),
-    do: info("Starting director for epoch #{epoch} with config (epoch: #{summary.epoch}, logs: #{summary.logs_count})")
+    do: info("Starting director for epoch #{epoch} (prior state names #{summary.prior_logs_count} logs)")
 
   def trace(:director_shutdown, _, %{director: director, reason: reason}),
     do: info("Shutting down director #{inspect(director)} (reason: #{reason})")

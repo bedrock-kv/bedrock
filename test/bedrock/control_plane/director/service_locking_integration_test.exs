@@ -31,11 +31,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       }
 
       # Empty old layout (first-time initialization)
-      old_transaction_system_layout = %{
+      prior_core_state = %{
         logs: %{}
       }
 
-      context = create_full_mocked_context(available_services, old_transaction_system_layout)
+      context = create_full_mocked_context(available_services, prior_core_state)
 
       # Execute TSL validation phase first (this comes before LockingPhase now)
       # Should proceed to LockingPhase since TSL validation passed
@@ -68,13 +68,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       }
 
       # Old layout from epoch 1 (only bwecaxvz and gb6cddk5 were used)
-      old_transaction_system_layout = %{
+      prior_core_state = %{
         logs: %{"bwecaxvz" => [0, 5]}
       }
 
       context =
         available_services
-        |> create_basic_context(old_transaction_system_layout)
+        |> create_basic_context(prior_core_state)
         |> with_mocked_service_locking()
 
       # Execute TSL validation phase first (this comes before LockingPhase now)
@@ -108,11 +108,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       }
 
       # Set up old system layout so bwecaxvz is excluded from recruitment
-      old_transaction_system_layout = %{
+      prior_core_state = %{
         logs: %{"bwecaxvz" => [0, 1]}
       }
 
-      context = create_tracking_context(available_services, old_transaction_system_layout)
+      context = create_tracking_context(available_services, prior_core_state)
 
       # Execute log recruitment phase
       # Should have recruited kilvu2af and proceed to LogReplayPhase
@@ -146,11 +146,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         "kilvu2af" => {:log, {:log_2, :node2}}
       }
 
-      old_transaction_system_layout = %{
+      prior_core_state = %{
         logs: %{"bwecaxvz" => [0, 1]}
       }
 
-      context = create_tracking_context(available_services, old_transaction_system_layout)
+      context = create_tracking_context(available_services, prior_core_state)
 
       # 1. Test selective locking phase - should lock only old system log services
       assert {lock_result, _next_phase} = LockingPhase.execute(recovery_attempt, context)
@@ -324,7 +324,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
   defp create_basic_context(available_services, old_layout) do
     create_test_context()
     |> Map.put(:available_services, available_services)
-    |> Map.put(:old_transaction_system_layout, old_layout)
+    |> Map.put(:prior_core_state, old_layout)
     |> with_multiple_nodes()
   end
 

@@ -11,7 +11,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
 
   @type context :: %{
           cluster_config: Config.t(),
-          old_transaction_system_layout: Config.TransactionSystemLayout.t(),
+          prior_core_state: Config.CoreState.t() | nil,
           node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
           lock_token: binary(),
           available_services: %{String.t() => {atom(), {atom(), node()}}},

@@ -15,7 +15,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
         resolvers: []
       }
 
-      context = %{old_transaction_system_layout: valid_tsl}
+      context = %{prior_core_state: valid_tsl}
 
       {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
 
@@ -35,7 +35,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
         resolvers: []
       }
 
-      context = %{old_transaction_system_layout: invalid_tsl}
+      context = %{prior_core_state: invalid_tsl}
 
       {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
 
@@ -43,10 +43,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
       assert {:stalled, {:corrupted_tsl, _validation_error}} = next_phase
     end
 
-    test "transitions to InitializationPhase when context has no old_transaction_system_layout" do
+    test "transitions to InitializationPhase when context has no prior_core_state" do
       recovery_attempt = %RecoveryAttempt{}
 
-      # Context without old_transaction_system_layout
+      # Context without prior_core_state
       context = %{}
 
       {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
@@ -55,11 +55,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
       assert next_phase == InitializationPhase
     end
 
-    test "transitions to InitializationPhase when old_transaction_system_layout is nil" do
+    test "transitions to InitializationPhase when prior_core_state is nil" do
       recovery_attempt = %RecoveryAttempt{}
 
-      # Context with nil old_transaction_system_layout
-      context = %{old_transaction_system_layout: nil}
+      # Context with nil prior_core_state
+      context = %{prior_core_state: nil}
 
       {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
 

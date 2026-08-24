@@ -29,8 +29,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   import Bedrock.Internal.Time, only: [now: 0]
 
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Distributor
@@ -41,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @type recovery_context :: %{
           cluster_config: Config.t(),
-          old_transaction_system_layout: TransactionSystemLayout.t(),
+          prior_core_state: CoreState.t() | nil,
           node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
           lock_token: binary(),
           available_services: %{Worker.id() => {atom(), {atom(), node()}}},
@@ -107,7 +107,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
     context = %{
       cluster_config: t.config,
-      old_transaction_system_layout: t.old_transaction_system_layout,
+      prior_core_state: t.prior_core_state,
       node_capabilities: t.node_capabilities,
       lock_token: t.lock_token,
       available_services: t.services,

@@ -10,7 +10,7 @@ defmodule Bedrock.ControlPlane.Director.ServiceIntegrationTest do
     [
       cluster: TestCluster,
       config: Config.new([:node1, :node2]),
-      old_transaction_system_layout: %{},
+      prior_core_state: %{},
       epoch: 1,
       coordinator: self()
     ]

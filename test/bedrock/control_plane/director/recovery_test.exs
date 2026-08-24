@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       cluster: __MODULE__.TestCluster,
       epoch: 1,
       node_capabilities: node_capabilities,
-      old_transaction_system_layout: %{
+      prior_core_state: %{
         logs: %{}
       },
       config: %{
@@ -422,7 +422,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       context =
         create_test_context(
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"existing_log_1" => [0, 100]}
           }
         )
@@ -547,7 +547,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       context =
         coordinator_services
-        |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
+        |> create_coordinator_format_context(prior_core_state: old_layout)
         |> Map.update!(
           :available_services,
           &Map.put(&1, "metadata_materializer", {:materializer, {:materializer, :node1}})
@@ -585,7 +585,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # Mock lock_service_fn to return newer_epoch_exists
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"existing_log_1" => [0, 100]}
           }
         ]
@@ -680,7 +680,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       |> with_complete_mocking()
 
     # Apply any additional overrides that weren't handled by create_test_context
-    additional_overrides = Keyword.delete(overrides, :old_transaction_system_layout)
+    additional_overrides = Keyword.delete(overrides, :prior_core_state)
 
     Enum.reduce(additional_overrides, base_context, fn {key, value}, ctx ->
       Map.put(ctx, key, value)

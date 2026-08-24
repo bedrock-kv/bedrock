@@ -9,6 +9,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   alias Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase
   alias Bedrock.DataPlane.Version
 
+  defmodule RangeRecorder do
+    @moduledoc false
+    # Answers get_range like a materializer would, forwarding the bounds
+    # it was asked for so a test can assert on them.
+    use GenServer
+
+    @impl true
+    def init(reporter), do: {:ok, reporter}
+
+    @impl true
+    def handle_call({:get_range, start_key, end_key, _version, _opts}, _from, reporter) do
+      send(reporter, {:range_read, start_key, end_key})
+      {:reply, {:ok, {[], false}}, reporter}
+    end
+  end
+
   describe "execute/2" do
     test "for fresh cluster, creates default shard layout and materializers" do
       system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -179,7 +195,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       end)
     end
 
-    test "reuses the locked materializers on restart — one per shard, unlocked at the recovery version" do
+    test "reuses the locked system materializer on restart, unlocked at the recovery version" do
       system_pid = spawn(fn -> Process.sleep(:infinity) end)
       user_pid = spawn(fn -> Process.sleep(:infinity) end)
       recovery_version = Version.from_integer(24_000_000)
@@ -230,26 +246,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert {updated_attempt, CommitProxyStartupPhase} =
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-          # The system-shard survivor answers the layout query...
-          assert %{"mat_sys" => _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+          # The system-shard survivor answers the layout query, and is the
+          # only materializer recovery seats — tag 1's survivor is left
+          # for the distributor to verify and adopt.
+          assert %{0 => %{"mat_sys" => _}} = updated_attempt.shard_materializers
+          assert map_size(updated_attempt.shard_materializers) == 1
           assert updated_attempt.shard_layout
-
-          # ...and every shard in the layout gets its surviving
-          # materializer — nothing newly created, nothing orphaned.
-          assert %{0 => %{"mat_sys" => _}, 1 => %{"mat_user" => _}} = updated_attempt.shard_materializers
-
-          assert map_size(updated_attempt.shard_materializers) == 2
         end)
 
-      # Both were unlocked at the recovery version (vector last), never at
-      # the regressed durable floor.
+      # Unlocked at the recovery version (vector last), never at the
+      # regressed durable floor.
       assert_receive {:unlocked, ^system_pid, ^recovery_version}
-      assert_receive {:unlocked, ^user_pid, ^recovery_version}
+      refute_receive {:unlocked, ^user_pid, _}
 
       assert log =~ "Materializer caught up to version"
     end
 
-    test "when several materializers claim a shard, the most-advanced durable state wins" do
+    test "when several materializers claim the system shard, the lowest worker id wins" do
       real_pid = spawn(fn -> Process.sleep(:infinity) end)
       stray_pid = spawn(fn -> Process.sleep(:infinity) end)
       recovery_version = Version.from_integer(24_000_000)
@@ -532,6 +545,95 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     end
   end
 
+  describe "recovery stops at tag 0" do
+    # FDB's recovery does essentially nothing to storage servers: the
+    # entire interaction is one key (\xff/lastEpochEnd,
+    # ClusterRecovery.actor.cpp:1692-1698), and storage learns the epoch
+    # IN-BAND from the mutation stream. Recovery OBSERVES storage —
+    # RecoveryState::STORAGE_RECOVERED (:519-520) is a status label fired
+    # when the old tlog generations drop away — it never drives it.
+    #
+    # Ours drove it: it re-locked and unlocked a materializer for every
+    # data tag. Nothing in the transaction system needed that (the
+    # recovery version comes from tlogs alone), and the distributor's
+    # startup sweep does it properly — verify, adopt, heal, recruit —
+    # after every recovery regardless.
+
+    test "an existing cluster's shard_materializers names ONLY tag 0, however many data-tag survivors are locked" do
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      a_pid = spawn(fn -> Process.sleep(:infinity) end)
+      b_pid = spawn(fn -> Process.sleep(:infinity) end)
+      test_pid = self()
+
+      context =
+        existing_context(recovery_version, %{
+          read_prior_refs_fn: fn _pid, _version -> {:ok, %{0 => %{"mat_sys" => Atom.to_string(node())}}} end,
+          unlock_materializer_fn: fn pid, version, _sources ->
+            send(test_pid, {:unlocked, pid, version})
+            :ok
+          end
+        })
+
+      recovery_attempt = two_claimants_attempt(recovery_version, a_pid, b_pid, sys_pid)
+
+      capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        # The layout has tag 1 in it, and both tag-1 claimants are locked,
+        # healthy, and available. Recovery still leaves them alone.
+        assert updated_attempt.shard_layout[<<0xFF>>] == {1, <<>>}
+        assert %{0 => %{"mat_sys" => _}} = updated_attempt.shard_materializers
+        assert map_size(updated_attempt.shard_materializers) == 1
+      end)
+
+      assert_receive {:unlocked, ^sys_pid, ^recovery_version}
+      refute_receive {:unlocked, ^a_pid, _}
+      refute_receive {:unlocked, ^b_pid, _}
+    end
+
+    test "the committed-member read is scoped to tag 0 — data-tag membership is never recovery's input" do
+      recovery_version = Version.from_integer(500)
+      # A real materializer stub, so this drives the DEFAULT read path
+      # rather than a stubbed-out one: the range bounds under test are the
+      # ones production computes.
+      {:ok, sys_pid} = GenServer.start_link(RangeRecorder, self())
+
+      # The shared support context stubs the family read; drop the stub so
+      # the production bounds are the ones under test.
+      context = recovery_version |> existing_context(%{}) |> Map.delete(:read_prior_refs_fn)
+
+      recovery_attempt =
+        two_claimants_attempt(
+          recovery_version,
+          spawn(fn -> Process.sleep(:infinity) end),
+          spawn(fn -> Process.sleep(:infinity) end),
+          sys_pid
+        )
+
+      capture_log(fn ->
+        assert {_updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+      end)
+
+      # Reading the whole materializers/ family would sweep in every data
+      # tag's members — bytes recovery has no use for, and a standing
+      # invitation to start consuming them again.
+      {tag_zero_start, tag_zero_end} =
+        RecoveryAttempt.system_shard_id()
+        |> Bedrock.SystemKeys.materializer_tag_prefix()
+        |> Bedrock.KeyRange.from_prefix()
+
+      assert_receive {:range_read, ^tag_zero_start, ^tag_zero_end}
+
+      {family_start, _family_end} =
+        Bedrock.KeyRange.from_prefix(Bedrock.SystemKeys.materializers_prefix())
+
+      refute_receive {:range_read, ^family_start, _}
+    end
+  end
+
   describe "prior materializer family as re-adoption input" do
     defp existing_context(recovery_version, overrides) do
       base =
@@ -571,95 +673,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         "mat_stray" => %{kind: :materializer, status: {:up, stray_pid}},
         "log_1" => %{kind: :log, status: {:up, self()}}
       })
-    end
-
-    test "the family-named locked survivor beats a stray" do
-      # The committed assignment is the authority; the deterministic pick
-      # is only the fallback for tags the family does not name.
-      recovery_version = Version.from_integer(500)
-      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
-      named_pid = spawn(fn -> Process.sleep(:infinity) end)
-      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
-
-      context =
-        existing_context(recovery_version, %{
-          read_prior_refs_fn: fn _pid, _version ->
-            {:ok, %{1 => %{"mat_named" => Atom.to_string(node())}}}
-          end
-        })
-
-      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
-
-      ExUnit.CaptureLog.capture_log(fn ->
-        assert {updated_attempt, CommitProxyStartupPhase} =
-                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
-
-        assert %{"mat_named" => _node} = updated_attempt.shard_materializers[1]
-        assert updated_attempt.prior_materializer_refs == %{1 => %{"mat_named" => Atom.to_string(node())}}
-        refute updated_attempt.seeded_layout?
-      end)
-    end
-
-    defp three_claimants_attempt(recovery_version, sys_pid, a_pid, b_pid, c_pid) do
-      # THREE claimants, with id order deliberately disagreeing with BOTH
-      # durable orders. Two candidates cannot discriminate: whichever way
-      # you arrange them, the id rule agrees with either min-durable or
-      # max-durable, so the test passes under a rule it was meant to
-      # reject. Here min-id is mat_a, min-durable is mat_b, and
-      # max-durable is mat_c — only the id rule produces mat_a.
-      recovery_attempt()
-      |> Map.put(:shard_layout, nil)
-      |> Map.put(:logs, %{"log_1" => [0, 1]})
-      |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
-      |> Map.put(:materializer_recovery_info_by_id, %{
-        "mat_sys" => %{kind: :materializer, shard_id: 0, durable_version: recovery_version},
-        "mat_a" => %{kind: :materializer, shard_id: 1, durable_version: Version.from_integer(50)},
-        "mat_b" => %{kind: :materializer, shard_id: 1, durable_version: Version.from_integer(1)},
-        "mat_c" => %{kind: :materializer, shard_id: 1, durable_version: recovery_version}
-      })
-      |> Map.put(:transaction_services, %{
-        "mat_sys" => %{kind: :materializer, status: {:up, sys_pid}},
-        "mat_a" => %{kind: :materializer, status: {:up, a_pid}},
-        "mat_b" => %{kind: :materializer, status: {:up, b_pid}},
-        "mat_c" => %{kind: :materializer, status: {:up, c_pid}},
-        "log_1" => %{kind: :log, status: {:up, self()}}
-      })
-    end
-
-    test "a family entry naming an unlocked worker falls back to the LOWEST ID, not to any durable ranking" do
-      recovery_version = Version.from_integer(500)
-      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
-      named_pid = spawn(fn -> Process.sleep(:infinity) end)
-      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
-
-      context =
-        existing_context(recovery_version, %{
-          read_prior_refs_fn: fn _pid, _version ->
-            {:ok, %{1 => %{"mat_gone" => Atom.to_string(node())}}}
-          end
-        })
-
-      recovery_attempt =
-        three_claimants_attempt(
-          recovery_version,
-          sys_pid,
-          named_pid,
-          stray_pid,
-          spawn(fn -> Process.sleep(:infinity) end)
-        )
-
-      ExUnit.CaptureLog.capture_log(fn ->
-        assert {updated_attempt, CommitProxyStartupPhase} =
-                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
-
-        # "mat_gone" was not locked this epoch, so the fallback decides —
-        # and it decides by worker id, the same deterministic rule the
-        # client-facing pick uses. Neither durable ranking picks mat_a:
-        # durable_version measures stream POSITION, not completeness, so
-        # ranking by it could seat a worker that merely pulled the log
-        # tail over one holding the data.
-        assert %{"mat_a" => _node} = updated_attempt.shard_materializers[1]
-      end)
     end
 
     test "a failed family read stalls the attempt — never a silently unnamed layout" do

@@ -240,16 +240,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Creates materializer_key(tag, worker_id) -> node entries as a DIFF
-  # against the prior family (read by bootstrap): only assignments this
-  # recovery changed are written; unchanged entries are left in place,
-  # and entries for tags outside this layout are not recovery's to clean
-  # — read-and-heal means stale reconciliation belongs to the
-  # distributor (bedrock-q67.21.4). A nil prior means the family was not
-  # read (fresh cluster, legacy path): every assignment writes, the safe
-  # direction. The attempt carries refs in the family's member shape, so
-  # keyspace and routing-snapshot seed remain one map read twice. Gated
-  # on the same INPUT as before: shard_materializers absent/empty means
-  # shard management is not active.
+  # against the prior members (read by bootstrap): only what this
+  # recovery changed is written; unchanged entries are left in place, and
+  # entries recovery never touched are not its to clean — read-and-heal
+  # means stale reconciliation belongs to the distributor
+  # (bedrock-q67.21.4).
+  #
+  # In practice this now writes tag 0 and nothing else, because that is
+  # all recovery seats (bedrock-q67.21.13); the loop stays general
+  # because the family is one family and this is a diff, not a
+  # tag-specific rule. Tag 0 must be written: on a fresh cluster nobody
+  # else knows the materializer recovery just created, and the
+  # distributor's own sweep reads the families through a client
+  # transaction that has to route to tag 0 to see anything at all.
+  #
+  # A nil prior means the family was not read (fresh cluster): every
+  # assignment writes, the safe direction. The attempt carries members in
+  # the family's own shape, so keyspace and routing-snapshot seed remain
+  # one map read twice.
   @spec build_materializer_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
   defp build_materializer_keys(tx, recovery_attempt) do
     case Map.get(recovery_attempt, :shard_materializers) do

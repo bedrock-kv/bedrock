@@ -7,9 +7,15 @@
   "id": "bedrock-q67.21.16",
   "labels": [],
   "parent": "bedrock-q67.21",
+  "comments": [
+    {
+      "text": "-m",
+      "timestamp": "2026-08-24T20:35:04Z"
+    }
+  ],
   "priority": 1,
   "status": "open",
   "title": "A materializer refuses reads for data it does not hold (FDB shard readability)",
   "type": "task",
-  "updated_at": "2026-08-24T20:29:18Z"
+  "updated_at": "2026-08-24T20:35:04Z"
 }

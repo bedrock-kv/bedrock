@@ -46,14 +46,6 @@ Readers: `RoutingData` → per-key covering entries served to clients
 proxy answering for the committed state) checks whether the entry for
 its tag still names it; absence means retire.
 
-### `layout/logs/<log_id>` → tag list
-
-The epoch's log set. Log topology is epoch-constant — as in FoundationDB,
-changing it *is* a recovery — so runtime log wiring rides the recovery
-unlock seed, not mid-epoch mutations of this family. The keys are kept
-for other consumers and cluster-introspection tools: a durable, queryable
-statement of which logs the current epoch runs.
-
 ## Who writes, and the ownership handoff
 
 Recovery's **persistence phase** commits one system transaction per
@@ -62,8 +54,6 @@ epoch (`:system` mode — user commits are bounded below `\xFF`,
 FDB's `ACCESS_SYSTEM_KEYS` trust model), and follows FDB's rule that
 recovery never rewrites the mapping (bedrock-q67.21.2):
 
-- `layout/logs/` — the one epoch-scoped family: cleared and rewritten
-  each recovery (which logs THIS epoch runs).
 - `shard_keys/` — durable across epochs. Seeded only when this recovery
   invented the layout (fresh cluster, FDB's `seedShardServers`
   analogue); an existing cluster's layout is read back, and boundaries

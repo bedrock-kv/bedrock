@@ -7,11 +7,7 @@ defmodule Bedrock.SystemKeys do
   the next recovery's materializer bootstrap; `materializers/<tag>/<worker_id>` entries
   feed the client-facing routing projection served by commit proxies
   (FDB's `serverList/` analogue - interfaces ride the keyspace) and answer
-  worker rejoin validation. `layout/logs/<log_id>` keys have no code
-  reader by design: log wiring is epoch-constant and rides the recovery
-  unlock seed (bedrock-q67.41) - the family stays durable for other
-  consumers and cluster-introspection tools, a queryable statement of
-  which logs the current epoch runs. Materializer refs are runtime hints
+  worker rejoin validation. Materializer members are runtime hints
   for clients, never recovery input: bootstrap rebuilds assignment from
   `shard_keys/` plus live foreman discovery. `distributor_lock/{owner,
   write}` is the distributor's write fence (FDB's MoveKeys lock,
@@ -43,14 +39,6 @@ defmodule Bedrock.SystemKeys do
   @doc "Prefix covering every shard boundary entry"
   @spec shard_keys_prefix() :: Bedrock.key()
   def shard_keys_prefix, do: "#{@system_prefix}/shard_keys/"
-
-  @doc "Log layout entry: `layout/logs/<log_id>` -> tag list"
-  @spec layout_log(Bedrock.range_tag() | String.t()) :: Bedrock.key()
-  def layout_log(log_id), do: "#{@system_prefix}/layout/logs/#{log_id}"
-
-  @doc "Prefix covering every log layout entry"
-  @spec layout_logs_prefix() :: Bedrock.key()
-  def layout_logs_prefix, do: "#{@system_prefix}/layout/logs/"
 
   @doc """
   Membership entry: `materializers/<tag>/<worker_id>` -> node string.
@@ -97,15 +85,13 @@ defmodule Bedrock.SystemKeys do
   `:unknown` (forward compatibility); non-system keys as `:error`.
   """
   @spec parse_key(Bedrock.key()) ::
-          {:layout_log, String.t()}
-          | {:shard_key, Bedrock.key()}
+          {:shard_key, Bedrock.key()}
           | {:materializer_key, Bedrock.range_tag(), Worker.id()}
           | {:distributor_lock, :owner | :write}
           | :unknown
           | :error
   def parse_key(<<@system_prefix, "/distributor_lock/owner">>), do: {:distributor_lock, :owner}
   def parse_key(<<@system_prefix, "/distributor_lock/write">>), do: {:distributor_lock, :write}
-  def parse_key(<<@system_prefix, "/layout/logs/", rest::binary>>), do: {:layout_log, rest}
   def parse_key(<<@system_prefix, "/shard_keys/", rest::binary>>), do: {:shard_key, rest}
 
   def parse_key(<<@system_prefix, "/materializers/", rest::binary>>) do

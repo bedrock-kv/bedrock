@@ -8,26 +8,15 @@ defmodule Bedrock.SystemKeys.Values do
   bytes must never create atoms.
 
   The surface is exactly the written families - `shard_keys/` entries
-  (the routing boundary map), `layout/logs/` tag lists (no code reader by
-  design: kept durable for introspection, see `Bedrock.SystemKeys`), and
-  `materializers/` refs (worker id and node as strings; consumers derive
-  the callable `{otp_name, node}` ref, so the no-atoms rule holds through
+  (the routing boundary map) and `materializers/` membership (the node as
+  a string; consumers derive the callable `{otp_name, node}` ref from it
+  and the worker id in the key, so the no-atoms rule holds through
   decode). Families return here when their readers do.
   """
 
   alias Bedrock.Encoding.Tuple, as: TupleEncoding
 
   @type decode_error :: {:error, :invalid_encoding | :invalid_type | :unknown_family}
-
-  @doc "Encodes a list of integer range tags (log descriptor)."
-  @spec encode_tag_list([Bedrock.range_tag()]) :: binary()
-  def encode_tag_list(tags) when is_list(tags) do
-    if Enum.all?(tags, &is_integer/1) do
-      TupleEncoding.pack(tags)
-    else
-      raise ArgumentError, "tag list must contain only integers: #{inspect(tags)}"
-    end
-  end
 
   @doc """
   Encodes a shard key entry: `{tag, start_key}`.
@@ -54,10 +43,6 @@ defmodule Bedrock.SystemKeys.Values do
   @spec encode_materializer_node(String.t()) :: binary()
   def encode_materializer_node(node) when is_binary(node), do: TupleEncoding.pack(node)
 
-  @doc "Decodes a list of integer range tags."
-  @spec decode_tag_list(binary()) :: {:ok, [Bedrock.range_tag()]} | decode_error()
-  def decode_tag_list(binary), do: safe_unpack(binary, &(is_list(&1) and Enum.all?(&1, fn t -> is_integer(t) end)))
-
   @doc "Decodes a shard key entry to `{:ok, {tag, start_key}}`."
   @spec decode_shard_key_entry(binary()) :: {:ok, {Bedrock.range_tag(), Bedrock.key()}} | decode_error()
   def decode_shard_key_entry(binary),
@@ -74,7 +59,6 @@ defmodule Bedrock.SystemKeys.Values do
   @spec decode_for(term(), binary()) :: {:ok, term()} | decode_error()
   def decode_for({:distributor_lock, _which}, value), do: decode_lock_uid(value)
   def decode_for({:shard_key, _end_key}, value), do: decode_shard_key_entry(value)
-  def decode_for({:layout_log, _log_id}, value), do: decode_tag_list(value)
   def decode_for({:materializer_key, _tag, _worker_id}, value), do: decode_materializer_node(value)
   def decode_for(_unknown, _value), do: {:error, :unknown_family}
 

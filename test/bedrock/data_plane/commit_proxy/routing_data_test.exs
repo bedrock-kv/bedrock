@@ -264,21 +264,16 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert shard_list(updated) == [{"m", {42, ""}}]
     end
 
-    test "layout_log mutations are ignored — log wiring is epoch-constant and seed-only" do
-      # The recovery transaction still writes the layout/logs/ family (it
-      # stays durable for introspection), but the fold is not a reader:
-      # the only such mutations a window can carry are the rewrite of the
-      # set this proxy was seeded with, and mid-epoch topology change is
-      # precluded (changing log topology IS a recovery).
+    test "unrecognized system families are ignored — the fold reads only what it routes on" do
+      # Log wiring is epoch-constant and rides the unlock seed, so no
+      # window can carry a log-topology change (changing log topology IS
+      # a recovery). An unknown family is forward-compatibility, not an
+      # error: it must never disturb the wiring this proxy was seeded
+      # with.
       seeded = seeded_wiring()
+      foreign = "\xff/system/some_future_family/entry"
 
-      updates = [
-        {v(100),
-         [
-           {:set, SystemKeys.layout_log("log-x"), Values.encode_tag_list([0])},
-           {:clear, SystemKeys.layout_log("log-a")}
-         ]}
-      ]
+      updates = [{v(100), [{:set, foreign, "whatever"}, {:clear, foreign}]}]
 
       updated = RoutingData.apply_mutations(seeded, updates)
 
@@ -411,10 +406,11 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert shard_list(updated) == []
     end
 
-    test "recovery's layout_log clear_range leaves the seeded wiring untouched" do
+    test "a clear_range over an unrouted family leaves the seeded wiring untouched" do
       seeded = seeded_wiring()
+      prefix = "\xff/system/some_future_family/"
 
-      updates = [{v(100), [{:clear_range, SystemKeys.layout_log("log-a"), SystemKeys.layout_log("log-c")}]}]
+      updates = [{v(100), [{:clear_range, prefix <> "a", prefix <> "c"}]}]
 
       updated = RoutingData.apply_mutations(seeded, updates)
 
@@ -456,14 +452,16 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert shard_list(updated) == [{"m", {10, ""}}, {<<0xFF, 0xFF>>, {11, "m"}}]
     end
 
-    test "mixed mutations: shard_key entries apply, layout_log entries do not" do
+    test "mixed mutations: shard_key entries apply, unrouted families do not" do
+      foreign = "\xff/system/some_future_family/"
+
       updates = [
         {v(100),
          [
            {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "")},
-           {:set, SystemKeys.layout_log("log-1"), Values.encode_tag_list([0])},
+           {:set, foreign <> "log-1", "opaque"},
            {:set, SystemKeys.shard_key("z"), Values.encode_shard_key_entry(2, "m")},
-           {:set, SystemKeys.layout_log("log-2"), Values.encode_tag_list([1])}
+           {:set, foreign <> "log-2", "opaque"}
          ]}
       ]
 

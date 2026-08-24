@@ -1,16 +1,13 @@
 defmodule Bedrock.SystemKeysTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.KeyRange
   alias Bedrock.SystemKeys
 
   describe "key construction and parsing round-trip" do
     test "shard_key/1 round-trips through parse_key/1" do
       assert SystemKeys.parse_key(SystemKeys.shard_key("m")) == {:shard_key, "m"}
       assert SystemKeys.parse_key(SystemKeys.shard_key(<<0xFF, 0xFF>>)) == {:shard_key, <<0xFF, 0xFF>>}
-    end
-
-    test "layout_log/1 round-trips through parse_key/1" do
-      assert SystemKeys.parse_key(SystemKeys.layout_log("log_1")) == {:layout_log, "log_1"}
     end
 
     test "materializer_key/2 round-trips through parse_key/1, carrying tag AND worker" do
@@ -39,10 +36,46 @@ defmodule Bedrock.SystemKeysTest do
 
     test "prefixes cover exactly their families" do
       assert String.starts_with?(SystemKeys.shard_key("x"), SystemKeys.shard_keys_prefix())
-      assert String.starts_with?(SystemKeys.layout_log("x"), SystemKeys.layout_logs_prefix())
       assert String.starts_with?(SystemKeys.materializer_key(3, "wkr_a"), SystemKeys.materializers_prefix())
-      refute String.starts_with?(SystemKeys.layout_log("x"), SystemKeys.shard_keys_prefix())
       refute String.starts_with?(SystemKeys.materializer_key(3, "wkr_a"), SystemKeys.shard_keys_prefix())
+    end
+
+    test "each family's prefix RANGE holds its own keys and no other family's" do
+      # A prefix is only safe to scan or clear if [prefix, strinc(prefix))
+      # is strictly its own family. An over-broad definition (a
+      # materializers_prefix of "materializers" without the slash, say)
+      # would swallow a sibling family that shares prefix bytes. Pinned
+      # on the RANGE, not on starts_with?, because the range is what
+      # readers and any future clear actually use.
+      families = %{
+        shard_key: {SystemKeys.shard_keys_prefix(), [SystemKeys.shard_key(<<>>), SystemKeys.shard_key(<<0xFF, 0xFF>>)]},
+        materializer_key:
+          {SystemKeys.materializers_prefix(),
+           [SystemKeys.materializer_key(0, "wkr_a"), SystemKeys.materializer_key(4200, "wkr_b")]}
+      }
+
+      # Plausible future siblings that share leading bytes with a family.
+      siblings = ["\xff/system/shards/0", "\xff/system/materializer_policy/0", "\xff/system/layout/id"]
+
+      for {family, {prefix, keys}} <- families do
+        range = KeyRange.from_prefix(prefix)
+
+        for key <- keys do
+          assert KeyRange.contains?(range, key), "#{family} range must hold its own key #{inspect(key)}"
+        end
+
+        for {other_family, {_p, other_keys}} <- families,
+            other_family != family,
+            other_key <- other_keys do
+          refute KeyRange.contains?(range, other_key),
+                 "#{family} range must not cover #{other_family} key #{inspect(other_key)}"
+        end
+
+        for sibling <- siblings do
+          refute KeyRange.contains?(range, sibling),
+                 "#{family} range must not cover sibling #{inspect(sibling)}"
+        end
+      end
     end
 
     test "unknown system keys parse as :unknown, non-system keys as :error" do

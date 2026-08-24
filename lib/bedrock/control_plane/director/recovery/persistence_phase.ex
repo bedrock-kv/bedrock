@@ -26,7 +26,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.Id
   alias Bedrock.Internal.TransactionBuilder.Tx
-  alias Bedrock.KeyRange
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.SystemKeys
@@ -189,30 +188,28 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   # Every key written here has a named purpose: shard_keys/ feeds both
-  # RoutingData and the next recovery's materializer bootstrap,
-  # and materializers/ refs feed the client-facing routing projection
-  # (FDB's serverList analogue - runtime hints, never recovery input) and
-  # worker rejoin validation. layout/logs/ has no code reader by design:
-  # log wiring is epoch-constant and rides the unlock seed
-  # (bedrock-q67.41); the family stays durable for other consumers and
-  # cluster-introspection tools. Nothing else is written (config and
-  # policy travel via the object-storage cluster bootstrap, which the
-  # coordinator actually reads; services are rebuilt each recovery from
-  # foreman discovery). Families return to the keyspace when their
-  # readers do (bedrock-q67.9, q67.25).
+  # RoutingData and the next recovery's materializer bootstrap, and
+  # materializers/ refs feed the client-facing routing projection (FDB's
+  # serverList analogue - runtime hints, never recovery input) and worker
+  # rejoin validation. Nothing else is written (config and policy travel
+  # via the object-storage cluster bootstrap, which the coordinator
+  # actually reads; services are rebuilt each recovery from foreman
+  # discovery). Families return to the keyspace when their readers do
+  # (bedrock-q67.9, q67.25) - and only then. FDB does keep a keyspace
+  # copy of its log set (`\xff/logs`, SystemData.cpp:1171, written by the
+  # recovery transaction at ClusterRecovery.actor.cpp:1728), so the
+  # deleted layout/logs family was its analogue - but FDB's copy has
+  # three readers we have no equivalent of: recovery's stale-master
+  # fence (ClusterRecovery.actor.cpp:770-801), exclusion safety
+  # (ManagementAPI.actor.cpp:2394), and the in-progress-exclusion
+  # special-key module (SpecialKeySpace.actor.cpp:1294). Ours had none,
+  # and the tag mapping it held survives in the cluster bootstrap the
+  # coordinator actually loads. The family comes back when one of those
+  # readers does (bedrock-q67.21.10).
   @spec build_readable_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
   defp build_readable_keys(tx, recovery_attempt) do
-    # layout/logs is an epoch-scoped statement (which logs THIS epoch
-    # runs), so it alone is cleared and rewritten each recovery. The
-    # mapping families below are durable, distributor-era state: recovery
+    # The mapping families are durable, distributor-era state: recovery
     # reads and heals, never blanket-clears (bedrock-q67.21.2).
-    tx = clear_prefix(tx, SystemKeys.layout_logs_prefix())
-
-    tx =
-      Enum.reduce(recovery_attempt.transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
-        Tx.set(tx, SystemKeys.layout_log(log_id), Values.encode_tag_list(log_descriptor))
-      end)
-
     tx = build_shard_keys(tx, recovery_attempt)
     build_materializer_keys(tx, recovery_attempt)
   end
@@ -254,16 +251,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
             end
         end
     end
-  end
-
-  # The epoch-scoped layout/logs family is cleared before its entries are
-  # written so a changed log set leaves no stale entries behind. The clear
-  # and the rewrite land in the same system transaction, so readers never
-  # observe a gap.
-  @spec clear_prefix(Tx.t(), Bedrock.key()) :: Tx.t()
-  defp clear_prefix(tx, prefix) do
-    {start_key, end_key} = KeyRange.from_prefix(prefix)
-    Tx.clear_range(tx, start_key, end_key)
   end
 
   # Creates shard_key(end_key) -> {tag, start_key} entries (ceiling

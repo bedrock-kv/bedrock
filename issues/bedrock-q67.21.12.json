@@ -11,11 +11,15 @@
     {
       "text": "-m",
       "timestamp": "2026-08-24T20:29:31Z"
+    },
+    {
+      "text": "-m",
+      "timestamp": "2026-08-24T21:53:41Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Tag-0 materializer members ride CoreState; recovery stops inventing the metadata store",
   "type": "task",
-  "updated_at": "2026-08-24T20:29:31Z"
+  "updated_at": "2026-08-24T21:53:41Z"
 }

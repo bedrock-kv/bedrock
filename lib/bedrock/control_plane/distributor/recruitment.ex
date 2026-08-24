@@ -78,8 +78,10 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   Unlike a failed recruitment, a failed adoption never removes the
   worker: it pre-exists this attempt and holds real state — enforced
   structurally by there being no removal call on this path. The caller
-  heals the tag instead (placeholder + fresh recruit); the unadopted
-  worker later observes the new entry and retires itself in-band.
+  heals the tag instead, and healing CLEARS this worker's own key — a
+  clear the proxy privatizes onto the shard's stream, so the worker
+  retires in-band, at the version its assignment ends
+  (bedrock-q67.21.6).
   """
   @spec adopt(Bedrock.range_tag(), Worker.id(), node(), context()) ::
           {:ok, pid(), node(), Worker.id()} | {:error, term()}

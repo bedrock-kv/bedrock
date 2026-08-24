@@ -35,6 +35,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.Time
+  alias Bedrock.SystemKeys
 
   @type metadata_mutations :: [Bedrock.Internal.TransactionBuilder.Tx.mutation()]
 
@@ -853,9 +854,47 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           add_tagged_mutation_to_logs({split_mutation, tag}, acc, log_map, m)
         end)
 
+      # Then any privatized copy, addressed by an EXPLICIT tag rather than
+      # a boundary walk — split_mutation_by_shards/2 would find no shard
+      # for a key past every boundary and fail the whole batch.
+      updated_acc =
+        Enum.reduce(privatized_mutations(mutation), updated_acc, fn tagged, acc ->
+          add_tagged_mutation_to_logs(tagged, acc, log_map, m)
+        end)
+
       {:cont, {:ok, updated_acc}}
     end
   end
+
+  @doc """
+  The privatized copies a committed mutation must also put on the stream.
+
+  A membership CLEAR retires the worker it names, and the worker must
+  learn it IN-BAND — from the stream it already follows — rather than
+  waiting for the next recovery push. So the proxy emits a second copy of
+  the mutation, prefixed past `end_of_keyspace/0` and addressed to the
+  shard tag the key itself carries.
+
+  The prefix does two jobs, both FDB's (`ApplyMetadataMutation.cpp:291-317`
+  privatizes `serverKeys` with `withPrefix(systemKeys.begin)` and
+  `toCommit->addTag(tag)`): it moves the key outside every shard's range
+  so no materializer can ever store it, and it makes the notice
+  unforgeable, because commit ingress rejects that range in BOTH modes —
+  only this function, running after validation, can produce one.
+
+  Only removals travel. A worker gaining membership learns it from the
+  distributor that recruited it, so a privatized SET would be a mutation
+  with no reader.
+  """
+  @spec privatized_mutations(term()) :: [{term(), non_neg_integer()}]
+  def privatized_mutations({:clear, key}) do
+    case SystemKeys.parse_key(key) do
+      {:materializer_key, tag, _worker_id} -> [{{:clear, Bedrock.end_of_keyspace() <> key}, tag}]
+      _not_a_membership_key -> []
+    end
+  end
+
+  def privatized_mutations(_mutation), do: []
 
   # Add a tagged mutation to the appropriate logs
   @spec add_tagged_mutation_to_logs(

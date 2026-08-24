@@ -195,11 +195,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # via the object-storage cluster bootstrap, which the coordinator
   # actually reads; services are rebuilt each recovery from foreman
   # discovery). Families return to the keyspace when their readers do
-  # (bedrock-q67.9, q67.25) - and only then: the log set is recorded
-  # where it is READ, in the cluster bootstrap the coordinator loads at
-  # cold start (FDB's DBCoreState) and in the epoch's broadcast wiring
-  # (FDB's logSystemConfig). A third copy here had no audience
-  # (bedrock-q67.21.10).
+  # (bedrock-q67.9, q67.25) - and only then. FDB does keep a keyspace
+  # copy of its log set (`\xff/logs`, SystemData.cpp:1171, written by the
+  # recovery transaction at ClusterRecovery.actor.cpp:1728), so the
+  # deleted layout/logs family was its analogue - but FDB's copy has
+  # three readers we have no equivalent of: recovery's stale-master
+  # fence (ClusterRecovery.actor.cpp:770-801), exclusion safety
+  # (ManagementAPI.actor.cpp:2394), and the in-progress-exclusion
+  # special-key module (SpecialKeySpace.actor.cpp:1294). Ours had none,
+  # and the tag mapping it held survives in the cluster bootstrap the
+  # coordinator actually loads. The family comes back when one of those
+  # readers does (bedrock-q67.21.10).
   @spec build_readable_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
   defp build_readable_keys(tx, recovery_attempt) do
     # The mapping families are durable, distributor-era state: recovery

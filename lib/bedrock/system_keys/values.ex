@@ -8,10 +8,9 @@ defmodule Bedrock.SystemKeys.Values do
   bytes must never create atoms.
 
   The surface is exactly the written families - `shard_keys/` entries
-  (the routing boundary map), `layout/logs/` tag lists (no code reader by
-  design: kept durable for introspection, see `Bedrock.SystemKeys`), and
-  `materializers/` refs (worker id and node as strings; consumers derive
-  the callable `{otp_name, node}` ref, so the no-atoms rule holds through
+  (the routing boundary map) and `materializers/` membership (the node as
+  a string; consumers derive the callable `{otp_name, node}` ref from it
+  and the worker id in the key, so the no-atoms rule holds through
   decode). Families return here when their readers do.
   """
 

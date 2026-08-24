@@ -7,11 +7,7 @@ defmodule Bedrock.SystemKeys do
   the next recovery's materializer bootstrap; `materializers/<tag>/<worker_id>` entries
   feed the client-facing routing projection served by commit proxies
   (FDB's `serverList/` analogue - interfaces ride the keyspace) and answer
-  worker rejoin validation. `layout/logs/<log_id>` keys have no code
-  reader by design: log wiring is epoch-constant and rides the recovery
-  unlock seed (bedrock-q67.41) - the family stays durable for other
-  consumers and cluster-introspection tools, a queryable statement of
-  which logs the current epoch runs. Materializer refs are runtime hints
+  worker rejoin validation. Materializer members are runtime hints
   for clients, never recovery input: bootstrap rebuilds assignment from
   `shard_keys/` plus live foreman discovery. `distributor_lock/{owner,
   write}` is the distributor's write fence (FDB's MoveKeys lock,

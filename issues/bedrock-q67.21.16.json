@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-24T23:06:48Z",
   "created": "2026-08-24T20:29:18Z",
   "description": "SUPERSEDED - DO NOT IMPLEMENT AS ORIGINALLY WRITTEN. Attempted as PR #201 and CLOSED. Kept as a design record because the reasoning matters and may become relevant again.\n\nTHE PRINCIPLE STANDS: materializers make no distinctions between themselves. They follow FDB's storage-server pattern - answer if you have the answer, refuse if you don't. Selection heuristics, rankings and contests are the complexity that pattern exists to avoid. That principle drove bedrock-q67.21.12 (the contest and the invent path are deleted) and it should keep driving this area.\n\nWHY THE IMPLEMENTATION WAS WRONG:\n\n1. It was DEAD CODE. It keyed on the log answering version_too_old, but that shape is produced only by Log.Shale.Pulling, reachable only through Log.pull/3, whose sole caller is log-to-log recovery replay. The materializer's puller goes through Demux.ShardServer.pull/3, which never produces it. The clause could not execute.\n\n2. THE HOLE IT DEFENDED AGAINST IS NOT REACHABLE. Chunks are NEVER deleted (demux/shard_server.ex:324) - Bedrock has no retention floor for shard chunks - so a materializer can always replay its shard's full history from zero. Reproducing the scenario required deleting objects by hand.\n\n3. IT REMOVED THE ONLY BACKOFF on that path. Replacing fail_over/1 with a no-op measured 854,517 pulls/sec against 1/sec before, with matching floods of callbacks, messages and warn-level log lines.\n\nWHAT THE SYMPTOM ACTUALLY WAS: the one path that FAKED such a gap was a swallowed object-storage listing error, fixed at the root by bedrock-q67.21.17. A failed listing now raises instead of reporting an empty history, so a worker neither starts empty for a populated shard nor advances past versions it never received.\n\nAND FDB DOES NOT MODEL THIS AS READABILITY AT ALL. Its answer to a genuinely lost log position is kill-and-rebuild: \"if (cursor-\u003epopped() \u003e 0) throw worker_removed()\" (storageserver.actor.cpp:12119-12123), then persistentData-\u003edispose() (:15001-15005), after which DD recruits fresh. FDB needs in-place refetch (fetchKeys) because one storage server hosts MANY shards and cannot die over one bad range; a Bedrock materializer serves exactly one shard, so the worker and the shard are the same unit of failure and replacement is the proportionate mechanism. See bedrock-q67.21.18.\n\nREVISIT ONLY IF a retention floor for chunks is introduced, or some other mechanism can leave a worker genuinely unable to reconstruct its shard. Then the refusal belongs at the read boundary with a distinct retryable error (never conflated with an absent key), and the trigger must be a signal the materializer's own pull path can actually receive.",
   "id": "bedrock-q67.21.16",
@@ -14,8 +15,8 @@
     }
   ],
   "priority": 4,
-  "status": "open",
+  "status": "closed",
   "title": "A materializer refuses reads for data it does not hold (FDB shard readability)",
   "type": "task",
-  "updated_at": "2026-08-24T21:56:03Z"
+  "updated_at": "2026-08-24T23:06:48Z"
 }

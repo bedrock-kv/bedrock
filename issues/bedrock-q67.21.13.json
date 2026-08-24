@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67.21",
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Recovery stops at tag 0: the distributor owns data-tag materializers",
   "type": "task",
-  "updated_at": "2026-08-24T19:39:22Z"
+  "updated_at": "2026-08-24T22:18:35Z"
 }

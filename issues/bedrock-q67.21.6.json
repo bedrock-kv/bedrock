@@ -1,7 +1,8 @@
 {
   "assignee": "",
   "blocked_by": [
-    "bedrock-q67.21.4"
+    "bedrock-q67.21.4",
+    "bedrock-q67.21.9"
   ],
   "blocks": [],
   "created": "2026-08-21T20:10:28Z",

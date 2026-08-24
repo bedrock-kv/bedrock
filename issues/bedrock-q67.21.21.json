@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-24T23:39:12Z",
+  "description": "P0 REGRESSION from bedrock-q67.21.12 (PR #203, merged 2026-08-24). Every\ncluster created before that PR is bricked by upgrading: recovery never\ncompletes and every client read hangs.\n\nREPRODUCED deterministically, variable isolated:\n- fresh cluster on develop -\u003e RESULT: nil (works)\n- same cluster, same data, system_materializers stripped from the\n  bootstrap record -\u003e :bootstrap_names_no_system_materializers, retried\n  in a tight loop forever\n\nThe user's /tmp/bedrock_00000 decodes to exactly that state:\nsystem_materializers %{}, fresh? false, epoch 3, one log. The record was\nlast written 13:33 while the worker dirs were touched at 19:25 —\nrecovery ran and never completed.\n\nTWO DEFECTS, both from the same assumption (a newly added field is\nalways present):\n\n1. resolve_system_materializer treated \"the record names nobody\" as\n   unrecoverable. The ticket said so outright: \"recovery cannot learn\n   where the metadata lives, and no retry will change that.\" That is\n   false. The locking phase has already locked every advertised\n   materializer and each reports its own shard_id, so tag 0 can be READ\n   from evidence. Reading evidence is not inventing a metadata store —\n   inventing is what q67.21.12 actually forbids.\n\n2. build_updated_bootstrap used %{record | field: ...}, which RAISES\n   badkey for a key the map lacks. A record decoded from a FlatBuffer\n   written before the field simply has no such key, so the director\n   crashed — on exactly the clusters an upgrade must carry.\n\nFIX:\n- legacy path only (field absent or empty) falls back to discovery among\n  locked services claiming shard 0; the persistence phase then records\n  it and the next recovery resolves by name. One-time, self-healing.\n- Map.merge instead of the update operator: adds what is missing,\n  overwrites what is not, which is what \"rewrite these fields\" means.\n\nINVARIANT PRESERVED: a record that DOES name members, none available,\nstill stalls — even with a healthy stranger locked and available.\nSubstituting a different worker is the fabrication FDB refuses\n(TagPartitionedLogSystem.actor.cpp:2549-2585). Pinned by its own test.\n\nVERIFIED END TO END: the stripped-record cluster now recovers on first\nboot, the bootstrap is repaired, and a second boot takes the named path\nwithout discovery. The user's real record bytes rewrite and round-trip\ncleanly.\n\nBoth fixes mutation-tested independently (restore by re-edit, not git\ncheckout — sequential checkout restores silently invalidate each other).",
+  "id": "bedrock-q67.21.21",
+  "labels": [],
+  "parent": "bedrock-q67.21",
+  "priority": 0,
+  "status": "open",
+  "title": "P0: a bootstrap record predating system_materializers bricks recovery on upgrade",
+  "type": "bug",
+  "updated_at": "2026-08-24T23:39:12Z"
+}

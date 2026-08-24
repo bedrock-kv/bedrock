@@ -21,14 +21,25 @@ defmodule Bedrock.ObjectStorage.ListingTruthfulnessTest do
 
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.ChunkReader
+  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
 
   defmodule FailingBackend do
     @moduledoc false
     @behaviour ObjectStorage
 
+    # LAZY, exactly like the real backends: the raise happens when the
+    # stream is CONSUMED, not when it is built. That is the property
+    # Snapshot.read_latest/1's rescue depends on — an eager stub would
+    # pass even if consumption were moved outside the rescued body.
     @impl true
-    def list(_config, _prefix, _opts \\ []), do: raise(Bedrock.ObjectStorage.ListError, reason: :econnrefused)
+    def list(_config, prefix, _opts \\ []) do
+      Stream.resource(
+        fn -> :start end,
+        fn :start -> raise(Bedrock.ObjectStorage.ListError, reason: :econnrefused, prefix: prefix) end,
+        fn _ -> :ok end
+      )
+    end
 
     @impl true
     def get(_config, _key), do: {:error, :econnrefused}
@@ -67,6 +78,49 @@ defmodule Bedrock.ObjectStorage.ListingTruthfulnessTest do
     end
   end
 
+  describe "the real LocalFilesystem backend, driven into its error path" do
+    @describetag :tmp_dir
+
+    setup %{tmp_dir: tmp_dir} do
+      on_exit(fn -> File.chmod(Path.join(tmp_dir, "c/locked"), 0o700) end)
+      :ok
+    end
+
+    test "an unreadable directory raises instead of listing zero keys", %{tmp_dir: tmp_dir} do
+      backend = {LocalFilesystem, root: tmp_dir}
+      locked = Path.join(tmp_dir, "c/locked")
+      File.mkdir_p!(locked)
+      File.write!(Path.join(locked, "0001"), "chunk")
+      File.chmod!(locked, 0o000)
+
+      assert_raise ObjectStorage.ListError, fn ->
+        backend |> ObjectStorage.list("c/locked/") |> Enum.to_list()
+      end
+    end
+
+    test "a prefix that was never created is EMPTY, not an error", %{tmp_dir: tmp_dir} do
+      # The regression this fix must not cause: a fresh cluster listing a
+      # shard that has never written a chunk must get [], not a raise.
+      backend = {LocalFilesystem, root: tmp_dir}
+
+      assert backend |> ObjectStorage.list("c/never_written/") |> Enum.to_list() == []
+    end
+
+    test "one unreadable shard does not break a DIFFERENT shard's listing", %{tmp_dir: tmp_dir} do
+      # The walk falls back to the parent when a prefix directory does not
+      # exist, so a naive implementation descends into sibling shards. An
+      # error there must not be reported as ignorance about THIS shard,
+      # whose answer is fully knowable: it has no chunks.
+      backend = {LocalFilesystem, root: tmp_dir}
+      locked = Path.join(tmp_dir, "c/locked")
+      File.mkdir_p!(locked)
+      File.write!(Path.join(locked, "0001"), "chunk")
+      File.chmod!(locked, 0o000)
+
+      assert backend |> ObjectStorage.list("c/healthy/") |> Enum.to_list() == []
+    end
+  end
+
   describe "the failure the lie caused, end to end" do
     test "a shard read reports an error instead of an empty history" do
       # This is the chain that loses data. Before: the listing halts on
@@ -94,7 +148,7 @@ defmodule Bedrock.ObjectStorage.ListingTruthfulnessTest do
   end
 
   describe "Snapshot distinguishes absence from ignorance" do
-    test "a failed listing is an error, never :not_found" do
+    test "a failed listing is an error, never :not_found — even though the raise arrives during consumption" do
       snapshot = Snapshot.new(@backend, "s1")
 
       # :not_found means "this shard has no durable baseline", which

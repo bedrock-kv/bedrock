@@ -95,11 +95,35 @@ defmodule Bedrock.ObjectStorage do
   @callback delete(backend :: term(), key :: key()) ::
               :ok | error()
 
+  defmodule ListError do
+    @moduledoc """
+    Raised when a listing cannot be completed.
+
+    `list/3` returns a bare `Enumerable.t()`, which has no way to report
+    failure — a stream can only yield elements or end. A backend that
+    quietly stopped on error would be indistinguishable from a prefix
+    that is genuinely empty, and consumers read that silence as fact: a
+    materializer treats "no chunks here" as "this shard has no data at
+    that version" and advances past everything it never received.
+
+    So the stream raises instead. Absence and ignorance are different
+    answers and must not share a representation.
+    """
+    defexception [:reason, :prefix]
+
+    @impl true
+    def message(%__MODULE__{reason: reason, prefix: prefix}),
+      do: "failed to list objects under #{inspect(prefix)}: #{inspect(reason)}"
+  end
+
   @doc """
   List objects with the given prefix.
 
   Returns a lazy stream that fetches pages as needed. Objects are returned
   in ascending lexicographic order by key.
+
+  RAISES `ListError` if the backend cannot complete the listing, so an
+  empty stream means the prefix IS empty rather than unknown.
 
   ## Options
 

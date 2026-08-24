@@ -18,6 +18,8 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
 
   @behaviour Bedrock.ObjectStorage
 
+  alias Bedrock.ObjectStorage
+
   @impl true
   def put(config, key, data, _opts \\ []) do
     root = Keyword.fetch!(config, :root)
@@ -181,8 +183,15 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
 
         list_next({root, sorted_subdirs ++ rest_dirs, sorted_files, prefix, limit})
 
-      {:error, _} ->
+      # A directory that is not there contributes nothing — genuine
+      # absence, and benign if it vanished mid-walk. Any OTHER failure
+      # (permissions, I/O) means we cannot see what is there, and
+      # skipping it would report those keys as absent without looking.
+      {:error, :enoent} ->
         list_next({root, rest_dirs, [], prefix, limit})
+
+      {:error, reason} ->
+        raise ObjectStorage.ListError, reason: reason, prefix: prefix
     end
   end
 end

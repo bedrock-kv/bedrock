@@ -105,6 +105,12 @@ defmodule Bedrock.ObjectStorage.Snapshot do
       [] -> {:error, :not_found}
       {:error, reason} -> {:error, reason}
     end
+  rescue
+    # :not_found is a FACT — this shard has no durable baseline, and a
+    # materializer may legitimately start empty on it. A listing that
+    # failed knows nothing, and must never be able to say that: it
+    # surfaces as an ordinary error so callers fail rather than assume.
+    e in ObjectStorage.ListError -> {:error, {:list_failed, e.reason}}
   end
 
   @doc """

@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       # Fresh cluster context - no old logs, but with materializer capability
       context =
         [
-          old_transaction_system_layout: %{logs: %{}},
+          prior_core_state: %{logs: %{}},
           node_capabilities: %{
             log: [Node.self()],
             materializer: [Node.self()]
@@ -111,7 +111,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       context =
         [
-          old_transaction_system_layout: %{logs: %{}},
+          prior_core_state: %{logs: %{}},
           node_capabilities: %{
             log: [Node.self()],
             materializer: [Node.self()]
@@ -164,7 +164,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       # AND no materializer capability in nodes
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"log_1" => [0, 1]}
           },
           node_capabilities: %{
@@ -212,7 +212,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"log_1" => [0, 1]}
           }
         ]
@@ -276,7 +276,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"log_1" => [0, 1]}
           }
         ]
@@ -313,7 +313,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"log_1" => [0, 1]}
           },
           node_capabilities: %{
@@ -376,7 +376,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"log_1" => [0, 1]}
           }
         ]
@@ -421,7 +421,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"log_1" => [0, 1]}
           }
         ]
@@ -448,7 +448,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"log_1" => [0, 1]}
           },
           node_capabilities: %{
@@ -503,7 +503,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: logs
           }
         ]
@@ -564,7 +564,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     defp existing_context(recovery_version, overrides) do
       base =
         [
-          old_transaction_system_layout: %{logs: %{"log_1" => [0, 1]}}
+          prior_core_state: %{logs: %{"log_1" => [0, 1]}}
         ]
         |> create_test_context()
         |> Map.put(:available_services, %{})
@@ -676,7 +676,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       context =
         [
-          old_transaction_system_layout: %{logs: %{}},
+          prior_core_state: %{logs: %{}},
           node_capabilities: %{log: [Node.self()], materializer: [Node.self()]}
         ]
         |> create_test_context()

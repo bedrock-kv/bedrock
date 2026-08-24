@@ -28,12 +28,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecoveryPlanningPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Version
 
   @impl true
   def execute(%RecoveryAttempt{} = recovery_attempt, context) do
-    old_log_ids = Map.keys(context.old_transaction_system_layout[:logs] || %{})
+    old_log_ids = context.prior_core_state |> CoreState.log_ids() |> MapSet.to_list()
     log_recovery_info = recovery_attempt.log_recovery_info_by_id
     locked_count = map_size(log_recovery_info)
     total_count = length(old_log_ids)

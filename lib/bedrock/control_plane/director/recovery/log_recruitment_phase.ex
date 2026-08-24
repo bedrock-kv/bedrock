@@ -26,6 +26,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
@@ -109,10 +110,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     end
   end
 
-  defp get_old_system_log_ids(%{old_transaction_system_layout: %{logs: old_logs}}),
-    do: old_logs |> Map.keys() |> MapSet.new()
-
-  defp get_old_system_log_ids(_), do: MapSet.new()
+  defp get_old_system_log_ids(context), do: context |> Map.get(:prior_core_state) |> CoreState.log_ids()
 
   defp get_available_log_ids(%{available_services: available_services}) do
     available_services

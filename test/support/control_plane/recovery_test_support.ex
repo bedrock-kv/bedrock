@@ -41,12 +41,12 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
         resolution: [Node.self()]
       })
 
-    old_transaction_system_layout =
-      Keyword.get(opts, :old_transaction_system_layout, %{logs: %{}})
+    prior_core_state =
+      Keyword.get(opts, :prior_core_state, %{logs: %{}})
 
     %{
       node_capabilities: node_capabilities,
-      old_transaction_system_layout: old_transaction_system_layout,
+      prior_core_state: prior_core_state,
       # Deterministic default for the bootstrap's durable-family read;
       # tests exercising the read path override it.
       read_prior_refs_fn: fn _materializer_pid, _read_version -> {:ok, %{}} end,
@@ -289,7 +289,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
         end
     }
 
-    Map.put(context, :old_transaction_system_layout, layout)
+    Map.put(context, :prior_core_state, layout)
   end
 
   @doc """

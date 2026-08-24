@@ -11,7 +11,7 @@ defmodule Bedrock.ControlPlane.Coordinator.StateTest do
 
       state =
         struct!(State,
-          old_transaction_system_layout: recovery_source,
+          prior_core_state: recovery_source,
           transaction_system_layout: runnable_layout,
           tsl_subscribers: MapSet.new([self()])
         )
@@ -19,16 +19,27 @@ defmodule Bedrock.ControlPlane.Coordinator.StateTest do
       result = Changes.clear_transaction_system_layout(state)
 
       assert result.transaction_system_layout == nil
-      assert result.old_transaction_system_layout == recovery_source
+      assert result.prior_core_state == recovery_source
       assert_receive {:tsl_updated, nil}
     end
 
-    test "publishing a runnable layout also refreshes the recovery source" do
-      runnable_layout = %{id: "layout-2", epoch: 8, logs: %{}, services: %{}}
+    test "publishing a runnable layout refreshes the recovery source with its DURABLE half only" do
+      # The broadcast goes out whole - subscribers need the pids. What is
+      # kept as the next recovery's prior state is the core state
+      # projected from it: the epoch's pids die with the epoch, and this
+      # slot exists to outlive it.
+      runnable_layout = %{
+        id: "layout-2",
+        epoch: 8,
+        sequencer: self(),
+        proxies: [self()],
+        logs: %{"new-log" => [0]},
+        services: %{}
+      }
 
       state =
         struct!(State,
-          old_transaction_system_layout: %{logs: %{"old-log" => []}},
+          prior_core_state: %{logs: %{"old-log" => []}},
           transaction_system_layout: nil,
           tsl_subscribers: MapSet.new([self()])
         )
@@ -36,7 +47,8 @@ defmodule Bedrock.ControlPlane.Coordinator.StateTest do
       result = Changes.put_transaction_system_layout(state, runnable_layout)
 
       assert result.transaction_system_layout == runnable_layout
-      assert result.old_transaction_system_layout == runnable_layout
+      assert result.prior_core_state == %{logs: %{"new-log" => [0]}}
+      refute Map.has_key?(result.prior_core_state, :sequencer)
       assert_receive {:tsl_updated, ^runnable_layout}
     end
   end

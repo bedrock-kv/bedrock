@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
@@ -33,7 +33,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
           opts :: [
             cluster: module(),
             config: Config.t(),
-            old_transaction_system_layout: TransactionSystemLayout.t() | nil,
+            prior_core_state: CoreState.t() | nil,
             epoch: Bedrock.epoch(),
             coordinator: Coordinator.ref(),
             services: %{String.t() => {atom(), {atom(), node()}}} | nil,
@@ -47,7 +47,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     coordinator = opts[:coordinator] || raise "Missing :coordinator param"
     services = opts[:services] || %{}
     node_capabilities = opts[:node_capabilities] || %{}
-    old_transaction_system_layout = opts[:old_transaction_system_layout] || nil
+    prior_core_state = opts[:prior_core_state] || nil
 
     %{
       id: __MODULE__,
@@ -55,19 +55,19 @@ defmodule Bedrock.ControlPlane.Director.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, config, old_transaction_system_layout, epoch, coordinator, services, node_capabilities}
+           {cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({cluster, config, old_transaction_system_layout, epoch, coordinator, services, node_capabilities}) do
+  def init({cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities}) do
     state = %State{
       epoch: epoch,
       cluster: cluster,
       config: config,
-      old_transaction_system_layout: old_transaction_system_layout,
+      prior_core_state: prior_core_state,
       coordinator: coordinator,
       node_capabilities: node_capabilities,
       lock_token: :crypto.strong_rand_bytes(32),

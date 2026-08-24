@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator.RecoveryCapabilityTracker
   alias Bedrock.ControlPlane.Director
@@ -23,8 +24,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           supervisor_otp_name: atom(),
           last_durable_txn_id: Raft.transaction_id(),
           config: Config.t() | nil,
-          old_transaction_system_layout:
-            TransactionSystemLayout.t() | %{required(:logs) => TransactionSystemLayout.log_map()} | nil,
+          prior_core_state: CoreState.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           waiting_list: %{Raft.transaction_id() => pid()},
           service_directory: %{String.t() => {atom(), {atom(), node()}}},
@@ -43,7 +43,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             supervisor_otp_name: nil,
             last_durable_txn_id: nil,
             config: nil,
-            old_transaction_system_layout: nil,
+            prior_core_state: nil,
             transaction_system_layout: nil,
             waiting_list: %{},
             service_directory: %{},
@@ -95,9 +95,13 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t()) ::
             State.t()
     def put_transaction_system_layout(t, transaction_system_layout) do
+      # The completed layout becomes the next recovery's PRIOR STATE, but
+      # only its durable half may: the layout's pids die with this epoch,
+      # and the prior-state slot exists to outlive it. (This worked
+      # before only because both shapes happen to carry a :logs field.)
       updated_state = %{
         t
-        | old_transaction_system_layout: transaction_system_layout,
+        | prior_core_state: CoreState.from_layout(transaction_system_layout),
           transaction_system_layout: transaction_system_layout
       }
 

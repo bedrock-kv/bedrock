@@ -1,6 +1,6 @@
 defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
   @moduledoc false
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.Telemetry
 
   @spec trace_started(cluster :: module(), otp_name :: atom()) :: :ok
@@ -27,15 +27,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
 
   @spec trace_director_launch(
           epoch :: non_neg_integer(),
-          old_transaction_system_layout :: TransactionSystemLayout.t() | nil
+          prior_core_state :: CoreState.t() | nil
         ) :: :ok
-  def trace_director_launch(epoch, old_transaction_system_layout) do
+  def trace_director_launch(epoch, prior_core_state) do
     config_summary =
-      if old_transaction_system_layout do
+      if prior_core_state do
         %{
-          epoch: old_transaction_system_layout[:epoch],
+          epoch: prior_core_state[:epoch],
           has_transaction_system_layout: true,
-          logs_count: map_size(old_transaction_system_layout[:logs] || %{})
+          logs_count: map_size(prior_core_state[:logs] || %{})
         }
       end
 

@@ -58,7 +58,7 @@ defmodule Bedrock.ControlPlane.Coordinator.TslReplayTest do
   test "a recovery-only layout is not replayed as runnable" do
     state =
       follower_state(%{
-        old_transaction_system_layout: %{logs: %{"old-log" => []}},
+        prior_core_state: %{logs: %{"old-log" => []}},
         transaction_system_layout: nil
       })
 
@@ -70,7 +70,7 @@ defmodule Bedrock.ControlPlane.Coordinator.TslReplayTest do
   test "fetch returns unavailable when no runnable layout exists" do
     state =
       follower_state(%{
-        old_transaction_system_layout: %{logs: %{"old-log" => []}},
+        prior_core_state: %{logs: %{"old-log" => []}},
         transaction_system_layout: nil
       })
 

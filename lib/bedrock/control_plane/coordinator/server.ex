@@ -43,6 +43,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   import Bedrock.Internal.GenServer.Replies
 
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Coordinator.Commands
   alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
@@ -89,8 +90,9 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     with {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          {:ok, raft_log} <- init_raft_log(cluster) do
-      # Load config and old TSL from object storage (source of truth)
-      {loaded_epoch, loaded_config, loaded_tsl} = load_state_from_object_storage(cluster)
+      # Load config and the prior core state from object storage (the
+      # durable record; FDB reads its cstate at the same point)
+      {loaded_epoch, loaded_config, loaded_core_state} = load_state_from_object_storage(cluster)
 
       {:ok,
        %State{
@@ -100,7 +102,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          supervisor_otp_name: cluster.otp_name(:sup),
          epoch: loaded_epoch,
          config: loaded_config,
-         old_transaction_system_layout: loaded_tsl,
+         prior_core_state: loaded_core_state,
          transaction_system_layout: nil,
          raft:
            Raft.new(
@@ -455,10 +457,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          {:ok, bootstrap} <- parse_bootstrap_data(data, cluster) do
       epoch = bootstrap.epoch
       config = build_config_from_bootstrap(bootstrap, cluster)
-      old_tsl = build_old_tsl_from_bootstrap(bootstrap)
+      core_state = CoreState.from_bootstrap(bootstrap)
 
       Logger.info("Bedrock [#{cluster}]: Loaded cluster bootstrap from object storage (epoch: #{epoch})")
-      {epoch, config, old_tsl}
+      {epoch, config, core_state}
     else
       {:error, :no_object_storage} -> {nil, nil, nil}
       {:error, :not_found} -> {nil, nil, nil}
@@ -538,18 +540,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   defp build_policies(nil), do: %{allow_volunteer_nodes_to_join: true}
   defp build_policies(p), do: %{allow_volunteer_nodes_to_join: p[:allow_volunteer_nodes_to_join] || false}
-
-  # Build old_transaction_system_layout from ClusterBootstrap logs
-  # Recovery only uses the logs field to determine which logs to copy from
-  defp build_old_tsl_from_bootstrap(bootstrap) do
-    logs =
-      Map.new(bootstrap[:logs] || [], fn log_info ->
-        # LogDescriptor is just [range_tag] - a list of shard tags
-        {log_info[:id], log_info[:shard_tags] || []}
-      end)
-
-    %{logs: logs}
-  end
 
   @spec get_object_storage_backend(module()) :: {:ok, ObjectStorage.backend()} | {:error, :no_object_storage}
   defp get_object_storage_backend(cluster) do

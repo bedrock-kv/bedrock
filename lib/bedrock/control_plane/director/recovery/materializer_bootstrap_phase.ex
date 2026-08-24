@@ -32,6 +32,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   import Bedrock, only: [end_of_keyspace: 0]
   import Bedrock.ControlPlane.Config.ResolverDescriptor, only: [resolver_descriptor: 2]
 
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.ShardRouter
@@ -75,9 +76,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
   # Private implementation
 
-  defp fresh_cluster?(%{old_transaction_system_layout: nil}), do: true
-  defp fresh_cluster?(%{old_transaction_system_layout: %{logs: logs}}) when map_size(logs) == 0, do: true
-  defp fresh_cluster?(_context), do: false
+  # FDB's neverCreated: a prior record naming no logs means there is no
+  # prior epoch's data to recover, so recovery seeds instead of reading.
+  defp fresh_cluster?(context), do: context |> Map.get(:prior_core_state) |> CoreState.fresh?()
 
   defp handle_fresh_cluster(recovery_attempt, context) do
     Logger.debug("Fresh cluster detected, using default shard layout")

@@ -69,7 +69,7 @@ defmodule Bedrock.ControlPlane.Coordinator.IntegrationTest do
       expected_args = [
         cluster: TestCluster,
         config: %{},
-        old_transaction_system_layout: %{},
+        prior_core_state: %{},
         epoch: 1,
         coordinator: self(),
         services: services

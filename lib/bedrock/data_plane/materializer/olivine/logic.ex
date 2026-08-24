@@ -232,8 +232,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     # over synchronously; the server withholds the reply for backpressure.
     server = self()
     ingest_fn = fn transactions, kcv -> GenServer.call(server, {:ingest, transactions, kcv}, :infinity) end
+    on_hole_fn = fn floor -> send(server, {:shard_hole, floor}) end
 
-    puller = Streaming.start_pulling(shard_num, start_after, sources, ingest_fn)
+    puller = Streaming.start_pulling(shard_num, start_after, sources, ingest_fn, on_hole_fn)
     put_puller(t, puller)
   end
 

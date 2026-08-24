@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Telemetry do
   """
 
   alias Bedrock.DataPlane.Materializer.Telemetry
+  alias Bedrock.Service.Worker
 
   @spec trace_read_operation_complete(term(), term(), keyword()) :: :ok
   def trace_read_operation_complete(operation, key, opts) do
@@ -75,6 +76,21 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Telemetry do
     }
 
     Telemetry.emit_materializer_operation(:compaction_started, measurements, metadata)
+  end
+
+  @doc """
+  This worker cannot account for its shard's full history: the log's
+  retention floor sits above where its data ends. It will refuse reads
+  from here on, so this is the event that explains a shard going
+  unavailable rather than silently wrong.
+  """
+  @spec trace_shard_unreadable(Worker.id(), String.t() | nil, Bedrock.version()) :: :ok
+  def trace_shard_unreadable(worker_id, shard_id, floor) do
+    Telemetry.emit_materializer_operation(
+      :shard_unreadable,
+      %{},
+      %{worker_id: worker_id, shard_id: shard_id, retention_floor: floor}
+    )
   end
 
   @spec trace_compaction_complete(Bedrock.version(), keyword()) :: :ok

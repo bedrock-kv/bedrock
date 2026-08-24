@@ -34,7 +34,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
           idle_timeout: pos_integer() | :infinity,
           last_read_at: integer() | nil,
           known_committed_version: Bedrock.version() | nil,
-          pending_ingest: GenServer.from() | nil
+          pending_ingest: GenServer.from() | nil,
+          unreadable_below: Bedrock.version() | nil
         }
   defstruct otp_name: nil,
             path: nil,
@@ -58,7 +59,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
             idle_timeout: :infinity,
             last_read_at: nil,
             known_committed_version: nil,
-            pending_ingest: nil
+            pending_ingest: nil,
+            # The cluster's retention floor, recorded ONLY when the log has
+            # told us it sits above where our data ends. Non-nil means this
+            # worker cannot account for its shard's full history and must
+            # refuse reads rather than answer from an incomplete database
+            # (FDB: a shard that has not finished fetching is not readable).
+            unreadable_below: nil
 
   @spec update_mode(t(), :locked | :running) :: t()
   def update_mode(t, mode), do: %{t | mode: mode}

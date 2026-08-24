@@ -67,8 +67,35 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamingTest do
         failed_logs: %{},
         shard_server: shard_server,
         current_log_id: "log-a",
-        ingest_fn: ingest_fn
+        ingest_fn: ingest_fn,
+        on_hole_fn: fn _floor -> :ok end
       }
+    end
+
+    test "version_too_old is a HOLE in our own data, not a fault of the log we asked" do
+      # Every log will answer the same way: the position is below the
+      # retention floor, which is a statement about THIS materializer, not
+      # about that replica. Failing over rotates through every log,
+      # marks them all bad, and loops forever — while reads keep being
+      # served from a database that is missing everything below the floor.
+      floor = Version.from_integer(9000)
+      test_pid = self()
+
+      {:ok, stub} = StubShardServer.start_link([{:reply, {:error, {:version_too_old, floor}}}], self())
+
+      state =
+        stub
+        |> state_with(fn _t, _kcv -> :ok end)
+        |> Map.put(:on_hole_fn, fn reported_floor -> send(test_pid, {:hole, reported_floor}) end)
+
+      new_state = Streaming.pull_once(state)
+
+      # Reported once, with the floor, so the worker can refuse reads.
+      assert_receive {:hole, ^floor}
+
+      # NOT treated as a per-log failure: the log we asked is fine.
+      assert new_state.failed_logs == %{}
+      assert new_state.current_log_id == "log-a"
     end
 
     test "ingests pulled slices and advances past the last version" do
@@ -210,7 +237,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamingTest do
           1,
           Version.from_integer(99),
           [{"log-a", log}],
-          ingest_fn
+          ingest_fn,
+          fn _floor -> :ok end
         )
 
       # on_exit runs outside the task's owner, so stop the raw pid directly

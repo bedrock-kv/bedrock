@@ -79,6 +79,21 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
   @impl true
 
+  # A worker that cannot account for its shard's full history refuses,
+  # rather than answering from an incomplete database. Absence and
+  # ignorance are different facts and must never share a reply: {:ok,
+  # nil} here would report "no such key" for keys that exist below a
+  # retention floor this worker cannot reach. :unavailable is retryable
+  # AND routing-invalidating for clients (Internal.Repo), so the caller
+  # re-asks a proxy and may land on a member of the set that CAN answer —
+  # FDB's wrong_shard_server, whose whole purpose is to send the client
+  # somewhere else.
+  def handle_call({:get, _key, _version, _opts}, _from, %State{unreadable_below: floor} = t) when floor != nil,
+    do: reply(t, {:error, :unavailable})
+
+  def handle_call({:get_range, _s, _e, _version, _opts}, _from, %State{unreadable_below: floor} = t) when floor != nil,
+    do: reply(t, {:error, :unavailable})
+
   def handle_call({:get, key, version, opts}, from, %State{} = t) do
     t = touch_read_activity(t)
 
@@ -322,6 +337,26 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   # placeholder in WITHOUT eager re-recruitment: demand revives the
   # shard on the next read.
   @impl true
+  # The puller found a hole: the cluster's retention floor is above where
+  # our data ends, so the span between exists nowhere we can reach. This
+  # is not transient and not a fault of any one log — every replica
+  # answers identically — so it is recorded once and the worker stops
+  # answering reads. It stays unreadable for its lifetime: Bedrock has no
+  # equivalent of FDB's fetchKeys, so nothing here can close the gap.
+  # Making it VISIBLE is the point; a worker serving an incomplete shard
+  # silently is the failure this prevents.
+  def handle_info({:shard_hole, _floor}, %State{unreadable_below: existing} = t) when existing != nil, do: noreply(t)
+
+  def handle_info({:shard_hole, floor}, %State{} = t) do
+    Logger.error(
+      "Bedrock materializer #{t.id} (shard #{inspect(t.shard_id)}): log retention floor #{inspect(floor)} is above " <>
+        "this worker's data; it cannot serve this shard and will refuse reads"
+    )
+
+    OlivineTelemetry.trace_shard_unreadable(t.id, t.shard_id, floor)
+    noreply(%{t | unreadable_below: floor})
+  end
+
   def handle_info(:idle_check, %State{idle_timeout: :infinity} = t), do: noreply(t)
 
   # A locked worker is mid-recovery: the director is counting on it, and

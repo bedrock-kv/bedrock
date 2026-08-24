@@ -43,6 +43,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
 
   @type source :: {Log.id(), Log.ref()}
 
+  @typedoc """
+  Reports that this materializer cannot account for its shard's full
+  history: the cluster's retention floor sits above where our data ends,
+  so everything between is unreachable from here. Called with the floor.
+  """
+  @type on_hole_fn :: (Bedrock.version() -> any())
+
   @type puller_state :: %{
           shard_num: non_neg_integer(),
           next_version: Bedrock.version(),
@@ -50,16 +57,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
           failed_logs: %{Log.id() => integer()},
           shard_server: pid() | nil,
           current_log_id: Log.id() | nil,
-          ingest_fn: ingest_fn()
+          ingest_fn: ingest_fn(),
+          on_hole_fn: on_hole_fn()
         }
 
   @spec start_pulling(
           shard_num :: non_neg_integer(),
           start_after :: Bedrock.version(),
           sources :: [source()],
-          ingest_fn()
+          ingest_fn(),
+          on_hole_fn()
         ) :: Task.t()
-  def start_pulling(shard_num, start_after, sources, ingest_fn) do
+  def start_pulling(shard_num, start_after, sources, ingest_fn, on_hole_fn) do
     state = %{
       shard_num: shard_num,
       next_version: Version.increment(start_after),
@@ -67,7 +76,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
       failed_logs: %{},
       shard_server: nil,
       current_log_id: nil,
-      ingest_fn: ingest_fn
+      ingest_fn: ingest_fn,
+      on_hole_fn: on_hole_fn
     }
 
     Task.async(fn -> stream_loop(state) end)
@@ -127,6 +137,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
 
       {:error, :timeout} ->
         # A quiet long-poll window: same server, ask again.
+        state
+
+      {:error, {:version_too_old, floor}} ->
+        # NOT this log's fault, and not transient: our position is below
+        # the cluster's retention floor, so the data between what we hold
+        # and that floor exists nowhere we can reach. Every replica
+        # answers identically — failing over rotates through all of them,
+        # trips the breaker, and loops forever while reads keep being
+        # served from an incomplete database. Report it and let the worker
+        # refuse reads instead (FDB: a shard that has not finished
+        # fetching is not readable).
+        trace_log_pull_failed(state.next_version, {:version_too_old, floor})
+        state.on_hole_fn.(floor)
         state
 
       {:error, reason} ->

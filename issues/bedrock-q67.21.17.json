@@ -11,11 +11,15 @@
     {
       "text": "-m",
       "timestamp": "2026-08-24T20:58:32Z"
+    },
+    {
+      "text": "-m",
+      "timestamp": "2026-08-24T21:15:40Z"
     }
   ],
   "priority": 0,
   "status": "open",
   "title": "[BUG] S3 list swallows every backend error as an empty listing",
   "type": "bug",
-  "updated_at": "2026-08-24T20:58:32Z"
+  "updated_at": "2026-08-24T21:15:40Z"
 }

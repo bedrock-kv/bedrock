@@ -4,14 +4,15 @@
     "bedrock-q67.21.4"
   ],
   "blocks": [],
+  "closed_at": "2026-08-24T15:41:20Z",
   "created": "2026-08-21T20:10:28Z",
   "description": "Phase 5. COMPLETE pending merge of stack #196 (PRs #193 + #194 landed; #195 in review).\n\nLanded: olivine idle spin-down (opt-in idle_timeout worker param, client-reads-only activity, compaction-format snapshot upload gating the exit, {:shutdown, :idle}, deferred foreman self-removal after own exit); the distributor's idle branch ({:shutdown, :idle} -\u003e park without recruit; degraded park falls back to heal; idle check defers while :locked or compacting; unlock resets the idle clock); assignment verification (PR #195) — the re-adoption residue collapsed with bedrock-q67.21.7 after the FDB sanity check killed the services-snapshot identification sweep: the committed materializers/ family is the membership authority; the sweep probes each named assignment's :epoch, adopts stale ones (lock at epoch, unlock at own durable version, fenced re-assert), heals unadoptable ones, never removes a pre-existing worker (provenance-structural); unnamed strays already self-retire via rejoin_verdict :displaced.\n\nResiduals moved to bedrock-q67.21.8 (idle_timeout production wiring + N2 telemetry + placeholder fit). Close this ticket when stack #196 merges.",
   "id": "bedrock-q67.21.5",
   "labels": [],
   "parent": "bedrock-q67.21",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Idle spin-down + re-adoption residue",
   "type": "task",
-  "updated_at": "2026-08-24T15:24:31Z"
+  "updated_at": "2026-08-24T15:41:20Z"
 }

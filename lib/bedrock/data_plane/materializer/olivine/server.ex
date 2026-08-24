@@ -182,10 +182,28 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     end
   end
 
+  # The lock's taker is the unlock's only authority: adoption
+  # (bedrock-q67.21.5) means family-named workers can now be locked by
+  # racing epochs — an equal-or-newer lock replaces `director`, and a
+  # superseded locker's late unlock must not flip the worker to
+  # :running with the loser's pull sources mid-recovery. A worker with
+  # no lock owner has no authority to violate (static configurations
+  # unlock directly).
   @impl true
+  def handle_call(
+        {:unlock_after_recovery, _durable_version, _pull_sources},
+        {caller, _},
+        %State{director: director} = t
+      )
+      when director != nil and caller != director do
+    reply(t, {:error, :not_lock_owner})
+  end
+
   def handle_call({:unlock_after_recovery, durable_version, pull_sources}, {_director, _}, t) do
     {:ok, updated_state} = Logic.unlock_after_recovery(t, durable_version, pull_sources)
-    reply(updated_state, :ok)
+    # Service starts now: a worker that spent its whole idle window locked
+    # (a long recovery) must not spin down on its first post-unlock check.
+    reply(touch_read_activity(updated_state), :ok)
   end
 
   @impl true
@@ -306,6 +324,17 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   @impl true
   def handle_info(:idle_check, %State{idle_timeout: :infinity} = t), do: noreply(t)
 
+  # A locked worker is mid-recovery: the director is counting on it, and
+  # reads legitimately pause while the lock is held — not idleness.
+  # An active compaction owns the scratch files and the window; spinning
+  # down mid-compaction would upload from a moving target and then let
+  # the deferred removal delete the directory under the task. Both defer:
+  # re-arm and check again.
+  def handle_info(:idle_check, %State{mode: :locked} = t), do: t |> schedule_idle_check() |> noreply()
+
+  def handle_info(:idle_check, %State{compaction_task: task} = t) when not is_nil(task),
+    do: t |> schedule_idle_check() |> noreply()
+
   def handle_info(:idle_check, %State{} = t) do
     idle_ms = System.monotonic_time(:millisecond) - t.last_read_at
 
@@ -372,9 +401,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
         %State{} = t
       ) do
     # Atomic cutover to compacted files
-    # Get file paths from old database
-    alias OlivineTelemetry, as: OlivineTelemetry
-
     # The cutover rewinds the index to the durable snapshot, so the
     # running puller's position (and any batch it has in flight) is
     # meaningless. Stop it first — releasing a backpressure-parked ingest
@@ -579,16 +605,27 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     t
   end
 
-  @spec initiate_idle_spindown(State.t(), non_neg_integer()) :: {:stop, {:shutdown, :idle}, State.t()}
+  # The snapshot upload gates the spin-down: it is the only durable
+  # artifact bridging spin-down to demand-driven revival, so on failure
+  # the worker stays up and retries at the next check — cheaper and
+  # louder than a full log replay at revival.
+  @spec initiate_idle_spindown(State.t(), non_neg_integer()) ::
+          {:stop, {:shutdown, :idle}, State.t()} | {:noreply, State.t()}
   defp initiate_idle_spindown(%State{} = t, idle_ms) do
-    OlivineTelemetry.trace_idle_spindown(idle_ms,
-      n_keys: IndexManager.info(t.index_manager, :n_keys),
-      size_in_bytes: IndexManager.info(t.index_manager, :size_in_bytes)
-    )
+    case Logic.upload_snapshot_before_spindown(t) do
+      :ok ->
+        OlivineTelemetry.trace_idle_spindown(idle_ms,
+          n_keys: IndexManager.info(t.index_manager, :n_keys),
+          size_in_bytes: IndexManager.info(t.index_manager, :size_in_bytes)
+        )
 
-    Logic.upload_snapshot_before_spindown(t)
-    remove_worker_after_exit(t)
-    stop(t, {:shutdown, :idle})
+        remove_worker_after_exit(t)
+        stop(t, {:shutdown, :idle})
+
+      {:error, reason} ->
+        Logger.warning("Idle spin-down aborted: snapshot upload failed (#{inspect(reason)}); staying up")
+        t |> schedule_idle_check() |> noreply()
+    end
   end
 
   # The foreman entry (and with it the on-disk working directory) is

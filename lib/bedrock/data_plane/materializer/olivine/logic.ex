@@ -253,6 +253,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   defp supported_info, do: ~w[
       current_version
       durable_version
+      epoch
       oldest_durable_version
       id
       pid
@@ -274,6 +275,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   # known-committed version and which therefore trails by design.
   defp gather_info(:current_version, t), do: t.index_manager.current_version
   defp gather_info(:shard_id, t), do: t.shard_num
+  # The epoch this worker was last locked into (nil: never locked). The
+  # distributor's assignment verification reads it to distinguish a
+  # worker that is IN the epoch from one the epoch never embraced — a
+  # node that missed recovery's roll call and rejoined later.
+  defp gather_info(:epoch, t), do: t.epoch
   defp gather_info(:id, t), do: t.id
   defp gather_info(:key_ranges, t), do: IndexManager.info(t.index_manager, :key_ranges)
   defp gather_info(:kind, _t), do: :materializer
@@ -447,35 +453,59 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   end
 
   @doc """
-  Best-effort synchronous snapshot upload before an idle spin-down.
+  Synchronous snapshot upload before an idle spin-down.
 
-  Unlike `maybe_upload_snapshot/4` this runs in the caller: the worker's
+  Runs in the caller (unlike `maybe_upload_snapshot/4`): the worker's
   removal reclaims its working directory right after it exits, so a
   fire-and-forget task would race the deletion of the very files it
-  reads. A no-op when no snapshot is configured; failures are logged and
-  swallowed (the shard remains rebuildable from earlier snapshots and
-  the logs).
+  reads.
+
+  The upload NEVER ships the live files: the live idx file is a delta
+  chain of per-window-advance records, while the bundle restore path
+  (`SnapshotBundle.split_in_place/3`) expects a single self-terminating
+  index record — a raw multi-record upload restores at best partially
+  and at worst as a silently EMPTY shard, and `Snapshot.write`'s
+  put-if-not-exists makes the poisoned bundle permanent. Instead the
+  durable state is compacted to scratch files (the same
+  `Database.compact/4` the compaction path uploads from, whose output
+  is exactly the bundle format) and those are uploaded.
+
+  A no-op when no snapshot is configured. A failure is returned, not
+  swallowed: the caller must abort the spin-down (stay up, retry at the
+  next idle check) — this snapshot is the only durable artifact
+  bridging spin-down to demand-driven revival, and staying up is
+  cheaper and louder than a full log replay at revival.
   """
-  @spec upload_snapshot_before_spindown(State.t()) :: :ok
+  @spec upload_snapshot_before_spindown(State.t()) :: :ok | {:error, term()}
   def upload_snapshot_before_spindown(%State{snapshot: nil}), do: :ok
 
   def upload_snapshot_before_spindown(%State{snapshot: snapshot} = t) do
     {data_db, index_db} = t.database
-    version_int = t.database |> Database.durable_version() |> Version.to_integer()
+    complete_page_map = IndexManager.get_complete_page_map(t.index_manager)
+    spindown_data_path = data_db.file_name ++ ~c".spindown"
+    spindown_idx_path = index_db.file_name ++ ~c".spindown"
 
-    with {:ok, data} <- File.read(to_string(data_db.file_name)),
-         {:ok, idx} <- File.read(to_string(index_db.file_name)),
-         :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
-      Logger.info("Snapshot uploaded to ObjectStorage before idle spin-down", version: version_int)
-    else
-      {:error, reason} ->
-        Logger.warning("Snapshot upload before idle spin-down failed",
-          version: version_int,
-          reason: inspect(reason)
-        )
-    end
+    result =
+      with {:ok, writer} <- SplitFileWriter.new(spindown_data_path, spindown_idx_path),
+           {:ok, files, _compacted_pages, durable_version} <-
+             Database.compact(t.database, complete_page_map, SplitFileWriter, writer),
+           _ = :file.close(files.data_fd),
+           _ = :file.close(files.idx_fd),
+           version_int = Version.to_integer(durable_version),
+           {:ok, data} <- File.read(to_string(spindown_data_path)),
+           {:ok, idx} <- File.read(to_string(spindown_idx_path)),
+           :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
+        Logger.info("Snapshot uploaded to ObjectStorage before idle spin-down", version: version_int)
+        :ok
+      else
+        {:error, reason} ->
+          Logger.warning("Snapshot upload before idle spin-down failed", reason: inspect(reason))
+          {:error, reason}
+      end
 
-    :ok
+    File.rm(to_string(spindown_data_path))
+    File.rm(to_string(spindown_idx_path))
+    result
   end
 
   @doc """

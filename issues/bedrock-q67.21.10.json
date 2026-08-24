@@ -18,7 +18,7 @@
     }
   ],
   "priority": 2,
-  "status": "open",
+  "status": "in-progress",
   "title": "Delete the layout/logs keyspace family: a write with no reader",
   "type": "task",
   "updated_at": "2026-08-24T19:46:48Z"

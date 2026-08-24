@@ -89,6 +89,20 @@ defmodule Bedrock.Internal.RepoTransactTest do
     end
   end
 
+  # A commit proxy that rejects every transaction with the configured error.
+  defmodule RejectingProxy do
+    @moduledoc false
+    use GenServer
+
+    def start_link(error), do: GenServer.start_link(__MODULE__, error)
+
+    @impl true
+    def init(error), do: {:ok, error}
+
+    @impl true
+    def handle_call({:commit, _epoch, _tx, _mode}, _from, error), do: {:reply, {:error, error}, error}
+  end
+
   @minimal_tsl %{epoch: 1, proxies: []}
 
   defp seed_txn(pid), do: TransactionContext.put_builder(TestRepo, pid)
@@ -246,6 +260,30 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert TransactionContext.builder(TestRepo) == nil
     end
 
+    test "surfaces key_out_of_range immediately instead of retrying" do
+      # A commit proxy that rejects the transaction with a permanent client
+      # error: transact must surface it on the first attempt - retrying a
+      # deterministic rejection would only burn the transaction deadline.
+      proxy = start_supervised!({RejectingProxy, {:key_out_of_range, <<0xFF, 0xFF>>}})
+      attempts = :counters.new(1, [])
+
+      result =
+        Repo.transact(
+          NoCluster,
+          TestRepo,
+          fn ->
+            :counters.add(attempts, 1, 1)
+            Repo.put(TestRepo, "key", "value")
+          end,
+          transaction_system_layout: %{epoch: 1, proxies: [proxy]},
+          retry_limit: 3
+        )
+
+      assert result == {:error, {:key_out_of_range, <<0xFF, 0xFF>>}}
+      assert :counters.get(attempts, 1) == 1
+      assert TransactionContext.builder(TestRepo) == nil
+    end
+
     test "raises after exhausting the retry limit when commit keeps failing" do
       # A put makes the transaction non-empty; with no commit proxies in the
       # layout, commit fails with :unavailable, a retryable failure.
@@ -345,6 +383,280 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert result == :eventually_committed
       assert_received :second_fetch
       assert TransactionContext.builder(TestRepo) == nil
+    end
+  end
+
+  describe "transact/4 proxy-served routing" do
+    defmodule RoutingCluster do
+      @moduledoc false
+      def link!, do: Process.get(:stub_link_pid)
+      def otp_name_for_worker(id), do: :"repo_transact_routing_worker_#{id}"
+    end
+
+    # A covering entry as the proxy serves it: shard bounds, tag, raw
+    # string-encoded materializer ref.
+    defp covering_entry(worker_id \\ "wkr1"), do: {<<>>, <<0xFF, 0xFF>>, 0, {worker_id, Atom.to_string(node())}}
+
+    # The shape the Link caches: {start, end, raw_ref}.
+    defp cached_entry({start_key, end_key, _tag, raw_ref}), do: {start_key, end_key, raw_ref}
+
+    defp spawn_stub_materializer(test_pid, answers \\ 1) do
+      materializer = spawn(fn -> materializer_loop(test_pid, answers) end)
+      Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
+      materializer
+    end
+
+    defp materializer_loop(_test_pid, 0), do: :ok
+
+    defp materializer_loop(test_pid, answers) do
+      receive do
+        {:"$gen_call", from, {:get, key, _version, _opts}} ->
+          send(test_pid, {:materializer_got, key})
+          GenServer.reply(from, {:ok, "routed_value"})
+          materializer_loop(test_pid, answers - 1)
+      end
+    end
+
+    defp spawn_stub_sequencer do
+      spawn(fn -> sequencer_loop() end)
+    end
+
+    defp sequencer_loop do
+      receive do
+        {:"$gen_call", from, {:next_read_version, _epoch}} ->
+          GenServer.reply(from, {:ok, Bedrock.DataPlane.Version.from_integer(1)})
+          sequencer_loop()
+      end
+    end
+
+    # A one-entry Link cache: covers [start, end) or nothing.
+    defp link_loop(tsl, cached_entry, test_pid) do
+      receive do
+        {:"$gen_call", from, {:get_covering_entry, key}} ->
+          case cached_entry do
+            {start_key, end_key, raw_ref} when key >= start_key and key < end_key ->
+              GenServer.reply(from, {:ok, {{start_key, end_key}, raw_ref}})
+
+            _ ->
+              GenServer.reply(from, {:error, :not_cached})
+          end
+
+          link_loop(tsl, cached_entry, test_pid)
+
+        {:"$gen_call", from, :get_transaction_system_layout} ->
+          GenServer.reply(from, {:ok, tsl})
+          link_loop(tsl, cached_entry, test_pid)
+
+        {:"$gen_cast", {:cache_routing_entry, entry}} ->
+          send(test_pid, {:routing_cached, entry})
+          link_loop(tsl, entry, test_pid)
+
+        {:"$gen_call", from, :invalidate_routing} ->
+          GenServer.reply(from, :ok)
+          send(test_pid, :routing_invalidated)
+          link_loop(tsl, nil, test_pid)
+      end
+    end
+
+    test "a cache miss fetches the single covering entry from a proxy, caches it, and routes the read" do
+      test_pid = self()
+      spawn_stub_materializer(test_pid)
+      entry = covering_entry()
+      expected_cached = cached_entry(entry)
+
+      proxy =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:fetch_routing, key}} ->
+              send(test_pid, {:proxy_asked, key})
+              GenServer.reply(from, {:ok, entry})
+          end
+        end)
+
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: [proxy]}
+      link = spawn(fn -> link_loop(tsl, nil, test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
+
+      assert result == "routed_value"
+      assert_received {:materializer_got, "some_key"}
+      # The ask was by key (GetKeyServerLocations, never a bulk map), and
+      # the raw (string-ref) entry was cached back for the next
+      # transaction on this node - the Link is the locationCache.
+      assert_receive {:proxy_asked, "some_key"}
+      assert_receive {:routing_cached, ^expected_cached}
+    end
+
+    test "a cache hit routes the read without touching any proxy" do
+      test_pid = self()
+      spawn_stub_materializer(test_pid)
+
+      # No proxies at all: a proxy fetch would fail loudly.
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
+      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry()), test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
+
+      assert result == "routed_value"
+      assert_received {:materializer_got, "some_key"}
+      refute_received {:routing_cached, _}
+    end
+
+    test "a routing-shaped read failure invalidates the cache exactly once, and the retry refetches" do
+      test_pid = self()
+      spawn_stub_materializer(test_pid)
+
+      # The cached entry routes to a worker that is not registered: the
+      # read fails :unavailable (a dead ref IS what a stale snapshot
+      # looks like). The retry must invalidate, refetch from the proxy -
+      # whose fresh entry names the live worker - and succeed.
+      stale = cached_entry(covering_entry("wkr_gone"))
+      fresh = covering_entry()
+      expected_cached = cached_entry(fresh)
+
+      proxy =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:fetch_routing, _key}} -> GenServer.reply(from, {:ok, fresh})
+          end
+        end)
+
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: [proxy]}
+      link = spawn(fn -> link_loop(tsl, stale, test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
+
+      assert result == "routed_value"
+      # Exactly one invalidation: the failed attempt's reason fired it; the
+      # first attempt (no prior failure) must not.
+      assert_receive :routing_invalidated
+      refute_received :routing_invalidated
+      assert_receive {:routing_cached, ^expected_cached}
+    end
+
+    test "a second read in the same shard uses the builder-local entry — no re-ask" do
+      test_pid = self()
+      spawn_stub_materializer(test_pid, 2)
+      entry = covering_entry()
+
+      # The proxy answers exactly once and the Link never caches (always
+      # :not_cached): a second resolve would hang on the dead proxy, so
+      # the second read completing proves the builder-local index served
+      # it (FDB: DatabaseContext locationCache + per-read resolution).
+      proxy =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:fetch_routing, _key}} -> GenServer.reply(from, {:ok, entry})
+          end
+        end)
+
+      never_caching_link = fn loop ->
+        receive do
+          {:"$gen_call", from, {:get_covering_entry, _key}} ->
+            GenServer.reply(from, {:error, :not_cached})
+            loop.(loop)
+
+          {:"$gen_call", from, :get_transaction_system_layout} ->
+            GenServer.reply(from, {:ok, %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: [proxy]}})
+            loop.(loop)
+
+          {:"$gen_cast", {:cache_routing_entry, _entry}} ->
+            loop.(loop)
+        end
+      end
+
+      link = spawn(fn -> never_caching_link.(never_caching_link) end)
+      Process.put(:stub_link_pid, link)
+
+      result =
+        Repo.transact(
+          RoutingCluster,
+          TestRepo,
+          fn -> {Repo.get(TestRepo, "key_one"), Repo.get(TestRepo, "key_two")} end,
+          []
+        )
+
+      assert result == {"routed_value", "routed_value"}
+      assert_received {:materializer_got, "key_one"}
+      assert_received {:materializer_got, "key_two"}
+    end
+
+    test "a locked proxy is a retry, not an error: the next attempt refetches and succeeds" do
+      test_pid = self()
+      spawn_stub_materializer(test_pid)
+      entry = covering_entry()
+
+      # First ask: the proxy is still locked (recovery in flight from the
+      # client's view). :locked classifies as retryable AND routing-
+      # invalidating; the retry refetches and the second ask succeeds.
+      proxy =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", from, {:fetch_routing, _key}} ->
+              GenServer.reply(from, {:error, :locked})
+
+              receive do
+                {:"$gen_call", from2, {:fetch_routing, _key2}} -> GenServer.reply(from2, {:ok, entry})
+              end
+          end
+        end)
+
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: [proxy]}
+      link = spawn(fn -> link_loop(tsl, nil, test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
+
+      assert result == "routed_value"
+      assert_receive :routing_invalidated
+    end
+
+    test "a slow materializer retries without dropping the node's routing cache — slow is not stale" do
+      test_pid = self()
+
+      # The materializer holds the call forever: the read times out. A
+      # timeout is retryable but NOT routing-shaped — FDB's locationCache
+      # survives timeouts (only definitive signals evict: an unroutable
+      # key, no servers, a dead ref). Under overload, evicting on timeout
+      # would convert latency into node-wide cache-thrash and refetch
+      # traffic. A dead materializer surfaces as :unavailable, which does
+      # evict.
+      materializer = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(materializer, :kill) end)
+      Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
+
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
+      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry()), test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      assert_raise RuntimeError, ~r/retry limit/, fn ->
+        Repo.transact(
+          RoutingCluster,
+          TestRepo,
+          fn -> Repo.get(TestRepo, "some_key") end,
+          retry_limit: 1,
+          timeout_in_ms: 2_000
+        )
+      end
+
+      refute_received :routing_invalidated
+    end
+
+    test "a transaction that never reads never fetches routing" do
+      test_pid = self()
+
+      # Link serves wiring only; a routing fetch would hit the empty proxy
+      # list and fail. Lazy routing means this commit-only (read-free)
+      # transaction never asks.
+      tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
+      link = spawn(fn -> link_loop(tsl, nil, test_pid) end)
+      Process.put(:stub_link_pid, link)
+
+      assert Repo.transact(RoutingCluster, TestRepo, fn -> :no_reads end, []) == :no_reads
+      refute_received {:routing_cached, _}
     end
   end
 

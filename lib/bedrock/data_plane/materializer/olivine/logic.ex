@@ -4,7 +4,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   import Bedrock.DataPlane.Materializer.Olivine.State,
     only: [update_mode: 2, update_director_and_epoch: 3, reset_puller: 1, put_puller: 2]
 
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Director
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Materializer.Olivine.CompactionWriter.SplitFile, as: SplitFileWriter
@@ -31,6 +30,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   def startup(otp_name, foreman, id, path, opts \\ []) do
     cluster = Keyword.get(opts, :cluster)
     {shard_tag, shard_num} = normalize_shard(Keyword.get(opts, :shard_id))
+    idle_timeout = Keyword.get(opts, :idle_timeout, :infinity)
     snapshot = build_snapshot_handle(cluster, shard_tag)
 
     with :ok <- ensure_directory_exists(path),
@@ -47,7 +47,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
          foreman: foreman,
          database: database,
          index_manager: index_manager,
-         snapshot: snapshot
+         snapshot: snapshot,
+         idle_timeout: idle_timeout,
+         last_read_at: System.monotonic_time(:millisecond)
        }}
     end
   end
@@ -164,14 +166,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     %{t | pending_ingest: nil}
   end
 
-  @spec unlock_after_recovery(State.t(), Bedrock.version(), TransactionSystemLayout.t()) ::
+  @spec unlock_after_recovery(State.t(), Bedrock.version(), Materializer.pull_sources()) ::
           {:ok, State.t()}
-  def unlock_after_recovery(t, durable_version, %{logs: logs, services: services}) do
+  def unlock_after_recovery(t, durable_version, pull_sources) when is_list(pull_sources) do
     t =
       t
       |> stop_pulling()
       |> rollback_uncommitted(durable_version)
-      |> Map.put(:pull_sources, {logs, services})
+      |> Map.put(:pull_sources, pull_sources)
 
     t
     |> start_pulling_from(resume_position(t))
@@ -224,14 +226,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   defp start_pulling_from(%{shard_num: nil} = t, _start_after), do: t
   defp start_pulling_from(%{pull_sources: nil} = t, _start_after), do: t
 
-  defp start_pulling_from(%{shard_num: shard_num, pull_sources: {logs, services}} = t, start_after) do
+  defp start_pulling_from(%{shard_num: shard_num, pull_sources: sources} = t, start_after) when is_list(sources) do
     # The stream puller: everything — history, recent data, and version
     # currency — comes from this shard's ShardServer. Batches are handed
     # over synchronously; the server withholds the reply for backpressure.
     server = self()
     ingest_fn = fn transactions, kcv -> GenServer.call(server, {:ingest, transactions, kcv}, :infinity) end
 
-    puller = Streaming.start_pulling(shard_num, start_after, logs, services, ingest_fn)
+    puller = Streaming.start_pulling(shard_num, start_after, sources, ingest_fn)
     put_puller(t, puller)
   end
 
@@ -442,6 +444,62 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
       end)
 
     {:ok, task}
+  end
+
+  @doc """
+  Synchronous snapshot upload before an idle spin-down.
+
+  Runs in the caller (unlike `maybe_upload_snapshot/4`): the worker's
+  removal reclaims its working directory right after it exits, so a
+  fire-and-forget task would race the deletion of the very files it
+  reads.
+
+  The upload NEVER ships the live files: the live idx file is a delta
+  chain of per-window-advance records, while the bundle restore path
+  (`SnapshotBundle.split_in_place/3`) expects a single self-terminating
+  index record — a raw multi-record upload restores at best partially
+  and at worst as a silently EMPTY shard, and `Snapshot.write`'s
+  put-if-not-exists makes the poisoned bundle permanent. Instead the
+  durable state is compacted to scratch files (the same
+  `Database.compact/4` the compaction path uploads from, whose output
+  is exactly the bundle format) and those are uploaded.
+
+  A no-op when no snapshot is configured. A failure is returned, not
+  swallowed: the caller must abort the spin-down (stay up, retry at the
+  next idle check) — this snapshot is the only durable artifact
+  bridging spin-down to demand-driven revival, and staying up is
+  cheaper and louder than a full log replay at revival.
+  """
+  @spec upload_snapshot_before_spindown(State.t()) :: :ok | {:error, term()}
+  def upload_snapshot_before_spindown(%State{snapshot: nil}), do: :ok
+
+  def upload_snapshot_before_spindown(%State{snapshot: snapshot} = t) do
+    {data_db, index_db} = t.database
+    complete_page_map = IndexManager.get_complete_page_map(t.index_manager)
+    spindown_data_path = data_db.file_name ++ ~c".spindown"
+    spindown_idx_path = index_db.file_name ++ ~c".spindown"
+
+    result =
+      with {:ok, writer} <- SplitFileWriter.new(spindown_data_path, spindown_idx_path),
+           {:ok, files, _compacted_pages, durable_version} <-
+             Database.compact(t.database, complete_page_map, SplitFileWriter, writer),
+           _ = :file.close(files.data_fd),
+           _ = :file.close(files.idx_fd),
+           version_int = Version.to_integer(durable_version),
+           {:ok, data} <- File.read(to_string(spindown_data_path)),
+           {:ok, idx} <- File.read(to_string(spindown_idx_path)),
+           :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
+        Logger.info("Snapshot uploaded to ObjectStorage before idle spin-down", version: version_int)
+        :ok
+      else
+        {:error, reason} ->
+          Logger.warning("Snapshot upload before idle spin-down failed", reason: inspect(reason))
+          {:error, reason}
+      end
+
+    File.rm(to_string(spindown_data_path))
+    File.rm(to_string(spindown_idx_path))
+    result
   end
 
   @doc """

@@ -50,6 +50,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Telemetry do
     Telemetry.emit_materializer_operation(:window_advanced, measurements, metadata)
   end
 
+  @spec trace_idle_spindown(non_neg_integer(), keyword()) :: :ok
+  def trace_idle_spindown(idle_duration_ms, opts \\ []) do
+    Telemetry.emit_materializer_operation(
+      :idle_spindown,
+      %{
+        idle_duration_ms: idle_duration_ms,
+        n_keys: Keyword.get(opts, :n_keys, 0),
+        size_in_bytes: Keyword.get(opts, :size_in_bytes, 0)
+      },
+      %{}
+    )
+  end
+
   @spec trace_compaction_started(Bedrock.version(), keyword()) :: :ok
   def trace_compaction_started(durable_version, opts \\ []) do
     measurements = %{

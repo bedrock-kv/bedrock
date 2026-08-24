@@ -12,6 +12,11 @@ defmodule Bedrock.ControlPlane.Director.State do
   @type timer_registry :: %{atom() => reference()}
 
   @type t :: %__MODULE__{
+          distributor: pid() | nil,
+          distributor_monitor: reference() | nil,
+          distributor_retry_ms: pos_integer(),
+          distributor_start_fn: (keyword() -> {:ok, pid()} | {:error, term()}) | nil,
+          distributor_wiring: %{logs: map(), log_refs: map()} | nil,
           state: state(),
           epoch: Bedrock.epoch(),
           cluster: module(),
@@ -25,7 +30,12 @@ defmodule Bedrock.ControlPlane.Director.State do
           lock_token: binary(),
           recovery_attempt: Config.RecoveryAttempt.t() | nil
         }
-  defstruct state: :starting,
+  defstruct distributor: nil,
+            distributor_monitor: nil,
+            distributor_retry_ms: 1_000,
+            distributor_start_fn: nil,
+            distributor_wiring: nil,
+            state: :starting,
             epoch: nil,
             cluster: nil,
             config: nil,

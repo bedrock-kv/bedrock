@@ -133,7 +133,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     Broadcasts only reach subscribers that existed when the layout was
     published. A Link that registers after the layout stabilized would
     otherwise keep a nil cache until the next recovery — its clients
-    unavailable and its foreman never handed the reconciliation trigger.
+    unavailable and its node's workers never handed the layout they
+    self-validate against.
     The message is identical to a live broadcast, so the subscriber's
     handling is too. With no layout yet (bootstrap, mid-recovery) nothing
     is sent: an incomplete layout is not a runtime layout.

@@ -16,22 +16,17 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   import Bedrock.DataPlane.Resolver.Telemetry,
     only: [
       emit_received: 2,
-      emit_processing: 2,
       emit_completed: 3,
-      emit_reply_sent: 3,
-      emit_waiting_list: 2,
       emit_waiting_list_inserted: 3,
-      emit_waiting_resolved: 3,
-      emit_validation_error: 2,
-      emit_waiting_list_validation_error: 2
+      emit_waiting_resolved: 3
     ]
 
   import Bedrock.Internal.GenServer.Replies
 
+  alias Bedrock.DataPlane.Resolver
   alias Bedrock.DataPlane.Resolver.Conflicts
   alias Bedrock.DataPlane.Resolver.MetadataAccumulator
   alias Bedrock.DataPlane.Resolver.State
-  alias Bedrock.DataPlane.Resolver.Validation
   alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.Time
   alias Bedrock.Internal.WaitingList
@@ -42,18 +37,17 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
   @spec child_spec(
           opts :: [
-            lock_token: Bedrock.lock_token(),
             key_range: Bedrock.key_range(),
             epoch: Bedrock.epoch(),
             last_version: Bedrock.version(),
             director: pid(),
             cluster: module(),
             sweep_interval_ms: pos_integer(),
-            version_retention_ms: pos_integer()
+            version_retention_ms: pos_integer(),
+            commit_proxy_count: pos_integer()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
-    lock_token = opts[:lock_token] || raise "Missing :lock_token option"
     key_range = opts[:key_range] || raise "Missing :key_range option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
     last_version = opts[:last_version] || Version.zero()
@@ -61,6 +55,7 @@ defmodule Bedrock.DataPlane.Resolver.Server do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     sweep_interval_ms = opts[:sweep_interval_ms] || 1_000
     version_retention_ms = opts[:version_retention_ms] || 6_000
+    commit_proxy_count = opts[:commit_proxy_count] || 1
 
     %{
       id: {__MODULE__, cluster, key_range, epoch},
@@ -68,30 +63,28 @@ defmodule Bedrock.DataPlane.Resolver.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {lock_token, last_version, epoch, director, sweep_interval_ms, version_retention_ms}
+           {last_version, epoch, director, sweep_interval_ms, version_retention_ms, commit_proxy_count}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({lock_token, last_version, epoch, director, sweep_interval_ms, version_retention_ms}) do
+  def init({last_version, epoch, director, sweep_interval_ms, version_retention_ms, commit_proxy_count}) do
     # Monitor the Director - if it dies, this resolver should terminate
     Process.monitor(director)
 
     then(
       %State{
-        lock_token: lock_token,
         conflicts: Conflicts.new(last_version),
         last_version: last_version,
         waiting: %{},
-        mode: :running,
         epoch: epoch,
         director: director,
         sweep_interval_ms: sweep_interval_ms,
         version_retention_ms: version_retention_ms,
+        commit_proxy_count: commit_proxy_count,
         last_sweep_time: Time.monotonic_now_in_ms(),
-        proxy_progress: %{},
         metadata_window: MetadataAccumulator.new()
       },
       &{:ok, &1}
@@ -104,71 +97,66 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   end
 
   @impl true
-  def handle_call({:resolve_transactions, epoch, {_last_version, _next_version}, _transactions, _metadata}, _from, t)
+  def handle_call(
+        {:resolve_transactions, epoch, {_last_version, _next_version}, _transactions, _metadata, _ack},
+        _from,
+        t
+      )
       when epoch != t.epoch do
     reply(t, {:error, {:epoch_mismatch, expected: t.epoch, received: epoch}})
   end
 
   @impl true
-  def handle_call({:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx}, from, t)
-      when t.mode == :running and epoch == t.epoch and last_version == t.last_version do
+  def handle_call(
+        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, proxy_id},
+        from,
+        t
+      )
+      when epoch == t.epoch and last_version == t.last_version do
     emit_received(transactions, next_version)
 
-    transactions
-    |> Validation.check_transactions()
-    |> case do
-      :ok ->
-        proxy_pid = elem(from, 0)
+    noreply(t,
+      continue: {:process_ready, {next_version, transactions, metadata_per_tx, proxy_id, reply_fn(from)}}
+    )
+  end
 
-        noreply(t,
-          continue: {:process_ready, {next_version, transactions, metadata_per_tx, proxy_pid, reply_fn(from)}}
-        )
-
-      {:error, reason} ->
-        emit_validation_error(transactions, reason)
-        reply(t, {:error, reason}, continue: :next_timeout)
-    end
+  # Structurally precluded: the sequencer hands out a strictly advancing
+  # version chain and proxies never retry a resolver call (fail-fast into
+  # recovery), so a same-epoch window below the floor cannot be
+  # re-presented. This clause is an assertion, not a guard - it cannot
+  # continue anything; it names the violated invariant and dies into
+  # recovery (the metadata_coverage_gap idiom).
+  @impl true
+  def handle_call(
+        {:resolve_transactions, epoch, {last_version, _next_version}, _transactions, _metadata_per_tx, _proxy_id},
+        _from,
+        t
+      )
+      when epoch == t.epoch and is_binary(last_version) and last_version < t.last_version do
+    exit({:stale_window_re_presented, %{floor: t.last_version, got: last_version}})
   end
 
   @impl true
-  def handle_call({:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx}, from, t)
-      when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version > t.last_version do
-    emit_waiting_list(transactions, next_version)
+  def handle_call(
+        {:resolve_transactions, epoch, {last_version, next_version}, transactions, metadata_per_tx, proxy_id},
+        from,
+        t
+      )
+      when epoch == t.epoch and is_binary(last_version) and last_version > t.last_version do
+    data = {next_version, transactions, metadata_per_tx, proxy_id}
 
-    transactions
-    |> Validation.check_transactions()
-    |> case do
-      :ok ->
-        proxy_pid = elem(from, 0)
-        data = {next_version, transactions, metadata_per_tx, proxy_pid}
+    {new_waiting, _timeout} =
+      WaitingList.insert(
+        t.waiting,
+        last_version,
+        data,
+        reply_fn(from),
+        @default_waiting_timeout_ms
+      )
 
-        {new_waiting, _timeout} =
-          WaitingList.insert(
-            t.waiting,
-            last_version,
-            data,
-            reply_fn(from),
-            @default_waiting_timeout_ms
-          )
+    emit_waiting_list_inserted(transactions, new_waiting, next_version)
 
-        emit_waiting_list_inserted(transactions, new_waiting, next_version)
-
-        noreply(%{t | waiting: new_waiting}, continue: :next_timeout)
-
-      {:error, reason} ->
-        emit_waiting_list_validation_error(transactions, reason)
-        reply(t, {:error, reason}, continue: :next_timeout)
-    end
-  end
-
-  @impl true
-  def handle_call({:resolve_transactions, epoch, {last_version, _next_version}, transactions, _metadata}, from, t)
-      when t.mode == :running and epoch == t.epoch and is_binary(last_version) and last_version < t.last_version do
-    # All transactions aborted due to stale version - return differential metadata for the proxy
-    proxy_pid = elem(from, 0)
-    {metadata_updates, t} = get_metadata_updates_for_proxy(t, proxy_pid)
-    aborted_indices = Enum.to_list(0..(length(transactions) - 1))
-    reply(t, {:ok, aborted_indices, metadata_updates})
+    noreply(%{t | waiting: new_waiting}, continue: :next_timeout)
   end
 
   @impl true
@@ -192,31 +180,32 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   end
 
   @impl true
-  def handle_continue({:process_ready, {next_version, transactions, metadata_per_tx, proxy_pid, reply_fn}}, t) do
-    emit_processing(transactions, next_version)
-
+  def handle_continue({:process_ready, {next_version, transactions, metadata_per_tx, proxy_id, reply_fn}}, t) do
     {conflicts, aborted} = resolve(t.conflicts, transactions, next_version)
+
     t = %{t | conflicts: conflicts, last_version: next_version}
+
     emit_completed(transactions, aborted, next_version)
 
-    # Accumulate metadata from non-aborted transactions
-    t = accumulate_committed_metadata(t, next_version, metadata_per_tx, aborted)
+    # Record each metadata-carrying transaction's mutations with this
+    # resolver's LOCAL verdict; the proxy ANDs verdicts across all resolvers'
+    # windows to reach the global verdict (FDB's stateMutations relay).
+    t = accumulate_metadata_verdicts(t, next_version, metadata_per_tx, aborted)
 
-    # Get differential updates for this proxy and update its progress
-    {metadata_updates, t} = get_metadata_updates_for_proxy(t, proxy_pid)
+    # Serve this proxy its exact window and advance its served floor.
+    {metadata_window, t} = serve_window(t, proxy_id)
 
-    reply_fn.({:ok, aborted, metadata_updates})
-    emit_reply_sent(transactions, aborted, next_version)
+    reply_fn.({:ok, aborted, metadata_window})
 
     case WaitingList.remove(t.waiting, next_version) do
       {updated_waiting, nil} ->
         noreply(%{t | waiting: updated_waiting}, continue: :next_timeout)
 
-      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions, metadata_per_tx, proxy_pid}}} ->
+      {updated_waiting, {_deadline, reply_fn, {waiting_next_version, transactions, metadata, proxy_id}}} ->
         emit_waiting_resolved(transactions, [], waiting_next_version)
 
         noreply(%{t | waiting: updated_waiting},
-          continue: {:process_ready, {waiting_next_version, transactions, metadata_per_tx, proxy_pid, reply_fn}}
+          continue: {:process_ready, {waiting_next_version, transactions, metadata, proxy_id, reply_fn}}
         )
     end
   end
@@ -233,7 +222,8 @@ defmodule Bedrock.DataPlane.Resolver.Server do
 
       updated_state =
         if current_version_int >= retention_microseconds do
-          new_conflicts = remove_old_transactions(t.conflicts, Version.subtract(t.last_version, retention_microseconds))
+          floor = Version.subtract(t.last_version, retention_microseconds)
+          new_conflicts = remove_old_transactions(t.conflicts, floor)
           %{t | conflicts: new_conflicts, last_sweep_time: Time.monotonic_now_in_ms()}
         else
           %{t | last_sweep_time: Time.monotonic_now_in_ms()}
@@ -255,46 +245,55 @@ defmodule Bedrock.DataPlane.Resolver.Server do
   # Metadata accumulation and distribution helpers
   # ===========================================================================
 
-  # Accumulates metadata mutations from committed (non-aborted) transactions
-  @spec accumulate_committed_metadata(State.t(), Bedrock.version(), [[tuple()]], [non_neg_integer()]) :: State.t()
-  defp accumulate_committed_metadata(t, commit_version, metadata_per_tx, aborted) do
+  # Records each metadata-carrying transaction's mutations with this
+  # resolver's LOCAL verdict, in transaction order. Verdict-false entries are
+  # recorded too: at the proxy's merge, absence must never be mistaken for a
+  # veto, so a veto is always explicit.
+  @spec accumulate_metadata_verdicts(State.t(), Bedrock.version(), [[tuple()]], [non_neg_integer()]) :: State.t()
+  defp accumulate_metadata_verdicts(t, commit_version, metadata_per_tx, aborted) do
     aborted_set = MapSet.new(aborted)
 
     metadata_per_tx
     |> Enum.with_index()
-    |> Enum.reject(fn {_mutations, idx} -> MapSet.member?(aborted_set, idx) end)
-    |> Enum.flat_map(fn {mutations, _idx} -> mutations end)
+    |> Enum.filter(fn {mutations, _idx} -> mutations != [] end)
+    |> Enum.map(fn {mutations, idx} -> {mutations, not MapSet.member?(aborted_set, idx)} end)
     |> case do
       [] -> t
-      mutations -> %{t | metadata_window: MetadataAccumulator.append(t.metadata_window, commit_version, mutations)}
+      entries -> %{t | metadata_window: MetadataAccumulator.append(t.metadata_window, commit_version, entries)}
     end
   end
 
-  # Gets differential metadata updates for a proxy and updates its progress
-  @spec get_metadata_updates_for_proxy(State.t(), pid()) :: {[MetadataAccumulator.entry()], State.t()}
-  defp get_metadata_updates_for_proxy(t, proxy_pid) do
-    last_seen = Map.get(t.proxy_progress, proxy_pid)
-    updates = MetadataAccumulator.mutations_since(t.metadata_window, last_seen)
+  # Serves a proxy its exact metadata window - (last_served, last_version] -
+  # and advances its served floor. Windows to one proxy tile exactly, so the
+  # proxy's applied version always equals the next window's from_version
+  # (asserted there); there is no ack, no overlap, and no receiver-side
+  # filtering. This is FDB's stateMutations relay: per-proxy lastVersion,
+  # exact half-open intervals, verdicts carried per entry.
+  @spec serve_window(State.t(), pid()) :: {Resolver.metadata_window(), State.t()}
+  defp serve_window(t, proxy_id) do
+    from = Map.get(t.last_served, proxy_id)
+    entries = MetadataAccumulator.mutations_since(t.metadata_window, from)
+    window = {from, t.last_version, entries}
 
-    # Update proxy progress to current version
-    updated_progress = Map.put(t.proxy_progress, proxy_pid, t.last_version)
-    t = %{t | proxy_progress: updated_progress}
+    t = %{t | last_served: Map.put(t.last_served, proxy_id, t.last_version)}
 
-    # Prune metadata window based on minimum progress across all proxies
-    t = prune_metadata_window(t)
-
-    {updates, t}
+    {window, prune_metadata_window(t)}
   end
 
-  # Prunes the metadata window based on the minimum version seen by any proxy
+  # Prunes entries every proxy has been served (windows are exact, so a
+  # served entry can never be requested again) - but only once every one of
+  # the epoch's proxies has been served at least once. FDB gates
+  # oldestProxyVersion pruning on having heard from all commitProxyCount
+  # proxies for the same reason: an entry must survive until the last
+  # first-contact window that needs it. A dead proxy freezes pruning only
+  # until the Director notices and recovers the epoch.
   @spec prune_metadata_window(State.t()) :: State.t()
-  defp prune_metadata_window(%{proxy_progress: progress} = t) when map_size(progress) == 0 do
-    t
-  end
-
   defp prune_metadata_window(t) do
-    min_version = t.proxy_progress |> Map.values() |> Enum.min()
-    updated_window = MetadataAccumulator.prune_before(t.metadata_window, min_version)
-    %{t | metadata_window: updated_window}
+    if map_size(t.last_served) < t.commit_proxy_count do
+      t
+    else
+      floor = t.last_served |> Map.values() |> Enum.min()
+      %{t | metadata_window: MetadataAccumulator.prune_through(t.metadata_window, floor)}
+    end
   end
 end

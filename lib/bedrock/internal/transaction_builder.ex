@@ -74,6 +74,8 @@ defmodule Bedrock.Internal.TransactionBuilder do
   @spec start_link(
           opts :: [
             transaction_system_layout: TransactionSystemLayout.t(),
+            routing_fn: (Bedrock.key() ->
+                           {:ok, {Bedrock.key(), Bedrock.key(), [LayoutIndex.server_ref()]}} | {:error, atom()}),
             time_fn: (-> integer())
           ]
         ) ::
@@ -83,7 +85,7 @@ defmodule Bedrock.Internal.TransactionBuilder do
 
     GenServer.start_link(
       __MODULE__,
-      transaction_system_layout
+      {transaction_system_layout, Keyword.get(opts, :routing_fn)}
     )
   end
 
@@ -91,14 +93,19 @@ defmodule Bedrock.Internal.TransactionBuilder do
   def init(arg), do: {:ok, arg, {:continue, :initialization}}
 
   @impl true
-  def handle_continue(:initialization, transaction_system_layout) do
-    # Build the layout index once during initialization for O(log n) lookups
-    layout_index = LayoutIndex.build_index(transaction_system_layout)
-
+  def handle_continue(:initialization, {transaction_system_layout, routing_fn}) do
+    # Routing arrives proxy-served, by key, and LAZILY: the partial index
+    # accumulates one covering entry per local miss, so a transaction that
+    # never reads never fetches routing, and one that reads a single key
+    # fetches a single entry (FDB fetches locations per read, never a bulk
+    # map). The TSL is wiring only - it carries no shard topology. Without
+    # a routing_fn (caller-provided wiring, tests) the index stays empty
+    # and reads fail as layout_lookup_failed.
     noreply(%State{
       state: :valid,
       transaction_system_layout: transaction_system_layout,
-      layout_index: layout_index,
+      layout_index: LayoutIndex.new(),
+      routing_fn: routing_fn,
       read_version: nil
     })
   end

@@ -33,8 +33,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.ControlPlane.Director.State
+  alias Bedrock.ControlPlane.Distributor
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Service.Worker
+
+  require Logger
 
   @type recovery_context :: %{
           cluster_config: Config.t(),
@@ -125,7 +128,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         |> Map.put(:transaction_system_layout, completed.transaction_system_layout)
         |> persist_config()
         |> persist_new_transaction_system_layout()
-        |> prune_service_directory()
+        |> prune_service_directory(completed)
+        |> remember_distributor_wiring(completed)
+        |> maybe_start_distributor()
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
@@ -156,24 +161,114 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   These are ghosts: registrations left behind by workers on nodes that no
   longer exist under that name (node names change across restarts, and
   nothing on a dead node can deregister itself). Entries on live nodes need
-  no help here — their foreman retires and deregisters them through layout
-  reconciliation — but only the director can clean up for the dead.
+  no help here — displaced workers self-retire on the layout push and their
+  foreman deregisters them — but only the director can clean up for the
+  dead.
   """
   @spec ghost_directory_ids(
           services :: %{Worker.id() => term()},
-          TransactionSystemLayout.t()
+          RecoveryAttempt.t()
         ) :: [Worker.id()]
-  def ghost_directory_ids(services, %{services: layout_services}) when is_map(layout_services) do
+  def ghost_directory_ids(services, completed_attempt) do
+    referenced = layout_reference_ids(completed_attempt)
+
     services
     |> Map.keys()
-    |> Enum.reject(&Map.has_key?(layout_services, &1))
+    |> Enum.reject(&MapSet.member?(referenced, &1))
   end
 
-  def ghost_directory_ids(_services, _layout), do: []
+  # The completed layout's statement of what exists: the new-generation
+  # logs and the active shard materializers — computed from the attempt
+  # (the TSL carries no membership map). Ghost pruning treats anything
+  # the completed recovery does not reference as a candidate ghost.
+  @spec layout_reference_ids(RecoveryAttempt.t()) :: MapSet.t(Worker.id())
+  defp layout_reference_ids(completed_attempt) do
+    log_ids = completed_attempt.logs |> Map.keys() |> MapSet.new()
 
-  @spec prune_service_directory(State.t()) :: State.t()
-  defp prune_service_directory(t) do
-    case ghost_directory_ids(t.services, t.transaction_system_layout) do
+    materializer_ids =
+      for {_tag, {worker_id, _node}} <- completed_attempt.shard_materializers,
+          into: MapSet.new(),
+          do: worker_id
+
+    MapSet.union(log_ids, materializer_ids)
+  end
+
+  # The runtime wiring recruitment needs — the epoch's log refs and node
+  # capabilities — is remembered at completion so retry recruits carry
+  # the same handoff (the same runtime-wiring shape recover_from hands
+  # proxies; log REFS never ride the TSL broadcast).
+  defp remember_distributor_wiring(t, completed) do
+    log_refs =
+      for {log_id, _tags} <- completed.logs,
+          %{status: {:up, ref}} <- [Map.get(completed.transaction_services, log_id)],
+          into: %{},
+          do: {log_id, ref}
+
+    %{t | distributor_wiring: %{logs: completed.logs, log_refs: log_refs}}
+  end
+
+  @doc """
+  Recruits the per-epoch Distributor singleton once the transaction
+  system is running (FDB's CC recruits DD only after recovery accepts
+  commits). Unlinked + monitored: a ceded exit (`:normal`) is final for
+  this epoch; failures are retried by the director's timer. The lock —
+  not this supervision — is what fences a stale instance's writes.
+  """
+  @spec maybe_start_distributor(State.t()) :: State.t()
+  def maybe_start_distributor(%{state: :running, distributor: nil, transaction_system_layout: tsl} = t)
+      when tsl != nil do
+    start_fn = t.distributor_start_fn || (&Distributor.Server.start/1)
+    wiring = t.distributor_wiring || %{logs: %{}, log_refs: %{}}
+
+    case start_fn.(
+           cluster: t.cluster,
+           epoch: t.epoch,
+           director: self(),
+           sequencer: tsl.sequencer,
+           proxies: tsl.proxies,
+           recruitment_ctx: %{
+             cluster: t.cluster,
+             epoch: t.epoch,
+             node_capabilities: t.node_capabilities,
+             logs: wiring.logs,
+             log_refs: wiring.log_refs
+           }
+         ) do
+      {:ok, pid} ->
+        %{t | distributor: pid, distributor_monitor: Process.monitor(pid)}
+
+      {:error, reason} ->
+        Logger.warning("Distributor start failed: #{inspect(reason)}; retrying")
+        schedule_distributor_retry(t)
+    end
+  end
+
+  def maybe_start_distributor(t), do: t
+
+  @doc false
+  @spec handle_distributor_down(State.t(), reason :: term()) :: State.t()
+  def handle_distributor_down(t, reason) do
+    t = %{t | distributor: nil, distributor_monitor: nil}
+
+    case reason do
+      # Ceded: superseded at the lock or the epoch ended — a newer owner
+      # exists, recruiting another would just lose the race again.
+      :normal ->
+        t
+
+      _failure ->
+        schedule_distributor_retry(t)
+    end
+  end
+
+  defp schedule_distributor_retry(t) do
+    Process.send_after(self(), {:timeout, :start_distributor}, t.distributor_retry_ms)
+    t
+  end
+
+  @spec prune_service_directory(State.t(), RecoveryAttempt.t()) :: State.t()
+  defp prune_service_directory(t, completed_attempt) do
+    case ghost_directory_ids(t.services, completed_attempt) do
       [] ->
         t
 

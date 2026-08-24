@@ -9,26 +9,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
   # Helper to create test process that sleeps briefly
   defp test_process, do: spawn(fn -> :timer.sleep(100) end)
 
-  # Helper to create test transaction system layout
-  defp create_layout(opts \\ []) do
-    sequencer = Keyword.get(opts, :sequencer, test_process())
-    proxies = Keyword.get(opts, :proxies, [test_process()])
-    resolvers = Keyword.get(opts, :resolvers, [{"start_key", test_process()}])
+  # Helper to build a recovery attempt with monitored components. The
+  # TSL carries no membership map; log pids come from the attempt's
+  # transaction_services.
+  defp attempt_with(opts \\ []) do
     logs = Keyword.get(opts, :logs, %{{:log, 1} => %{}})
 
-    # Create services map based on the components
-    services =
-      Keyword.get(opts, :services, %{
-        {:log, 1} => %{kind: :log, status: {:up, test_process()}}
-      })
+    transaction_services =
+      Keyword.get(
+        opts,
+        :transaction_services,
+        Map.new(logs, fn {log_id, _} -> {log_id, %{kind: :log, status: {:up, test_process()}}} end)
+      )
 
-    %{
-      sequencer: sequencer,
-      proxies: proxies,
-      resolvers: resolvers,
-      logs: logs,
-      services: services
-    }
+    recovery_attempt()
+    |> Map.put(:sequencer, Keyword.get(opts, :sequencer, test_process()))
+    |> Map.put(:proxies, Keyword.get(opts, :proxies, [test_process()]))
+    |> Map.put(:resolvers, Keyword.get(opts, :resolvers, [{"start_key", test_process()}]))
+    |> Map.put(:logs, logs)
+    |> Map.put(:transaction_services, transaction_services)
   end
 
   # Helper to execute monitoring and verify next phase
@@ -43,43 +42,28 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
         make_ref()
       end
 
-      recovery_attempt = Map.put(recovery_attempt(), :transaction_system_layout, create_layout())
-
-      execute_and_verify(recovery_attempt, %{monitor_fn: monitor_fn})
+      execute_and_verify(attempt_with(), %{monitor_fn: monitor_fn})
 
       # Should have monitored sequencer, 1 proxy, 1 resolver, 1 log (4 total)
       for _ <- 1..4, do: assert_received({:monitored, _})
     end
 
     test "uses default Process.monitor when no monitor_fn provided" do
-      recovery_attempt = Map.put(recovery_attempt(), :transaction_system_layout, create_layout())
-
-      execute_and_verify(recovery_attempt, %{})
+      execute_and_verify(attempt_with(), %{})
     end
 
     test "monitors multiple components correctly" do
-      log1_pid = test_process()
-      log2_pid = test_process()
-
-      recovery_attempt = %{
-        transaction_system_layout:
-          create_layout(
-            proxies: [test_process(), test_process()],
-            resolvers: [{"key1", test_process()}, {"key2", test_process()}],
-            logs: %{{:log, 1} => %{}, {:log, 2} => %{}},
-            services: %{
-              {:log, 1} => %{kind: :log, status: {:up, log1_pid}},
-              {:log, 2} => %{kind: :log, status: {:up, log2_pid}},
-              # Storage services shouldn't be monitored
-              {:materializer, 1} => %{kind: :materializer, status: {:up, test_process()}}
-            }
-          )
-      }
+      recovery_attempt =
+        attempt_with(
+          proxies: [test_process(), test_process()],
+          resolvers: [{"key1", test_process()}, {"key2", test_process()}],
+          logs: %{{:log, 1} => %{}, {:log, 2} => %{}}
+        )
 
       execute_and_verify(recovery_attempt, %{})
     end
 
-    test "excludes storage services from monitoring" do
+    test "monitors only the layout's logs — materializers are not epoch-fatal" do
       storage_pid = test_process()
 
       monitor_fn = fn pid ->
@@ -87,15 +71,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
         make_ref()
       end
 
-      recovery_attempt = %{
-        transaction_system_layout:
-          create_layout(
-            services: %{
-              {:log, 1} => %{kind: :log, status: {:up, test_process()}},
-              {:materializer, 1} => %{kind: :materializer, status: {:up, storage_pid}}
-            }
-          )
-      }
+      recovery_attempt =
+        attempt_with(
+          logs: %{{:log, 1} => %{}},
+          transaction_services: %{
+            {:log, 1} => %{kind: :log, status: {:up, test_process()}},
+            {:materializer, 1} => %{kind: :materializer, status: {:up, storage_pid}}
+          }
+        )
 
       execute_and_verify(recovery_attempt, %{monitor_fn: monitor_fn})
 
@@ -103,7 +86,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       refute_received {:monitored, ^storage_pid}
     end
 
-    test "crashes if services are not in :up status" do
+    test "crashes if a layout log is not up — an epoch that cannot watch its logs must not run" do
       down_log_pid = test_process()
 
       monitor_fn = fn pid ->
@@ -111,19 +94,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
         make_ref()
       end
 
-      recovery_attempt = %{
-        transaction_system_layout:
-          create_layout(
-            logs: %{{:log, 1} => %{}, {:log, 2} => %{}},
-            services: %{
-              {:log, 1} => %{kind: :log, status: {:up, test_process()}},
-              {:log, 2} => %{kind: :log, status: {:down, down_log_pid}}
-            }
-          )
-      }
+      recovery_attempt =
+        attempt_with(
+          logs: %{{:log, 1} => %{}, {:log, 2} => %{}},
+          transaction_services: %{
+            {:log, 1} => %{kind: :log, status: {:up, test_process()}},
+            {:log, 2} => %{kind: :log, status: {:down, down_log_pid}}
+          }
+        )
 
-      # Should crash when trying to extract PID from :down service
-      assert_raise FunctionClauseError, fn ->
+      assert_raise MatchError, fn ->
         MonitoringPhase.execute(recovery_attempt, %{monitor_fn: monitor_fn})
       end
     end

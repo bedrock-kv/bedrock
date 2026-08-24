@@ -41,8 +41,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
     epoch = 1
     {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, epoch})
 
-    layout = %{logs: %{}, services: %{}}
-    :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), layout})
+    :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), []})
   end
 
   setup do
@@ -98,8 +97,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
 
       # Recovery rolls the cluster back to v2: the v3 suffix must vanish.
       {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, 2})
-      layout = %{logs: %{}, services: %{}}
-      :ok = GenServer.call(pid, {:unlock_after_recovery, v2, layout})
+      :ok = GenServer.call(pid, {:unlock_after_recovery, v2, []})
 
       assert {:ok, "b"} = GenServer.call(pid, {:get, "key", v2, []})
 
@@ -118,8 +116,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
 
       # Nothing was applied: after unlock, the key does not exist at the
       # current (zero) version.
-      layout = %{logs: %{}, services: %{}}
-      :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), layout})
+      :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), []})
       assert {:error, :not_found} = GenServer.call(pid, {:get, "key", Version.zero(), []})
     end
   end

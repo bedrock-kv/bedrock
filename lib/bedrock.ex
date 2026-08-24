@@ -65,10 +65,25 @@ defmodule Bedrock do
   This binary value is lexicographically greater than any valid key and is used
   to represent unbounded key ranges. For ergonomics, the atom `:end` is also
   accepted in the public API and is automatically converted to this sentinel.
+
+  This sentinel bounds *reads* and *system-mode commits*. A user-mode
+  `clear_range` may end no later than `end_of_user_keyspace/0` — an end past
+  it is rejected at commit ingress with `{:key_out_of_range, key}`.
   """
   @end_of_keyspace <<0xFF, 0xFF>>
   @spec end_of_keyspace() :: key()
   def end_of_keyspace, do: @end_of_keyspace
+
+  @doc """
+  The exclusive upper bound of the user-writable keyspace.
+
+  Every key at or above this value is reserved for system metadata and may
+  only be written by system-mode commits. It is a valid exclusive end for a
+  user `clear_range`, mirroring how `end_of_keyspace/0` bounds system commits.
+  """
+  @end_of_user_keyspace <<0xFF>>
+  @spec end_of_user_keyspace() :: key()
+  def end_of_user_keyspace, do: @end_of_user_keyspace
 
   @doc """
   Creates a key range from a minimum inclusive key to a maximum exclusive key.

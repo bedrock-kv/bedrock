@@ -10,6 +10,9 @@ defmodule Bedrock.Internal.TransactionBuilder.State do
           state: :valid | :committed | :rolled_back,
           transaction_system_layout: Bedrock.ControlPlane.Config.TransactionSystemLayout.t(),
           layout_index: LayoutIndex.t(),
+          routing_fn:
+            (Bedrock.key() -> {:ok, {Bedrock.key(), Bedrock.key(), [LayoutIndex.server_ref()]}} | {:error, atom()})
+            | nil,
           #
           read_version: Bedrock.version() | nil,
           commit_version: Bedrock.version() | nil,
@@ -21,7 +24,8 @@ defmodule Bedrock.Internal.TransactionBuilder.State do
         }
   defstruct state: nil,
             transaction_system_layout: nil,
-            layout_index: nil,
+            layout_index: LayoutIndex.new(),
+            routing_fn: nil,
             #
             read_version: nil,
             commit_version: nil,

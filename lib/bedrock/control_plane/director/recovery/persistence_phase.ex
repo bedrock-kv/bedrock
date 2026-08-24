@@ -21,18 +21,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
   alias Bedrock.ClusterBootstrap.Discovery
-  alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.Persistence
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.Id
   alias Bedrock.Internal.TransactionBuilder.Tx
+  alias Bedrock.KeyRange
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.ClusterBootstrap
-  alias Bedrock.SystemKeys.ShardMetadata
+  alias Bedrock.SystemKeys.Values
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -40,13 +39,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     transaction_system_layout = recovery_attempt.transaction_system_layout
 
-    system_transaction =
-      build_system_transaction(
-        recovery_attempt.epoch,
-        context.cluster_config,
-        transaction_system_layout,
-        recovery_attempt.cluster
-      )
+    system_transaction = build_system_transaction(recovery_attempt)
 
     case submit_system_transaction(system_transaction, recovery_attempt.proxies, recovery_attempt.epoch, context) do
       {:ok, _version, _sequence} ->
@@ -187,143 +180,102 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end)
   end
 
-  @spec build_system_transaction(
-          epoch :: non_neg_integer(),
-          cluster_config :: Config.t(),
-          transaction_system_layout :: TransactionSystemLayout.t(),
-          cluster :: module()
-        ) :: Transaction.encoded()
-  defp build_system_transaction(epoch, cluster_config, transaction_system_layout, cluster) do
-    encoded_config = Persistence.encode_for_storage(cluster_config, cluster)
-
+  @spec build_system_transaction(RecoveryAttempt.t()) :: Transaction.encoded()
+  defp build_system_transaction(recovery_attempt) do
     tx = Tx.new()
-    tx = build_monolithic_keys(tx, epoch, encoded_config)
-    tx = build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, cluster)
+    tx = build_readable_keys(tx, recovery_attempt)
 
     Tx.commit(tx, nil)
   end
 
-  @spec build_monolithic_keys(Tx.t(), Bedrock.epoch(), map()) :: Tx.t()
-  defp build_monolithic_keys(tx, epoch, encoded_config) do
-    tx
-    |> Tx.set(SystemKeys.config_monolithic(), :erlang.term_to_binary({epoch, encoded_config}))
-    |> Tx.set(SystemKeys.epoch_legacy(), :erlang.term_to_binary(epoch))
-    |> Tx.set(
-      SystemKeys.last_recovery_legacy(),
-      :erlang.term_to_binary(System.system_time(:millisecond))
-    )
-  end
-
-  @spec build_decomposed_keys(
-          Tx.t(),
-          Bedrock.epoch(),
-          Config.t(),
-          TransactionSystemLayout.t(),
-          module()
-        ) ::
-          Tx.t()
-  defp build_decomposed_keys(tx, epoch, cluster_config, transaction_system_layout, _cluster) do
-    encoded_services = encode_services_for_storage(transaction_system_layout.services)
+  # Every key written here has a named purpose: shard_keys/ feeds both
+  # RoutingData and the next recovery's materializer bootstrap,
+  # and materializers/ refs feed the client-facing routing projection
+  # (FDB's serverList analogue - runtime hints, never recovery input) and
+  # worker rejoin validation. layout/logs/ has no code reader by design:
+  # log wiring is epoch-constant and rides the unlock seed
+  # (bedrock-q67.41); the family stays durable for other consumers and
+  # cluster-introspection tools. Nothing else is written (config and
+  # policy travel via the object-storage cluster bootstrap, which the
+  # coordinator actually reads; services are rebuilt each recovery from
+  # foreman discovery). Families return to the keyspace when their
+  # readers do (bedrock-q67.9, q67.25).
+  @spec build_readable_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
+  defp build_readable_keys(tx, recovery_attempt) do
+    # layout/logs is an epoch-scoped statement (which logs THIS epoch
+    # runs), so it alone is cleared and rewritten each recovery. The
+    # mapping families below are durable, distributor-era state: recovery
+    # reads and heals, never blanket-clears (bedrock-q67.21.2).
+    tx = clear_prefix(tx, SystemKeys.layout_logs_prefix())
 
     tx =
-      tx
-      |> Tx.set(
-        SystemKeys.cluster_coordinators(),
-        :erlang.term_to_binary(cluster_config.coordinators)
-      )
-      |> Tx.set(SystemKeys.cluster_epoch(), :erlang.term_to_binary(epoch))
-      |> Tx.set(
-        SystemKeys.cluster_policies_volunteer_nodes(),
-        :erlang.term_to_binary(cluster_config.policies.allow_volunteer_nodes_to_join)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_logs(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_logs)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_replication(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_replication_factor)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_commit_proxies(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_commit_proxies)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_coordinators(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_coordinators)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_desired_read_version_proxies(),
-        :erlang.term_to_binary(cluster_config.parameters.desired_read_version_proxies)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_empty_transaction_timeout_ms(),
-        :erlang.term_to_binary(Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000))
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_ping_rate_in_hz(),
-        :erlang.term_to_binary(cluster_config.parameters.ping_rate_in_hz)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_retransmission_rate_in_hz(),
-        :erlang.term_to_binary(cluster_config.parameters.retransmission_rate_in_hz)
-      )
-      |> Tx.set(
-        SystemKeys.cluster_parameters_transaction_window_in_ms(),
-        :erlang.term_to_binary(cluster_config.parameters.transaction_window_in_ms)
-      )
-
-    # Only durable layout config (services and id)
-    tx =
-      tx
-      |> Tx.set(SystemKeys.layout_services(), :erlang.term_to_binary(encoded_services))
-      |> Tx.set(SystemKeys.layout_id(), :erlang.term_to_binary(transaction_system_layout.id))
-
-    tx =
-      Enum.reduce(transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
-        encoded_descriptor =
-          log_descriptor
-          |> encode_log_descriptor_for_storage()
-          |> :erlang.term_to_binary()
-
-        Tx.set(tx, SystemKeys.layout_log(log_id), encoded_descriptor)
+      Enum.reduce(recovery_attempt.transaction_system_layout.logs, tx, fn {log_id, log_descriptor}, tx ->
+        Tx.set(tx, SystemKeys.layout_log(log_id), Values.encode_tag_list(log_descriptor))
       end)
 
-    # Shard keys use ceiling-search pattern
-    tx = build_shard_keys(tx, transaction_system_layout.shard_layout)
-
-    tx
-    |> Tx.set(SystemKeys.recovery_attempt(), :erlang.term_to_binary(1))
-    |> Tx.set(
-      SystemKeys.recovery_last_completed(),
-      :millisecond |> System.system_time() |> :erlang.term_to_binary()
-    )
+    tx = build_shard_keys(tx, recovery_attempt)
+    build_materializer_keys(tx, recovery_attempt)
   end
 
-  defp encode_services_for_storage(services) when is_map(services), do: services
+  # Creates materializer_key(tag) -> {worker_id, node} entries as a DIFF
+  # against the prior family (read by bootstrap): only assignments this
+  # recovery changed are written; unchanged entries are left in place,
+  # and entries for tags outside this layout are not recovery's to clean
+  # — read-and-heal means stale reconciliation belongs to the
+  # distributor (bedrock-q67.21.4). A nil prior means the family was not
+  # read (fresh cluster, legacy path): every assignment writes, the safe
+  # direction. The attempt carries refs in the keyspace-value shape, so
+  # keyspace and routing-snapshot seed remain one map read twice. Gated
+  # on the same INPUT as before: shard_materializers absent/empty means
+  # shard management is not active.
+  @spec build_materializer_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
+  defp build_materializer_keys(tx, recovery_attempt) do
+    case Map.get(recovery_attempt, :shard_materializers) do
+      nil ->
+        tx
 
-  @spec encode_log_descriptor_for_storage([term()]) :: [term()]
-  defp encode_log_descriptor_for_storage(log_descriptor) do
-    # Log descriptors typically don't contain PIDs directly
-    log_descriptor
+      materializers when map_size(materializers) == 0 ->
+        tx
+
+      materializers ->
+        prior = Map.get(recovery_attempt, :prior_materializer_refs) || %{}
+
+        materializers
+        |> Enum.reject(fn {tag, ref} -> Map.get(prior, tag) == ref end)
+        |> Enum.reduce(tx, fn {tag, {worker_id, node}}, tx ->
+          Tx.set(tx, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node))
+        end)
+    end
   end
 
-  # Creates shard_key(end_key) -> tag and shard(tag) -> ShardMetadata entries
-  # shard_layout format: %{end_key => {tag, start_key}}
-  @spec build_shard_keys(Tx.t(), TransactionSystemLayout.shard_layout() | nil) :: Tx.t()
-  defp build_shard_keys(tx, nil), do: tx
-  defp build_shard_keys(tx, shard_layout) when map_size(shard_layout) == 0, do: tx
+  # The epoch-scoped layout/logs family is cleared before its entries are
+  # written so a changed log set leaves no stale entries behind. The clear
+  # and the rewrite land in the same system transaction, so readers never
+  # observe a gap.
+  @spec clear_prefix(Tx.t(), Bedrock.key()) :: Tx.t()
+  defp clear_prefix(tx, prefix) do
+    {start_key, end_key} = KeyRange.from_prefix(prefix)
+    Tx.clear_range(tx, start_key, end_key)
+  end
 
-  defp build_shard_keys(tx, shard_layout) when is_map(shard_layout) do
-    Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
-      # Write shard_key(end_key) -> tag (for ceiling search)
-      tx = Tx.set(tx, SystemKeys.shard_key(end_key), :erlang.term_to_binary(tag))
+  # Creates shard_key(end_key) -> {tag, start_key} entries (ceiling
+  # search) ONLY when this recovery seeded the layout (fresh cluster —
+  # FDB's seedShardServers analogue). An existing cluster's layout was
+  # READ from the family, and boundaries never change without splits, so
+  # there is nothing to write; the family is durable across epochs. The
+  # seed writes into a definitionally empty family (a fresh cluster has
+  # no committed data), so no clear is needed.
+  @spec build_shard_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
+  defp build_shard_keys(tx, recovery_attempt) do
+    shard_layout = recovery_attempt.shard_layout
 
-      # Write shard(tag) -> ShardMetadata (FlatBuffer encoded)
-      # born_at is 0 for now - will be set properly once we track shard versions
-      metadata = ShardMetadata.new(start_key, end_key, 0)
-      Tx.set(tx, SystemKeys.shard(tag), metadata)
-    end)
+    if Map.get(recovery_attempt, :seeded_layout?, false) and is_map(shard_layout) and map_size(shard_layout) > 0 do
+      Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
+        Tx.set(tx, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key))
+      end)
+    else
+      tx
+    end
   end
 
   @spec submit_system_transaction(Transaction.encoded(), [pid()], Bedrock.epoch(), map()) ::
@@ -332,10 +284,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp submit_system_transaction(_system_transaction, [], _epoch, _context), do: {:error, :no_commit_proxies}
 
   defp submit_system_transaction(encoded_transaction, proxies, epoch, context) when is_list(proxies) do
-    commit_fn = Map.get(context, :commit_transaction_fn, &CommitProxy.commit/3)
+    commit_fn = Map.get(context, :commit_transaction_fn, &commit_in_system_mode/3)
 
     proxies
     |> Enum.random()
     |> commit_fn.(epoch, encoded_transaction)
   end
+
+  # Recovery is a system writer: user-mode commits cannot touch \xFF keys.
+  defp commit_in_system_mode(proxy, epoch, encoded_transaction),
+    do: CommitProxy.commit(proxy, epoch, encoded_transaction, mode: :system)
 end

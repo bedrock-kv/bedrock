@@ -121,7 +121,7 @@ director start goes stale immediately.
 - **Main Recovery Module**: `lib/bedrock/control_plane/director/recovery.ex`
 - **Phase Implementations**: `lib/bedrock/control_plane/director/recovery/*_phase.ex`
 - **Recovery Attempt State**: `lib/bedrock/control_plane/config/recovery_attempt.ex`
-- **Worker Reconciliation**: `lib/bedrock/service/foreman/impl.ex` (`do_reconcile_workers/2`)
+- **Worker Self-Displacement**: `lib/bedrock/service/foreman/impl.ex` (`do_relay_tsl/2`; workers decide their own retirement)
 
 ## See Also
 

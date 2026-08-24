@@ -19,7 +19,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
 
@@ -56,13 +55,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           # Default layout has two shards: system and user
           assert map_size(updated_attempt.shard_layout) == 2
 
-          # Should have created materializers for both shards
-          assert map_size(updated_attempt.shard_materializers) == 2
+          # Only the system shard is recovery's to create: the data
+          # shard's slot stays ABSENT for the distributor to cover with
+          # the placeholder and heal by recruitment (stall-only-for-
+          # tag-0 completed).
+          assert map_size(updated_attempt.shard_materializers) == 1
           assert Map.has_key?(updated_attempt.shard_materializers, 0)
-          assert Map.has_key?(updated_attempt.shard_materializers, 1)
+          refute Map.has_key?(updated_attempt.shard_materializers, 1)
 
-          # metadata_materializer should be the system shard materializer
-          assert updated_attempt.metadata_materializer == system_materializer_pid
+          assert {<<_::binary>>, node_string} =
+                   updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+
+          assert node_string == Atom.to_string(node())
 
           # Every creation reaches transaction_services — the layout is
           # built from it, and reconciliation retires anything the layout
@@ -71,33 +75,37 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
             for {_id, %{kind: :materializer, status: {:up, pid}}} <- updated_attempt.transaction_services, do: pid
 
           assert system_materializer_pid in created_pids
-          assert user_materializer_pid in created_pids
+          refute user_materializer_pid in created_pids
         end)
 
       assert log =~ "Fresh cluster detected"
 
-      # Verify both shards were created
+      # Only the system shard's materializer was created.
       shards = created_shards |> :ets.lookup(:shard) |> Enum.map(fn {:shard, tag} -> tag end)
-      assert 0 in shards
-      assert 1 in shards
+      assert shards == [0]
 
       :ets.delete(created_shards)
     end
 
-    test "for fresh cluster, unlocks shard materializers with empty log descriptors" do
+    test "for fresh cluster, seeds shard materializers with the epoch's pull sources" do
       system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
       user_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      log_1_pid = spawn(fn -> Process.sleep(:infinity) end)
+      log_2_pid = spawn(fn -> Process.sleep(:infinity) end)
 
       logs = %{
-        {:vacancy, 1} => [],
-        {:vacancy, 2} => []
+        "log_1" => [],
+        "log_2" => []
       }
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, logs)
+        |> Map.put(:transaction_services, %{
+          "log_1" => %{kind: :log, status: {:up, log_1_pid}},
+          "log_2" => %{kind: :log, status: {:up, log_2_pid}}
+        })
 
       unlocks = :ets.new(:materializer_unlocks, [:bag, :public])
 
@@ -117,18 +125,31 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           pid = if shard_tag == 0, do: system_materializer_pid, else: user_materializer_pid
           {:ok, pid}
         end)
-        |> Map.put(:unlock_materializer_fn, fn pid, _version, tsl ->
-          :ets.insert(unlocks, {:unlock, pid, tsl.logs})
+        |> Map.put(:unlock_materializer_fn, fn pid, _version, pull_sources ->
+          :ets.insert(unlocks, {:unlock, pid, pull_sources})
           :ok
         end)
 
       assert {updated_attempt, CommitProxyStartupPhase} =
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-      assert updated_attempt.metadata_materializer == system_materializer_pid
+      assert {<<_::binary>>, <<_::binary>>} =
+               updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
 
-      assert {:unlock, system_materializer_pid, logs} in :ets.lookup(unlocks, :unlock)
-      assert {:unlock, user_materializer_pid, logs} in :ets.lookup(unlocks, :unlock)
+      # Replication spans all logs today, so the system shard's replica
+      # set covers both — the seed carries {log_id, ref} pairs, never a
+      # cluster services map. (The data shard is not created; its seed
+      # is the distributor's, at recruitment.)
+      expected = [{"log_1", log_1_pid}, {"log_2", log_2_pid}]
+
+      assert [{:unlock, ^system_materializer_pid, sources}] =
+               unlocks
+               |> :ets.lookup(:unlock)
+               |> Enum.filter(&match?({:unlock, ^system_materializer_pid, _}, &1))
+
+      assert Enum.sort(sources) == expected
+
+      assert [] = unlocks |> :ets.lookup(:unlock) |> Enum.filter(&match?({:unlock, ^user_materializer_pid, _}, &1))
 
       :ets.delete(unlocks)
     end
@@ -136,7 +157,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     test "stalls when no materializer capable nodes exist" do
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
 
@@ -177,7 +197,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       # rollback target.
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
@@ -217,12 +236,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
           # The system-shard survivor answers the layout query...
-          assert updated_attempt.metadata_materializer == system_pid
+          assert {"mat_sys", _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
           assert updated_attempt.shard_layout
 
           # ...and every shard in the layout gets its surviving
           # materializer — nothing newly created, nothing orphaned.
-          assert updated_attempt.shard_materializers == %{0 => system_pid, 1 => user_pid}
+          assert %{0 => {"mat_sys", _}, 1 => {"mat_user", _}} = updated_attempt.shard_materializers
+
+          assert map_size(updated_attempt.shard_materializers) == 2
         end)
 
       # Both were unlocked at the recovery version (vector last), never at
@@ -241,7 +262,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       # A stray from an earlier failed recovery attempt: same shard, empty.
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
@@ -275,8 +295,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         assert {updated_attempt, CommitProxyStartupPhase} =
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-        assert updated_attempt.metadata_materializer == real_pid
-        assert updated_attempt.shard_materializers == %{0 => real_pid}
+        assert {"mat_real", _node} = updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
+        assert %{0 => {"mat_real", _}} = updated_attempt.shard_materializers
+        assert map_size(updated_attempt.shard_materializers) == 1
       end)
     end
 
@@ -286,7 +307,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:durable_version, durable_version)
@@ -320,7 +340,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert {updated_attempt, CommitProxyStartupPhase} =
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-          assert updated_attempt.metadata_materializer == materializer_pid
+          assert {<<_::binary>>, <<_::binary>>} = updated_attempt.shard_materializers[0]
           assert updated_attempt.shard_layout
 
           # The creation is recorded: the layout will reference it, so
@@ -343,7 +363,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:version_vector, {Version.from_integer(0), durable_version})
@@ -389,7 +408,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:version_vector, {Version.from_integer(0), durable_version})
@@ -424,7 +442,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, %{"log_1" => [0, 1]})
         |> Map.put(:durable_version, durable_version)
@@ -454,20 +471,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       assert log =~ "System shard materializer not found, creating new one"
     end
 
-    test "filters logs to only system shard when unlocking" do
+    test "seeds each unlocked materializer with its replica set of pull sources" do
       materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
+      log_1_pid = spawn(fn -> Process.sleep(:infinity) end)
+      log_2_pid = spawn(fn -> Process.sleep(:infinity) end)
       durable_version = Version.from_integer(100)
 
-      # Logs with different shard assignments
-      # log_1 handles shard 0 (system), log_2 handles shard 1 (user)
       logs = %{
-        "log_1" => [0],
-        "log_2" => [1]
+        "log_1" => [],
+        "log_2" => []
       }
 
       recovery_attempt =
         recovery_attempt()
-        |> Map.put(:metadata_materializer, nil)
         |> Map.put(:shard_layout, nil)
         |> Map.put(:logs, logs)
         |> Map.put(:version_vector, {Version.from_integer(0), durable_version})
@@ -478,10 +494,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         })
         |> Map.put(:transaction_services, %{
           "mat_sys" => %{kind: :materializer, status: {:up, materializer_pid}},
-          "mat_user" => %{kind: :materializer, status: {:up, spawn(fn -> Process.sleep(:infinity) end)}}
+          "mat_user" => %{kind: :materializer, status: {:up, spawn(fn -> Process.sleep(:infinity) end)}},
+          "log_1" => %{kind: :log, status: {:up, log_1_pid}},
+          "log_2" => %{kind: :log, status: {:up, log_2_pid}}
         })
 
-      received_tsl = :ets.new(:test_tsl, [:set, :public])
+      received_sources = :ets.new(:test_sources, [:set, :public])
 
       context =
         [
@@ -492,8 +510,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> create_test_context()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
-        |> Map.put(:unlock_materializer_fn, fn pid, _version, tsl ->
-          :ets.insert(received_tsl, {pid, tsl.logs})
+        |> Map.put(:unlock_materializer_fn, fn pid, _version, pull_sources ->
+          :ets.insert(received_sources, {pid, pull_sources})
           :ok
         end)
         |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
@@ -508,15 +526,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           assert {_updated_attempt, CommitProxyStartupPhase} =
                    MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-          # Verify per-shard log filtering: the system materializer got
-          # only log_1, the user materializer only log_2
-          assert [{_, sys_logs}] = :ets.lookup(received_tsl, materializer_pid)
-          assert Map.keys(sys_logs) == ["log_1"]
+          # The seed is the shard's replica set — {log_id, ref} pairs
+          # resolved by the director, not a services map for the
+          # materializer to re-derive placement from. Replication spans
+          # all logs today, so the system shard's set covers both.
+          assert [{_, sources}] = :ets.lookup(received_sources, materializer_pid)
+          assert Enum.sort(sources) == [{"log_1", log_1_pid}, {"log_2", log_2_pid}]
         end)
 
       assert log =~ "Materializer caught up to version"
 
-      :ets.delete(received_tsl)
+      :ets.delete(received_sources)
     end
   end
 
@@ -537,6 +557,283 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   describe "system_shard_id/0" do
     test "returns 0 for the system shard" do
       assert RecoveryAttempt.system_shard_id() == 0
+    end
+  end
+
+  describe "prior materializer family as re-adoption input" do
+    defp existing_context(recovery_version, overrides) do
+      base =
+        [
+          old_transaction_system_layout: %{logs: %{"log_1" => [0, 1]}}
+        ]
+        |> create_test_context()
+        |> Map.put(:available_services, %{})
+        |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _sources -> :ok end)
+        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
+          {:ok, %{current_version: recovery_version}}
+        end)
+        |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
+          {:ok, %{<<0xFF>> => {1, <<>>}, Bedrock.end_of_keyspace() => {0, <<0xFF>>}}}
+        end)
+
+      Map.merge(base, overrides)
+    end
+
+    defp two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid) do
+      recovery_attempt()
+      |> Map.put(:shard_layout, nil)
+      |> Map.put(:logs, %{"log_1" => [0, 1]})
+      |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
+      |> Map.put(:materializer_recovery_info_by_id, %{
+        "mat_sys" => %{kind: :materializer, shard_id: 0, durable_version: recovery_version},
+        "mat_named" => %{kind: :materializer, shard_id: 1, durable_version: Version.from_integer(1)},
+        "mat_stray" => %{kind: :materializer, shard_id: 1, durable_version: recovery_version}
+      })
+      |> Map.put(:transaction_services, %{
+        "mat_sys" => %{kind: :materializer, status: {:up, sys_pid}},
+        "mat_named" => %{kind: :materializer, status: {:up, named_pid}},
+        "mat_stray" => %{kind: :materializer, status: {:up, stray_pid}},
+        "log_1" => %{kind: :log, status: {:up, self()}}
+      })
+    end
+
+    test "the family-named locked survivor beats a more-advanced stray" do
+      # The committed assignment is the authority; the contest (most
+      # advanced durable state wins) is only the fallback for tags the
+      # family does not name.
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      named_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        existing_context(recovery_version, %{
+          read_prior_refs_fn: fn _pid, _version ->
+            {:ok, %{1 => {"mat_named", Atom.to_string(node())}}}
+          end
+        })
+
+      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        assert {"mat_named", _node} = updated_attempt.shard_materializers[1]
+        assert updated_attempt.prior_materializer_refs == %{1 => {"mat_named", Atom.to_string(node())}}
+        refute updated_attempt.seeded_layout?
+      end)
+    end
+
+    test "a family entry naming an unlocked worker falls back to the contest" do
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      named_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        existing_context(recovery_version, %{
+          read_prior_refs_fn: fn _pid, _version ->
+            {:ok, %{1 => {"mat_gone", Atom.to_string(node())}}}
+          end
+        })
+
+      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        # "mat_gone" was not locked this epoch: the most-advanced
+        # claimant wins as before.
+        assert {"mat_stray", _node} = updated_attempt.shard_materializers[1]
+      end)
+    end
+
+    test "a failed family read stalls the attempt — never a silently unnamed layout" do
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      named_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        existing_context(recovery_version, %{
+          read_prior_refs_fn: fn _pid, _version -> {:error, {:prior_refs_query_failed, :timeout}} end
+        })
+
+      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+
+      assert {_attempt, {:stalled, {:prior_refs_query_failed, :timeout}}} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+    end
+
+    test "the fresh path marks the layout seeded with an empty prior family" do
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0, 1]})
+
+      context =
+        [
+          old_transaction_system_layout: %{logs: %{}},
+          node_capabilities: %{log: [Node.self()], materializer: [Node.self()]}
+        ]
+        |> create_test_context()
+        |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
+          {:ok, :new_materializer_ref}
+        end)
+        |> Map.put(:lock_materializer_fn, fn {:materializer, _ref, _shard_tag}, _epoch ->
+          {:ok, spawn(fn -> Process.sleep(:infinity) end)}
+        end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _sources -> :ok end)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        assert updated_attempt.seeded_layout?
+        assert updated_attempt.prior_materializer_refs == %{}
+      end)
+    end
+  end
+
+  describe "decode_prior_refs/1" do
+    alias Bedrock.SystemKeys, as: SK
+    alias Bedrock.SystemKeys.Values, as: V
+
+    test "decodes tag-keyed refs and rejects foreign or undecodable entries" do
+      entries = [
+        {SK.materializer_key(0), V.encode_materializer_ref("wkr_sys", "n@h")},
+        {SK.materializer_key(7), V.encode_materializer_ref("wkr_a", "n@h")}
+      ]
+
+      assert {:ok, %{0 => {"wkr_sys", "n@h"}, 7 => {"wkr_a", "n@h"}}} =
+               MaterializerBootstrapPhase.decode_prior_refs(entries)
+
+      bad_key = SK.shard_key("m")
+
+      assert {:error, {:invalid_materializer_entry, ^bad_key}} =
+               MaterializerBootstrapPhase.decode_prior_refs([{bad_key, "x"}])
+
+      garbage = SK.materializer_key(1)
+
+      assert {:error, {:invalid_materializer_entry, ^garbage}} =
+               MaterializerBootstrapPhase.decode_prior_refs([{garbage, <<0xEE>>}])
+    end
+  end
+
+  describe "read_all_shard_entries/1" do
+    alias Bedrock.SystemKeys, as: Keys
+
+    # A scripted range read keyed by the start key it expects: paging must
+    # resume each page exactly after the last returned key.
+    defp scripted(script), do: fn start_key -> Map.fetch!(script, start_key) end
+
+    test "a single page under the limit passes through" do
+      entries = [{Keys.shard_key("m"), "v1"}]
+      script = %{Keys.shard_keys_prefix() => {:ok, {entries, false}}}
+
+      assert {:ok, ^entries} = MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+    end
+
+    test "pages through the continuation until the read reports no more" do
+      page1 = [{Keys.shard_key("b"), "v1"}, {Keys.shard_key("f"), "v2"}]
+      page2 = [{Keys.shard_key("m"), "v3"}]
+      page3 = [{Keys.shard_key(<<0xFF, 0xFF>>), "v4"}]
+
+      script = %{
+        Keys.shard_keys_prefix() => {:ok, {page1, true}},
+        Bedrock.Key.key_after(Keys.shard_key("f")) => {:ok, {page2, true}},
+        Bedrock.Key.key_after(Keys.shard_key("m")) => {:ok, {page3, false}}
+      }
+
+      assert {:ok, entries} = MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+      assert entries == page1 ++ page2 ++ page3
+    end
+
+    test "an empty layout is an empty list, not an error" do
+      script = %{Keys.shard_keys_prefix() => {:ok, {[], false}}}
+
+      assert {:ok, []} = MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+    end
+
+    test "a mid-continuation failure surfaces as a query failure — never a truncated layout" do
+      page1 = [{Keys.shard_key("b"), "v1"}]
+
+      script = %{
+        Keys.shard_keys_prefix() => {:ok, {page1, true}},
+        Bedrock.Key.key_after(Keys.shard_key("b")) => {:failure, :timeout, :ref}
+      }
+
+      assert {:error, {:shard_layout_query_failed, :timeout}} =
+               MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+    end
+
+    test "an empty page claiming more is a broken contract, not an infinite loop" do
+      script = %{Keys.shard_keys_prefix() => {:ok, {[], true}}}
+
+      assert {:error, {:shard_layout_query_failed, :empty_continuation_page}} =
+               MaterializerBootstrapPhase.read_all_shard_entries(scripted(script))
+    end
+  end
+
+  describe "shard_layout_from_entries/1" do
+    alias Bedrock.SystemKeys
+    alias Bedrock.SystemKeys.Values
+
+    test "decodes tuple-encoded shard values, consuming the carried start keys" do
+      entries = [
+        {SystemKeys.shard_key(<<0xFF, 0xFF>>), Values.encode_shard_key_entry(0, "m")},
+        {SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "")}
+      ]
+
+      assert {:ok, %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries(entries)
+    end
+
+    test "the carried start key is consumed verbatim — no adjacency reconstruction" do
+      # The value carries the fact; readers must not rebuild it. Under
+      # adjacency reconstruction this entry's start would come out as the
+      # empty key (the first shard "starts where nothing ended"), so a
+      # carried non-empty start surviving proves the value is consumed —
+      # the same meaning RoutingData.apply_mutation gives it.
+      entries = [{SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "gap")}]
+
+      assert {:ok, %{"m" => {1, "gap"}}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries(entries)
+    end
+
+    test "decodes legacy term_to_binary shard values in both historical shapes" do
+      entries = [
+        {SystemKeys.shard_key("m"), :erlang.term_to_binary(1)},
+        {SystemKeys.shard_key(<<0xFF, 0xFF>>), :erlang.term_to_binary({0, "m"})}
+      ]
+
+      assert {:ok, %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries(entries)
+    end
+
+    test "any legacy entry falls the whole snapshot back to adjacency" do
+      # Structurally precluded in production (the family rewrites
+      # atomically each epoch, so snapshots are encoding-uniform), but the
+      # branch is live: a modern entry's carried start key is discarded
+      # and its tag still extracted when a legacy sibling forces the
+      # adjacency rebuild.
+      entries = [
+        {SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, "carried-start")},
+        {SystemKeys.shard_key(<<0xFF, 0xFF>>), :erlang.term_to_binary(0)}
+      ]
+
+      assert {:ok, %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries(entries)
+    end
+
+    test "rejects values that decode in neither encoding" do
+      key = SystemKeys.shard_key("m")
+
+      assert {:error, {:invalid_shard_value, ^key}} =
+               MaterializerBootstrapPhase.shard_layout_from_entries([{key, "garbage"}])
     end
   end
 end

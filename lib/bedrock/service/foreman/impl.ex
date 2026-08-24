@@ -19,7 +19,6 @@ defmodule Bedrock.Service.Foreman.Impl do
   alias Bedrock.ControlPlane.Coordinator
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo
-  alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
 
   require Logger
@@ -40,51 +39,46 @@ defmodule Bedrock.Service.Foreman.Impl do
   end
 
   @doc """
-  Retires every hosted worker the layout does not reference.
+  Relays a newly durable transaction system layout to every running
+  hosted worker.
 
-  The durable transaction system layout is the single source of truth for
-  what should exist: recovery attempts are the only creation path, and this
-  is the only destruction path. Old-generation logs (their WAL replayed
-  into the new generation before the layout became durable) and stray
-  materializers from premature recovery attempts are removed by the same
-  rule — no stray detection, no age heuristics.
+  The foreman never answers a membership question: workers self-detect
+  displacement against the pushed layout (FDB-style — every role decides
+  its own retirement; no component decides another process's). One
+  foreman per node makes it the natural distribution point from the
+  cluster push to the workers it hosts.
 
-  A layout with no services is not a valid layout (every recovery produces
-  at least one log), so it retires nothing.
+  Bounded by liveness: only a running worker can self-detect, so a worker
+  that cannot start (crash loop, corrupt state) keeps its directory until
+  an operator intervenes — the same property FDB has for a process that
+  cannot run its rejoin check. A nil layout (the coordinator clears and
+  broadcasts nil when a director starts) carries nothing to judge against
+  and is not relayed.
   """
-  @spec do_reconcile_workers(State.t(), TransactionSystemLayout.t()) :: State.t()
-  def do_reconcile_workers(t, %{services: services}) when is_map(services) and map_size(services) > 0 do
-    case workers_to_retire(t.workers, services) do
-      [] ->
-        t
+  @spec do_relay_tsl(State.t(), TransactionSystemLayout.t() | nil) :: State.t()
+  def do_relay_tsl(t, nil), do: t
 
-      to_retire ->
-        Logger.info("Bedrock foreman: retiring workers not in the durable layout: #{inspect(to_retire)}")
-
-        Enum.reduce(to_retire, t, fn worker_id, acc ->
-          {acc, _result} = do_remove_worker(acc, worker_id)
-          acc
-        end)
+  def do_relay_tsl(t, transaction_system_layout) do
+    for {_id, %{health: {:ok, pid}}} <- t.workers do
+      send(pid, {:tsl_updated, transaction_system_layout})
     end
+
+    t
   end
 
-  def do_reconcile_workers(t, _layout), do: t
-
   @doc """
-  The hosted worker ids a layout does not reference.
+  Janitors a worker that decided its own retirement.
 
-  Only entries with a valid manifest qualify: a worker IS a directory with
-  a manifest. The boot scan ingests every subdirectory of the base path,
-  and shared-path deployments put non-worker directories (the
-  coordinator's raft state, the object storage root) alongside workers —
-  things the foreman cannot identify are not its to destroy.
+  The worker found itself displaced from the committed layout and is
+  exiting (`:transient` restart means a deliberate shutdown stays down);
+  the foreman disposes what remains — process (if still up),
+  registration, directory, manifest — and does not restart it.
   """
-  @spec workers_to_retire(%{Worker.id() => WorkerInfo.t()}, %{Worker.id() => term()}) :: [Worker.id()]
-  def workers_to_retire(workers, services) do
-    for {id, %{manifest: %Manifest{worker: worker}}} <- workers,
-        not is_nil(worker),
-        not Map.has_key?(services, id),
-        do: id
+  @spec do_worker_retired(State.t(), Worker.id()) :: State.t()
+  def do_worker_retired(t, worker_id) do
+    Logger.info("Bedrock foreman: worker #{worker_id} retired itself; disposing")
+    {t, _result} = do_remove_worker(t, worker_id)
+    t
   end
 
   @spec do_new_worker(State.t(), Worker.id(), :log | :materializer, params :: map()) ::
@@ -256,6 +250,23 @@ defmodule Bedrock.Service.Foreman.Impl do
     t
     |> load_workers_from_disk()
     |> start_workers_that_are_stopped()
+    |> relay_current_tsl()
+  end
+
+  # Cold boot composes with self-detection only if resurrected workers
+  # see a layout. The coordinator replays its push on Link subscription,
+  # which can precede this foreman (the forward is dropped when whereis
+  # finds no foreman), so pull the Link's cached layout once at spin-up —
+  # rehydrated workers self-validate immediately instead of waiting for
+  # the next recovery's push.
+  @spec relay_current_tsl(State.t()) :: State.t()
+  defp relay_current_tsl(t) do
+    case Link.fetch_transaction_system_layout(t.cluster.otp_name(:link)) do
+      {:ok, transaction_system_layout} -> do_relay_tsl(t, transaction_system_layout)
+      _ -> t
+    end
+  catch
+    _, _ -> t
   end
 
   @spec load_workers_from_disk(State.t()) :: State.t()

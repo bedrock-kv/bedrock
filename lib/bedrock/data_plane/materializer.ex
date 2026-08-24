@@ -7,13 +7,21 @@ defmodule Bedrock.DataPlane.Materializer do
 
   # Removed: import Bedrock.Internal.GenServer.Calls
 
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Materializer.Telemetry
   alias Bedrock.KeySelector
   alias Bedrock.Service.Worker
 
   @type ref :: Worker.ref()
   @type id :: Worker.id()
+
+  @typedoc """
+  A shard's replica set for stream pulling: the logs that receive this
+  shard's slices, as `{log_id, log_ref}` pairs. Resolved once by the
+  director at unlock (`ShardRouter.log_ids_for_tag/3`); the materializer
+  never re-derives placement and never sees a cluster services map.
+  """
+  @type pull_sources :: [{Log.id(), Log.ref()}]
   @type key_range :: Bedrock.key_range()
   @type fact_name ::
           Worker.fact_name()
@@ -270,25 +278,33 @@ defmodule Bedrock.DataPlane.Materializer do
           | {:error, :newer_epoch_exists}
   defdelegate lock_for_recovery(storage, epoch), to: Worker
 
+  @doc "As `lock_for_recovery/2`, with a bounded call timeout."
+  @spec lock_for_recovery(ref(), Bedrock.epoch(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          {:ok, pid(), recovery_info :: term()} | {:error, :newer_epoch_exists}
+  defdelegate lock_for_recovery(storage, epoch, opts), to: Worker
+
   @doc """
   Unlocks the materializer after recovery is complete. This allows the materializer
   to start accepting new transactions again and continue normal operation.
 
-  The durable version and transaction system layout must be provided to
-  ensure that the materializer is unlocked at the correct state.
+  The durable version and the shard's pull sources — its replica set of
+  `{log_id, log_ref}` pairs, resolved once by the director through the
+  same `ShardRouter` walk the commit proxies route with — must be
+  provided so the materializer resumes at the correct state. The seed is
+  exactly this shard's sources, never a cluster map.
   """
   @spec unlock_after_recovery(
           storage :: ref(),
           durable_version :: Bedrock.version(),
-          TransactionSystemLayout.t(),
+          pull_sources(),
           opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
         ) :: :ok | {:error, :unavailable} | {:failure, :timeout, ref()}
-  def unlock_after_recovery(storage, durable_version, transaction_system_layout, opts \\ []) do
+  def unlock_after_recovery(storage, durable_version, pull_sources, opts \\ []) do
     timeout = opts[:timeout_in_ms] || :infinity
     start_time = System.monotonic_time()
 
     try do
-      result = GenServer.call(storage, {:unlock_after_recovery, durable_version, transaction_system_layout}, timeout)
+      result = GenServer.call(storage, {:unlock_after_recovery, durable_version, pull_sources}, timeout)
 
       Telemetry.emit_materializer_operation(
         :unlock_after_recovery_success,

@@ -89,14 +89,19 @@ defmodule Bedrock.Service.Foreman.Server do
   @impl true
   def handle_cast({:worker_health, worker_id, health}, t), do: t |> do_worker_health(worker_id, health) |> noreply()
 
+  # A hosted worker decided its own retirement; the foreman only janitors.
+  @impl true
+  def handle_cast({:worker_retired, worker_id}, t), do: t |> do_worker_retired(worker_id) |> noreply()
+
   @impl true
   def handle_cast(_, t), do: noreply(t)
 
   # A newly durable transaction system layout arrived (forwarded by this
-  # node's Link): retire any hosted worker the layout doesn't reference.
+  # node's Link): relay it to the hosted workers, which self-detect
+  # displacement. The foreman never answers a membership question.
   @impl true
   def handle_info({:tsl_updated, transaction_system_layout}, t),
-    do: t |> do_reconcile_workers(transaction_system_layout) |> noreply()
+    do: t |> do_relay_tsl(transaction_system_layout) |> noreply()
 
   @impl true
   def handle_info(_, t), do: noreply(t)

@@ -48,8 +48,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
     buffer =
       transactions
       |> Enum.with_index()
-      |> Enum.map(fn {{reply_fn, tx_binary, task}, index} ->
-        {index, reply_fn, tx_binary, task}
+      |> Enum.map(fn {{reply_fn, tx_binary, commit_mode}, index} ->
+        {index, reply_fn, tx_binary, commit_mode}
       end)
 
     %Batch{
@@ -92,27 +92,26 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       tx_map = create_transaction_with_metadata("key1", "value1", "meta_key", "meta_value")
       tx_binary = Transaction.encode(tx_map)
       reply_fn = create_reply_fn(self(), :reply)
-      task = Task.async(fn -> %{:test_resolver => tx_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn, tx_binary, task}
+          {reply_fn, tx_binary, :system}
         ])
 
       # Mock resolver that captures metadata_per_tx
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], []}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -138,26 +137,25 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       tx_map = create_transaction_without_metadata("key1", "value1")
       tx_binary = Transaction.encode(tx_map)
       reply_fn = create_reply_fn(self(), :reply)
-      task = Task.async(fn -> %{:test_resolver => tx_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn, tx_binary, task}
+          {reply_fn, tx_binary, :system}
         ])
 
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], []}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -182,32 +180,30 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       tx_map = create_transaction_without_metadata("key1", "value1")
       tx_binary = Transaction.encode(tx_map)
       reply_fn = create_reply_fn(self(), :reply)
-      task = Task.async(fn -> %{:test_resolver => tx_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn, tx_binary, task}
+          {reply_fn, tx_binary, :system}
         ])
 
-      # Mock resolver returns metadata updates (stored in plan.metadata_updates)
+      # Mock resolver returns a metadata window (entries stored in plan.metadata_updates)
       commit_version = Version.from_integer(100)
 
-      metadata_updates = [
-        {commit_version, [{:set, <<0xFF, "system_key">>, "system_value"}]}
-      ]
+      metadata_window =
+        {nil, commit_version, [{commit_version, [{[{:set, <<0xFF, "system_key">>, "system_value"}], true}]}]}
 
       mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
-        {:ok, [], metadata_updates}
+        {:ok, [], metadata_window}
       end
 
-      assert {:ok, 0, 1, _returned_routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -223,25 +219,24 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       tx_map = create_transaction_without_metadata("key1", "value1")
       tx_binary = Transaction.encode(tx_map)
       reply_fn = create_reply_fn(self(), :reply)
-      task = Task.async(fn -> %{:test_resolver => tx_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn, tx_binary, task}
+          {reply_fn, tx_binary, :system}
         ])
 
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
-        {:ok, [], []}
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
-      assert {:ok, 0, 1, _returned_routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -256,26 +251,25 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       tx_map = create_transaction_without_metadata("key1", "value1")
       tx_binary = Transaction.encode(tx_map)
       reply_fn = create_reply_fn(self(), :reply)
-      task = Task.async(fn -> %{:test_resolver => tx_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn, tx_binary, task}
+          {reply_fn, tx_binary, :system}
         ])
 
       # Resolver returns no metadata updates
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
-        {:ok, [], []}
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
-      assert {:ok, 0, 1, _returned_routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -303,40 +297,37 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
       tx1_map = create_transaction_with_metadata("key1", "value1", "meta1", "meta_val1")
       tx1_binary = Transaction.encode(tx1_map)
       reply_fn1 = create_reply_fn(self(), :reply1)
-      task1 = Task.async(fn -> %{:test_resolver => tx1_binary} end)
 
       # Transaction 2: no metadata
       tx2_map = create_transaction_without_metadata("key2", "value2")
       tx2_binary = Transaction.encode(tx2_map)
       reply_fn2 = create_reply_fn(self(), :reply2)
-      task2 = Task.async(fn -> %{:test_resolver => tx2_binary} end)
 
       # Transaction 3: has metadata
       tx3_map = create_transaction_with_metadata("key3", "value3", "meta3", "meta_val3")
       tx3_binary = Transaction.encode(tx3_map)
       reply_fn3 = create_reply_fn(self(), :reply3)
-      task3 = Task.async(fn -> %{:test_resolver => tx3_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn1, tx1_binary, task1},
-          {reply_fn2, tx2_binary, task2},
-          {reply_fn3, tx3_binary, task3}
+          {reply_fn1, tx1_binary, :system},
+          {reply_fn2, tx2_binary, :system},
+          {reply_fn3, tx3_binary, :system}
         ])
 
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], []}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
-      assert {:ok, 0, 3, _routing_data} =
+      assert {:ok, 0, 3} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -376,19 +367,19 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
         create_batch_with_transactions(100, 99, [])
 
       # Mock resolver captures metadata
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], []}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
-      assert {:ok, 0, 0, _routing_data} =
+      assert {:ok, 0, 0} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )
@@ -427,26 +418,25 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.MetadataTest do
 
       tx_binary = Transaction.encode(tx_map)
       reply_fn = create_reply_fn(self(), :reply)
-      task = Task.async(fn -> %{:test_resolver => tx_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn, tx_binary, task}
+          {reply_fn, tx_binary, :system}
         ])
 
-      mock_resolver_fn = fn _resolver, _epoch, _last_version, _commit_version, _summaries, metadata_per_tx, _opts ->
+      mock_resolver_fn = fn _resolver, _epoch, last_version, commit_version, _summaries, metadata_per_tx, _opts ->
         send(test_pid, {:metadata_received, metadata_per_tx})
-        {:ok, [], []}
+        {:ok, [], Support.tiling_window(last_version, commit_version)}
       end
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
-                 routing_data: routing_data,
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data),
                  batch_log_push_fn: fn _last_version, _tx_by_log, _commit_version, _opts -> :ok end,
                  sequencer_notify_fn: fn _sequencer, _epoch, _commit_version, _opts -> :ok end
                )

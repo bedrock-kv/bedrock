@@ -6,56 +6,38 @@ defmodule Bedrock.ControlPlane.Config.TransactionSystemLayout do
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
   alias Bedrock.ControlPlane.Config.ResolverDescriptor
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.Log
-  alias Bedrock.Service.Worker
 
   @typedoc """
-  Struct representing the layout of the transaction system within the cluster.
+  The transaction system's runtime wiring, published once per recovery -
+  FDB's ClientDBInfo/ServerDBInfo analogue. Shard topology deliberately
+  does NOT ride here: the shard map lives in the `\\xFF/system` keyspace
+  and is served to clients by commit proxies (bedrock-q67.9).
 
   ## Fields
-    - `id` - The unique identifier of the layout.
-    - `director` - The full otp name of the cluster director.
-    - `sequencer` - The full otp name of the cluster sequencer.
-    - `rate_keeper` - The full otp name of the system rate-keeper.
-    - `read_version_proxies` - The full otp names of the read-version proxies.
-    - `commit_proxies` - The full otp names of the commit proxies.
-    - `resolvers` - The pids of the transaction resolvers.
-    - `logs` - A list of logs that are responsible for storing the transactions on
-       their way to the materializers. Each log contains a list of the tags
-       that it services, and the full otp name of the log worker process that
-       is responsible for the log.
-    - `services` - A list of all of the workers within the system, their types, ids and
-       the otp names used to communicate with them.
-    - `metadata_materializer` - The pid of the metadata materializer process, or nil if not yet started.
-    - `shard_layout` - A map from end_key to {tag, start_key} describing the shard boundaries.
-    - `shard_materializers` - A map from shard tag to materializer pid.
+    - `epoch` - The recovery epoch this wiring belongs to.
+    - `sequencer` - The pid of the cluster sequencer (read versions).
+    - `proxies` - The pids of the commit proxies (commits, routing fetches).
+    - `resolvers` - Resolver descriptors, consumed at proxy unlock.
+    - `logs` - Log descriptors: each log's id and the tags it services.
+
+  No membership map rides here (FDB's ServerDBInfo carries no storage
+  membership either): logs self-check against the epoch-constant log
+  set, materializers rejoin-validate against the committed keyspace
+  through a commit proxy, and director-internal readers consume the
+  recovery attempt's transaction_services. Nothing O(workers) may ever
+  be added to this broadcast.
   """
   @type process_ref :: pid() | nil
   @type proxy_list :: [pid()]
   @type resolver_list :: [ResolverDescriptor.t()]
   @type log_map :: %{Log.id() => LogDescriptor.t()}
-  @type service_map :: %{Worker.id() => ServiceDescriptor.t()}
-  @type shard_layout :: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}}
-  @type shard_materializers :: %{Bedrock.range_tag() => pid()}
 
   @type t :: %{
-          required(:id) => id(),
           required(:epoch) => non_neg_integer(),
-          required(:director) => process_ref() | :unavailable,
           required(:sequencer) => process_ref(),
-          required(:rate_keeper) => process_ref(),
           required(:proxies) => proxy_list(),
           required(:resolvers) => resolver_list(),
-          required(:logs) => log_map(),
-          required(:services) => service_map(),
-          optional(:metadata_materializer) => process_ref(),
-          optional(:shard_layout) => shard_layout() | nil,
-          optional(:shard_materializers) => shard_materializers()
+          required(:logs) => log_map()
         }
-
-  @type id :: non_neg_integer()
-
-  @spec random_id() :: id()
-  def random_id, do: :rand.uniform(1_000_000)
 end

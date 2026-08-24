@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
   @moduledoc false
 
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
@@ -28,8 +29,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
           compaction_task: Task.t() | nil,
           allow_window_advancement: boolean(),
           snapshot: Snapshot.t() | nil,
-          pull_sources: {logs :: map(), services :: map()} | nil,
+          pull_sources: [{Log.id(), Log.ref()}] | nil,
           shard_num: non_neg_integer() | nil,
+          idle_timeout: pos_integer() | :infinity,
+          last_read_at: integer() | nil,
           known_committed_version: Bedrock.version() | nil,
           pending_ingest: GenServer.from() | nil
         }
@@ -52,6 +55,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
             snapshot: nil,
             pull_sources: nil,
             shard_num: nil,
+            idle_timeout: :infinity,
+            last_read_at: nil,
             known_committed_version: nil,
             pending_ingest: nil
 

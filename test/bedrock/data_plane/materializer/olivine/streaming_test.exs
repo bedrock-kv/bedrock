@@ -58,32 +58,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamingTest do
     })
   end
 
-  defp services_for(logs_to_stubs) do
-    Map.new(logs_to_stubs, fn {log_id, stub} -> {log_id, %{kind: :log, status: {:up, stub}}} end)
-  end
-
-  describe "candidate_log_ids/2" do
-    test "is deterministic and drawn from the sorted log-id list" do
-      logs = %{"log-c" => [], "log-a" => [], "log-b" => []}
-
-      ids = Streaming.candidate_log_ids(7, logs)
-
-      assert Enum.sort(ids) == ["log-a", "log-b", "log-c"]
-      assert ids == Streaming.candidate_log_ids(7, logs)
-    end
-
-    test "returns an empty list with no logs" do
-      assert Streaming.candidate_log_ids(0, %{}) == []
-    end
-  end
-
   describe "pull_once/1" do
     defp state_with(shard_server, ingest_fn) do
       %{
         shard_num: 1,
         next_version: Version.from_integer(1001),
-        logs: %{},
-        services: %{},
+        sources: [],
         failed_logs: %{},
         shard_server: shard_server,
         current_log_id: "log-a",
@@ -162,8 +142,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamingTest do
       state = %{
         shard_num: 1,
         next_version: Version.from_integer(1),
-        logs: %{"log-a" => []},
-        services: services_for(%{"log-a" => log_stub}),
+        sources: [{"log-a", log_stub}],
         failed_logs: %{},
         shard_server: nil,
         current_log_id: nil,
@@ -181,8 +160,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamingTest do
       state = %{
         shard_num: 1,
         next_version: Version.from_integer(1),
-        logs: %{"log-a" => []},
-        services: %{"log-a" => %{kind: :log, status: {:up, self()}}},
+        sources: [{"log-a", self()}],
         failed_logs: %{"log-a" => future},
         shard_server: nil,
         current_log_id: nil,
@@ -231,8 +209,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamingTest do
         Streaming.start_pulling(
           1,
           Version.from_integer(99),
-          %{"log-a" => []},
-          services_for(%{"log-a" => log}),
+          [{"log-a", log}],
           ingest_fn
         )
 

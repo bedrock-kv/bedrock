@@ -36,7 +36,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
     buffer =
       transactions
       |> Enum.with_index()
-      |> Enum.map(fn {{reply_fn, binary}, idx} -> {idx, reply_fn, binary, nil} end)
+      # System mode: these batches write \xFF metadata keys, which user-mode
+      # commits are rejected for during pipeline validation.
+      |> Enum.map(fn {{reply_fn, binary}, idx} -> {idx, reply_fn, binary, :system} end)
 
     %Batch{
       commit_version: @commit_version,
@@ -75,7 +77,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         epoch: 1,
         sequencer: :test_sequencer,
         resolver_layout: resolver_layout,
-        routing_data: routing_data,
+        metadata_apply_fn: Support.metadata_apply_fn(routing_data),
         batch_log_push_fn: fn _last, _by_log, _commit, _opts -> :ok end,
         sequencer_notify_fn: fn :test_sequencer, _epoch, _commit, _opts -> :ok end
       ],
@@ -89,12 +91,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       resolver_fn = fn ref, 1, @last_commit_version, @commit_version, transactions, metadata, _opts ->
         send(test_pid, {:resolved, ref, transactions, metadata})
-        {:ok, [], []}
+        {:ok, [], Support.tiling_window(@last_commit_version, @commit_version)}
       end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:ok, 0, 0, _routing_data} = Finalization.finalize_batch(empty_batch(), opts)
+      assert {:ok, 0, 0} = Finalization.finalize_batch(empty_batch(), opts)
 
       assert_receive {:resolved, :resolver_a, [], []}
       assert_receive {:resolved, :resolver_b, [], []}
@@ -109,13 +111,16 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         ])
 
       resolver_fn = fn
-        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [0], []}
-        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [1], []}
+        :resolver_a, _epoch, last, commit, _txns, _metadata, _opts ->
+          {:ok, [0], Support.tiling_window(last, commit)}
+
+        :resolver_b, _epoch, last, commit, _txns, _metadata, _opts ->
+          {:ok, [1], Support.tiling_window(last, commit)}
       end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:ok, 2, 0, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 2, 0} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:tx0, {:error, :aborted}}
       assert_receive {:tx1, {:error, :aborted}}
@@ -128,11 +133,13 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
           {reply_fn(self(), :tx1), encode_tx("zebra", "v1")}
         ])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:ok, 0, 2, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 0, 2} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:tx0, {:ok, @commit_version, 0}}
       assert_receive {:tx1, {:ok, @commit_version, 1}}
@@ -146,7 +153,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
         ])
 
       resolver_fn = fn
-        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []}
+        :resolver_a, _epoch, last, commit, _txns, _metadata, _opts -> {:ok, [], Support.tiling_window(last, commit)}
         :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts -> {:error, :resolver_crashed}
       end
 
@@ -156,6 +163,117 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       assert_receive {:tx0, {:error, :aborted}}
       assert_receive {:tx1, {:error, :aborted}}
+    end
+
+    test "every resolver receives every transaction's metadata mutations" do
+      test_pid = self()
+
+      metadata_tx =
+        Transaction.encode(%{
+          mutations: [{:set, "apple", "v"}, {:set, <<0xFF, "/system/key">>, "meta"}],
+          write_conflicts: [{"apple", "apple" <> <<0>>}],
+          read_conflicts: nil
+        })
+
+      batch = batch_with([{reply_fn(test_pid, :tx0), metadata_tx}])
+
+      resolver_fn = fn ref, _epoch, last, commit, _txns, metadata_per_tx, _opts ->
+        send(test_pid, {:metadata_at, ref, metadata_per_tx})
+        {:ok, [], Support.tiling_window(last, commit)}
+      end
+
+      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
+
+      assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
+
+      # Both resolvers see the same broadcast metadata, so each can record
+      # verdict-carrying entries; the merge ANDs them into the global verdict.
+      expected = [[{:set, <<0xFF, "/system/key">>, "meta"}]]
+      assert_receive {:metadata_at, :resolver_a, ^expected}
+      assert_receive {:metadata_at, :resolver_b, ^expected}
+    end
+
+    test "the metadata apply call receives only unanimously-committed mutations" do
+      test_pid = self()
+      v = &Version.from_integer/1
+      meta = [{:set, <<0xFF, "a">>, "1"}]
+
+      # Both resolvers relay the same entry at v(95): resolver_a's slice saw
+      # no conflict (committed), resolver_b's did (vetoed). The AND vetoes.
+      resolver_fn = fn
+        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(96), [{v.(95), [{meta, true}]}]}}
+
+        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(96), [{v.(95), [{meta, false}]}]}}
+      end
+
+      metadata_apply_fn = fn _version, window ->
+        send(test_pid, {:committed_window, window})
+        {:ok, routing_data()}
+      end
+
+      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn, metadata_apply_fn: metadata_apply_fn)
+
+      assert {:ok, 0, 0} = Finalization.finalize_batch(empty_batch(), opts)
+
+      from90 = v.(90)
+      to96 = v.(96)
+      assert_receive {:committed_window, {^from90, ^to96, []}}
+    end
+
+    test "merged windows AND verdicts per transaction across identical bounds" do
+      test_pid = self()
+      v = &Version.from_integer/1
+      meta_a = [{:set, <<0xFF, "a">>, "1"}]
+      meta_b = [{:set, <<0xFF, "b">>, "2"}]
+
+      # Resolvers run in version lockstep, so windows to one proxy carry
+      # identical bounds; the merge is pure verdict combination. The second
+      # transaction at v(95) is vetoed at resolver_b only - the AND vetoes.
+      resolver_fn = fn
+        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(96), [{v.(95), [{meta_a, true}, {meta_b, true}]}]}}
+
+        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(96), [{v.(95), [{meta_a, true}, {meta_b, false}]}]}}
+      end
+
+      metadata_apply_fn = fn _version, window ->
+        send(test_pid, {:committed_window, window})
+        {:ok, routing_data()}
+      end
+
+      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn, metadata_apply_fn: metadata_apply_fn)
+
+      assert {:ok, 0, 0} = Finalization.finalize_batch(empty_batch(), opts)
+
+      from90 = v.(90)
+      to96 = v.(96)
+      v95 = v.(95)
+      assert_receive {:committed_window, {^from90, ^to96, [{^v95, ^meta_a}]}}
+    end
+
+    test "diverged window bounds fail the batch rather than guess" do
+      # Exact windows to one proxy must carry identical bounds from every
+      # resolver; a mismatch means the resolvers disagree about history.
+      v = &Version.from_integer/1
+
+      resolver_fn = fn
+        :resolver_a, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(99), []}}
+
+        :resolver_b, _epoch, _last, _commit, _txns, _metadata, _opts ->
+          {:ok, [], {v.(90), v.(96), []}}
+      end
+
+      opts = base_opts(sharded_layout(), routing_data(), resolver_fn: resolver_fn)
+
+      # The raise crashes the finalization task, which kills the linked proxy
+      # into Director recovery - fail-fast, never guess.
+      assert_raise RuntimeError, ~r/windows diverged/, fn ->
+        Finalization.finalize_batch(empty_batch(), opts)
+      end
     end
 
     test "fails the batch when a resolver task exits" do
@@ -185,20 +303,23 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       batch = batch_with([{reply_fn(self(), :tx0), no_mutations_tx}])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       opts = base_opts(single_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
       assert_receive {:tx0, {:ok, @commit_version, 0}}
     end
   end
 
   describe "keys outside shard coverage" do
-    test "clear_range entirely beyond shard coverage fails the batch with a coverage error and aborts the client" do
-      # Default shard layout covers ["", <<0xFF, 0xFF>>); this range starts at
-      # the exclusive upper bound, so no shard covers it. Regression: this used
-      # to crash the finalization task with ArgumentError from :ets.prev.
+    test "an out-of-bounds clear_range is rejected per-transaction, not fatal to the batch" do
+      # A range starting at the end of the keyspace is out of the commit's
+      # legal write range: pipeline validation rejects just this transaction
+      # with its specific error. (This used to fail the whole batch - and
+      # before that, crash the finalization task.)
       hostile_tx =
         Transaction.encode(%{
           mutations: [{:clear_range, <<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>}],
@@ -208,12 +329,38 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
       batch = batch_with([{reply_fn(self(), :tx0), hostile_tx}])
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       opts = base_opts(single_layout(), routing_data(), resolver_fn: resolver_fn)
 
-      assert {:error, {:storage_team_coverage_error, {<<0xFF, 0xFF>>, <<0xFF, 0xFF, 0>>}}} =
-               Finalization.finalize_batch(batch, opts)
+      assert {:ok, 1, 0} = Finalization.finalize_batch(batch, opts)
+
+      assert_receive {:tx0, {:error, {:key_out_of_range, <<0xFF, 0xFF>>}}}
+    end
+
+    test "an in-bounds clear_range no shard covers fails the batch with a coverage error" do
+      # The shard map covers only ["", "m"): the range ["x", "z") is legal to
+      # write but no shard owns it - a map/keyspace divergence the batch must
+      # not paper over.
+      hostile_tx =
+        Transaction.encode(%{
+          mutations: [{:clear_range, "x", "z"}],
+          write_conflicts: [{"x", "z"}],
+          read_conflicts: nil
+        })
+
+      batch = batch_with([{reply_fn(self(), :tx0), hostile_tx}])
+
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
+
+      opts =
+        base_opts(single_layout(), routing_data(%{shard_layout: %{"m" => {0, ""}}}), resolver_fn: resolver_fn)
+
+      assert {:error, {:storage_team_coverage_error, {"x", "z"}}} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:tx0, {:error, :aborted}}
     end
@@ -234,7 +381,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       batch = batch_with([{reply_fn(self(), :tx0), spanning_tx}])
       test_pid = self()
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       log_push_fn = fn _last, transactions_by_log, _commit, _opts ->
         send(test_pid, {:pushed, transactions_by_log})
@@ -244,7 +393,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       opts =
         base_opts(single_layout(), routing_data, resolver_fn: resolver_fn, batch_log_push_fn: log_push_fn)
 
-      assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:pushed, %{"log_1" => encoded}}
 
@@ -269,7 +418,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       batch = batch_with([{reply_fn(self(), :tx0), atomic_tx}])
       test_pid = self()
 
-      resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+      resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+        last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+      end
 
       log_push_fn = fn _last, transactions_by_log, _commit, _opts ->
         send(test_pid, {:pushed, transactions_by_log})
@@ -279,7 +430,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       opts =
         base_opts(single_layout(), routing_data, resolver_fn: resolver_fn, batch_log_push_fn: log_push_fn)
 
-      assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+      assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
 
       assert_receive {:pushed, %{"log_1" => encoded}}
       assert Enum.to_list(Transaction.mutations!(encoded)) == [{:atomic, :add, "counter", <<1::64-little>>}]
@@ -293,7 +444,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
     batch = batch_with([{reply_fn(self(), :tx0), encode_tx("key", "value")}])
     test_pid = self()
 
-    resolver_fn = fn _ref, _epoch, _last, _commit, _txns, _metadata, _opts -> {:ok, [], []} end
+    resolver_fn = fn _ref, _epoch, last, commit, _txns, _metadata, _opts ->
+      last |> Support.tiling_window(commit) |> then(&{:ok, [], &1})
+    end
 
     log_push_fn = fn _last, transactions_by_log, _commit, _opts ->
       send(test_pid, {:pushed, transactions_by_log})
@@ -302,7 +455,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
 
     opts = base_opts(single_layout(), routing_data, resolver_fn: resolver_fn, batch_log_push_fn: log_push_fn)
 
-    assert {:ok, 0, 1, _routing_data} = Finalization.finalize_batch(batch, opts)
+    assert {:ok, 0, 1} = Finalization.finalize_batch(batch, opts)
 
     assert_receive {:pushed, %{"log_1" => encoded}}
     assert Enum.to_list(Transaction.mutations!(encoded)) == [{:set, "key", "value"}]
@@ -361,30 +514,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
                  @last_commit_version,
                  nil
                )
-    end
-  end
-
-  describe "reply and descriptor helpers" do
-    test "send_reply_with_commit_version/2 delivers the commit version to every waiting client" do
-      test_pid = self()
-      oks = [fn result -> send(test_pid, {:client_1, result}) end, fn result -> send(test_pid, {:client_2, result}) end]
-
-      assert :ok = Finalization.send_reply_with_commit_version(oks, @commit_version)
-
-      assert_receive {:client_1, {:ok, @commit_version}}
-      assert_receive {:client_2, {:ok, @commit_version}}
-    end
-
-    test "mutation_to_key_or_range/1 extracts the key from an atomic mutation" do
-      assert Finalization.mutation_to_key_or_range({:atomic, :add, "counter", <<1>>}) == "counter"
-    end
-
-    test "resolve_log_descriptors/2 keeps only logs with known service descriptors" do
-      descriptor = %{kind: :log, status: {:up, self()}}
-      services = %{"log_1" => descriptor}
-
-      assert Finalization.resolve_log_descriptors(%{"log_1" => [0], "log_missing" => [1]}, services) ==
-               %{"log_1" => descriptor}
     end
   end
 end

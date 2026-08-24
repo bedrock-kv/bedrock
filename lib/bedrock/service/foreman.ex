@@ -104,6 +104,16 @@ defmodule Bedrock.Service.Foreman do
   def report_health(foreman, worker_id, health), do: cast(foreman, {:worker_health, worker_id, health})
 
   @doc """
+  Called by a hosted worker that has decided its own retirement (it found
+  itself displaced from the committed layout). The foreman is the janitor,
+  not the judge: it disposes the worker's directory and registration and
+  does not restart it. The decision was the worker's — FDB-style, no
+  component decides another process's retirement.
+  """
+  @spec worker_retired(foreman :: ref(), Worker.id()) :: :ok
+  def worker_retired(foreman, worker_id), do: cast(foreman, {:worker_retired, worker_id})
+
+  @doc """
   Return a list of all running services with information needed for coordinator registration.
 
   Each service is returned as a compact tuple of {service_id, kind, name} where:

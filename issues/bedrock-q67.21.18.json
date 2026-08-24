@@ -13,7 +13,7 @@
       "timestamp": "2026-08-24T21:18:32Z"
     }
   ],
-  "priority": 2,
+  "priority": 4,
   "status": "open",
   "title": "An unreadable materializer exits so it can be replaced (the snapshot is our fetchKeys)",
   "type": "task",

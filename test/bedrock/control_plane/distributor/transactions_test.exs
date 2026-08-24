@@ -176,7 +176,7 @@ defmodule Bedrock.ControlPlane.Distributor.TransactionsTest do
           end
         })
 
-      payload = {:set, SystemKeys.materializer_key(7), "payload"}
+      payload = {:set, SystemKeys.materializer_key(7, "wkr_a"), "payload"}
       assert :ok = Transactions.commit_checked(lock, deps, [payload])
 
       owner_key = SystemKeys.distributor_lock_owner()
@@ -196,7 +196,7 @@ defmodule Bedrock.ControlPlane.Distributor.TransactionsTest do
 
       assert {:ok, mutations} = Transaction.mutations(encoded)
       mutations = Enum.to_list(mutations)
-      assert {:set, SystemKeys.materializer_key(7), "payload"} in mutations
+      assert {:set, SystemKeys.materializer_key(7, "wkr_a"), "payload"} in mutations
       assert Enum.any?(mutations, &match?({:set, ^write_key, _fresh}, &1))
     end
 
@@ -290,7 +290,7 @@ defmodule Bedrock.ControlPlane.Distributor.TransactionsTest do
       v = Version.from_integer(77)
 
       shard_entries = [{SystemKeys.shard_key(<<0xFF, 0xFF>>), V.encode_shard_key_entry(0, <<>>)}]
-      ref_entries = [{SystemKeys.materializer_key(0), V.encode_materializer_ref("wkr", "n@h")}]
+      ref_entries = [{SystemKeys.materializer_key(0, "wkr"), V.encode_materializer_node("n@h")}]
 
       deps =
         deps(%{
@@ -307,7 +307,7 @@ defmodule Bedrock.ControlPlane.Distributor.TransactionsTest do
 
       assert {:ok, %{shard_layout: layout, materializer_refs: refs}} = Transactions.read_snapshot(deps)
       assert layout == %{<<0xFF, 0xFF>> => {0, <<>>}}
-      assert refs == %{0 => {"wkr", "n@h"}}
+      assert refs == %{0 => %{"wkr" => "n@h"}}
 
       assert_received {:range_read, _shard_start, ^v}
       assert_received {:range_read, _refs_start, ^v}

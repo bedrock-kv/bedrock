@@ -3,6 +3,7 @@ defmodule Bedrock.ControlPlane.Distributor.State do
 
   alias Bedrock.ControlPlane.Distributor.Lock
   alias Bedrock.ControlPlane.Distributor.Transactions
+  alias Bedrock.Service.Worker
 
   @type t :: %__MODULE__{
           cluster: module(),
@@ -17,15 +18,16 @@ defmodule Bedrock.ControlPlane.Distributor.State do
           snapshot:
             %{
               shard_layout: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}},
-              materializer_refs: %{Bedrock.range_tag() => {String.t(), String.t()}}
+              materializer_refs: %{Bedrock.range_tag() => %{String.t() => String.t()}}
             }
             | nil,
           pending_demands: MapSet.t(Bedrock.range_tag()),
           recruitment_ctx: map() | nil,
           recruiting: MapSet.t(Bedrock.range_tag()),
           recruit_task_refs: %{reference() => Bedrock.range_tag()},
-          assignment_monitors: %{reference() => Bedrock.range_tag()},
-          unreachable_counts: %{Bedrock.range_tag() => pos_integer()},
+          verification_task_refs: %{reference() => {Bedrock.range_tag(), Worker.id()}},
+          assignment_monitors: %{reference() => {Bedrock.range_tag(), Worker.id()}},
+          unreachable_counts: %{{Bedrock.range_tag(), Worker.id()} => pos_integer()},
           reverify_interval_ms: pos_integer(),
           backoff: %{Bedrock.range_tag() => integer()},
           backoff_ms: pos_integer()
@@ -46,6 +48,7 @@ defmodule Bedrock.ControlPlane.Distributor.State do
     recruitment_ctx: nil,
     recruiting: MapSet.new(),
     recruit_task_refs: %{},
+    verification_task_refs: %{},
     assignment_monitors: %{},
     unreachable_counts: %{},
     reverify_interval_ms: 2_000,

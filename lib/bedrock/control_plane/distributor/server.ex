@@ -147,12 +147,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   def handle_cast({:coverage_demand, tag}, %State{} = t) do
     Telemetry.emit_coverage_demand(t.cluster, tag)
 
-    case Map.fetch(t.snapshot.materializer_refs, tag) do
-      {:ok, {worker_id, node}} when worker_id != @placeholder_worker_id ->
+    case t |> real_members(tag) |> Enum.min(fn -> nil end) do
+      {worker_id, node} ->
         Placeholder.notify_covered(t.placeholder, tag, callable_ref(t.cluster, worker_id, node))
         {:noreply, t}
 
-      _uncovered_or_placeholder ->
+      nil ->
         {:noreply, t |> Map.update!(:pending_demands, &MapSet.put(&1, tag)) |> maybe_recruit(tag)}
     end
   end
@@ -180,33 +180,24 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     end
   end
 
-  # Verification verdicts serialize back through the server. The
-  # reservation (the tag's membership in `recruiting`) is released
-  # first; then a verdict for a tag whose ref no longer names the probed
-  # worker belongs to a mechanism that re-owned the tag mid-probe (death
-  # healing, idle parking, a completed demand recruit) — a late-adopted
-  # worker is an unnamed stray that retires itself at the next layout
-  # push. One re-owned shape demands action: an ABSENT ref is a degraded
-  # park whose correcting recruit OUR reservation suppressed — without
-  # it the committed keyspace keeps naming a corpse no read can bypass,
-  # dark until the next recovery. A placeholder ref needs nothing
-  # (demand revives it); a foreign worker ref is already re-covered.
-  def handle_info({:assignment_verified, tag, worker, verdict}, %State{} = t) do
-    t = %{t | recruiting: MapSet.delete(t.recruiting, tag)}
-
+  # Verification verdicts serialize back through the server. A verdict
+  # for a worker the committed set no longer contains is DROPPED: some
+  # other mechanism (death healing, idle retirement, a newer owner)
+  # already removed it, and a late-adopted stray retires itself in-band.
+  # Nothing is reserved while a probe is in flight — with set-valued
+  # membership an extra materializer is legal, so the only cost of a
+  # concurrent recruit is a redundant worker, never a lost heal.
+  def handle_info({:assignment_verified, tag, worker_id, verdict}, %State{} = t) do
     cond do
-      verdict == :current ->
-        {:noreply, clear_unreachable(t, tag)}
+      not Map.has_key?(real_members(t, tag), worker_id) ->
+        {:noreply, clear_unreachable(t, tag, worker_id)}
 
-      Map.get(t.snapshot.materializer_refs, tag) != worker ->
-        case Map.get(t.snapshot.materializer_refs, tag) do
-          nil -> {:noreply, maybe_recruit(t, tag)}
-          _placeholder_or_foreign -> {:noreply, t}
-        end
+      verdict == :current ->
+        {:noreply, clear_unreachable(t, tag, worker_id)}
 
       match?({:adopted, _pid, _node, _worker_id}, verdict) ->
-        {:adopted, pid, node, worker_id} = verdict
-        publish_assignment(clear_unreachable(t, tag), tag, pid, node, worker_id, :preexisting)
+        {:adopted, pid, node, adopted_id} = verdict
+        publish_assignment(clear_unreachable(t, tag, worker_id), tag, pid, node, adopted_id, :preexisting)
 
       match?({:error, reason} when reason in [:unavailable, :timeout], verdict) ->
         # Unreachable-shaped: the same evidence a :noconnection DOWN
@@ -215,17 +206,17 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
         # every shard on the node at once. Escalates through the shared
         # counter; the reverify tick re-runs verification on contact.
         Logger.warning("Bedrock distributor (epoch #{t.epoch}): tag #{tag} unreachable during verification; damping")
-        escalate_unreachable(t, tag)
+        escalate_unreachable(t, tag, worker_id)
 
       true ->
         {:error, reason} = verdict
 
         Logger.warning(
-          "Bedrock distributor (epoch #{t.epoch}): assignment for tag #{tag} failed verification " <>
+          "Bedrock distributor (epoch #{t.epoch}): materializer #{worker_id} for tag #{tag} failed verification " <>
             "(#{inspect(reason)}); healing"
         )
 
-        heal_tag(clear_unreachable(t, tag), tag)
+        heal_member(clear_unreachable(t, tag, worker_id), tag, worker_id)
     end
   end
 
@@ -264,6 +255,20 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     end
   end
 
+  # A verification task that died without reporting leaves nothing to
+  # clean but its ref: the member keeps its entry, its monitor, and its
+  # place in the set, and the next epoch's sweep verifies it again.
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %State{} = t) when is_map_key(t.verification_task_refs, ref),
+    do: {:noreply, %{t | verification_task_refs: Map.delete(t.verification_task_refs, ref)}}
+
+  # A retirement whose commit failed transiently: retry until the
+  # keyspace stops naming a worker that is gone.
+  def handle_info({:retire_member, tag, worker_id}, %State{} = t) do
+    if Map.has_key?(real_members(t, tag), worker_id),
+      do: retire_member(t, tag, worker_id),
+      else: {:noreply, t}
+  end
+
   # Death healing (event-driven, FDB teamTracker-style) — with FDB's
   # distinction between connection state and failure: unreachable is NOT
   # dead. A :noconnection DOWN fires for every remote assignment at once
@@ -273,25 +278,25 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # only after the node stays unreachable across consecutive checks.
   # Genuine death signals (:noproc, :killed, crashes) heal immediately.
   def handle_info({:DOWN, ref, :process, _pid, reason}, %State{} = t) when is_map_key(t.assignment_monitors, ref) do
-    {tag, monitors} = Map.pop(t.assignment_monitors, ref)
+    {{tag, worker_id}, monitors} = Map.pop(t.assignment_monitors, ref)
     t = %{t | assignment_monitors: monitors}
 
     case reason do
       :noconnection ->
-        Logger.warning("Bedrock distributor (epoch #{t.epoch}): materializer for tag #{tag} unreachable; verifying")
-        {:noreply, schedule_reverify(t, tag)}
+        Logger.warning("Bedrock distributor (epoch #{t.epoch}): materializer #{worker_id} unreachable; verifying")
+        {:noreply, schedule_reverify(t, tag, worker_id)}
 
       {:shutdown, :idle} ->
         # A voluntary idle spin-down (bedrock-q67.21.5): the shard proved
-        # cold, so revival is demand-driven — swap the placeholder in but
-        # do NOT eagerly re-recruit; the next read parks and re-demands.
-        Logger.info("Bedrock distributor (epoch #{t.epoch}): tag #{tag} spun down idle; revival on demand")
+        # cold, so revival is demand-driven — retire the member but do
+        # NOT eagerly re-recruit; the next read parks and re-demands.
+        Logger.info("Bedrock distributor (epoch #{t.epoch}): #{worker_id} spun down idle; revival on demand")
         Telemetry.emit_idle_spindown(t.cluster, tag)
-        idle_tag(clear_unreachable(t, tag), tag)
+        retire_member(clear_unreachable(t, tag, worker_id), tag, worker_id)
 
       _dead ->
-        Logger.warning("Bedrock distributor (epoch #{t.epoch}): materializer for tag #{tag} down (#{inspect(reason)})")
-        heal_tag(clear_unreachable(t, tag), tag)
+        Logger.warning("Bedrock distributor (epoch #{t.epoch}): materializer #{worker_id} down (#{inspect(reason)})")
+        heal_member(clear_unreachable(t, tag, worker_id), tag, worker_id)
     end
   end
 
@@ -302,13 +307,10 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # escalates to a heal after @max_unreachable_verifications consecutive
   # failed pings. A tag whose ref changed meanwhile has nothing left to
   # verify.
-  def handle_info({:reverify_assignment, tag}, %State{} = t) do
-    case Map.get(t.snapshot.materializer_refs, tag) do
-      {worker_id, node_string} when worker_id != @placeholder_worker_id ->
-        reverify_assignment(t, tag, worker_id, node_string)
-
-      _placeholder_or_absent ->
-        {:noreply, clear_unreachable(t, tag)}
+  def handle_info({:reverify_assignment, tag, worker_id}, %State{} = t) do
+    case t |> real_members(tag) |> Map.fetch(worker_id) do
+      {:ok, node_string} -> reverify_assignment(t, tag, worker_id, node_string)
+      :error -> {:noreply, clear_unreachable(t, tag, worker_id)}
     end
   end
 
@@ -327,36 +329,60 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   def handle_info({:EXIT, _pid, _reason}, %State{} = t), do: {:noreply, t}
 
-  # An existing placeholder ref counts as covered-enough to skip
-  # republication. That rests on two invariants: the distributor runs on
-  # the director's node (a restarted placeholder re-registers the same
-  # name on the node the committed refs already name), and every
-  # recovery's bootstrap re-assigns all layout tags, so placeholder refs
-  # never survive a recovery as stale foreign-node entries. If the
-  # distributor ever detaches from the director's node, this rejection
-  # must compare the ref's node too.
+  # Uncovered means the tag's committed member set holds no REAL worker.
+  # The placeholder is an ordinary member of that set — it parks reads
+  # rather than serving them — so its presence is not coverage, and
+  # adding it never displaces a live worker.
   defp uncovered_tags(%{shard_layout: shard_layout, materializer_refs: refs}) do
     shard_layout
     |> Map.values()
     |> Enum.map(fn {tag, _start_key} -> tag end)
     |> Enum.uniq()
-    |> Enum.reject(&Map.has_key?(refs, &1))
+    |> Enum.reject(fn tag -> refs |> Map.get(tag, %{}) |> Map.delete(@placeholder_worker_id) != %{} end)
   end
 
   defp publish_placeholders(_t, []), do: :ok
 
   defp publish_placeholders(%State{} = t, tags) do
-    node_string = Atom.to_string(node())
+    # A tag already carrying the placeholder needs no write: the entry is
+    # the same name on the same node, and re-setting it would be a commit
+    # that changes nothing.
+    case Enum.reject(tags, &Map.has_key?(members(t, &1), @placeholder_worker_id)) do
+      [] ->
+        :ok
 
-    mutations =
-      Enum.map(tags, fn tag ->
-        {:set, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(@placeholder_worker_id, node_string)}
-      end)
-
-    with :ok <- Transactions.commit_checked(t.lock, t.deps, mutations) do
-      Telemetry.emit_placeholder_published(t.cluster, tags)
-      :ok
+      missing ->
+        with :ok <- Transactions.commit_checked(t.lock, t.deps, Enum.map(missing, &placeholder_mutation/1)) do
+          Telemetry.emit_placeholder_published(t.cluster, missing)
+          :ok
+        end
     end
+  end
+
+  defp placeholder_mutation(tag) do
+    {:set, SystemKeys.materializer_key(tag, @placeholder_worker_id),
+     Values.encode_materializer_node(Atom.to_string(node()))}
+  end
+
+  defp members(%State{} = t, tag), do: Map.get(t.snapshot.materializer_refs, tag, %{})
+
+  defp real_members(%State{} = t, tag), do: t |> members(tag) |> Map.delete(@placeholder_worker_id)
+
+  defp put_member(%State{} = t, tag, worker_id, node_string) do
+    refs =
+      Map.update(t.snapshot.materializer_refs, tag, %{worker_id => node_string}, &Map.put(&1, worker_id, node_string))
+
+    %{t | snapshot: %{t.snapshot | materializer_refs: refs}}
+  end
+
+  defp drop_member(%State{} = t, tag, worker_id) do
+    refs =
+      case t |> members(tag) |> Map.delete(worker_id) do
+        empty when empty == %{} -> Map.delete(t.snapshot.materializer_refs, tag)
+        remaining -> Map.put(t.snapshot.materializer_refs, tag, remaining)
+      end
+
+    %{t | snapshot: %{t.snapshot | materializer_refs: refs}}
   end
 
   defp start_placeholder(%State{} = t, shard_layout) do
@@ -409,25 +435,25 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # was lost).
   defp publish_assignment(%State{} = t, tag, pid, node, worker_id, provenance) do
     node_string = Atom.to_string(node)
-    mutation = {:set, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node_string)}
     callable = {t.cluster.otp_name_for_worker(worker_id), node}
 
-    case Transactions.commit_checked(t.lock, t.deps, [mutation]) do
+    # Adding a real member retires the tag's placeholder in the same
+    # fenced commit: parking exists only while nothing serves, and one
+    # transaction means no window where both or neither is true.
+    mutations =
+      [{:set, SystemKeys.materializer_key(tag, worker_id), Values.encode_materializer_node(node_string)}] ++
+        placeholder_retirement(t, tag)
+
+    case Transactions.commit_checked(t.lock, t.deps, mutations) do
       :ok ->
         Placeholder.notify_covered(t.placeholder, tag, callable)
 
-        refs = Map.put(t.snapshot.materializer_refs, tag, {worker_id, node_string})
-
         {:noreply,
-         monitor_assignment(
-           %{
-             t
-             | snapshot: %{t.snapshot | materializer_refs: refs},
-               pending_demands: MapSet.delete(t.pending_demands, tag)
-           },
-           tag,
-           callable
-         )}
+         t
+         |> put_member(tag, worker_id, node_string)
+         |> drop_member(tag, @placeholder_worker_id)
+         |> Map.update!(:pending_demands, &MapSet.delete(&1, tag))
+         |> monitor_assignment(tag, worker_id, callable)}
 
       {:error, :superseded} ->
         # The READ verdict refused before any commit was attempted: a
@@ -462,8 +488,14 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
           "Bedrock distributor (epoch #{t.epoch}): adoption re-assert for tag #{tag} failed: #{inspect(reason)}"
         )
 
-        {:noreply, monitor_assignment(t, tag, callable)}
+        {:noreply, monitor_assignment(t, tag, worker_id, callable)}
     end
+  end
+
+  defp placeholder_retirement(%State{} = t, tag) do
+    if t |> members(tag) |> Map.has_key?(@placeholder_worker_id),
+      do: [{:clear, SystemKeys.materializer_key(tag, @placeholder_worker_id)}],
+      else: []
   end
 
   defp commit_definitely_not_landed?({:lock_commit_failed, :aborted}), do: true
@@ -484,101 +516,93 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       # not membership, though: verification re-runs, and ITS verdict —
       # not the ping — clears the escalation counter, so a wedged-alive
       # worker whose node pings fine still escalates to a heal.
-      t = monitor_assignment(t, tag, {t.cluster.otp_name_for_worker(worker_id), node_atom})
-      t = if t.recruitment_ctx, do: start_verification(t, tag, worker_id, node_string), else: clear_unreachable(t, tag)
+      t = monitor_assignment(t, tag, worker_id, {t.cluster.otp_name_for_worker(worker_id), node_atom})
+
+      t =
+        if t.recruitment_ctx,
+          do: start_verification(t, tag, worker_id, node_string),
+          else: clear_unreachable(t, tag, worker_id)
+
       {:noreply, t}
     else
-      escalate_unreachable(t, tag)
+      escalate_unreachable(t, tag, worker_id)
     end
   end
 
   # The shared unreachability escalation: fed by failed pings AND
   # unreachable-shaped verification verdicts. Heals only after
   # @max_unreachable_verifications consecutive pieces of evidence.
-  defp escalate_unreachable(%State{} = t, tag) do
-    count = Map.get(t.unreachable_counts, tag, 0) + 1
-    t = %{t | unreachable_counts: Map.put(t.unreachable_counts, tag, count)}
+  defp escalate_unreachable(%State{} = t, tag, worker_id) do
+    count = Map.get(t.unreachable_counts, {tag, worker_id}, 0) + 1
+    t = %{t | unreachable_counts: Map.put(t.unreachable_counts, {tag, worker_id}, count)}
 
     if count >= @max_unreachable_verifications do
       Logger.warning(
-        "Bedrock distributor (epoch #{t.epoch}): tag #{tag} unreachable after #{count} verifications; healing"
+        "Bedrock distributor (epoch #{t.epoch}): #{worker_id} unreachable after #{count} verifications; healing"
       )
 
-      heal_tag(clear_unreachable(t, tag), tag)
+      heal_member(clear_unreachable(t, tag, worker_id), tag, worker_id)
     else
-      {:noreply, schedule_reverify(t, tag)}
+      {:noreply, schedule_reverify(t, tag, worker_id)}
     end
   end
 
-  # The heal is park + eager re-recruit — a degraded park (publish
-  # failed) recruits too, since the recruit's own publication is what
-  # self-corrects the keyspace. When the tag is under a verification
-  # reservation the recruit is deferred, not lost: the verdict handler
-  # re-issues it for a degraded park and leaves an intact park to
-  # demand-driven revival.
-  defp heal_tag(%State{} = t, tag) do
-    case park_tag(t, tag) do
-      {:parked, t2} -> {:noreply, maybe_recruit(t2, tag)}
-      {:degraded, t2} -> {:noreply, maybe_recruit(t2, tag)}
+  # A heal is retirement plus an eager replacement; an idle spin-down is
+  # retirement alone (the shard proved cold — the next read revives it).
+  defp heal_member(%State{} = t, tag, worker_id) do
+    case retire_member(t, tag, worker_id) do
+      {:noreply, t2} -> {:noreply, maybe_recruit(t2, tag)}
       {:stop, _reason, _t} = stop -> stop
     end
   end
 
-  # An idle spin-down parks WITHOUT the recruit (revival is
-  # demand-driven) — but ONLY when the park actually published. A
-  # degraded park left the committed keyspace naming the departed
-  # worker: clients keep routing to the corpse, no read ever reaches
-  # the placeholder, and coverage_demand can never fire — the tag would
-  # stay dark until the next recovery. The recruit's publication is the
-  # only self-correction available, so a degraded idle park falls back
-  # to the heal path.
-  defp idle_tag(%State{} = t, tag) do
-    case park_tag(t, tag) do
-      {:parked, t2} -> {:noreply, t2}
-      {:degraded, t2} -> {:noreply, maybe_recruit(t2, tag)}
-      {:stop, _reason, _t} = stop -> stop
-    end
-  end
+  # Retirement is a CLEAR of the departing member's own key — the family
+  # names members individually, so removing one never touches another
+  # and never has to overwrite a live twin's entry. When the clear would
+  # leave the tag with no real member, the same fenced commit adds the
+  # placeholder, so a shard is never briefly unroutable between the two.
+  # A superseded commit cedes. A transient failure keeps the local view
+  # honest (the keyspace still names the departed worker) and schedules
+  # a retry: nothing else would revisit this tag, and an uncleared
+  # corpse can be handed to clients by the deterministic pick.
+  defp retire_member(%State{} = t, tag, worker_id) do
+    remaining = t |> real_members(tag) |> Map.delete(worker_id)
+    parking? = remaining == %{}
 
-  # The park: make the gap keyspace-visible FIRST — publish the
-  # placeholder ref under the fence, so clients park instead of
-  # hammering the departed worker and displaced-but-alive twins observe
-  # the change — then tell the placeholder the tag is uncovered (park,
-  # don't forward). A superseded publish cedes: a newer owner heals, not
-  # us. A transient publish failure returns :degraded with the tag's
-  # LOCAL ref dropped, so a racing coverage_demand recruits instead of
-  # draining parked reads into the departed worker; the keyspace still
-  # names it, and every caller must arrange a correcting publication
-  # (both current callers recruit, whose publish self-corrects).
-  defp park_tag(%State{} = t, tag) do
-    Placeholder.notify_uncovered(t.placeholder, tag)
+    if parking?, do: Placeholder.notify_uncovered(t.placeholder, tag)
 
-    case publish_placeholders(t, [tag]) do
+    mutations =
+      [{:clear, SystemKeys.materializer_key(tag, worker_id)}] ++
+        if parking? and not Map.has_key?(members(t, tag), @placeholder_worker_id),
+          do: [placeholder_mutation(tag)],
+          else: []
+
+    case Transactions.commit_checked(t.lock, t.deps, mutations) do
       :ok ->
-        refs = Map.put(t.snapshot.materializer_refs, tag, {@placeholder_worker_id, Atom.to_string(node())})
-        {:parked, %{t | snapshot: %{t.snapshot | materializer_refs: refs}}}
+        t = drop_member(t, tag, worker_id)
+        t = if parking?, do: put_member(t, tag, @placeholder_worker_id, Atom.to_string(node())), else: t
+        {:noreply, t}
 
       {:error, :superseded} ->
-        Logger.info(
-          "Bedrock distributor (epoch #{t.epoch}): superseded swapping the placeholder into tag #{tag}; ceding"
-        )
-
+        Logger.info("Bedrock distributor (epoch #{t.epoch}): superseded retiring #{worker_id} for tag #{tag}; ceding")
         {:stop, :normal, t}
 
       {:error, reason} ->
         Logger.warning(
-          "Bedrock distributor (epoch #{t.epoch}): placeholder publish for tag #{tag} failed: #{inspect(reason)}"
+          "Bedrock distributor (epoch #{t.epoch}): retiring #{worker_id} for tag #{tag} failed: " <>
+            "#{inspect(reason)}; retrying"
         )
 
-        refs = Map.delete(t.snapshot.materializer_refs, tag)
-        {:degraded, %{t | snapshot: %{t.snapshot | materializer_refs: refs}}}
+        Process.send_after(self(), {:retire_member, tag, worker_id}, t.backoff_ms)
+        {:noreply, t}
     end
   end
 
-  defp clear_unreachable(%State{} = t, tag), do: %{t | unreachable_counts: Map.delete(t.unreachable_counts, tag)}
+  defp clear_unreachable(%State{} = t, tag, worker_id),
+    do: %{t | unreachable_counts: Map.delete(t.unreachable_counts, {tag, worker_id})}
 
-  defp schedule_reverify(%State{} = t, tag) do
-    Process.send_after(self(), {:reverify_assignment, tag}, t.reverify_interval_ms)
+  defp schedule_reverify(%State{} = t, tag, worker_id) do
+    Process.send_after(self(), {:reverify_assignment, tag, worker_id}, t.reverify_interval_ms)
     t
   end
 
@@ -597,10 +621,17 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   defp verify_assignments(%State{recruitment_ctx: nil} = t), do: t
 
   defp verify_assignments(%State{} = t) do
-    Enum.reduce(t.snapshot.materializer_refs, t, fn
-      {_tag, {@placeholder_worker_id, _node}}, acc -> acc
-      {tag, {worker_id, node_string}}, acc -> start_verification(acc, tag, worker_id, node_string)
+    Enum.reduce(each_real_member(t), t, fn {tag, worker_id, node_string}, acc ->
+      start_verification(acc, tag, worker_id, node_string)
     end)
+  end
+
+  # Every committed member of every tag except the placeholders, which
+  # this distributor owns directly and never verifies or monitors.
+  defp each_real_member(%State{} = t) do
+    for {tag, members} <- t.snapshot.materializer_refs,
+        {worker_id, node_string} <- Map.delete(members, @placeholder_worker_id),
+        do: {tag, worker_id, node_string}
   end
 
   defp start_verification(%State{} = t, tag, worker_id, node_string) do
@@ -631,28 +662,27 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
             other -> other
           end
 
-        send(server, {:assignment_verified, tag, {worker_id, node_string}, verdict})
+        send(server, {:assignment_verified, tag, worker_id, verdict})
       end)
 
-    %{t | recruiting: MapSet.put(t.recruiting, tag), recruit_task_refs: Map.put(t.recruit_task_refs, ref, tag)}
+    # Verification reserves nothing: with set-valued membership a
+    # concurrent recruit costs a redundant worker, never a lost heal.
+    # The task is still monitored so a crash cannot leak silently.
+    %{t | verification_task_refs: Map.put(t.verification_task_refs, ref, {tag, worker_id})}
   end
 
   # Monitor every live (non-placeholder) assignment by its callable name
   # — monitors on {name, node} fire on death OR unreachability, either of
   # which is a coverage gap worth healing.
   defp monitor_assignments(%State{} = t) do
-    Enum.reduce(t.snapshot.materializer_refs, t, fn
-      {_tag, {@placeholder_worker_id, _node}}, acc ->
-        acc
-
-      {tag, {worker_id, node}}, acc ->
-        # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
-        monitor_assignment(acc, tag, {acc.cluster.otp_name_for_worker(worker_id), String.to_atom(node)})
+    Enum.reduce(each_real_member(t), t, fn {tag, worker_id, node}, acc ->
+      # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
+      monitor_assignment(acc, tag, worker_id, {acc.cluster.otp_name_for_worker(worker_id), String.to_atom(node)})
     end)
   end
 
-  defp monitor_assignment(%State{} = t, tag, {name, node_atom}) do
-    if tag in Map.values(t.assignment_monitors) do
+  defp monitor_assignment(%State{} = t, tag, worker_id, {name, node_atom}) do
+    if {tag, worker_id} in Map.values(t.assignment_monitors) do
       # Already armed (the sweep monitors before verification adopts):
       # a second monitor would double every DOWN into a double heal.
       t
@@ -662,7 +692,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       # legitimately runs without.
       target = if node_atom == node(), do: name, else: {name, node_atom}
       ref = Process.monitor(target)
-      %{t | assignment_monitors: Map.put(t.assignment_monitors, ref, tag)}
+      %{t | assignment_monitors: Map.put(t.assignment_monitors, ref, {tag, worker_id})}
     end
   end
 

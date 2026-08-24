@@ -240,10 +240,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       materializers ->
         prior = Map.get(recovery_attempt, :prior_materializer_refs) || %{}
 
-        materializers
-        |> Enum.reject(fn {tag, ref} -> Map.get(prior, tag) == ref end)
-        |> Enum.reduce(tx, fn {tag, {worker_id, node}}, tx ->
-          Tx.set(tx, SystemKeys.materializer_key(tag), Values.encode_materializer_ref(worker_id, node))
+        # Recovery writes the members it decided on and nothing else: an
+        # entry already naming this worker on this node is left alone,
+        # and members recovery never touched (other replicas of the same
+        # shard) keep their keys — the family is a set, so writing one
+        # member never implies removing another.
+        Enum.reduce(materializers, tx, fn {tag, {worker_id, node}}, tx ->
+          if prior |> Map.get(tag, %{}) |> Map.get(worker_id) == node do
+            tx
+          else
+            Tx.set(tx, SystemKeys.materializer_key(tag, worker_id), Values.encode_materializer_node(node))
+          end
         end)
     end
   end

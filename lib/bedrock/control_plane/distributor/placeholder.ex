@@ -40,7 +40,9 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder do
   # The stable worker id the keyspace names for uncovered tags. Worker
   # OTP names are deterministic in the id, so the callable ref is
   # derivable everywhere from the committed {worker_id, node} pair.
-  @worker_id "distributor-placeholder"
+  # One source of truth: routing reads this convention too, so it lives
+  # with the family's semantics rather than behind the control plane.
+  @worker_id Bedrock.SystemKeys.placeholder_worker_id()
 
   @doc "The reserved worker id placeholder entries carry in the keyspace."
   @spec worker_id() :: String.t()

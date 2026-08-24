@@ -83,7 +83,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
       shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
       log_map: %{0 => "log_1"},
       log_services: %{"log_1" => log},
-      materializers: %{0 => {"wkr_sys", "n1@host"}},
+      materializers: %{0 => %{"wkr_sys" => "n1@host"}},
       replication_factor: 1
     }
 
@@ -255,7 +255,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
     test "committed shard and materializer mutations reach served covering entries", %{proxy: proxy, epoch: epoch} do
       mutations = [
         {:set, SystemKeys.shard_key("m"), Values.encode_shard_key_entry(7, "")},
-        {:set, SystemKeys.materializer_key(7), Values.encode_materializer_ref("wkr_new", "n2@host")}
+        {:set, SystemKeys.materializer_key(7, "wkr_new"), Values.encode_materializer_node("n2@host")}
       ]
 
       version = commit!(proxy, epoch, mutations, "routing_key")

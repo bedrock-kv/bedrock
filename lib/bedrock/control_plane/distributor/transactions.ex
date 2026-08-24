@@ -116,7 +116,7 @@ defmodule Bedrock.ControlPlane.Distributor.Transactions do
           {:ok,
            %{
              shard_layout: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}},
-             materializer_refs: %{Bedrock.range_tag() => {String.t(), String.t()}}
+             materializer_refs: %{Bedrock.range_tag() => %{String.t() => String.t()}}
            }}
           | {:error, term()}
   def read_snapshot(deps) do
@@ -131,7 +131,7 @@ defmodule Bedrock.ControlPlane.Distributor.Transactions do
          {:ok, ref_entries} <-
            Reader.read_family(&deps.get_range_fn.(&1, refs_end, version), refs_prefix, :snapshot_read_failed),
          {:ok, shard_layout} <- Reader.shard_layout_from_entries(shard_entries),
-         {:ok, refs} <- Reader.decode_materializer_refs(ref_entries) do
+         {:ok, refs} <- Reader.decode_materializer_members(ref_entries) do
       {:ok, %{shard_layout: shard_layout, materializer_refs: refs}}
     end
   end
@@ -150,7 +150,7 @@ defmodule Bedrock.ControlPlane.Distributor.Transactions do
   the read on the retry); exhausted retries surface as a transient
   commit failure.
   """
-  @spec commit_checked(Lock.t(), deps(), [Lock.mutation() | {:set, Bedrock.key(), binary()}]) ::
+  @spec commit_checked(Lock.t(), deps(), [Lock.mutation() | {:set, Bedrock.key(), binary()} | {:clear, Bedrock.key()}]) ::
           :ok
           | {:error, :superseded}
           | {:error, {:read_version_failed | :lock_read_failed | :lock_commit_failed, term()}}
@@ -270,7 +270,12 @@ defmodule Bedrock.ControlPlane.Distributor.Transactions do
     encoded =
       Tx.new()
       |> then(&Enum.reduce(conflict_keys, &1, fn key, tx -> Tx.add_read_conflict_key(tx, key) end))
-      |> then(&Enum.reduce(mutations, &1, fn {:set, key, value}, tx -> Tx.set(tx, key, value) end))
+      |> then(
+        &Enum.reduce(mutations, &1, fn
+          {:set, key, value}, tx -> Tx.set(tx, key, value)
+          {:clear, key}, tx -> Tx.clear(tx, key)
+        end)
+      )
       |> Tx.commit(version)
 
     case commit_fn.(Enum.random(proxies), epoch, encoded, mode: :system) do

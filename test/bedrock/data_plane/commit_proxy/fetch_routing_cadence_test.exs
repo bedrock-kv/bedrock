@@ -29,7 +29,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FetchRoutingCadenceTest do
       shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
       log_map: %{},
       log_services: %{},
-      materializers: %{0 => {"wkr_sys", "n1@host"}},
+      materializers: %{0 => %{"wkr_sys" => "n1@host"}},
       replication_factor: 1
     })
   end
@@ -59,33 +59,34 @@ defmodule Bedrock.DataPlane.CommitProxy.FetchRoutingCadenceTest do
              Server.handle_call({:fetch_routing, "a"}, from(), struct!(%State{mode: :locked}, []))
   end
 
-  describe "resolve_materializer" do
+  describe "materializer_members" do
     defp routing_with(materializers), do: %{RoutingData.new_empty() | materializers: materializers}
 
-    test "answers the tag's committed entry and resumes the cadence" do
-      state = running_state(batch: nil, routing_data: routing_with(%{7 => {"w7", "node@host"}}))
+    test "answers the tag's whole committed member set and resumes the cadence" do
+      members = %{"w7" => "node@host", "w7b" => "other@host"}
+      state = running_state(batch: nil, routing_data: routing_with(%{7 => members}))
 
-      assert {:noreply, _t, 1_234} = Server.handle_call({:resolve_materializer, 7}, from(), state)
-      assert_received {_ref, {:ok, {"w7", "node@host"}}}
+      assert {:noreply, _t, 1_234} = Server.handle_call({:materializer_members, 7}, from(), state)
+      assert_received {_ref, {:ok, ^members}}
     end
 
     test "an unnamed tag is authoritatively :not_found" do
       state = running_state(batch: nil, routing_data: routing_with(%{}))
 
-      assert {:noreply, _t, 1_234} = Server.handle_call({:resolve_materializer, 7}, from(), state)
+      assert {:noreply, _t, 1_234} = Server.handle_call({:materializer_members, 7}, from(), state)
       assert_received {_ref, {:error, :not_found}}
     end
 
     test "with an open batch, the zero timeout is re-armed" do
       state = running_state(batch: %Batch{}, routing_data: routing_with(%{}))
 
-      assert {:noreply, _t, 0} = Server.handle_call({:resolve_materializer, 1}, from(), state)
+      assert {:noreply, _t, 0} = Server.handle_call({:materializer_members, 1}, from(), state)
     end
 
     test "a locked proxy refuses — not a verdict" do
       state = struct!(%State{mode: :locked}, [])
 
-      assert {:reply, {:error, :locked}, _t} = Server.handle_call({:resolve_materializer, 7}, from(), state)
+      assert {:reply, {:error, :locked}, _t} = Server.handle_call({:materializer_members, 7}, from(), state)
     end
   end
 

@@ -49,17 +49,19 @@ defmodule Bedrock.SystemKeys.Reader do
   end
 
   @doc """
-  Decodes `materializers/<tag>` entries into `%{tag => {worker_id,
-  node}}`. Foreign or undecodable entries fail the whole decode.
+  Decodes `materializers/<tag>/<worker_id>` entries into the membership
+  map `%{tag => %{worker_id => node}}` - a shard's members are a set, and
+  absence of a key is absence of a member. Foreign or undecodable entries
+  fail the whole decode.
   """
-  @spec decode_materializer_refs([{Bedrock.key(), binary()}]) ::
-          {:ok, %{Bedrock.range_tag() => {Bedrock.Service.Worker.id(), String.t()}}}
+  @spec decode_materializer_members([{Bedrock.key(), binary()}]) ::
+          {:ok, %{Bedrock.range_tag() => %{Bedrock.Service.Worker.id() => String.t()}}}
           | {:error, {:invalid_materializer_entry, Bedrock.key()}}
-  def decode_materializer_refs(entries) do
+  def decode_materializer_members(entries) do
     Enum.reduce_while(entries, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
-      with {:materializer_key, tag} <- SystemKeys.parse_key(key),
-           {:ok, ref} <- Values.decode_materializer_ref(value) do
-        {:cont, {:ok, Map.put(acc, tag, ref)}}
+      with {:materializer_key, tag, worker_id} <- SystemKeys.parse_key(key),
+           {:ok, node} <- Values.decode_materializer_node(value) do
+        {:cont, {:ok, Map.update(acc, tag, %{worker_id => node}, &Map.put(&1, worker_id, node))}}
       else
         _ -> {:halt, {:error, {:invalid_materializer_entry, key}}}
       end

@@ -401,7 +401,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # before the family can be read (the family lives IN the system shard).
   defp prefer_family_named(existing_by_shard, prior_refs, recovery_attempt) do
     named =
-      for {tag, {worker_id, _node}} <- prior_refs,
+      for {tag, members} <- prior_refs,
+          {worker_id, _node} <- members,
           match?(%{shard_id: ^tag}, Map.get(recovery_attempt.materializer_recovery_info_by_id, worker_id)),
           %{status: {:up, ref}} <- [Map.get(recovery_attempt.transaction_services, worker_id)],
           into: %{},
@@ -436,7 +437,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   @spec decode_prior_refs([{Bedrock.key(), binary()}]) ::
           {:ok, %{Bedrock.range_tag() => {Worker.id(), String.t()}}}
           | {:error, {:invalid_materializer_entry, Bedrock.key()}}
-  defdelegate decode_prior_refs(entries), to: Reader, as: :decode_materializer_refs
+  defdelegate decode_prior_refs(entries), to: Reader, as: :decode_materializer_members
 
   # Find a node that can host materializers
   defp find_materializer_capable_node(%{node_capabilities: caps}) do

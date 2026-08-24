@@ -110,11 +110,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       assert decoded[{:layout_log, "log_1"}] == [1, 2]
 
-      # Materializer refs: worker id + node as strings (FDB serverList
-      # analogue), projected from the carried shard_materializers refs.
+      # Membership: the worker id is in the KEY and the value carries the
+      # node (FDB serverKeys analogue), projected from the carried
+      # shard_materializers refs.
       node_string = Atom.to_string(node())
-      assert decoded[{:materializer_key, 0}] == {"wkr_sys", node_string}
-      assert decoded[{:materializer_key, 1}] == {"wkr_user", node_string}
+      assert decoded[{:materializer_key, 0, "wkr_sys"}] == node_string
+      assert decoded[{:materializer_key, 1, "wkr_user"}] == node_string
     end
 
     test "materializer family is skipped entirely when shard_materializers is absent" do
@@ -148,7 +149,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       for tag <- [0, 1] do
         assert Enum.any?(mutations, fn
-                 {:set, key, _} -> key == SystemKeys.materializer_key(tag)
+                 {:set, key, _} -> String.starts_with?(key, SystemKeys.materializer_tag_prefix(tag))
                  _ -> false
                end)
       end
@@ -294,16 +295,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # left alone — read-and-heal means stale entries are the
       # distributor's to reconcile, never recovery's to erase.
       prior = %{
-        0 => {"wkr_sys", node_string()},
-        1 => {"wkr_departed", node_string()},
-        9 => {"wkr_stray", node_string()}
+        0 => %{"wkr_sys" => node_string()},
+        1 => %{"wkr_departed" => node_string()},
+        9 => %{"wkr_stray" => node_string()}
       }
 
       recovery_attempt = Map.put(base_recovery_attempt(), :prior_materializer_refs, prior)
 
       stale_store =
-        Map.new(prior, fn {tag, {id, node}} ->
-          {SystemKeys.materializer_key(tag), Values.encode_materializer_ref(id, node)}
+        Map.new(prior, fn {tag, members} ->
+          [{id, node}] = Map.to_list(members)
+          {SystemKeys.materializer_key(tag, id), Values.encode_materializer_node(node)}
         end)
 
       mutations = captured_system_mutations(recovery_attempt)
@@ -314,15 +316,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
             String.starts_with?(key, SystemKeys.materializers_prefix()),
             do: {key, value}
 
+      # tag 1's member changed, so its NEW member's key is written; the
+      # departed member's key is left alone — recovery writes what it
+      # decided and never removes members it did not place (a set may
+      # legitimately hold replicas recovery knows nothing about).
       assert materializer_sets == [
-               {SystemKeys.materializer_key(1), Values.encode_materializer_ref("wkr_user", node_string())}
+               {SystemKeys.materializer_key(1, "wkr_user"), Values.encode_materializer_node(node_string())}
              ]
 
-      assert {:ok, {"wkr_sys", _}} =
-               Values.decode_materializer_ref(Map.fetch!(store, SystemKeys.materializer_key(0)))
+      assert {:ok, _node} =
+               Values.decode_materializer_node(Map.fetch!(store, SystemKeys.materializer_key(0, "wkr_sys")))
 
-      assert {:ok, {"wkr_stray", _}} =
-               Values.decode_materializer_ref(Map.fetch!(store, SystemKeys.materializer_key(9)))
+      assert {:ok, _node} =
+               Values.decode_materializer_node(Map.fetch!(store, SystemKeys.materializer_key(9, "wkr_stray")))
     end
 
     test "cleared prefix ranges do not cover any other system-key family" do

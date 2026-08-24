@@ -42,16 +42,17 @@ defmodule Bedrock.SystemKeys.Values do
     do: TupleEncoding.pack({tag, start_key})
 
   @doc """
-  Encodes a materializer ref: `{worker_id, node}`, both strings.
+  Encodes a materializer membership value: the member's node, a string.
 
-  Refs are string-encoded on purpose - never atoms or pids - so decoding
-  durable bytes never creates atoms. The worker's OTP name is derivable
-  from the id (`cluster.otp_name_for_worker/1`); conversion to a callable
-  ref happens at the consumer.
+  The worker id lives in the key (`materializers/<tag>/<worker_id>`), so
+  the value carries only what a consumer cannot derive: the node. Both
+  halves are string-encoded on purpose - never atoms or pids - so
+  decoding durable bytes never creates atoms. The worker's OTP name is
+  derivable from the id (`cluster.otp_name_for_worker/1`); conversion to
+  a callable ref happens at the consumer.
   """
-  @spec encode_materializer_ref(String.t(), String.t()) :: binary()
-  def encode_materializer_ref(worker_id, node) when is_binary(worker_id) and is_binary(node),
-    do: TupleEncoding.pack({worker_id, node})
+  @spec encode_materializer_node(String.t()) :: binary()
+  def encode_materializer_node(node) when is_binary(node), do: TupleEncoding.pack(node)
 
   @doc "Decodes a list of integer range tags."
   @spec decode_tag_list(binary()) :: {:ok, [Bedrock.range_tag()]} | decode_error()
@@ -62,10 +63,9 @@ defmodule Bedrock.SystemKeys.Values do
   def decode_shard_key_entry(binary),
     do: safe_unpack(binary, &match?({tag, start_key} when is_integer(tag) and is_binary(start_key), &1))
 
-  @doc "Decodes a materializer ref to `{:ok, {worker_id, node}}` (strings)."
-  @spec decode_materializer_ref(binary()) :: {:ok, {String.t(), String.t()}} | decode_error()
-  def decode_materializer_ref(binary),
-    do: safe_unpack(binary, &match?({worker_id, node} when is_binary(worker_id) and is_binary(node), &1))
+  @doc "Decodes a materializer membership value to `{:ok, node}` (string)."
+  @spec decode_materializer_node(binary()) :: {:ok, String.t()} | decode_error()
+  def decode_materializer_node(binary), do: safe_unpack(binary, &is_binary/1)
 
   @doc """
   Decodes a value given its parsed system key (from
@@ -75,7 +75,7 @@ defmodule Bedrock.SystemKeys.Values do
   def decode_for({:distributor_lock, _which}, value), do: decode_lock_uid(value)
   def decode_for({:shard_key, _end_key}, value), do: decode_shard_key_entry(value)
   def decode_for({:layout_log, _log_id}, value), do: decode_tag_list(value)
-  def decode_for({:materializer_key, _tag}, value), do: decode_materializer_ref(value)
+  def decode_for({:materializer_key, _tag, _worker_id}, value), do: decode_materializer_node(value)
   def decode_for(_unknown, _value), do: {:error, :unknown_family}
 
   defp safe_unpack(binary, valid?) when is_binary(binary) do

@@ -182,7 +182,23 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     end
   end
 
+  # The lock's taker is the unlock's only authority: adoption
+  # (bedrock-q67.21.5) means family-named workers can now be locked by
+  # racing epochs — an equal-or-newer lock replaces `director`, and a
+  # superseded locker's late unlock must not flip the worker to
+  # :running with the loser's pull sources mid-recovery. A worker with
+  # no lock owner has no authority to violate (static configurations
+  # unlock directly).
   @impl true
+  def handle_call(
+        {:unlock_after_recovery, _durable_version, _pull_sources},
+        {caller, _},
+        %State{director: director} = t
+      )
+      when director != nil and caller != director do
+    reply(t, {:error, :not_lock_owner})
+  end
+
   def handle_call({:unlock_after_recovery, durable_version, pull_sources}, {_director, _}, t) do
     {:ok, updated_state} = Logic.unlock_after_recovery(t, durable_version, pull_sources)
     # Service starts now: a worker that spent its whole idle window locked

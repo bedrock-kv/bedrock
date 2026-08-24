@@ -67,6 +67,32 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   end
 
   @doc """
+  Adopts a family-named materializer into the current epoch: recruitment
+  minus creation. The worker already exists (the committed
+  `materializers/` family names it — the keyspace is the membership
+  authority) but was never locked into this epoch, typically because its
+  node missed recovery's roll call and rejoined later. It is locked at
+  the epoch and unlocked at the durable version IT reports, so it
+  resumes pulling from exactly where its own store left off.
+
+  Unlike a failed recruitment, a failed adoption never removes the
+  worker: it pre-exists this attempt and holds real state — enforced
+  structurally by there being no removal call on this path. The caller
+  heals the tag instead (placeholder + fresh recruit); the unadopted
+  worker later observes the new entry and retires itself in-band.
+  """
+  @spec adopt(Bedrock.range_tag(), Worker.id(), node(), context()) ::
+          {:ok, pid(), node(), Worker.id()} | {:error, term()}
+  def adopt(tag, worker_id, node, context) do
+    with {:ok, sources} <- pull_sources_for_shard(tag, context),
+         {:ok, pid, recovery_info} <-
+           lock_materializer({context.cluster.otp_name_for_worker(worker_id), node}, node, context),
+         :ok <- unlock_and_start_pulling(pid, node, recovery_info, sources, context) do
+      {:ok, pid, node, worker_id}
+    end
+  end
+
+  @doc """
   Best-effort removal of a worker left behind by a failed recruitment or
   an aborted publication. The worker never carried data a client could
   reach, so removal is safe; any failure to remove it is logged and

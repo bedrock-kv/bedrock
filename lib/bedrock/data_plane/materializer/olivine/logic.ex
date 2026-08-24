@@ -253,6 +253,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   defp supported_info, do: ~w[
       current_version
       durable_version
+      epoch
       oldest_durable_version
       id
       pid
@@ -274,6 +275,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   # known-committed version and which therefore trails by design.
   defp gather_info(:current_version, t), do: t.index_manager.current_version
   defp gather_info(:shard_id, t), do: t.shard_num
+  # The epoch this worker was last locked into (nil: never locked). The
+  # distributor's assignment verification reads it to distinguish a
+  # worker that is IN the epoch from one the epoch never embraced — a
+  # node that missed recovery's roll call and rejoined later.
+  defp gather_info(:epoch, t), do: t.epoch
   defp gather_info(:id, t), do: t.id
   defp gather_info(:key_ranges, t), do: IndexManager.info(t.index_manager, :key_ranges)
   defp gather_info(:kind, _t), do: :materializer

@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T19:53:47Z",
+  "description": "Introduced deliberately by bedrock-ghd and documented in the LocalFilesystem moduledoc.\n\nWrites now go to a scratch file (`.bedrock-tmp.\u003cbasename\u003e.\u003cnode\u003e.\u003cpid\u003e.\u003cn\u003e`) in the target's directory, fsynced, then published atomically. In-process failures remove the scratch file. A process KILLED between the write and the publish cannot, so its scratch file survives at full payload size.\n\nMeasured during the bedrock-ghd audit: killing a writer mid-put of a 300 MB payload left a 314,572,800-byte scratch file, and `list/3` returned `[]` for its prefix.\n\nNothing reclaims it. `list/3` filters scratch files out by design (they are not objects and must never be reported as keys), and the only reclamation path in the tree — `Snapshot.delete_older_than/2` — enumerates `list/3` and deletes by key. `delete/2` is key-addressed only. So the file is invisible and unreachable.\n\n## The trade this accepted\n\nBefore bedrock-ghd the same crash left wreckage visible under the REAL key, where it was permanent and poisonous: `put_if_not_exists` would return `:already_exists` forever and no one could rewrite it. Now the wreckage is inert but invisible. Inert-and-invisible is strictly better than poisonous-and-permanent, but it is not free — a crash loop could accumulate scratch files without bound.\n\n## Why this is not a one-liner\n\nA sweep must distinguish a dead scratch file from a LIVE writer's, and a scratch file gives no direct signal of either. Deleting a live one would corrupt an in-flight write, which is worse than the leak. Options, none obviously right:\n\n- age-based sweep (mtime older than some threshold) — a heuristic, and a slow large write could exceed any threshold\n- parse the embedded node/OS-pid and check liveness — only sound for scratch files from the local node, and pids are recycled\n- an explicit lock or registry of in-flight writes — real bookkeeping for a dev/test backend\n- sweep only at a moment nothing can be in flight (backend start), which LocalFilesystem has no hook for, being a stateless module rather than a process\n\nPick deliberately; the leak is bounded by crash frequency and this backend is not the production path (S3 has no equivalent — an aborted PUT leaves nothing).\n\n## Test (write first, must fail)\n\nPlant scratch files of varying ages, run the sweep, assert the stale ones are gone, a fresh one is untouched, and no real object is ever removed.",
+  "id": "bedrock-ck3",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Scratch files from a killed object-storage writer are never reclaimed",
+  "type": "task",
+  "updated_at": "2026-08-25T19:53:47Z"
+}

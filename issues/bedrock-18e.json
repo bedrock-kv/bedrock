@@ -6,9 +6,15 @@
   "description": "",
   "id": "bedrock-18e",
   "labels": [],
+  "comments": [
+    {
+      "text": "PR #221: https://github.com/bedrock-kv/bedrock/pull/221",
+      "timestamp": "2026-08-25T20:53:06Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "hunt-dead-code: index defprotocol, config roots, framework conventions; fix --root",
   "type": "task",
-  "updated_at": "2026-08-25T20:50:56Z"
+  "updated_at": "2026-08-25T20:53:06Z"
 }

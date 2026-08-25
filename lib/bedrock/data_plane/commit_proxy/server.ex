@@ -41,7 +41,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
       start_batch_if_needed: 1,
       apply_finalization_policy: 1,
       add_transaction_to_batch: 4,
-      single_transaction_batch: 2
+      single_transaction_batch: 2,
+      hold_in_ms: 1,
+      observe_batch: 2
     ]
 
   import Bedrock.DataPlane.CommitProxy.Finalization, only: [finalize_batch: 2]
@@ -235,6 +237,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   def handle_call({:materializer_members, _tag}, _from, %{mode: :locked} = t), do: reply(t, {:error, :locked})
 
+  # What is left of the adaptive hold for the open batch, never negative.
+  # Capping at the batch's own age keeps a long-lived batch from having
+  # its window extended by every new arrival.
+  defp hold_remaining(t),
+    do: max(t.batch.started_at + hold_in_ms(t.recent_batch_fill) - :erlang.monotonic_time(:millisecond), 0)
+
+  defp observe_finalized(t, batch),
+    do: %{t | recent_batch_fill: observe_batch(t.recent_batch_fill, batch.n_transactions)}
+
   defp accept_commit(transaction, commit_mode, from, t) do
     case start_batch_if_needed(t) do
       {:error, reason} ->
@@ -247,10 +258,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         |> apply_finalization_policy()
         |> case do
           {t, nil} ->
-            # Use zero timeout to process any pending messages first
-            noreply(t, timeout: 0)
+            # Hold the window only while batches are actually filling. A
+            # zero timeout fires as soon as the mailbox empties, which
+            # with request/response clients is immediately -- so the
+            # batch closed at one transaction and max_latency_in_ms was
+            # never reached.
+            noreply(t, timeout: hold_remaining(t))
 
           {t, batch} ->
+            t = observe_finalized(t, batch)
             # Finalize asynchronously and reset for next batch
             t = finalize_batch_async(batch, t)
 
@@ -289,6 +305,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   end
 
   def handle_info(:timeout, %{batch: batch} = t) do
+    t = observe_finalized(t, batch)
     # Timeout reached - finalize current batch asynchronously
     t = finalize_batch_async(batch, t)
 

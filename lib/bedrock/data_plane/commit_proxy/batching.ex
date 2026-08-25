@@ -56,6 +56,38 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
   def add_transaction_to_batch(t, transaction, reply_fn, commit_mode) when is_binary(transaction),
     do: %{t | batch: add_transaction(t.batch, transaction, reply_fn, commit_mode)}
 
+  # How much of the average a new batch replaces. Slow enough that one
+  # busy batch does not latch the proxy into waiting, fast enough that
+  # real load engages within a few batches.
+  @smoothing 0.3
+
+  # Above one, so noise cannot trip it; low enough that light batching
+  # still counts as load.
+  @batching_threshold 1.5
+
+  # FDB's COMMIT_TRANSACTION_BATCH_INTERVAL_MIN. The sweep found larger
+  # holds strictly worse: 8ms cost 12x at idle and lost throughput under
+  # load versus 1ms.
+  @hold_in_ms 1
+
+  @doc """
+  The moving average of batch fill, updated with one finalized batch.
+  """
+  @spec observe_batch(average :: float(), n_transactions :: non_neg_integer()) :: float()
+  def observe_batch(average, n_transactions), do: (1 - @smoothing) * average + @smoothing * n_transactions
+
+  @doc """
+  How long to hold an open batch, given recent fill.
+
+  Zero when batches are not filling: an idle proxy must never delay a
+  lone transaction, which is what the old unconditional zero timeout got
+  right. Otherwise a millisecond, so the finalization round is amortized
+  across the transactions that are actually arriving.
+  """
+  @spec hold_in_ms(average :: float()) :: non_neg_integer()
+  def hold_in_ms(average) when average > @batching_threshold, do: @hold_in_ms
+  def hold_in_ms(_not_filling), do: 0
+
   @spec apply_finalization_policy(State.t()) ::
           {State.t(), batch_to_finalize :: Batch.t()} | {State.t(), nil}
   def apply_finalization_policy(t) do

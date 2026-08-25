@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T19:53:47Z",
+  "description": "Found during the bedrock-m7j audit.\n\n`Bedrock.Internal.GenServer.Calls.call/3` (lib/bedrock/internal/gen_server/calls.ex:28-35) catches a fixed set of exit reasons — `{:noproc, _}`, `{{:nodedown, _}, _}`, `{:timeout, _}`, `{:normal, _}`, `{:shutdown, _}`, `{{:shutdown, _}, _}` — and maps them to `{:error, :unavailable}` or `{:error, :timeout}`. Any other exit reason escapes uncaught.\n\nVerified during the audit: a server stopping with `:shutdown` yields `{:error, :unavailable}`; the same server stopping with `:eacces` raises `{:eacces, {GenServer, :call, [...]}}` into the caller.\n\n## Failure scenario\n\nA GenServer that dies of a genuine resource fault (`:enospc`, `:eacces`, `:emfile`) kills its callers rather than reporting unavailability — the exact case where a caller most wants a clean error to back off on. bedrock-m7j makes this reachable for the Shale log: the SegmentRecycler now exits with the real posix reason instead of masking it as `:shutdown`, and that reason propagates through the link into the log.\n\nBlast radius is currently small and was checked: every production caller of `Log.push`/`Log.pull` runs inside a `Task.async_stream` that converts the exit (`commit_proxy/finalization.ex:1091-1098`), and the director's recovery phases are likewise wrapped. The one unwrapped site is `shale/recovery.ex:192`, running in the recovering log's own process, which its supervisor restarts.\n\n## Fix\n\nNormalize any unrecognised exit reason to `{:error, :unavailable}` rather than letting it escape — a dead callee is unavailable whatever killed it. Keep `:timeout` distinct. Consider preserving the reason as `{:error, {:unavailable, reason}}` if callers would benefit, but check every `case` on these returns first: several are non-exhaustive.\n\n## Test (write first, must fail)\n\nStart a server, stop it with `:eacces`, assert `Calls.call/3` returns `{:error, :unavailable}` rather than raising. Cover `:enospc` and an arbitrary term too.",
+  "id": "bedrock-sfu",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "[BUG] Calls.call/3 does not normalize posix exit reasons, so a crashed worker raises instead of returning :unavailable",
+  "type": "bug",
+  "updated_at": "2026-08-25T19:53:47Z"
+}

@@ -2,7 +2,7 @@
 
 **Building reliable log infrastructure by replacing potentially compromised services with verified ones.**
 
-During recovery, Bedrock must fill [vacancy placeholders](vacancy-creation.md) in the new system architecture with actual [log services](../../deep-dives/architecture/data-plane/log.md). Unlike other recovery phases that attempt to preserve existing components, log recruitment takes an aggressive replacement approach: prioritize reliability over efficiency by using fresh services instead of salvaging potentially compromised ones.
+During recovery, Bedrock must fill [vacancy placeholders](log-recovery-planning.md) in the new system architecture with actual [log services](../../deep-dives/architecture/data-plane/log.md). Unlike other recovery phases that attempt to preserve existing components, log recruitment takes an aggressive replacement approach: prioritize reliability over efficiency by using fresh services instead of salvaging potentially compromised ones.
 
 This "clean slate" strategy works because logs contain no unique persistent state—every committed transaction exists identically across all logs in the system. The old logs contain transaction history that will be copied to newly recruited logs during the subsequent [log replay](log-replay.md) phase, but their infrastructure cannot be trusted for continued operational use.
 
@@ -32,10 +32,10 @@ The recruitment process transforms abstract vacancy placeholders into concrete o
 - **Processing**: Systematic assignment of discovered or newly created services according to the three-tier strategy
 - **Output**: Concrete service identifiers replacing all placeholders, plus service descriptor mappings and process relationships for coordination
 
-This establishes the trustworthy log foundation needed for subsequent [storage recruitment](storage-recruitment.md) and [log replay](log-replay.md) phases.
+This establishes the trustworthy log foundation needed for subsequent [log replay](log-replay.md) and [materializer bootstrap](materializer-bootstrap.md) phases.
 
 ---
 
 **Implementation**: `lib/bedrock/control_plane/director/recovery/log_recruitment_phase.ex`
 
-**See Also**: [Recovery Overview](../recovery.md) | [Log Replay](log-replay.md) | [Storage Recruitment](storage-recruitment.md)
+**See Also**: [Recovery Overview](../recovery.md) | [Log Replay](log-replay.md) | [Materializer Bootstrap](materializer-bootstrap.md)

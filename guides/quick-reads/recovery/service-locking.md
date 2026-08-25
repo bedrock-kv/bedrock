@@ -36,7 +36,7 @@ Services not in the previous layout remain available for recruitment without pro
 
 Locking results automatically determine the recovery path:
 
-- **New Cluster**: No logs in previous layout → proceed to [initialization](path-determination.md)
+- **New Cluster**: No logs in previous layout → proceed to initialization, which seeds the default shard layout and fresh log vacancies
 - **Data Recovery**: Logs were defined → proceed to [data preservation phases](log-recovery-planning.md)
 
 This guarantees the system never mistakes an existing deployment for a new one, protecting committed data.
@@ -48,4 +48,4 @@ This guarantees the system never mistakes an existing deployment for a new one, 
 
 ---
 
-**Next Phase**: [Path Determination](path-determination.md) — Classifying recovery scenarios based on locking results
+**Next Phase**: [Log Recovery Planning](log-recovery-planning.md) — Establishing quorum and the common recoverable WAL range

@@ -76,7 +76,7 @@ flowchart TD
    replay cost is bounded by the untrimmed tail, not the cluster's age.
 5. **[Sequencer Startup](recovery/sequencer-startup.md)** - Start the
    global version authority at the recovery version.
-6. **Materializer Bootstrap** - Reuse the surviving materializers: hand
+6. **[Materializer Bootstrap](recovery/materializer-bootstrap.md)** - Reuse the surviving materializers: hand
    each one its shard back, unlocked at the recovery version so it resumes
    streaming from its own applied position. The system-shard materializer
    catches up and serves the shard layout, which drives resolver placement

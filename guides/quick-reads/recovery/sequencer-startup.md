@@ -10,7 +10,7 @@ Version assignment requires exactly one authority cluster-wide. Multiple sequenc
 
 ## Startup Process
 
-The sequencer starts on the [director's](../../glossary.md#director) node using the recovery baseline from [version determination](version-determination.md). This initialization preserves three critical properties:
+The sequencer starts on the [director's](../../glossary.md#director) node using the recovery baseline from [log recovery planning](log-recovery-planning.md). This initialization preserves three critical properties:
 
 - **Continuity**: New versions begin exactly where the old system left off
 - **Uniqueness**: No previously assigned version numbers get reused  

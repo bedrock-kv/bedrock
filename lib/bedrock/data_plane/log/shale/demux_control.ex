@@ -12,7 +12,8 @@ defmodule Bedrock.DataPlane.Log.Shale.DemuxControl do
     Demux.Server.start_link(
       cluster: t.cluster,
       object_storage: t.object_storage,
-      log: self()
+      log: self(),
+      cut_interval_us: State.cut_interval_us(t)
     )
   end
 

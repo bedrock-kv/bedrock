@@ -165,7 +165,7 @@ This approach improves efficiency and reduces data transfer overhead between com
 
 **Process**:
 
-1. Client calls `Bedrock.Repo.transact/1`
+1. Client calls `c:Bedrock.Repo.transact/1`
 2. The Repo fetches the transaction system layout from the Link and starts a
    new Transaction Builder process via `start_link/1`
 3. Transaction Builder initializes with that layout plus a routing function —

@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-25T15:52:51Z",
+  "close_reason": "Fixed in f22f63ed: guide rewritten for the set-valued materializers/\u003ctag\u003e/\u003cworker_id\u003e family, distributor_lock/ family documented, Distributor ownership in present tense; SystemKeys moduledoc's 'never recovery input' claim corrected",
   "created": "2026-08-25T15:47:29Z",
   "description": "",
   "id": "bedrock-nwa",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "system-keyspace guide documents the pre-q67.21.9 single-valued materializers/\u003ctag\u003e shape",
   "type": "task",
-  "updated_at": "2026-08-25T15:47:29Z"
+  "updated_at": "2026-08-25T15:52:51Z"
 }

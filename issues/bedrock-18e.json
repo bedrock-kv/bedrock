@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T20:50:56Z",
+  "description": "",
+  "id": "bedrock-18e",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "hunt-dead-code: index defprotocol, config roots, framework conventions; fix --root",
+  "type": "task",
+  "updated_at": "2026-08-25T20:50:56Z"
+}

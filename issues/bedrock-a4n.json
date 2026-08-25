@@ -8,6 +8,12 @@
   "description": "",
   "id": "bedrock-a4n",
   "labels": [],
+  "comments": [
+    {
+      "text": "PR #217 opened against develop: https://github.com/bedrock-kv/bedrock/pull/217 — adds the hunt-dead-code skill and the narrow .gitignore exception; removes the superseded find-unused-modules skill (untracked, so not visible in the diff). Worktree at .claude/worktrees/a4n-deadcode.",
+      "timestamp": "2026-08-25T19:58:12Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "Add hunt-dead-code skill: transitive dead-code analyzer with root manifest",

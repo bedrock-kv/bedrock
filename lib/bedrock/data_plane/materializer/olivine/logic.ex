@@ -401,8 +401,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
   @doc """
   Apply a batch of transactions to the storage state.
-  This is used for incremental processing to avoid large DETS writes.
-  Buffer tracking is now handled directly by IndexManager.apply_transactions.
+  This is used for incremental processing, so that durable writes happen in
+  bounded steps as the window advances rather than as one large flush.
+  Buffer tracking is handled directly by IndexManager.apply_transactions.
   """
   @spec apply_transactions(State.t(), [binary()]) :: {:ok, State.t(), Bedrock.version()}
   def apply_transactions(%State{} = t, encoded_transactions) do

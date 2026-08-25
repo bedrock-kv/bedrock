@@ -9,8 +9,8 @@
   "id": "bedrock-a4n",
   "labels": [],
   "priority": 3,
-  "status": "closed",
+  "status": "in_progress",
   "title": "Add hunt-dead-code skill: transitive dead-code analyzer with root manifest",
   "type": "task",
-  "updated_at": "2026-08-25T19:52:02Z"
+  "updated_at": "2026-08-25T19:58:12Z"
 }

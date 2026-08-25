@@ -13,7 +13,7 @@ defmodule Bedrock.Service.Foreman.State do
           otp_name: atom(),
           path: Path.t(),
           object_storage: term(),
-          waiting_for_healthy: [pid()],
+          waiting_for_healthy: [GenServer.from()],
           workers: %{Worker.id() => WorkerInfo.t()}
         }
   defstruct [
@@ -68,7 +68,7 @@ defmodule Bedrock.Service.Foreman.State do
           State.t()
   def update_waiting_for_healthy(t, updater), do: %{t | waiting_for_healthy: updater.(t.waiting_for_healthy)}
 
-  @spec put_waiting_for_healthy(State.t(), [pid()]) :: State.t()
+  @spec put_waiting_for_healthy(State.t(), [GenServer.from()]) :: State.t()
   def put_waiting_for_healthy(t, waiting_for_healthy), do: %{t | waiting_for_healthy: waiting_for_healthy}
 
   @spec put_health_for_worker(State.t(), Worker.id(), Worker.health()) :: State.t()

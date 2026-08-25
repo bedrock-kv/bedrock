@@ -21,7 +21,7 @@ one transactional key-space.
 ```elixir
 def deps do
   [
-    {:bedrock, "~> 0.6"}
+    {:bedrock, "~> 0.7"}
   ]
 end
 ```

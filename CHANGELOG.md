@@ -1,5 +1,166 @@
 # Changelog
 
+## 0.7.0 — 2026-08-25
+
+This release moves cluster metadata out of the broadcast layout and into the
+committed keyspace, and introduces the Distributor — the component that owns
+shard coverage between recoveries. Together they follow FoundationDB's divide:
+the keyspace carries what must be durable and ordered with the data it
+describes; the broadcast carries only this epoch's wiring.
+
+- **The shard map leaves the broadcast and rides the keyspace.** Shard
+  boundaries and materializer membership were previously fields on the
+  `TransactionSystemLayout` struct, republished to every node on each
+  recovery — so topology could only change at a recovery, and the broadcast
+  grew with the cluster. Both now live under `\xFF/system` as ordinary
+  committed key-values (`shard_keys/<end_key>` and
+  `materializers/<tag>/<worker_id>`), and clients resolve routing **per key**
+  from a commit proxy — Bedrock's `GetKeyServerLocations` — rather than
+  receiving the whole map. Answers are cached node-locally in ETS and read
+  without a message to the Link, and locations are treated as hints:
+  staleness costs a retry, never a wrong answer. `TransactionSystemLayout` is
+  now wiring only (`epoch`, `sequencer`, `proxies`, `resolvers`, `logs`); its
+  `services`, `shard_layout`, `shard_materializers`, `id`, `director`, and
+  `rate_keeper` fields are gone. The durable half is a new struct,
+  `Bedrock.ControlPlane.Config.CoreState` (FDB's `DBCoreState`), replacing
+  `Bedrock.ControlPlane.Config.Persistence`.
+
+- **New: the Distributor.** A per-epoch singleton, recruited by the director,
+  that owns shard coverage between recoveries — the job recovery used to do
+  wholesale and only at epoch boundaries. Its mid-epoch mutations are fenced
+  by a keyspace-enforced write lock (`distributor_lock/`, FDB's MoveKeys lock
+  port), so a superseded Distributor cannot write. It recruits materializers
+  on demand, heals coverage when one dies, and parks shards that go cold.
+  Uncovered tags no longer fail reads outright: a placeholder publishes
+  itself as the tag's materializer and sheds `{:error, :unavailable}` — which
+  the client retry loop treats as retryable and routing-invalidating — so a
+  coverage gap is bounded degradation rather than an unroutable key. No
+  configuration is required; the Distributor is recruited onto an existing
+  materializer-capable node. New telemetry:
+  `[:bedrock, :distributor, :coverage_demand | :idle_spindown]` and
+  `[:bedrock, :distributor, :placeholder, :published | :parked | :forwarded | :drained | :shed]`.
+
+- **User commits are bounded below `\xFF`.** Bedrock now enforces
+  FoundationDB's system-key trust model: a mutation keyed at or above
+  `Bedrock.end_of_user_keyspace/0` (`<<0xFF>>`) is rejected at commit ingress
+  with a permanent `{:error, {:key_out_of_range, key}}` — not retried, not
+  clamped. Only system components commit in `:system` mode, which extends the
+  bound to `Bedrock.end_of_keyspace/0`. **This changes one common pattern:** a
+  user `clear_range` that ends at the `:end` sentinel now fails, because
+  `:end` converts to the full-keyspace bound. Use the new
+  `Bedrock.end_of_user_keyspace/0` as the widest legal end key:
+
+  ```elixir
+  # before — now rejected with {:key_out_of_range, <<0xFF, 0xFF>>}
+  Repo.clear_range(txn, "users/", :end)
+
+  # after
+  Repo.clear_range(txn, "users/", Bedrock.end_of_user_keyspace())
+  ```
+
+  Rejected transactions are replaced with empty ones inside the pipeline, so
+  a bad range can never pollute resolver conflict history. The keyspace and
+  its families are documented in the new
+  [System Keyspace](guides/quick-reads/system-keyspace.md) guide.
+
+- **Contended transactions retry with full jitter.** The retry delay was a
+  doubling ceiling plus 1–3ms of jitter, so transactions contending on one
+  key computed nearly the same delay, woke together, and re-collided — the
+  wall clock was set by whichever contender climbed furthest up the ladder.
+  The delay is now a uniform draw from the *whole* interval below the
+  ceiling (FoundationDB's client backoff), so contenders spread instead of
+  laddering. On 100 concurrent transactions against one counter, the tail
+  collapsed 2.7–9.5× (max 1058ms/3057ms → 387ms/320ms across two runs).
+  Exposed as `Bedrock.Internal.Repo.retry_delay_in_ms/1`.
+
+- **Commit batching actually batches now.** The proxy re-armed its open batch
+  with a zero timeout, which fires as soon as the mailbox empties — with
+  request/response clients that is immediately, so every batch closed at one
+  transaction and the configured `max_latency_in_ms` was never reached. The
+  proxy now tracks a moving average of batch fill and holds the window for a
+  millisecond (FDB's `COMMIT_TRANSACTION_BATCH_INTERVAL_MIN`) only while
+  batches are demonstrably filling, so the finalization round is amortized
+  under load while an idle proxy still never delays a lone transaction.
+
+- **More read failures retry instead of surfacing.** Routing- and
+  liveness-shaped failures (`:layout_lookup_failed`, `:no_servers_to_race`,
+  `:locked`, `:version_too_old`, `:unknown`) now retry the transaction rather
+  than raising, matching FDB's `wrong_shard_server` model. The definitively
+  routing-shaped ones also invalidate the node's routing cache, so the retry
+  refetches. `:timeout` deliberately does not evict — slow is not stale, and
+  evicting on it turns overload latency into node-wide cache thrash.
+
+- **Object storage listings never report emptiness they did not verify.**
+  `ObjectStorage.list/3` returns a bare stream, which has no way to signal
+  failure — so both backends turned listing errors into an early halt,
+  indistinguishable from a genuinely empty prefix. Two consumers read that
+  silence as fact and lost data: a running materializer fabricated currency
+  at the high-water mark and advanced past versions it never received, and a
+  starting materializer opened an empty database for a populated shard. The
+  stream now raises `Bedrock.ObjectStorage.ListError` instead, so an empty
+  stream means the prefix *is* empty. **Custom backends must propagate
+  listing errors rather than halting**, and consumers of `list/3` should
+  expect a raise.
+
+- **Workers retire themselves.** The foreman no longer decides which workers
+  to reap by diffing the durable layout; it relays the layout and janitors
+  what a retiring worker leaves behind. A log checks itself against the
+  epoch-constant log set; a materializer asks a commit proxy whether the
+  committed `materializers/<tag>` entry still names it. Retirement is also
+  in-band now: the commit proxy emits a privatized copy of a membership
+  clear, addressed to the shard's own tag, so a materializer whose
+  assignment is withdrawn mid-epoch learns from its own stream instead of
+  waiting for the next recovery broadcast.
+
+- **Cold shards park and revive on demand.** A materializer with an
+  `idle_timeout` set uploads a snapshot and exits when no *client reads*
+  arrive within the window (pulls and transaction application keep a shard
+  fresh, not hot). The Distributor parks the tag rather than re-recruiting;
+  the next read's coverage demand revives it from the uploaded snapshot plus
+  the log suffix. The system shard is exempt.
+
+- **Resolver protocol simplified.** Converged verdicts replace the
+  hold/confirm metadata handshake, resolvers replay retried batches instead
+  of fabricating verdicts for them, each proxy receives an exact tiling
+  metadata window rather than an ack protocol, and resolver calls fail fast
+  instead of retrying internally. The removed telemetry events are
+  `[:bedrock, :commit_proxy, :resolver, :retry | :max_retries_exceeded]` and
+  `[:bedrock, :resolver, :resolve_transactions, :processing | :reply_sent | :validation_error | :waiting_list | :waiting_list_validation_error]`;
+  `[:bedrock, :data_plane, :commit_proxy, :ingress_validation_failed]` is
+  new. `Bedrock.DataPlane.Resolver.Validation` is removed — keyspace bounds
+  are validated in the commit pipeline, per transaction.
+
+- **Removed modules.** `Bedrock.ControlPlane.Config.Persistence` (replaced by
+  `CoreState`), `Bedrock.DataPlane.Resolver.Validation`,
+  `Bedrock.SystemKeys.MaterializerList`, `Bedrock.SystemKeys.OtpRef`, and
+  `Bedrock.SystemKeys.ShardMetadata` (replaced by
+  `Bedrock.SystemKeys.Values`, a single tuple-encoding codec, and
+  `Bedrock.SystemKeys.Reader`). System-key values now use explicit versioned
+  encodings; decoders handle durable bytes, never raise, and never create
+  atoms.
+
+- **The guides are published, and accurate.** The README linked 18 guides that
+  were never listed in `mix.exs` extras, so every architecture link on the
+  hexdocs landing page resolved to nothing. All of them now ship — along with
+  the per-component and per-recovery-phase guides they link to — grouped into
+  Quick Reads, Deep Dives, Recovery Phases, Component Deep Dives, Durability,
+  and Reference. `mix docs` reports zero broken references, down from 174.
+
+  Publishing them meant correcting the drift they had accumulated first. Every
+  `lib/bedrock/**.ex` path and `Bedrock.*` module named in a published guide is
+  now verified to exist. The substantive fixes: the Gateway → Link rename, the
+  storage-team → shard model, `key_codecs`/`value_codecs` (which `use
+  Bedrock.Repo` never accepted) replaced with the `Bedrock.Keyspace` encodings
+  that actually exist, a Transaction System Layout guide rewritten for the
+  wiring-only TSL, and four recovery-phase guides retired — one of which
+  described materializer recruitment as *excluding* prior-layout services, the
+  exact inverse of the re-adoption the phase performs.
+
+  The README was also rewritten around Bedrock's three pillars (FoundationDB
+  lineage, object-storage durability, pure BEAM zero-copy), the new System
+  Keyspace guide documents every `\xFF/system` family and who writes it, and CI
+  now covers OTP 29.
+
 ## 0.6.1 — 2026-08-19
 
 - **Security: remove hackney from the dependency tree.** An audit found the

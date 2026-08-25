@@ -37,4 +37,4 @@ Upon completion, all storage vacancies are filled with locked services. Recovery
 
 ---
 
-**Implementation**: `lib/bedrock/control_plane/director/recovery/storage_recruitment_phase.ex`
+**Implementation**: `lib/bedrock/control_plane/director/recovery/materializer_bootstrap_phase.ex`

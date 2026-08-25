@@ -28,7 +28,7 @@ Recovery fails fast if resolution-capable nodes become unavailable or individual
 
 **Source**: `lib/bedrock/control_plane/director/recovery/resolver_startup_phase.ex`
 
-**Key Inputs**: Resolver descriptors, storage team assignments, transaction logs, version vector bounds
+**Key Inputs**: Resolver descriptors, shard assignments, transaction logs, version vector bounds
 
 **Output**: Operational resolver processes ready for MVCC conflict detection
 

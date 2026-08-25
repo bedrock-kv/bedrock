@@ -205,19 +205,19 @@ Foreman operations balance reliability with performance:
 
 Foreman serves as the **service creation foundation** in Bedrock's service registration workflow:
 
-**Foreman → Gateway → Coordinator → Director**
+**Foreman → Link → Coordinator → Director**
 
 **Workflow Context**:
 
 1. **Worker Process Creation**: Creates and manages storage and log worker processes on cluster nodes
-2. **Service Advertisement**: Provides service information to Gateway for cluster-wide registration
+2. **Service Advertisement**: Provides service information to Link for cluster-wide registration
 3. **Health Monitoring**: Ensures worker processes remain operational and reports status
 4. **Resource Management**: Manages working directories, supervision trees, and process lifecycle
 5. **Capability Reporting**: Enables cluster-wide resource planning through service advertisements
 
 **Key Handoff Points**:
 
-- **To Gateway**: Provides service information for cluster registration
+- **To Link**: Provides service information for cluster registration
   - **Service Discovery**: `get_all_running_services/1` returns compact service tuples for registration
   - **Service Format**: Returns `{service_id, service_type, otp_name}` tuples for Coordinator registration
   - **Health Status**: Workers report health to Foreman before being advertised to cluster
@@ -232,7 +232,7 @@ Foreman serves as the **service creation foundation** in Bedrock's service regis
 **Error Propagation**:
 
 - **Worker Creation Failures**: Creation errors → detailed error responses to Director → recovery planning adjustments
-- **Health Monitoring Failures**: Worker health issues → status reporting through Gateway → potential cluster recovery triggers
+- **Health Monitoring Failures**: Worker health issues → status reporting through Link → potential cluster recovery triggers
 - **Resource Cleanup Issues**: Working directory cleanup failures → detailed POSIX error reporting → administrative intervention
 
 ### Recovery Coordination Workflow Role
@@ -280,8 +280,8 @@ For detailed recovery process documentation, see **[Recovery Deep Dive](../../..
 ## See Also
 
 - **[Director](../control-plane/director.md)**: Orchestrates worker creation through Foreman during recovery
-- **[Gateway](gateway.md)**: Receives service advertisements from Foreman for cluster registration
-- **[Coordinator](../control-plane/coordinator.md)**: Receives service information through Gateway from Foreman
+- **[Link](link.md)**: Receives service advertisements from Foreman for cluster registration
+- **[Coordinator](../control-plane/coordinator.md)**: Receives service information through Link from Foreman
 - **[Storage](../data-plane/storage.md)**: Storage workers created and managed by Foreman
 - **[Log](../data-plane/log.md)**: Log workers created and managed by Foreman
 - **[Recovery](../../../deep-dives/recovery.md)**: Foreman role in cluster recovery infrastructure provisioning

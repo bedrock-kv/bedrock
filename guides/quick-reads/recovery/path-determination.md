@@ -17,7 +17,7 @@ This simple test provides foolproof protection against accidental data loss—re
 
 When no previous logs exist, recovery initializes a fresh cluster by creating:
 
-1. **Storage Teams**: Two teams with distinct keyspace boundaries
+1. **Shards**: Two shards with distinct keyspace boundaries
    - User data team: handles application keys (empty string to `0xFF`)
    - System data team: handles system metadata (`0xFF` to end-of-keyspace)
 

@@ -26,14 +26,14 @@ Example: Storage team has 2 replicas but configuration requires 3. Recovery crea
 
 ### Resolver Services: Computational Boundaries
 
-[Resolvers](../../deep-dives/architecture/data-plane/resolver.md) handle [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection for key ranges. Recovery creates resolver descriptors that map each storage team's key range to resolver vacancy placeholders, establishing computational boundaries without assigning specific processes.
+[Resolvers](../../deep-dives/architecture/data-plane/resolver.md) handle [MVCC](../../glossary.md#multi-version-concurrency-control) conflict detection for key ranges. Recovery creates resolver descriptors that map each shard's key range to resolver vacancy placeholders, establishing computational boundaries without assigning specific processes.
 
 ## Output Blueprint
 
 The phase produces a complete architectural specification:
 
 - **Log Vacancy Map**: Vacancy identifiers mapped to shard tag lists, completely replacing previous log architecture
-- **Storage Team Expansion**: Existing storage teams with precisely calculated additional vacancy slots
+- **Shard Expansion**: Existing shards with precisely calculated additional vacancy slots
 - **Resolver Layout**: Key range to resolver vacancy mappings for complete keyspace coverage
 
 ## Next Phase

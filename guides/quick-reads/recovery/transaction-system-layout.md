@@ -2,7 +2,7 @@
 
 **Recovery phase 12: Creating the coordination blueprint that enables distributed transaction processing.**
 
-After recovery brings components online individually, they exist in isolation—the [sequencer](../../deep-dives/architecture/data-plane/sequencer.md) can't notify [logs](../../deep-dives/architecture/data-plane/log.md), [proxies](../../deep-dives/architecture/data-plane/commit-proxy.md) can't route to [resolvers](../../deep-dives/architecture/data-plane/resolver.md), and [storage teams](../../deep-dives/architecture/data-plane/storage.md) operate independently. The Transaction System Layout (TSL) phase solves this coordination problem.
+After recovery brings components online individually, they exist in isolation—the [sequencer](../../deep-dives/architecture/data-plane/sequencer.md) can't notify [logs](../../deep-dives/architecture/data-plane/log.md), [proxies](../../deep-dives/architecture/data-plane/commit-proxy.md) can't route to [resolvers](../../deep-dives/architecture/data-plane/resolver.md), and [materializers](../../deep-dives/architecture/data-plane/storage.md) operate independently. The Transaction System Layout (TSL) phase solves this coordination problem.
 
 ## What It Does
 
@@ -11,7 +11,7 @@ This phase creates the authoritative coordination map that tells every component
 The TSL contains:
 
 - Process identifiers for all components
-- Key range assignments for storage teams and resolvers  
+- Key range assignments for shards and resolvers  
 - Log shard mappings
 - Communication endpoints and coordination relationships
 
@@ -35,7 +35,7 @@ Success transitions to [Persistence](persistence.md), which handles the final st
 
 ## Implementation
 
-**Source**: `lib/bedrock/control_plane/director/recovery/transaction_system_layout_phase.ex`
+**Source**: `lib/bedrock/control_plane/director/recovery/topology_phase.ex`
 
 ## See Also
 

@@ -147,11 +147,11 @@ The system implements exponential backoff with configurable retry limits (defaul
 
 **State Transition**: `:aborts_notified → :ready_for_logging`
 
-**Purpose**: Organize mutations by [storage team](../../../glossary.md#storage-team) tags for efficient distribution
+**Purpose**: Organize mutations by shard tags for efficient distribution
 
 **Actions Performed**:
 
-- Map transaction keys to storage team tags
+- Map transaction keys to shard tags
 - Group mutations by responsible log servers
 - Optimize data distribution to minimize network overhead
 
@@ -162,8 +162,8 @@ The system implements exponential backoff with configurable retry limits (defaul
 **Tag-Based Mutation Distribution**
 
 ```elixir
-# Determine storage team tags for each mutation
-key_or_range_to_tags(key_or_range, storage_teams)
+# Determine shard tags for each mutation
+split_mutation_by_shards(mutation, shards)
 
 # Find logs responsible for these tags
 find_logs_for_tags(affected_tags, logs_by_id)
@@ -174,7 +174,7 @@ Map.update!(mutations_acc, log_id, &[mutation | &1])
 
 The distribution algorithm ensures each log server receives exactly the mutations relevant to its storage responsibility:
 
-- **Key-to-Tag Mapping**: Efficiently maps keys and ranges to storage team tags
+- **Key-to-Tag Mapping**: Efficiently maps keys and ranges to shard tags
 - **Tag Intersection Logic**: Determines log server requirements based on tag coverage
 - **Range Operation Handling**: Special logic for `{:clear_range, start_key, end_key}` operations spanning multiple teams
 - **Mutation Deduplication**: Prevents redundant data transfer by filtering mutations per log

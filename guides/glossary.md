@@ -41,10 +41,6 @@ The strategy of processing multiple transactions together to amortize overhead c
 
 An immutable object-storage file holding one shard's transaction slices for a range of versions. Chunks are written by ShardServers on Demux-commanded cuts and are named for the last commit they contain, so a reader can find the chunk covering any version with a single next-key-after listing call. Because cuts are deterministic and gated on the known committed version, every replica produces byte-identical chunks.
 
-### **Codec**
-
-A module responsible for encoding/decoding keys or values for storage and transmission. Examples: `TupleKeyCodec`, `BertValueCodec`.
-
 ### **Currency**
 
 The high-water knowledge carried on every ShardServer pull reply: "here is your data" or "nothing for you, but you are current through version v." Busy shards learn it from slice pushes; idle shards learn it by subscription — a parked materializer asks its Demux once, and the Demux answers the moment its high-water advances. Currency is what lets a materializer for a quiet shard keep advancing its version (and serving fresh reads) without any timers or polling.
@@ -105,6 +101,14 @@ The promise that once a transaction is committed and acknowledged, it will survi
 
 ## E
 
+### **Encoding**
+
+A module responsible for packing and unpacking keys or values, attached to a
+`Bedrock.Keyspace` rather than to the repo. `Bedrock.Encoding.Tuple` implements
+the FoundationDB tuple layer, `Bedrock.Encoding.None` passes bytes through,
+and `Bedrock.Encoding.BERT` serializes Elixir terms. The repo API itself is
+binary in, binary out.
+
 ### **Epoch**
 
 A recovery generation number that increases with each cluster recovery, used to reject stale requests from previous recovery attempts.
@@ -132,10 +136,6 @@ The distributed database architecture that Bedrock follows, separating control p
 ---
 
 ## G
-
-### **Gateway**
-
-The client-facing interface that manages transaction coordination and serves as the entry point for all client operations. See also: [Gateway implementation](deep-dives/architecture/infrastructure/gateway.md).
 
 ### **Generation**
 
@@ -180,6 +180,14 @@ A logical clock mechanism used by the Sequencer to assign globally ordered versi
 ### **Last Commit Version**
 
 The most recent version number handed to a commit proxy by the Sequencer. Forms the Lamport clock chain with the next commit version for conflict detection.
+
+### **Link**
+
+The per-node client-facing interface (formerly called the Gateway). It discovers
+the cluster, holds this epoch's transaction system layout, and owns the node's
+routing cache — the partial, coalescing index of per-key routing answers fetched
+from commit proxies, read directly from ETS on every key lookup. See also:
+[Link implementation](deep-dives/architecture/infrastructure/link.md).
 
 ### **Lock Token**
 
@@ -295,17 +303,13 @@ An anonymous per-shard process owned by exactly one log's Demux. It buffers that
 
 The component that serves read requests and maintains versioned key-value data by streaming its shard's committed transactions from a log's Demux (called a [Materializer](#materializer) in the codebase). See also: [Storage implementation](deep-dives/architecture/data-plane/storage.md).
 
-### **Storage Team**
-
-A group of storage servers that collectively handle a set of key ranges, providing replication and load distribution.
-
 ### **Strict Serialization**
 
 The strongest isolation level where transactions appear to execute in some sequential order, with no interleaving of operations.
 
 ### **System Keys**
 
-Special keys used internally by Bedrock for storing system configuration and metadata (e.g., `\xff/system/transaction_system_layout`).
+Keys under the `\xff/system` prefix, which Bedrock uses for cluster metadata: `shard_keys/` for shard boundaries, `materializers/` for shard membership, and `distributor_lock/` for the Distributor's write fence. Writable only by system-mode commits. See [The System Keyspace](quick-reads/system-keyspace.md).
 
 ---
 

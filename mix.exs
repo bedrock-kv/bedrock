@@ -102,13 +102,42 @@ defmodule Bedrock.MixProject do
   defp docs do
     [
       main: "Bedrock",
+      # Every guide the README links to has to be an extra, or ex_doc
+      # resolves the link to nothing and it 404s on hexdocs.
       extras: [
         "README.md",
+        "guides/quick-reads/users-perspective.md",
+        "guides/quick-reads/transactions.md",
+        "guides/quick-reads/transaction-format.md",
+        "guides/quick-reads/data-plane.md",
+        "guides/quick-reads/control-plane.md",
+        "guides/quick-reads/transaction-system-layout.md",
+        "guides/quick-reads/system-keyspace.md",
+        "guides/quick-reads/recovery.md",
+        "guides/deep-dives/architecture.md",
+        "guides/deep-dives/transactions.md",
+        "guides/deep-dives/cluster-startup.md",
+        "guides/deep-dives/recovery.md",
         "guides/durability-foundation.md",
         "guides/durability-profile.md",
         "guides/object-storage-s3.md",
         "guides/async-persistence-queue.md",
-        "guides/distributed-durability-tests.md"
+        "guides/distributed-durability-tests.md",
+        "guides/glossary.md",
+        "guides/ai-start-here.md",
+        "LICENSE"
+      ],
+      groups_for_extras: [
+        "Quick Reads": ~r"guides/quick-reads/",
+        "Deep Dives": ~r"guides/deep-dives/",
+        Durability: [
+          "guides/durability-foundation.md",
+          "guides/durability-profile.md",
+          "guides/object-storage-s3.md",
+          "guides/async-persistence-queue.md",
+          "guides/distributed-durability-tests.md"
+        ],
+        Reference: ["guides/glossary.md", "guides/ai-start-here.md", "LICENSE"]
       ]
     ]
   end

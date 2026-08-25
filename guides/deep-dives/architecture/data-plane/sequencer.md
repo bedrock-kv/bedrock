@@ -48,8 +48,8 @@ Sequencer serves as the **global version authority** with these specific respons
 
 ## Related Components
 
-- **[Gateway](../infrastructure/gateway.md)**: Requests read versions from Sequencer for Transaction Builder processes
-- **[Transaction Builder](../infrastructure/transaction-builder.md)**: Obtains read versions through Gateway for transaction consistency
+- **[Link](../infrastructure/link.md)**: Requests read versions from Sequencer for Transaction Builder processes
+- **[Transaction Builder](../infrastructure/transaction-builder.md)**: Obtains read versions through Link for transaction consistency
 - **[Commit Proxy](commit-proxy.md)**: Requests commit versions and reports successful commits to Sequencer
 - **[Resolver](resolver.md)**: Uses Sequencer version chains for conflict detection analysis
 - **[Director](../control-plane/director.md)**: Control plane component that provides initial version state during recovery

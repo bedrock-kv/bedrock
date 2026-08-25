@@ -2,7 +2,7 @@
 
 **Finding the highest transaction version guaranteed durable across the cluster.**
 
-Version determination solves a critical distributed systems challenge: identifying the maximum [version](../../glossary.md#version) safely recoverable when [storage teams](../../glossary.md#storage-team) report different durability states. This establishes the recovery baseline—the foundation for all subsequent phases.
+Version determination solves a critical distributed systems challenge: identifying the maximum [version](../../glossary.md#version) safely recoverable when shards report different durability states. This establishes the recovery baseline—the foundation for all subsequent phases.
 
 ## The Challenge
 
@@ -12,7 +12,7 @@ Storage servers inevitably operate at different versions due to network delays a
 
 The algorithm uses two-tier analysis:
 
-### Storage Team Analysis
+### Shard Analysis
 
 For each team, recovery applies quorum mathematics to replica versions. In a three-replica team reporting versions [95, 98, 100], the durable version becomes 98—ensuring two replicas have the data even if the highest-version replica fails.
 

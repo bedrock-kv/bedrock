@@ -47,11 +47,6 @@ decoding durable bytes never creates atoms — and consumers derive the
 callable `{otp_name, node}` ref (worker OTP names are deterministic in
 the worker id, so a restart on the same node changes nothing).
 
-Clusters written before bedrock-q67.21.9 hold single-valued
-`materializers/<tag>` → `{worker_id, node}` entries. Those keys are still
-recognized (`legacy_materializer_key/1`); recovery rewrites each into the
-set-valued shape and clears the legacy key in the same transaction.
-
 Readers: `RoutingData` → per-key covering entries served to clients
 (`fetch_routing`), materializer rejoin validation — a worker (through the
 proxy answering for the committed state) checks whether its tag's member
@@ -100,7 +95,7 @@ arrives, and clears the entry of one that died or was parked for
 idleness — all as ordinary system-mode commits, so mid-epoch membership
 changes are visible to routing the moment they commit. It reads
 `shard_keys/` and never writes it. Recovery's remaining share of the
-family is the tag-0 metadata shard and the legacy-key migration.
+family is the tag-0 metadata shard.
 
 ## How it moves
 

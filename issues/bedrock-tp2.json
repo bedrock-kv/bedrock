@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T20:20:46Z",
+  "description": "",
+  "id": "bedrock-tp2",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Remove dead Director.ChangingParameters",
+  "type": "task",
+  "updated_at": "2026-08-25T20:20:46Z"
+}

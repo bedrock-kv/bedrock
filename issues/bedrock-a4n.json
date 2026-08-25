@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-25T19:52:02Z",
+  "close_reason": "Skill, analyzer, root manifest and reference doc created and validated against the ChunkWriter calibration case. Lives in .claude/ which is gitignored, so nothing to commit.",
   "created": "2026-08-25T19:50:50Z",
   "description": "",
   "id": "bedrock-a4n",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Add hunt-dead-code skill: transitive dead-code analyzer with root manifest",
   "type": "task",
-  "updated_at": "2026-08-25T19:50:50Z"
+  "updated_at": "2026-08-25T19:52:02Z"
 }

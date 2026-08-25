@@ -10,19 +10,6 @@ defmodule Bedrock.SystemKeysTest do
       assert SystemKeys.parse_key(SystemKeys.shard_key(<<0xFF, 0xFF>>)) == {:shard_key, <<0xFF, 0xFF>>}
     end
 
-    test "the pre-q67.21.9 single-valued key is recognized as legacy, not as garbage" do
-      # Before membership became a set the family was
-      # materializers/<tag> -> packed {worker_id, node}. A cluster written
-      # by that code still holds those keys, and reading them as garbage
-      # stalls every recovery on it forever (bedrock-q67.21.21).
-      assert SystemKeys.parse_key(<<0xFF, "/system/materializers/0">>) == {:legacy_materializer_key, 0}
-      assert SystemKeys.parse_key(<<0xFF, "/system/materializers/42">>) == {:legacy_materializer_key, 42}
-
-      # Still not a licence to accept nonsense.
-      assert SystemKeys.parse_key(<<0xFF, "/system/materializers/notanumber">>) == :unknown
-      assert SystemKeys.parse_key(<<0xFF, "/system/materializers/">>) == :unknown
-    end
-
     test "materializer_key/2 round-trips through parse_key/1, carrying tag AND worker" do
       assert SystemKeys.parse_key(SystemKeys.materializer_key(0, "wkr_sys")) == {:materializer_key, 0, "wkr_sys"}
       assert SystemKeys.parse_key(SystemKeys.materializer_key(42, "abc12def")) == {:materializer_key, 42, "abc12def"}
@@ -43,9 +30,9 @@ defmodule Bedrock.SystemKeysTest do
       assert SystemKeys.parse_key(SystemKeys.materializers_prefix()) == :unknown
 
       # A tag with a trailing slash and no worker is the prefix, not an
-      # entry. (A tag with NO slash is the pre-q67.21.9 single-valued
-      # entry — see the legacy test above.)
+      # entry; a tag with no slash at all names no member either.
       assert SystemKeys.parse_key(SystemKeys.materializers_prefix() <> "7/") == :unknown
+      assert SystemKeys.parse_key(SystemKeys.materializers_prefix() <> "7") == :unknown
     end
 
     test "prefixes cover exactly their families" do

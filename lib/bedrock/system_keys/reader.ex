@@ -51,21 +51,11 @@ defmodule Bedrock.SystemKeys.Reader do
   @doc """
   Decodes `materializers/<tag>/<worker_id>` entries into the membership
   map `%{tag => %{worker_id => node}}` - a shard's members are a set, and
-  absence of a key is absence of a member. Foreign or undecodable entries
-  fail the whole decode.
+  absence of a key is absence of a member.
 
-  A keyspace still holding the pre-q67.21.9 single-valued
-  `materializers/<tag>` entries is MIGRATED, not rejected: the old value
-  packs `{worker_id, node}`, which is one member of the same set, so it
-  folds in and both shapes may coexist mid-migration. Failing instead
-  was the loud edge of the format change — right as a guard against
-  reading the old family as empty (which would re-recruit every shard
-  and orphan the live ones), wrong as the only behaviour, because it
-  stalled every recovery on every pre-q67.21.9 cluster forever
-  (bedrock-q67.21.21).
-
-  What still fails the whole decode: a foreign key, or either shape with
-  an undecodable value. Absence of a key remains absence of a member.
+  A foreign key, or a member key with an undecodable value, fails the
+  whole decode: reading a family we cannot account for as empty would
+  re-recruit every shard and orphan the live ones.
   """
   @spec decode_materializer_members([{Bedrock.key(), binary()}]) ::
           {:ok, %{Bedrock.range_tag() => %{Bedrock.Service.Worker.id() => String.t()}}}
@@ -85,14 +75,6 @@ defmodule Bedrock.SystemKeys.Reader do
   defp decode_member_entry({:materializer_key, tag, worker_id}, value) do
     case Values.decode_materializer_node(value) do
       {:ok, node} -> {:ok, tag, worker_id, node}
-      _ -> :error
-    end
-  end
-
-  # The worker id rode the VALUE before it rode the key.
-  defp decode_member_entry({:legacy_materializer_key, tag}, value) do
-    case Values.decode_materializer_ref(value) do
-      {:ok, {worker_id, node}} -> {:ok, tag, worker_id, node}
       _ -> :error
     end
   end

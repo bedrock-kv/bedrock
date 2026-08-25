@@ -67,15 +67,6 @@ defmodule Bedrock.SystemKeys do
   @spec materializer_tag_prefix(Bedrock.range_tag()) :: Bedrock.key()
   def materializer_tag_prefix(tag) when is_integer(tag), do: "#{@system_prefix}/materializers/#{tag}/"
 
-  @doc """
-  The PRE-q67.21.9 single-valued membership key: `materializers/<tag>`.
-
-  Built only so recovery can CLEAR it once the members it held have been
-  rewritten in the set-valued shape. Nothing writes this key any more.
-  """
-  @spec legacy_materializer_key(Bedrock.range_tag()) :: Bedrock.key()
-  def legacy_materializer_key(tag) when is_integer(tag), do: "#{@system_prefix}/materializers/#{tag}"
-
   @doc "Prefix covering every materializer membership entry"
   @spec materializers_prefix() :: Bedrock.key()
   def materializers_prefix, do: "#{@system_prefix}/materializers/"
@@ -97,7 +88,6 @@ defmodule Bedrock.SystemKeys do
   @spec parse_key(Bedrock.key()) ::
           {:shard_key, Bedrock.key()}
           | {:materializer_key, Bedrock.range_tag(), Worker.id()}
-          | {:legacy_materializer_key, Bedrock.range_tag()}
           | {:distributor_lock, :owner | :write}
           | :unknown
           | :error
@@ -108,11 +98,6 @@ defmodule Bedrock.SystemKeys do
   def parse_key(<<@system_prefix, "/materializers/", rest::binary>>) do
     case String.split(rest, "/", parts: 2) do
       [tag_string, worker_id] when worker_id != "" -> materializer_key_or_unknown(tag_string, worker_id)
-      # Pre-q67.21.9: the family was single-valued, materializers/<tag>
-      # -> packed {worker_id, node}. Clusters written by that code still
-      # hold these, so they are recognized rather than read as garbage
-      # (bedrock-q67.21.21).
-      [tag_string] -> legacy_materializer_key_or_unknown(tag_string)
       _ -> :unknown
     end
   end
@@ -123,13 +108,6 @@ defmodule Bedrock.SystemKeys do
   defp materializer_key_or_unknown(tag_string, worker_id) do
     case Integer.parse(tag_string) do
       {tag, ""} -> {:materializer_key, tag, worker_id}
-      _ -> :unknown
-    end
-  end
-
-  defp legacy_materializer_key_or_unknown(tag_string) do
-    case Integer.parse(tag_string) do
-      {tag, ""} -> {:legacy_materializer_key, tag}
       _ -> :unknown
     end
   end

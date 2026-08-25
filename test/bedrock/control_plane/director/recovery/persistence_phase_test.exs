@@ -268,38 +268,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert range_read(store, SystemKeys.shard_keys_prefix()) == Enum.sort(stale_store)
     end
 
-    test "a pre-q67.21.9 legacy key is rewritten into the set shape and cleared, in one transaction" do
-      # Folding the old key on read is what unbricks the cluster; this is
-      # what finishes the job. Leaving it would keep the family in two
-      # shapes forever, and a legacy member could never be RETIRED —
-      # retirement clears the new-shape key it does not have.
-      legacy_key = SystemKeys.legacy_materializer_key(0)
-
-      recovery_attempt =
-        base_recovery_attempt()
-        # Two members under tag 0: the seated one and one the legacy key
-        # also held. BOTH must survive the migration.
-        |> Map.put(:prior_materializer_refs, %{0 => %{"wkr_sys" => node_string(), "wkr_other" => node_string()}})
-        |> Map.put(:legacy_materializer_keys, [legacy_key])
-
-      mutations = captured_system_mutations(recovery_attempt)
-
-      assert {:clear, legacy_key} in mutations
-
-      for id <- ["wkr_sys", "wkr_other"] do
-        key = SystemKeys.materializer_key(0, id)
-        assert Enum.any?(mutations, &match?({:set, ^key, _}, &1)), "member #{id} was dropped by the migration"
-      end
-
-      # Applied to a store that still holds the legacy entry, the result
-      # names both members in the new shape and nothing in the old.
-      store = apply_to_store(%{legacy_key => "whatever"}, mutations)
-
-      refute Map.has_key?(store, legacy_key)
-      assert Map.has_key?(store, SystemKeys.materializer_key(0, "wkr_sys"))
-      assert Map.has_key?(store, SystemKeys.materializer_key(0, "wkr_other"))
-    end
-
     test "materializer writes are a diff against the prior family; unnamed entries are not recovery's to clean" do
       # tag 0's assignment is unchanged (not rewritten); tag 1's changed
       # (rewritten); tag 9's entry names a tag outside this layout and is

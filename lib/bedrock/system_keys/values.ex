@@ -53,18 +53,6 @@ defmodule Bedrock.SystemKeys.Values do
   def decode_materializer_node(binary), do: safe_unpack(binary, &is_binary/1)
 
   @doc """
-  Decodes a PRE-q67.21.9 materializer ref: packed `{worker_id, node}`.
-
-  Read-only, and deliberately so: nothing writes this shape any more.
-  It exists because clusters written before membership became a set
-  still hold `materializers/<tag>` entries, and refusing to read them
-  stalls every recovery on those clusters forever (bedrock-q67.21.21).
-  """
-  @spec decode_materializer_ref(binary()) :: {:ok, {String.t(), String.t()}} | decode_error()
-  def decode_materializer_ref(binary),
-    do: safe_unpack(binary, &match?({worker_id, node} when is_binary(worker_id) and is_binary(node), &1))
-
-  @doc """
   Decodes a value given its parsed system key (from
   `Bedrock.SystemKeys.parse_key/1`).
   """

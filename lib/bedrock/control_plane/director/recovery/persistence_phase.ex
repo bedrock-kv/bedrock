@@ -242,11 +242,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp build_readable_keys(tx, recovery_attempt) do
     # The mapping families are durable, distributor-era state: recovery
     # reads and heals, never blanket-clears (bedrock-q67.21.2).
-    tx = build_shard_keys(tx, recovery_attempt)
-
     tx
+    |> build_shard_keys(recovery_attempt)
     |> build_materializer_keys(recovery_attempt)
-    |> migrate_legacy_materializer_keys(recovery_attempt)
   end
 
   # Creates materializer_key(tag, worker_id) -> node entries as a DIFF
@@ -286,35 +284,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
             end
         end
     end
-  end
-
-  # Completes the pre-q67.21.9 migration for the keys this recovery's
-  # read folded in: every member the legacy key held is rewritten in the
-  # set-valued shape, and only then is the legacy key cleared. Both in
-  # ONE transaction, so no reader ever sees the tag unrepresented.
-  #
-  # Rewriting every member matters: the legacy key may name a worker
-  # recovery did not seat, and clearing without writing it would drop a
-  # live member. Leaving the key instead would be worse — a legacy member
-  # can never be retired, because retirement clears the new-shape key it
-  # does not have.
-  @spec migrate_legacy_materializer_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
-  defp migrate_legacy_materializer_keys(tx, recovery_attempt) do
-    prior = Map.get(recovery_attempt, :prior_materializer_refs) || %{}
-
-    recovery_attempt
-    |> Map.get(:legacy_materializer_keys)
-    |> Kernel.||([])
-    |> Enum.reduce(tx, fn legacy_key, tx ->
-      {:legacy_materializer_key, tag} = SystemKeys.parse_key(legacy_key)
-
-      prior
-      |> Map.get(tag, %{})
-      |> Enum.reduce(tx, fn {worker_id, node}, tx ->
-        Tx.set(tx, SystemKeys.materializer_key(tag, worker_id), Values.encode_materializer_node(node))
-      end)
-      |> Tx.clear(legacy_key)
-    end)
   end
 
   # Creates shard_key(end_key) -> {tag, start_key} entries (ceiling

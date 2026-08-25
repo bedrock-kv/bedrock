@@ -584,7 +584,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         existing_context(recovery_version, %{
           read_prior_refs_fn: fn _pid, _version ->
-            {:ok, %{1 => %{"mat_named" => Atom.to_string(node())}}, []}
+            {:ok, %{1 => %{"mat_named" => Atom.to_string(node())}}}
           end
         })
 
@@ -635,7 +635,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         existing_context(recovery_version, %{
           read_prior_refs_fn: fn _pid, _version ->
-            {:ok, %{1 => %{"mat_gone" => Atom.to_string(node())}}, []}
+            {:ok, %{1 => %{"mat_gone" => Atom.to_string(node())}}}
           end
         })
 
@@ -734,32 +734,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       assert {:error, {:invalid_materializer_entry, ^garbage}} =
                MaterializerBootstrapPhase.decode_prior_refs([{garbage, <<0xEE>>}])
-    end
-
-    test "a pre-q67.21.9 single-valued entry folds into the set instead of failing the read" do
-      # The family used to be materializers/<tag> -> packed
-      # {worker_id, node}. A cluster written by that code still holds
-      # those keys, and rejecting them stalls its every recovery forever
-      # — the loud edge was right as a guard and wrong as the only
-      # behaviour (bedrock-q67.21.21).
-      legacy_key = <<0xFF, "/system/materializers/0">>
-      legacy_value = Bedrock.Encoding.Tuple.pack({"wkr_old", "n@h"})
-
-      assert {:ok, %{0 => %{"wkr_old" => "n@h"}}} =
-               MaterializerBootstrapPhase.decode_prior_refs([{legacy_key, legacy_value}])
-
-      # Both shapes can coexist mid-migration: one member each, one set.
-      mixed = [
-        {legacy_key, legacy_value},
-        {SK.materializer_key(0, "wkr_new"), V.encode_materializer_node("n2@h")}
-      ]
-
-      assert {:ok, %{0 => %{"wkr_old" => "n@h", "wkr_new" => "n2@h"}}} =
-               MaterializerBootstrapPhase.decode_prior_refs(mixed)
-
-      # A legacy KEY with an undecodable value is still a hard failure.
-      assert {:error, {:invalid_materializer_entry, ^legacy_key}} =
-               MaterializerBootstrapPhase.decode_prior_refs([{legacy_key, <<0xEE>>}])
     end
   end
 

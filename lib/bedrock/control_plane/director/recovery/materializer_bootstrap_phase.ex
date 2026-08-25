@@ -255,7 +255,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
            ),
          {:ok, shard_layout} <- get_shard_layout(materializer_pid, recovery_version, context),
          :ok <- reject_empty_layout(shard_layout),
-         {:ok, prior_refs, legacy_keys} <- read_prior_refs(materializer_pid, recovery_version, context),
+         {:ok, prior_refs} <- read_prior_refs(materializer_pid, recovery_version, context),
          {:ok, shard_materializers, created_services} <-
            ensure_materializers_for_shards(
              shard_layout,
@@ -281,12 +281,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         # the diff base for materializer writes.
         |> Map.put(:seeded_layout?, false)
         |> Map.put(:prior_materializer_refs, prior_refs)
-        # The pre-q67.21.9 keys this read folded in. Persistence rewrites
-        # their members in the set-valued shape and clears them, so the
-        # migration actually completes instead of leaving the family in
-        # two shapes forever — a legacy member can never be RETIRED,
-        # because retirement clears the new-shape key it does not have.
-        |> Map.put(:legacy_materializer_keys, legacy_keys)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
         |> Map.update!(:transaction_services, &Map.merge(&1, created_services))
 
@@ -556,16 +550,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
       Materializer.get_range(materializer_pid, start_key, range_end, read_version, limit: 1000)
     end
 
-    with {:ok, entries} <- Reader.read_family(range_read_fn, prefix, :prior_refs_query_failed),
-         {:ok, refs} <- decode_prior_refs(entries) do
-      {:ok, refs, legacy_keys(entries)}
+    case Reader.read_family(range_read_fn, prefix, :prior_refs_query_failed) do
+      {:ok, entries} -> decode_prior_refs(entries)
+      {:error, _reason} = error -> error
     end
-  end
-
-  defp legacy_keys(entries) do
-    for {key, _value} <- entries,
-        match?({:legacy_materializer_key, _tag}, Bedrock.SystemKeys.parse_key(key)),
-        do: key
   end
 
   @doc false

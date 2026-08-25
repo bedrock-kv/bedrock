@@ -37,8 +37,12 @@
     "lib/bedrock/type_coercion.ex"
   ],
 
-  # Reachable, but not by any edge the graph can see. Mix tasks are added
-  # automatically (anything under lib/mix/) and do not need listing here.
+  # Reachable, but not by any edge the graph can see. Paths may contain globs,
+  # so one dynamically-dispatched family is one entry with one reason.
+  #
+  # Two classes are rooted automatically and never need listing: anything under
+  # a `lib/mix/` directory, and any module named in a discovered project's
+  # `config/*.exs` (this repo has no config/, so that one is inert here).
   roots: [
     # -- add confirmed false positives here, with the reason --
   ]

@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T19:50:50Z",
+  "description": "",
+  "id": "bedrock-a4n",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Add hunt-dead-code skill: transitive dead-code analyzer with root manifest",
+  "type": "task",
+  "updated_at": "2026-08-25T19:50:50Z"
+}

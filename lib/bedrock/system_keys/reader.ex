@@ -54,26 +54,50 @@ defmodule Bedrock.SystemKeys.Reader do
   absence of a key is absence of a member. Foreign or undecodable entries
   fail the whole decode.
 
-  This is deliberately the loud edge of the format change: a keyspace
-  still holding single-valued `materializers/<tag>` entries fails here
-  rather than being read as an empty family. An empty family reads as
-  "no shard has any member", which would silently re-recruit every
-  shard and orphan the live ones — a wrong answer is worse than a
-  failed recovery that names the offending key.
+  A keyspace still holding the pre-q67.21.9 single-valued
+  `materializers/<tag>` entries is MIGRATED, not rejected: the old value
+  packs `{worker_id, node}`, which is one member of the same set, so it
+  folds in and both shapes may coexist mid-migration. Failing instead
+  was the loud edge of the format change — right as a guard against
+  reading the old family as empty (which would re-recruit every shard
+  and orphan the live ones), wrong as the only behaviour, because it
+  stalled every recovery on every pre-q67.21.9 cluster forever
+  (bedrock-q67.21.21).
+
+  What still fails the whole decode: a foreign key, or either shape with
+  an undecodable value. Absence of a key remains absence of a member.
   """
   @spec decode_materializer_members([{Bedrock.key(), binary()}]) ::
           {:ok, %{Bedrock.range_tag() => %{Bedrock.Service.Worker.id() => String.t()}}}
           | {:error, {:invalid_materializer_entry, Bedrock.key()}}
   def decode_materializer_members(entries) do
     Enum.reduce_while(entries, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
-      with {:materializer_key, tag, worker_id} <- SystemKeys.parse_key(key),
-           {:ok, node} <- Values.decode_materializer_node(value) do
-        {:cont, {:ok, Map.update(acc, tag, %{worker_id => node}, &Map.put(&1, worker_id, node))}}
-      else
-        _ -> {:halt, {:error, {:invalid_materializer_entry, key}}}
+      case decode_member_entry(SystemKeys.parse_key(key), value) do
+        {:ok, tag, worker_id, node} ->
+          {:cont, {:ok, Map.update(acc, tag, %{worker_id => node}, &Map.put(&1, worker_id, node))}}
+
+        :error ->
+          {:halt, {:error, {:invalid_materializer_entry, key}}}
       end
     end)
   end
+
+  defp decode_member_entry({:materializer_key, tag, worker_id}, value) do
+    case Values.decode_materializer_node(value) do
+      {:ok, node} -> {:ok, tag, worker_id, node}
+      _ -> :error
+    end
+  end
+
+  # The worker id rode the VALUE before it rode the key.
+  defp decode_member_entry({:legacy_materializer_key, tag}, value) do
+    case Values.decode_materializer_ref(value) do
+      {:ok, {worker_id, node}} -> {:ok, tag, worker_id, node}
+      _ -> :error
+    end
+  end
+
+  defp decode_member_entry(_not_a_member_key, _value), do: :error
 
   @doc """
   Decodes `shard_keys/<end_key>` entries into the boundary map

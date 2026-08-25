@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67.21",
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "Drop the pre-q67.21.9 single-valued materializer migration: the shape never shipped",
   "type": "task",
-  "updated_at": "2026-08-25T16:22:58Z"
+  "updated_at": "2026-08-25T16:23:01Z"
 }

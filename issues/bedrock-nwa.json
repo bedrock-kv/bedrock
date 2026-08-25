@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T15:47:29Z",
+  "description": "",
+  "id": "bedrock-nwa",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "system-keyspace guide documents the pre-q67.21.9 single-valued materializers/\u003ctag\u003e shape",
+  "type": "task",
+  "updated_at": "2026-08-25T15:47:29Z"
+}

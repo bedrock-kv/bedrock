@@ -27,6 +27,13 @@ elixir .claude/skills/hunt-dead-code/scripts/dead_code.exs
 
 `--json` for machine-readable output, `--root DIR` to analyze elsewhere.
 
+It discovers the project layout the way Mix does, so it needs no configuration
+and works unchanged on a library or an umbrella. `--root`'s `mix.exs` is read
+for `apps_path`: absent (this repo) means one project rooted here; present means
+the root plus every app under it, all scanned into a **single** graph so a
+cross-app reference counts as liveness. Each discovered project contributes its
+own `lib/`, `test/` and `config/`.
+
 It reports five things, in descending order of confidence:
 
 | Section | Confidence | Action |
@@ -127,6 +134,9 @@ roots: [
 ]
 ```
 
+Paths may contain globs, so a whole dynamically-dispatched family is one entry
+with one reason rather than a dozen identical lines.
+
 This is the ratchet, and it is the most valuable thing the skill produces. Each
 false positive becomes a permanent, justified root: the noise floor drops for
 good, and `roots.exs` accumulates into documentation of the dynamic-wiring
@@ -156,7 +166,6 @@ macro-generated calls. Treat them as a reading list, not a work queue.
 - `roots.exs` -- declared roots; the ratchet, grown over time
 - `reference.md` -- false-positive taxonomy and why `mix xref` is not enough
 
-> `.claude/` is gitignored in this repo, so `roots.exs` is local-only. The
-> justifications accumulated there are real project knowledge and will not
-> survive a fresh clone. If that becomes a problem, move the manifest somewhere
-> tracked and point the analyzer's `manifest_path` at it.
+`dead_code.exs` is layout-agnostic and carries no assumptions about this repo --
+keep it that way, so a fix found in one project flows to the others unchanged.
+Everything project-specific belongs in `roots.exs`.

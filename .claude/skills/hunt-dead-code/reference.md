@@ -64,7 +64,10 @@ def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.TSLValidati
 
 The alias head is not an atom, so a naive `__aliases__` walk drops it and the
 entire recovery phase chain looks dead. The analyzer resolves `__MODULE__`
-against the enclosing module.
+against the enclosing module, in **both** reference and `alias` position -- the
+`alias __MODULE__.Types` / `import_types(Types.Foo)` pairing that Absinthe
+schemas are built from is the same shape, and dropping it hides a whole
+subsystem behind one unresolved name.
 
 ### 3. Behaviour impls chosen at runtime
 
@@ -106,9 +109,36 @@ lib/bedrock/service/manifest.ex  worker_name |> String.split(".") |> Module.conc
 Anything reachable only through a `Module.concat` is invisible to every static
 tool. `manifest.ex` reconstructs worker modules from persisted strings.
 
-### 6. Mix tasks
+### 6. `defprotocol`
 
-CLI-invoked, never aliased. Everything under `lib/mix/` is rooted automatically.
+A protocol defines a module, but it is not a `defmodule`. Until the analyzer
+learned this, a protocol file owned no name in the graph, so no reference to it
+could resolve. `lib/bedrock/type_coercion.ex` is the case here: it holds
+`Bedrock.ToKeyRange` and `Bedrock.ToKeyspace`, both called from `keyspace.ex`,
+`repo.ex` and `directory.ex`, and it was still being reported as public API with
+no internal caller. `defimpl` bodies are walked for references but define no
+name worth tracking -- an impl lives or dies with its protocol.
+
+### 7. Modules named only in config
+
+A module looked up at runtime from application env is named in `config/*.exs`
+and nowhere else. The analyzer parses every discovered project's config and
+roots what it finds, so this class is handled without manifest entries. Inert in
+this repo, which has no `config/` -- it earns its keep in an application, where
+adapters, event handlers and job queues are all wired this way.
+
+### 8. Framework naming conventions
+
+Phoenix `scope "/x", Some.Namespace do ... end` prefixes bare aliases inside the
+block with no `alias` line anywhere, and controllers pick their view by name
+rather than by reference. The analyzer accumulates `scope` prefixes; the view
+convention it cannot see at all. Neither applies to this repo. They are listed
+because the analyzer is shared across projects and the code is there.
+
+### 9. Mix tasks
+
+CLI-invoked, never aliased. Anything under a `lib/mix/` directory is rooted
+automatically.
 
 ## Things that are *not* evidence of life
 
@@ -148,3 +178,6 @@ thereby testing that backend.
 - `ChunkReader` alongside it: **live** (`demux/shard_server.ex`)
 
 If a change to the analyzer breaks any of those four, the change is wrong.
+
+`Bedrock.ToKeyRange` must stay **off** the unused-public-API list: it is the
+regression test for `defprotocol` ownership (class 6).

@@ -21,7 +21,7 @@
 defmodule DeadCode.Source do
   @moduledoc "Parses one source file into the facts the graph needs."
 
-  defstruct [:path, :modules, :aliases, :refs, :behaviours, :functions, :impls]
+  defstruct [:path, :modules, :aliases, :refs, :behaviours, :functions, :impls, :called]
 
   def parse(path, root) do
     rel = Path.relative_to(path, root)
@@ -30,20 +30,35 @@ defmodule DeadCode.Source do
       {:ok, ast} ->
         modules = modules(ast)
         primary = List.first(modules)
-        aliases = aliases(ast)
+        aliases = aliases(ast, primary)
 
         %__MODULE__{
           path: rel,
           modules: modules,
           aliases: aliases,
-          refs: refs(ast, aliases, primary),
+          refs: refs(ast, aliases, primary) ++ scoped_refs(ast),
           behaviours: behaviours(ast, aliases),
           functions: functions(ast, primary),
-          impls: impls(ast)
+          impls: impls(ast),
+          # Captured here, while the absolute path is still in hand. Re-reading
+          # later by the stored relative path resolved it against the cwd, so
+          # --root silently analyzed whichever tree the shell happened to be in
+          # -- reading a same-named file out of the wrong checkout rather than
+          # failing. It also parsed every file a second time.
+          called: called_names(ast)
         }
 
       {:error, _} ->
-        %__MODULE__{path: rel, modules: [], aliases: %{}, refs: [], behaviours: [], functions: [], impls: []}
+        %__MODULE__{
+          path: rel,
+          modules: [],
+          aliases: %{},
+          refs: [],
+          behaviours: [],
+          functions: [],
+          impls: [],
+          called: MapSet.new()
+        }
     end
   end
 
@@ -51,13 +66,19 @@ defmodule DeadCode.Source do
 
   # Every module defined in the file, outermost first. Nested `defmodule`s are
   # qualified against their enclosing module the way the compiler does.
+  #
+  # `defprotocol` defines a module too. Without it a protocol file owns no name,
+  # so no reference to it can resolve and it reads as dead however many callers
+  # it has. `defimpl` bodies are walked for references but define no name worth
+  # tracking: an impl lives or dies with its protocol.
   def modules(ast) do
     {_, {mods, _}} =
       Macro.traverse(
         ast,
         {[], []},
         fn
-          {:defmodule, _, [{:__aliases__, _, parts} | _]} = node, {mods, stack} when is_list(parts) ->
+          {kind, _, [{:__aliases__, _, parts} | _]} = node, {mods, stack}
+          when kind in [:defmodule, :defprotocol] and is_list(parts) ->
             name =
               if stack == [],
                 do: dotted(parts),
@@ -69,7 +90,7 @@ defmodule DeadCode.Source do
             {node, acc}
         end,
         fn
-          {:defmodule, _, _} = node, {mods, stack} ->
+          {kind, _, _} = node, {mods, stack} when kind in [:defmodule, :defprotocol] ->
             {node, {mods, Enum.drop(stack, -1)}}
 
           node, acc ->
@@ -83,9 +104,30 @@ defmodule DeadCode.Source do
   # alias Foo.Bar / alias Foo.Bar, as: Baz / alias Foo.{Bar, Baz}
   # Treated as file-global rather than lexically scoped. That over-links, which
   # over-approximates liveness -- the safe direction.
-  def aliases(ast) do
+  #
+  # `alias __MODULE__.Mutations` is resolved against the enclosing module. The
+  # Absinthe schema is built entirely out of that idiom -- `alias
+  # __MODULE__.Types` followed by 200-odd `import_types(Types.Foo)` -- so
+  # dropping it makes the whole GraphQL type surface look dead.
+  def aliases(ast, primary \\ nil) do
     {_, table} =
       Macro.prewalk(ast, %{}, fn
+        {:alias, _, [{:__aliases__, _, [{:__MODULE__, _, _} | rest]} | opts]} = node, acc
+        when is_list(rest) ->
+          if primary && rest != [] && Enum.all?(rest, &is_atom/1) do
+            full = dotted([primary | Enum.map(rest, &to_string/1)])
+
+            key =
+              case Keyword.get(List.wrap(List.first(opts)), :as) do
+                {:__aliases__, _, [as]} when is_atom(as) -> to_string(as)
+                _ -> to_string(List.last(rest))
+              end
+
+            {node, Map.put(acc, key, full)}
+          else
+            {node, acc}
+          end
+
         {:alias, _, [{{:., _, [{:__aliases__, _, base}, :{}]}, _, children}]} = node, acc
         when is_list(base) and is_list(children) ->
           if Enum.all?(base, &is_atom/1) do
@@ -165,6 +207,41 @@ defmodule DeadCode.Source do
 
     Enum.uniq(refs)
   end
+
+  # Phoenix `scope "/x", Some.Namespace do ... post "/", FooController ... end`
+  # prefixes bare aliases inside the block with the scope's namespace. No
+  # `alias` line exists, so without this every controller in a namespaced scope
+  # looks unreferenced. Nested scopes accumulate their prefixes. Inert in a
+  # project that has no such macro.
+  def scoped_refs(ast), do: ast |> scoped_refs([]) |> Enum.uniq()
+
+  defp scoped_refs({:scope, _, args}, prefix) when is_list(args) do
+    ns =
+      Enum.find_value(args, fn
+        {:__aliases__, _, parts} when is_list(parts) ->
+          if Enum.all?(parts, &is_atom/1), do: Enum.map(parts, &to_string/1)
+
+        _ ->
+          nil
+      end)
+
+    inner = if ns, do: prefix ++ ns, else: prefix
+
+    Enum.flat_map(args, fn
+      arg -> scoped_refs(arg, inner)
+    end)
+  end
+
+  defp scoped_refs({:__aliases__, _, parts}, prefix) when is_list(parts) and prefix != [] do
+    if Enum.all?(parts, &is_atom/1),
+      do: [dotted(prefix ++ Enum.map(parts, &to_string/1))],
+      else: []
+  end
+
+  defp scoped_refs({a, _, b}, prefix), do: scoped_refs(a, prefix) ++ scoped_refs(b, prefix)
+  defp scoped_refs({a, b}, prefix), do: scoped_refs(a, prefix) ++ scoped_refs(b, prefix)
+  defp scoped_refs(list, prefix) when is_list(list), do: Enum.flat_map(list, &scoped_refs(&1, prefix))
+  defp scoped_refs(_, _), do: []
 
   def behaviours(ast, aliases) do
     {_, bs} =
@@ -377,9 +454,15 @@ defmodule DeadCode.CLI do
         %{roots: [], public_api: []}
       end
 
-    lib = Path.wildcard(Path.join(root, "lib/**/*.ex"))
-    support = Path.wildcard(Path.join(root, "test/support/**/*.ex"))
-    tests = Path.wildcard(Path.join(root, "test/**/*_test.exs"))
+    # Every Mix project under `root`, discovered the way Mix itself decides:
+    # one entry for a plain library, one per app (plus the root) for an
+    # umbrella. All of them are scanned into a single graph, so a cross-app
+    # reference counts as liveness.
+    projects = projects(root)
+
+    lib = project_glob(projects, "lib/**/*.ex")
+    support = project_glob(projects, "test/support/**/*.ex")
+    tests = project_glob(projects, "test/**/*_test.exs")
 
     lib_sources = Enum.map(lib, &Source.parse(&1, root))
     support_sources = Enum.map(support, &Source.parse(&1, root))
@@ -387,13 +470,20 @@ defmodule DeadCode.CLI do
 
     graph = Graph.build(lib_sources)
 
-    declared = manifest |> Map.get(:roots, []) |> Enum.map(&elem(&1, 0))
+    declared =
+      manifest
+      |> Map.get(:roots, [])
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.flat_map(&expand_root(root, &1))
     public_api = Map.get(manifest, :public_api, [])
 
-    mix_tasks = graph.nodes |> Enum.filter(&String.starts_with?(&1, "lib/mix/"))
+    # Mix tasks are invoked from the CLI and never aliased.
+    mix_tasks = graph.nodes |> Enum.filter(&String.contains?(&1, "lib/mix/"))
+
+    config_roots = config_roots(projects, graph.owner)
 
     roots =
-      (declared ++ public_api ++ mix_tasks)
+      (declared ++ public_api ++ mix_tasks ++ config_roots)
       |> Enum.uniq()
       |> Enum.filter(&MapSet.member?(graph.nodes, &1))
 
@@ -413,6 +503,74 @@ defmodule DeadCode.CLI do
     else
       emit_text(graph, clusters, test_index, unused_public, dead_fns, roots, live)
     end
+  end
+
+  # A declared root may be a glob, so a whole dynamically-dispatched family
+  # (the order state workers, the per-context `events.ex`) is one manifest entry
+  # with one reason rather than two dozen identical lines.
+  defp expand_root(root, pattern) do
+    if String.contains?(pattern, "*") do
+      root
+      |> glob([pattern])
+      |> Enum.map(&Path.relative_to(&1, root))
+    else
+      [pattern]
+    end
+  end
+
+  # Mix's own definition of an umbrella is `apps_path` being set in the root
+  # project, so read that rather than guessing at directory names: a library
+  # yields just the root, an umbrella yields the root plus every app, and an
+  # umbrella that calls its apps directory something other than "apps" still
+  # works. Every project contributes its own lib/, test/ and config/.
+  defp projects(root) do
+    apps =
+      case root |> Path.join("mix.exs") |> apps_path() do
+        nil -> []
+        dir -> root |> glob([Path.join(dir, "*/mix.exs")]) |> Enum.map(&Path.dirname/1)
+      end
+
+    [root | apps]
+  end
+
+  defp apps_path(mix_exs) do
+    with true <- File.exists?(mix_exs),
+         {:ok, ast} <- mix_exs |> File.read!() |> Code.string_to_quoted() do
+      {_, found} =
+        Macro.prewalk(ast, nil, fn
+          {:apps_path, dir} = node, _ when is_binary(dir) -> {node, dir}
+          node, acc -> {node, acc}
+        end)
+
+      found
+    else
+      _ -> nil
+    end
+  end
+
+  defp project_glob(projects, pattern), do: Enum.flat_map(projects, &glob(&1, [pattern]))
+
+  # Anything a config file names is an entry point: the module is looked up at
+  # runtime from application env and never referenced from lib/. A Phoenix app
+  # wires its event handlers, Oban queues and adapters this way, so without it
+  # whole subsystems read as dead. Inert in a project with no config/ at all.
+  defp config_roots(projects, owner) do
+    projects
+    |> project_glob("config/*.exs")
+    |> Enum.flat_map(fn path ->
+      case path |> File.read!() |> Code.string_to_quoted() do
+        {:ok, ast} -> Source.refs(ast, Source.aliases(ast), nil)
+        {:error, _} -> []
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.flat_map(&List.wrap(Map.get(owner, &1)))
+  end
+
+  defp glob(root, patterns) do
+    patterns
+    |> Enum.flat_map(&Path.wildcard(Path.join(root, &1)))
+    |> Enum.uniq()
   end
 
   # A test file dies wholesale when its *subject* is dead -- the module its own
@@ -451,7 +609,7 @@ defmodule DeadCode.CLI do
     end
   end
 
-  # Bedrock.ObjectStorage.ChunkWriterTest -> Bedrock.ObjectStorage.ChunkWriter
+  # Some.Namespace.FooTest -> Some.Namespace.Foo
   defp subject_module(%{modules: []}), do: nil
 
   defp subject_module(%{modules: [primary | _]}) do
@@ -525,15 +683,7 @@ defmodule DeadCode.CLI do
   end
 
   defp mention_index(sources) do
-    for s <- sources, into: %{} do
-      ast =
-        case s.path |> File.read!() |> Code.string_to_quoted() do
-          {:ok, parsed} -> parsed
-          _ -> {:__block__, [], []}
-        end
-
-      {s.path, Source.called_names(ast)}
-    end
+    for s <- sources, into: %{}, do: {s.path, s.called}
   end
 
   defp mentioned_elsewhere?(mentions, own_path, name) do

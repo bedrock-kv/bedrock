@@ -19,14 +19,9 @@ defmodule Bedrock.DataPlane.Resolver.TelemetryTest do
       handler_id,
       [
         [:bedrock, :resolver, :resolve_transactions, :received],
-        [:bedrock, :resolver, :resolve_transactions, :processing],
         [:bedrock, :resolver, :resolve_transactions, :completed],
-        [:bedrock, :resolver, :resolve_transactions, :reply_sent],
-        [:bedrock, :resolver, :resolve_transactions, :waiting_list],
         [:bedrock, :resolver, :resolve_transactions, :waiting_list_inserted],
-        [:bedrock, :resolver, :resolve_transactions, :waiting_resolved],
-        [:bedrock, :resolver, :resolve_transactions, :validation_error],
-        [:bedrock, :resolver, :resolve_transactions, :waiting_list_validation_error]
+        [:bedrock, :resolver, :resolve_transactions, :waiting_resolved]
       ],
       &__MODULE__.handle_event/4,
       %{test_pid: test_pid}
@@ -104,7 +99,6 @@ defmodule Bedrock.DataPlane.Resolver.TelemetryTest do
       transactions = ["tx"]
       aborted = []
       waiting_list = %{}
-      reason = :test
 
       assert :ok = Telemetry.emit_received(transactions, version)
       assert :ok = Telemetry.emit_completed(transactions, aborted, version)

@@ -33,18 +33,45 @@ resolver metadata windows), the next recovery's materializer bootstrap
 (the cross-epoch read that rebuilds the layout), and — indirectly —
 every client, via proxy-served routing.
 
-### `materializers/<tag>` → `{worker_id, node}`
+### `materializers/<tag>/<worker_id>` → node
 
-Which materializer serves each shard: Bedrock's `serverList/` analogue,
-with interfaces riding the keyspace. Both fields are strings — decoding
-durable bytes never creates atoms — and consumers derive the callable
-`{otp_name, node}` ref (worker OTP names are deterministic in the worker
-id, so a restart on the same node changes nothing).
+Which materializers serve each shard: Bedrock's `serverList/` analogue,
+with interfaces riding the keyspace. Membership is a **set**, expressed
+by key presence — the tag is major, the member id is *in* the key, and
+removal is a clear of that one key. One family answers both questions
+FDB needs two for: a prefix scan over a tag gives the shard's members
+(FDB's range-major `keyServers/<range>` → team), and each member is
+individually addressable for removal (FDB's server-major
+`serverKeys/<server>/<range>`). The value is the node, as a string —
+decoding durable bytes never creates atoms — and consumers derive the
+callable `{otp_name, node}` ref (worker OTP names are deterministic in
+the worker id, so a restart on the same node changes nothing).
+
+Clusters written before bedrock-q67.21.9 hold single-valued
+`materializers/<tag>` → `{worker_id, node}` entries. Those keys are still
+recognized (`legacy_materializer_key/1`); recovery rewrites each into the
+set-valued shape and clears the legacy key in the same transaction.
 
 Readers: `RoutingData` → per-key covering entries served to clients
-(`fetch_routing`), and worker rejoin validation — a worker (through the
-proxy answering for the committed state) checks whether the entry for
-its tag still names it; absence means retire.
+(`fetch_routing`), materializer rejoin validation — a worker (through the
+proxy answering for the committed state) checks whether its tag's member
+set still names it; absence means retire — and recovery's materializer
+bootstrap, which reads the family as its re-adoption input and as the
+persistence phase's diff base.
+
+### `distributor_lock/owner`, `distributor_lock/write` → opaque UIDs
+
+The Distributor's write fence: a port of FDB's MoveKeys lock
+(`moveKeysLockOwnerKey` / `moveKeysLockWriteKey`). Every mutating
+Distributor transaction reads both keys and proves inside its own
+serializable commit that no newer owner has appeared, so a superseded
+Distributor's writes are refused by the commit pipeline itself rather
+than by cooperation. A read-only poll of the same keys is what lets an
+idle zombie exit promptly.
+
+Reader and writer: the Distributor alone
+(`Bedrock.ControlPlane.Distributor.Lock`, driven by
+`Distributor.Transactions`).
 
 ## Who writes, and the ownership handoff
 
@@ -66,11 +93,14 @@ recovery never rewrites the mapping (bedrock-q67.21.2):
   the assignments it changed. Entries recovery didn't touch — including strays for tags
   outside the layout — are not recovery's to clean.
 
-The Distributor (bedrock-q67.21) completes the ownership transfer: a
-keyspace-enforced write fence (`distributor_lock/{owner,write}`, the
-MoveKeys-lock port) fences its mid-epoch mutations, and stale-entry
-reconciliation and data-tag healing become its job, with recovery's
-shrinking to the tag-0 metadata shard.
+The **Distributor** (bedrock-q67.21) owns `materializers/` between
+recoveries. Under the `distributor_lock/` fence it publishes the
+placeholder for uncovered tags, seats a real materializer when demand
+arrives, and clears the entry of one that died or was parked for
+idleness — all as ordinary system-mode commits, so mid-epoch membership
+changes are visible to routing the moment they commit. It reads
+`shard_keys/` and never writes it. Recovery's remaining share of the
+family is the tag-0 metadata shard and the legacy-key migration.
 
 ## How it moves
 
@@ -101,8 +131,6 @@ Families exist only alongside their consumers; these return with theirs:
 
 - **Cluster configuration** (bedrock-q67.25): parameters and policies,
   read back at recovery, changed by ordinary transactions.
-- **Distributor coverage** (bedrock-q67.21): mid-epoch shard and
-  materializer mutations from the coverage owner.
 - **Shard genealogy** (Phase C): split/merge lineage.
 
 See `Bedrock.SystemKeys` and `Bedrock.SystemKeys.Values` for the

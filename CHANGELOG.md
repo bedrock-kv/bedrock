@@ -161,6 +161,25 @@ describes; the broadcast carries only this epoch's wiring.
   Keyspace guide documents every `\xFF/system` family and who writes it, and CI
   now covers OTP 29.
 
+- **The key and value encodings are documented API.** `Bedrock.Encoding` and
+  its three implementations carried `@moduledoc false` while the guides told
+  you to pass `Encoding.Tuple` as a `key_encoding:` — the package was hiding
+  modules it asked you to name. They are now documented, with the property
+  that actually governs the choice made explicit: an encoding used for **keys**
+  must be order-preserving, so that the byte order of packed keys matches the
+  logical order of the values inside them and a range read returns what you
+  meant.
+
+  | Encoding | Accepts | Order-preserving | Use for |
+  |---|---|---|---|
+  | `Bedrock.Encoding.Tuple` | tuples, lists, binaries, integers, floats, `nil` | yes | keys |
+  | `Bedrock.Encoding.None` | binaries only | yes (identity) | keys or values |
+  | `Bedrock.Encoding.BERT` | any Elixir term | **no** | values |
+
+  `BERT` is documented as values-only for that reason, and carries a note that
+  `unpack/1` uses `:erlang.binary_to_term/1` without `:safe` — fine for values
+  your own application wrote, not for bytes from anywhere else.
+
 ## 0.6.1 — 2026-08-19
 
 - **Security: remove hackney from the dependency tree.** An audit found the

@@ -102,15 +102,12 @@ defmodule Bedrock.MixProject do
   defp docs do
     [
       main: "Bedrock",
-      # Named in prose by the architecture and glossary guides, but carrying
+      # Named in prose by the architecture guides, but carrying
       # `@moduledoc false` on purpose. Listing them here documents that the
       # silence is deliberate, rather than leaving ex_doc to warn on each.
       skip_code_autolink_to: [
         "Bedrock.Cluster.Link.Server",
         "Bedrock.Cluster.Link.State",
-        "Bedrock.Encoding.BERT",
-        "Bedrock.Encoding.None",
-        "Bedrock.Encoding.Tuple",
         "Bedrock.Internal.GenServerApi"
       ],
       # Every guide the README links to has to be an extra, or ex_doc

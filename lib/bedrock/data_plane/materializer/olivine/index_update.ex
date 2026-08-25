@@ -122,6 +122,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
   end
 
   @spec apply_mutation(Tx.mutation(), Bedrock.version(), t()) :: t()
+  # A key at or past the index's own upper bound is not index data: only
+  # the commit proxy can synthesize one, and it does so precisely to
+  # address a worker rather than a shard (see
+  # Finalization.privatized_mutations/1). Written verbatim it would become
+  # a durable out-of-bounds key that survives compaction and snapshot
+  # upload, and would corrupt the n_keys/size_in_bytes facts that gate
+  # idle spin-down.
+  defp apply_mutation({_op, key}, _target_version, index_update) when key >= @max_key, do: index_update
+  defp apply_mutation({_op, key, _value}, _target_version, index_update) when key >= @max_key, do: index_update
+
   defp apply_mutation({:set, key, value}, target_version, index_update) do
     insertion_page = Tree.page_for_key(index_update.index.tree, key)
     {:ok, locator, database} = Database.store_value(index_update.database, key, target_version, value)

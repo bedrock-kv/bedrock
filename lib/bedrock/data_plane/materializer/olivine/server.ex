@@ -247,12 +247,28 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
       {batch, _batch_last_version, updated_intake_queue} ->
         updated_state = maybe_release_ingest(%{t | intake_queue: updated_intake_queue})
-        # Process small batch for responsiveness
-        {:ok, state_with_txns, version} = Logic.apply_transactions(updated_state, batch)
-        final_state = notify_waiting_fetches(state_with_txns, version)
 
-        # Check for more transactions to process
-        noreply(final_state, continue: :maybe_process_transactions)
+        # Retirement arrives in-band, on the stream this worker already
+        # follows, at the version its assignment ends — no recovery push,
+        # no proxy round trip. Asked here because this is the single point
+        # where stream data becomes durable state, and the answer is to
+        # stop rather than apply. No epoch gate: a private mutation is
+        # from the current epoch by construction, since the proxy that
+        # synthesized it is the current epoch's.
+        if Logic.retirement_notice?(batch, Logic.retirement_notice_key(updated_state)) do
+          require Logger
+
+          Logger.info("Bedrock materializer #{t.id}: membership cleared for shard #{t.shard_num}; retiring")
+          Foreman.worker_retired(t.foreman, t.id)
+          {:stop, {:shutdown, :displaced}, updated_state}
+        else
+          # Process small batch for responsiveness
+          {:ok, state_with_txns, version} = Logic.apply_transactions(updated_state, batch)
+          final_state = notify_waiting_fetches(state_with_txns, version)
+
+          # Check for more transactions to process
+          noreply(final_state, continue: :maybe_process_transactions)
+        end
     end
   end
 

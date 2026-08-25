@@ -183,7 +183,8 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # Verification verdicts serialize back through the server. A verdict
   # for a worker the committed set no longer contains is DROPPED: some
   # other mechanism (death healing, idle retirement, a newer owner)
-  # already removed it, and a late-adopted stray retires itself in-band.
+  # already removed it, and a late-adopted stray retires itself in-band
+  # when its own key is cleared.
   # Nothing is reserved while a probe is in flight — with set-valued
   # membership an extra materializer is legal, so the only cost of a
   # concurrent recruit is a redundant worker, never a lost heal.
@@ -699,7 +700,8 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # epoch, unlocked at its own durable version, its entry re-asserted
   # under the fence. Anything else (wedged, dead, unreachable beyond the
   # monitor's damping) is healed; the worker itself is never removed —
-  # it retires in-band when it observes the replacing entry. One shot,
+  # it retires in-band when its OWN key is cleared — membership is a set,
+  # so another member appearing is not displacement. One shot,
   # at the sweep. Nothing is reserved while a probe runs: membership is
   # a set, so a concurrent recruit costs a redundant worker, never a
   # lost heal.

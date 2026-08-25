@@ -14,6 +14,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Materializer.Olivine.Streaming
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
   alias Bedrock.DataPlane.Materializer.Telemetry
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
   alias Bedrock.ObjectStorage.Keys
@@ -126,6 +127,40 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
   @spec ensure_directory_exists(Path.t()) :: :ok | {:error, File.posix()}
   defp ensure_directory_exists(path), do: File.mkdir_p(path)
+
+  @doc """
+  This worker's retirement notice key, or nil if it has no assignment.
+
+  The worker id is IN the key, so the question a private mutation poses
+  is FDB's own — `startsWith(data->sk)`, "is this about me?"
+  (`storageserver.actor.cpp:11523`) — not "does this value name someone
+  else". Set-valued membership is what collapses it: a sibling joining or
+  leaving is not this worker's business.
+  """
+  @spec retirement_notice_key(State.t()) :: Bedrock.key() | nil
+  def retirement_notice_key(%State{id: id, shard_num: shard_num}) when is_binary(id) and is_integer(shard_num),
+    do: Bedrock.end_of_keyspace() <> Bedrock.SystemKeys.materializer_key(shard_num, id)
+
+  def retirement_notice_key(_unassigned), do: nil
+
+  @doc """
+  Whether a batch carries this worker's retirement notice.
+
+  Asked at the single point where stream data becomes durable state, so
+  the worker retires at exactly the version its assignment ends — the
+  notice rides the same commit that removed the membership entry.
+  """
+  @spec retirement_notice?([Transaction.encoded()], Bedrock.key() | nil) :: boolean()
+  def retirement_notice?(_batch, nil), do: false
+
+  def retirement_notice?(batch, notice_key) do
+    Enum.any?(batch, fn transaction ->
+      case Transaction.mutations(transaction) do
+        {:ok, mutations} -> Enum.any?(mutations, &match?({:clear, ^notice_key}, &1))
+        _no_mutations -> false
+      end
+    end)
+  end
 
   @spec shutdown(State.t()) :: :ok
   def shutdown(%State{} = t) do

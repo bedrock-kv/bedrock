@@ -139,6 +139,26 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
     assert_receive {:user_tx, {:error, {:key_out_of_range, ^system_key}}}
   end
 
+  test "a privatized key is unforgeable — even a system commit cannot write one" do
+    # What makes an in-band retirement notice trustworthy: the notice is
+    # built by prefixing end_of_keyspace, and ingress rejects every key at
+    # or past that sentinel in BOTH modes. Only the proxy, synthesizing
+    # after validation, can put one on the stream — FDB's reason for
+    # moving privatized keys outside allKeys.
+    private = Bedrock.end_of_keyspace() <> Bedrock.SystemKeys.materializer_key(7, "wkr_victim")
+
+    batch =
+      batch_of([
+        {reply_to_self(:system_tx), encode([{:clear, private}], "s"), :system},
+        {reply_to_self(:user_tx), encode([{:clear, private}], "u"), :user}
+      ])
+
+    assert {:ok, 2, 0} = finalize(batch)
+
+    assert_receive {:system_tx, {:error, {:key_out_of_range, ^private}}}
+    assert_receive {:user_tx, {:error, {:key_out_of_range, ^private}}}
+  end
+
   test "a corrupt mutation payload fails closed without failing the batch" do
     corrupt = corrupt_mutation_payload(encode([{:set, "k", "v"}], "k"))
 

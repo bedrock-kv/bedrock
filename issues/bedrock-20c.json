@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T19:19:09Z",
+  "description": "Found during the bedrock-61c.3 audit; pre-existing and currently unreachable.\n\nlib/bedrock/data_plane/log/shale/segment_recycler.ex — `Server.handle_call({:check_out, ...})`:\n\n    {:ok, state}          -\u003e reply(state, :ok, continue: :ensure_min_available)\n    {:error, _reason} = e -\u003e reply(state, e)\n\nThe success path schedules the min-refill; the failure path does not. `Logic.check_out/2` returns `{:error, :unavailable}` exactly when `segments: []`, so the one moment the pool most needs refilling is the one moment it is not scheduled. Nothing else drives `:ensure_min_available` except a successful checkout, so an emptied pool never recovers on its own — every subsequent checkout fails, and `Segment.allocate_from_recycler!/4` raises.\n\nCurrently unreachable: `check_out` is always followed by a refill that restores `min_available` before the next message, and check-in never shrinks the pool. It becomes reachable if allocation ever fails transiently (a full disk that later clears) — the pool would be stuck at zero with no path back even after space returns.\n\n## Fix\n\nSchedule `:ensure_min_available` on the error path too.\n\n## Test (write first, must fail)\n\nConstruct a recycler state with an empty pool, call `handle_call({:check_out, path}, ...)`, and assert the reply carries `{:continue, :ensure_min_available}` alongside the error.",
+  "id": "bedrock-20c",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "[BUG] SegmentRecycler never refills after a failed check_out, so an emptied pool stays empty",
+  "type": "bug",
+  "updated_at": "2026-08-25T19:19:09Z"
+}

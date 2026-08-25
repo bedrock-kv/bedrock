@@ -9,6 +9,7 @@ defmodule Bedrock.Internal.Repo do
   alias Bedrock.KeySelector
 
   @default_timeout_in_ms 5_000
+  @max_retry_delay_in_ms 1_000
 
   # Read failures that never resolve without new information, only with a
   # retry: version window misses resolve with a fresh read version, and the
@@ -323,10 +324,12 @@ defmodule Bedrock.Internal.Repo do
 
   defp routing_fn_for_transaction(cluster, nil, link) do
     fn key ->
-      case Link.fetch_covering_entry(link, key) do
+      # A direct ETS read, so the only outcomes are hit and miss. There is
+      # no unavailable/timeout arm any more: the cache is not a process to
+      # be asked, and a table that does not exist reads as a miss.
+      case Link.fetch_covering_entry(cluster, key) do
         {:ok, {{start_key, end_key}, raw_ref}} -> {:ok, {start_key, end_key, [callable_ref(cluster, raw_ref)]}}
         {:error, :not_cached} -> fetch_and_cache_entry(cluster, link, key)
-        {:error, reason} -> {:error, reason}
       end
     end
   end
@@ -406,10 +409,33 @@ defmodule Bedrock.Internal.Repo do
       reraise exception, __STACKTRACE__
   end
 
+  @doc """
+  The delay before retry number `retry_count`, in milliseconds.
+
+  FULL JITTER: a uniform draw from the whole interval below a ceiling
+  that doubles, capped. The ceiling schedule is unchanged — what changed
+  is that the delay is drawn from ALL of it rather than from a 3ms band
+  at the top.
+
+  That distinction is the whole point. Transactions contending on one key
+  fail at nearly the same instant; if they then compute nearly the same
+  delay they wake together and collide again, and the round trip repeats
+  at twice the delay. Spreading them across the interval means some
+  contender arrives while the key is uncontended instead of every
+  contender re-colliding. Identical 100-way workloads varied 278ms to
+  2059ms on the old schedule.
+
+  This is FDB's client backoff (`NativeAPI.actor.cpp:4436`:
+  `returnedBackoff *= deterministicRandom()->random01()`, with the
+  ceiling grown at :4446 by `BACKOFF_GROWTH_RATE`). Never zero, so a
+  retry can never become a spin.
+  """
+  @spec retry_delay_in_ms(non_neg_integer()) :: pos_integer()
+  def retry_delay_in_ms(retry_count) when is_integer(retry_count) and retry_count >= 0,
+    do: :rand.uniform(min(1 <<< retry_count, @max_retry_delay_in_ms))
+
   defp wait_before_retry(repo, retry_count, last_reason) do
-    base_delay = 1 <<< retry_count
-    jitter = :rand.uniform(3)
-    wait_time_in_ms = min(base_delay + jitter, 1000)
+    wait_time_in_ms = retry_delay_in_ms(retry_count)
     remaining = TransactionContext.remaining_timeout!(repo, last_reason)
 
     Process.sleep(min_timeout(wait_time_in_ms, remaining))

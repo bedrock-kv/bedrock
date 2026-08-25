@@ -16,6 +16,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
           batch: Batch.t() | nil,
           max_latency_in_ms: non_neg_integer(),
           max_per_batch: non_neg_integer(),
+          recent_batch_fill: float(),
           empty_transaction_timeout_ms: non_neg_integer(),
           mode: mode(),
           lock_token: binary(),
@@ -33,6 +34,9 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
             batch: nil,
             max_latency_in_ms: nil,
             max_per_batch: nil,
+            # Moving average of how full recent batches were; decides
+            # whether holding an open batch would collect anything.
+            recent_batch_fill: 1.0,
             empty_transaction_timeout_ms: nil,
             mode: :locked,
             lock_token: nil,

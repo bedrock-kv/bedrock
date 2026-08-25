@@ -16,6 +16,7 @@ defmodule Bedrock.Cluster.Link do
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   alias Bedrock.Cluster.Descriptor
+  alias Bedrock.Cluster.Link.RoutingCache
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
 
@@ -62,20 +63,26 @@ defmodule Bedrock.Cluster.Link do
   end
 
   @doc """
-  Fetch the cached covering entry for one key: the shard range and its
-  raw `{worker_id, node}` materializer ref, as fetched from
-  `Bedrock.DataPlane.CommitProxy.fetch_routing/3`.
+  The cached covering entry for one key: the shard range and its raw
+  `{worker_id, node}` materializer ref.
 
-  The Link is the node-wide location cache (FDB's `DatabaseContext`
-  locationCache), a partial coalescing index: it only stores. On a miss
-  the caller fetches the single covering entry from a commit proxy and
-  caches it back with `cache_routing_entry/2`.
+  Read DIRECTLY from the node's routing cache — no message to the Link.
+  Every transaction on the node looks up every key, so routing a key must
+  not require the Link to be scheduled.
+
+  The Link still owns that cache (FDB's `DatabaseContext` locationCache),
+  a partial coalescing index that only stores. On a miss the caller
+  fetches the single covering entry from a commit proxy and caches it
+  back with `cache_routing_entry/2`.
   """
-  @spec fetch_covering_entry(ref(), Bedrock.key(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
-          {:ok, {Bedrock.key_range(), {String.t(), String.t()}}}
-          | {:error, :not_cached | :unavailable | :timeout | :unknown}
-  def fetch_covering_entry(link, key, opts \\ []),
-    do: call(link, {:get_covering_entry, key}, opts[:timeout_in_ms] || 1000)
+  @spec fetch_covering_entry(module(), Bedrock.key()) ::
+          {:ok, {Bedrock.key_range(), {String.t(), String.t()}}} | {:error, :not_cached}
+  def fetch_covering_entry(cluster, key) do
+    case RoutingCache.lookup(cluster.otp_name(:link_routing), key) do
+      {:ok, entry} -> {:ok, entry}
+      :not_cached -> {:error, :not_cached}
+    end
+  end
 
   @doc "Caches one covering entry fetched from a commit proxy."
   @spec cache_routing_entry(ref(), {Bedrock.key(), Bedrock.key(), {String.t(), String.t()}}) :: :ok

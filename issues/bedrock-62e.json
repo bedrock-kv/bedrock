@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T14:00:56Z",
+  "description": "Retry backoff was `(1 \u003c\u003c\u003c retry_count) + :rand.uniform(3)`: a ceiling that\ndoubles, with one to three milliseconds of jitter.\n\nWith N transactions contending on one key they fail at nearly the same\ninstant, compute nearly the same delay, and wake together -- so they\ncollide again and the round trip repeats at twice the delay. The work is\ntrivial; the wall clock is set by whichever contender climbs furthest up\nthe ladder.\n\nMEASURED, 100 concurrent signups on one seat counter (the class-scheduling\ndemo's \"dans\" section), ten independent rounds:\n\n  before: min=154.7 median=284.7 max=1058.0 total=4760.8ms\n          min=281.4 median=540.1 max=3057.3 total=7161.1ms\n          samples snap to a ladder: 280 / 540 / 1058 / 3057\n\n  after:  min=168.6 median=209.5 max=387.1 total=2326.9ms\n          min=150.5 median=201.7 max=320.3 total=2054.1ms\n\nTail 2.7-9.5x better; total 2-3.5x. The ladder is gone.\n\nFIX: full jitter, which is what FDB's client does. The delay is a uniform\ndraw from the whole interval below the ceiling, and only the CEILING\ngrows (NativeAPI.actor.cpp:4436 `returnedBackoff *= random01()`, ceiling\ngrown at :4446 by BACKOFF_GROWTH_RATE; knobs ClientKnobs.cpp:67-69 --\n10ms initial, 1s max, growth 2.0). The ceiling schedule is unchanged;\nwhat changed is drawing from all of it instead of a 3ms band at the top.\n\nNever zero, so a retry cannot become a spin.\n\nNOT a regression: measured at 0.5.3 (198ms), 0.6.0 (150ms), 0.6.1-era\n(283ms), pre-merge (277ms) and today (281ms). The schedule dates to\n602f0c8a. It was always this way; it was simply never measured.\n\nThe ~200ms floor that remains is the real cost: 100 transactions\ncontending on one key must serialize, so ~2ms per commit x 100.",
+  "id": "bedrock-62e",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Retry backoff collides in lockstep: full jitter, FDB-style",
+  "type": "task",
+  "updated_at": "2026-08-25T14:00:56Z"
+}

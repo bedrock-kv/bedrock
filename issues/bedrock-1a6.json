@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T19:45:17Z",
+  "description": "Surfaced by the bedrock-287 audit.\n\n`State.health` is consumed in exactly two places, both matching `:ok` literally: `do_wait_for_healthy/2` (impl.ex:236) and `notify_waiting_for_healthy/1` (impl.ex:309). It is never returned by any `handle_call` in foreman/server.ex, never logged, never emitted as telemetry.\n\nSo the three non-`:ok` verdicts — `:starting`, `:unknown`, `{:failed_to_start, :at_least_one_failed_to_start}` — are computed and then discarded. The distinction between 'still booting' and 'a worker is wedged' exists in the code and reaches nobody.\n\nThat is why bedrock-287 (order-dependent fold) and bedrock-mxt (never recomputed at boot) could both persist unnoticed: nothing reads the value closely enough to notice it was wrong. Fixing the computation without giving it a reader means it can silently re-rot.\n\nNote `wait_for_healthy/2` itself currently has no production callers either (checked lib, test, bedrock_ex); only guides/deep-dives/architecture/infrastructure/foreman.md:111,229 claims recovery uses it.\n\n## Options\n\n- emit telemetry on every health transition (the codebase has established tracing modules per component)\n- log transitions at info/warning, so a wedged worker is visible in the log without a subscriber\n- return health from a `handle_call`, so an operator can ask\n- or decide the value is genuinely unused and delete it along with `wait_for_healthy/2` — a smaller surface is better than one nobody reads\n\nPrefer one of the first three if recovery is ever meant to gate on foreman readiness; prefer the last if it is not.",
+  "id": "bedrock-1a6",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Foreman health is computed but never exposed, so no operator or supervisor can read it",
+  "type": "task",
+  "updated_at": "2026-08-25T19:45:17Z"
+}

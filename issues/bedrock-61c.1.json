@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T18:41:58Z",
+  "description": "`Shale.Pushing.crosses_cut_boundary?/2` (lib/bedrock/data_plane/log/shale/pushing.ex:266-272) hardcodes the module default:\n\n    defp crosses_cut_boundary?(%{min_version: min_version}, version) do\n      interval = Demux.Server.default_cut_interval_us()\n      div(Version.to_integer(version), interval) \u003e div(Version.to_integer(min_version), interval)\n    end\n\nIts own comment states the invariant it is meant to uphold: 'Same version arithmetic as the Demux's deterministic cuts: a segment holds exactly one cut bucket of versions.'\n\nBut the demux does NOT use the default - `bucket_of/2` (demux/server.ex:404) uses `state.cut_interval_us`, set from `Keyword.get(opts, :cut_interval_us, @default_cut_interval_us)` and documented as a supported option at demux/server.ex:115.\n\n## Failure scenario\n\nConfigure `cut_interval_us` to anything other than 5_000_000 and the two boundaries silently diverge:\n\n- **Configured \u003e default:** the log rolls more often than the demux cuts. Wasteful (extra renames + header writes + fsyncs) but safe.\n- **Configured \u003c default:** a single segment spans multiple cut buckets. This breaks the reasoning the roll exists to serve - the active segment is trim-immune, so `available_after` chases the untrimmed tail across bucket boundaries and the trim floor can be computed against a segment that is not yet fully durable.\n\nNothing configures a non-default interval today, so this is latent. It is a trap for whoever first tunes the knob, and the misleading comment makes it look correct.\n\n## Fix\n\nThread the demux's configured `cut_interval_us` through to Shale (state or writer_opts) and use it in `crosses_cut_boundary?/2`. Keep the default as the fallback when unset.\n\n## Test (write first, must fail)\n\nDrive `append_transaction/2` with a non-default cut interval and assert the roll boundary matches `Demux.Server.bucket_of/2` arithmetic at that same interval - i.e. a segment holds exactly one bucket. Assert both the smaller-than-default and larger-than-default directions.",
+  "id": "bedrock-61c.1",
+  "labels": [],
+  "parent": "bedrock-61c",
+  "priority": 2,
+  "status": "open",
+  "title": "[BUG] Log segment roll reads the default cut interval, not the demux's configured one",
+  "type": "bug",
+  "updated_at": "2026-08-25T18:41:58Z"
+}

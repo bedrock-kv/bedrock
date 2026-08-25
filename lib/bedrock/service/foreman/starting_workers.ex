@@ -8,6 +8,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
 
   alias Bedrock.Cluster
   alias Bedrock.Service.Foreman.WorkerInfo
+  alias Bedrock.Service.Foreman.WorkingDirectory
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
 
@@ -19,11 +20,71 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     |> Enum.map(&worker_info_for_id(Path.basename(&1), &1, otp_namer))
   end
 
+  # Directories the foreman's path holds that belong to other components.
+  # The cluster supervisor derives object_storage/ from the same :path it
+  # hands the foreman; the coordinator's raft/ is a sibling by the
+  # convention every deployment config follows. Neither is a worker, and
+  # neither is news.
+  @infrastructure_dirs ~w(object_storage raft)
+
+  @doc """
+  The worker directories under the foreman's path.
+
+  A worker directory is one holding a manifest — not merely one that
+  exists. The foreman's path is shared with other components, so "every
+  entry under path is a worker" is never true in a real deployment.
+
+  Presence of the manifest is the test, not readability: a directory
+  whose manifest is corrupt is a worker in trouble, and one whose
+  manifest cannot be stat'ed for any reason OTHER than absence is a
+  worker we cannot rule out. Both are enumerated so they surface as
+  `:failed_to_start`. Only a definite absence excludes a directory —
+  a live worker must never vanish from the foreman's view because of a
+  permissions mistake.
+  """
   @spec worker_paths_from_disk(Path.t()) :: [Path.t()]
   def worker_paths_from_disk(path) do
     path
     |> Path.join("*")
     |> Path.wildcard()
+    |> Enum.filter(&worker_directory?/1)
+  end
+
+  @doc """
+  Directories under the foreman's path that are neither workers nor
+  another component's, in sorted order.
+
+  These are the remains of workers that cannot be started: a worker whose
+  manifest is gone is unstartable, and because retirement runs THROUGH
+  the worker — `Foreman.worker_retired/2` from a live process holding the
+  id and foreman ref its manifest supplied — an unstartable directory can
+  never retire itself either. It will be re-attempted and re-fail on
+  every boot, holding its disk forever.
+
+  The foreman reports them rather than reclaiming them: the directory may
+  hold a WAL, and deleting data on a guess is not the foreman's call.
+  """
+  @spec abandoned_paths_from_disk(Path.t()) :: [Path.t()]
+  def abandoned_paths_from_disk(path) do
+    path
+    |> Path.join("*")
+    |> Path.wildcard()
+    |> Enum.reject(&(worker_directory?(&1) or Path.basename(&1) in @infrastructure_dirs))
+    |> Enum.filter(&File.dir?/1)
+    |> Enum.sort()
+  end
+
+  @spec worker_directory?(Path.t()) :: boolean()
+  defp worker_directory?(path) do
+    case File.stat(WorkingDirectory.manifest_path(path)) do
+      {:ok, _stat} -> true
+      # A definite "no manifest here": either nothing at that path, or
+      # the entry is a plain file so it has no children at all.
+      {:error, reason} when reason in [:enoent, :enotdir] -> false
+      # Anything else (EACCES on the directory, EIO) is ignorance, not
+      # absence — enumerate and let the start attempt report the truth.
+      {:error, _reason} -> true
+    end
   end
 
   @spec worker_info_for_id(Worker.id(), Path.t(), (Worker.id() -> Worker.otp_name())) ::

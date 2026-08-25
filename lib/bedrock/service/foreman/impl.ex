@@ -5,6 +5,7 @@ defmodule Bedrock.Service.Foreman.Impl do
 
   import Bedrock.Service.Foreman.StartingWorkers,
     only: [
+      abandoned_paths_from_disk: 1,
       worker_info_from_path: 2,
       try_to_start_workers: 3,
       try_to_start_worker: 3,
@@ -248,9 +249,36 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec do_spin_up(State.t()) :: State.t()
   def do_spin_up(t) do
     t
+    |> report_abandoned_directories()
     |> load_workers_from_disk()
     |> start_workers_that_are_stopped()
     |> relay_current_tsl()
+  end
+
+  # An unstartable directory is silent by nature: with no manifest there
+  # is no worker process, so nothing can report its own health and
+  # nothing can retire itself. Left unreported it is invisible — retried
+  # and re-failed on every boot while holding its disk. Say it out loud
+  # at the one moment an operator is looking, and name the paths so the
+  # cleanup is a copy-paste. Reporting only; a WAL is real data and the
+  # foreman does not delete on a guess.
+  @spec report_abandoned_directories(State.t()) :: State.t()
+  defp report_abandoned_directories(t) do
+    case abandoned_paths_from_disk(t.path) do
+      [] ->
+        t
+
+      paths ->
+        Logger.warning(
+          "Bedrock foreman: #{length(paths)} abandoned working " <>
+            "#{if length(paths) == 1, do: "directory", else: "directories"} under #{t.path} " <>
+            "(no manifest, so they cannot be started and cannot retire themselves). " <>
+            "They will be ignored on every boot until removed by hand: " <>
+            Enum.map_join(paths, ", ", &Path.basename/1)
+        )
+
+        t
+    end
   end
 
   # Cold boot composes with self-detection only if resurrected workers

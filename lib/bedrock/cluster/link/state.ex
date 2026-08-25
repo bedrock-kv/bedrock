@@ -4,7 +4,6 @@ defmodule Bedrock.Cluster.Link.State do
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
-  alias Bedrock.Internal.TransactionBuilder.LayoutIndex
 
   @type t :: %__MODULE__{
           node: node(),
@@ -16,7 +15,7 @@ defmodule Bedrock.Cluster.Link.State do
           mode: :passive | :active,
           capabilities: [Bedrock.Cluster.capability()],
           transaction_system_layout: TransactionSystemLayout.t() | nil,
-          routing: LayoutIndex.t()
+          routing_table: :ets.table()
         }
   defstruct node: nil,
             cluster: nil,
@@ -27,5 +26,5 @@ defmodule Bedrock.Cluster.Link.State do
             mode: :active,
             capabilities: [],
             transaction_system_layout: nil,
-            routing: LayoutIndex.new()
+            routing_table: nil
 end

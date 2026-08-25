@@ -324,10 +324,12 @@ defmodule Bedrock.Internal.Repo do
 
   defp routing_fn_for_transaction(cluster, nil, link) do
     fn key ->
-      case Link.fetch_covering_entry(link, key) do
+      # A direct ETS read, so the only outcomes are hit and miss. There is
+      # no unavailable/timeout arm any more: the cache is not a process to
+      # be asked, and a table that does not exist reads as a miss.
+      case Link.fetch_covering_entry(cluster, key) do
         {:ok, {{start_key, end_key}, raw_ref}} -> {:ok, {start_key, end_key, [callable_ref(cluster, raw_ref)]}}
         {:error, :not_cached} -> fetch_and_cache_entry(cluster, link, key)
-        {:error, reason} -> {:error, reason}
       end
     end
   end

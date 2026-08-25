@@ -19,6 +19,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
   """
   use ExUnit.Case, async: true
 
+  alias Bedrock.Cluster.Link.RoutingCache
   alias Bedrock.Internal.Repo
   alias Bedrock.Internal.Repo.TransactionContext
 
@@ -391,6 +392,28 @@ defmodule Bedrock.Internal.RepoTransactTest do
       @moduledoc false
       def link!, do: Process.get(:stub_link_pid)
       def otp_name_for_worker(id), do: :"repo_transact_routing_worker_#{id}"
+      # The routing cache is read directly from ETS now, so the cluster
+      # must name the table just as a real cluster does.
+      # Fixed name: tests within a module run sequentially, and the
+      # lookup happens in the TransactionBuilder process, which cannot
+      # see the test's process dictionary.
+      def otp_name(:link_routing), do: :repo_transact_routing_cache
+    end
+
+    # A real routing cache, seeded per test. The read path no longer goes
+    # through the Link, so seeding the table IS how a "cache hit" is set
+    # up -- the stub link only serves misses, the TSL, and invalidation.
+    defp seed_routing_cache(entry) do
+      table = RoutingCluster.otp_name(:link_routing)
+      if :ets.whereis(table) != :undefined, do: :ets.delete(table)
+      RoutingCache.new(table)
+
+      case entry do
+        {start_key, end_key, raw_ref} -> RoutingCache.insert(table, start_key, end_key, raw_ref)
+        nil -> :ok
+      end
+
+      table
     end
 
     # A covering entry as the proxy serves it: shard bounds, tag, raw
@@ -430,31 +453,23 @@ defmodule Bedrock.Internal.RepoTransactTest do
     end
 
     # A one-entry Link cache: covers [start, end) or nothing.
-    defp link_loop(tsl, cached_entry, test_pid) do
+    defp link_loop(tsl, cached_entry, test_pid, table) do
       receive do
-        {:"$gen_call", from, {:get_covering_entry, key}} ->
-          case cached_entry do
-            {start_key, end_key, raw_ref} when key >= start_key and key < end_key ->
-              GenServer.reply(from, {:ok, {{start_key, end_key}, raw_ref}})
-
-            _ ->
-              GenServer.reply(from, {:error, :not_cached})
-          end
-
-          link_loop(tsl, cached_entry, test_pid)
-
         {:"$gen_call", from, :get_transaction_system_layout} ->
           GenServer.reply(from, {:ok, tsl})
-          link_loop(tsl, cached_entry, test_pid)
+          link_loop(tsl, cached_entry, test_pid, table)
 
-        {:"$gen_cast", {:cache_routing_entry, entry}} ->
+        {:"$gen_cast", {:cache_routing_entry, {start_key, end_key, raw_ref} = entry}} ->
+          RoutingCache.insert(table, start_key, end_key, raw_ref)
+
           send(test_pid, {:routing_cached, entry})
-          link_loop(tsl, entry, test_pid)
+          link_loop(tsl, entry, test_pid, table)
 
         {:"$gen_call", from, :invalidate_routing} ->
+          RoutingCache.clear(table)
           GenServer.reply(from, :ok)
           send(test_pid, :routing_invalidated)
-          link_loop(tsl, nil, test_pid)
+          link_loop(tsl, nil, test_pid, table)
       end
     end
 
@@ -474,7 +489,8 @@ defmodule Bedrock.Internal.RepoTransactTest do
         end)
 
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: [proxy]}
-      link = spawn(fn -> link_loop(tsl, nil, test_pid) end)
+      table = seed_routing_cache(nil)
+      link = spawn(fn -> link_loop(tsl, nil, test_pid, table) end)
       Process.put(:stub_link_pid, link)
 
       result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
@@ -494,7 +510,8 @@ defmodule Bedrock.Internal.RepoTransactTest do
 
       # No proxies at all: a proxy fetch would fail loudly.
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
-      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry()), test_pid) end)
+      table = seed_routing_cache(cached_entry(covering_entry()))
+      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry()), test_pid, table) end)
       Process.put(:stub_link_pid, link)
 
       result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
@@ -524,7 +541,8 @@ defmodule Bedrock.Internal.RepoTransactTest do
         end)
 
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: [proxy]}
-      link = spawn(fn -> link_loop(tsl, stale, test_pid) end)
+      table = seed_routing_cache(stale)
+      link = spawn(fn -> link_loop(tsl, stale, test_pid, table) end)
       Process.put(:stub_link_pid, link)
 
       result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
@@ -605,7 +623,8 @@ defmodule Bedrock.Internal.RepoTransactTest do
         end)
 
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: [proxy]}
-      link = spawn(fn -> link_loop(tsl, nil, test_pid) end)
+      table = seed_routing_cache(nil)
+      link = spawn(fn -> link_loop(tsl, nil, test_pid, table) end)
       Process.put(:stub_link_pid, link)
 
       result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
@@ -629,7 +648,8 @@ defmodule Bedrock.Internal.RepoTransactTest do
       Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
 
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
-      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry()), test_pid) end)
+      table = seed_routing_cache(cached_entry(covering_entry()))
+      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry()), test_pid, table) end)
       Process.put(:stub_link_pid, link)
 
       assert_raise RuntimeError, ~r/retry limit/, fn ->
@@ -652,7 +672,8 @@ defmodule Bedrock.Internal.RepoTransactTest do
       # list and fail. Lazy routing means this commit-only (read-free)
       # transaction never asks.
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
-      link = spawn(fn -> link_loop(tsl, nil, test_pid) end)
+      table = seed_routing_cache(nil)
+      link = spawn(fn -> link_loop(tsl, nil, test_pid, table) end)
       Process.put(:stub_link_pid, link)
 
       assert Repo.transact(RoutingCluster, TestRepo, fn -> :no_reads end, []) == :no_reads

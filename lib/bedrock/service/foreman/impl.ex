@@ -253,6 +253,20 @@ defmodule Bedrock.Service.Foreman.Impl do
     |> load_workers_from_disk()
     |> start_workers_that_are_stopped()
     |> relay_current_tsl()
+    # Spin-up is where the foreman learns what it has and starts it, so
+    # it is where the verdict has to be settled. Without this the state
+    # keeps the :starting it was constructed with: recompute_health/1 is
+    # otherwise reachable only from a worker's own health cast, and the
+    # sole sender is Olivine — Shale never reports. A log-only node
+    # therefore had no path to :ok at all, and wait_for_healthy/2 could
+    # not return on one.
+    #
+    # No waiters can exist yet to notify: this runs in the :spin_up
+    # handle_continue, which precedes every mailbox message, so the
+    # handle_call that is the only writer of waiting_for_healthy cannot
+    # have run. A caller whose request is already queued finds health
+    # settled when it is finally served.
+    |> recompute_health()
   end
 
   # An unstartable directory is silent by nature: with no manifest there

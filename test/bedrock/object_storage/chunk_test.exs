@@ -93,6 +93,28 @@ defmodule Bedrock.ObjectStorage.ChunkTest do
     test "returns error for truncated chunk" do
       assert {:error, :truncated_chunk} = Chunk.decode(<<1, 2, 3>>)
     end
+
+    # A tear PAST the directory used to slip through: the header and
+    # directory both parse, so decode reported success, and the missing
+    # bytes only surfaced as an ArgumentError from binary_part/3 inside
+    # extract_transactions/1 — at read time, deep in a materializer
+    # catch-up or a recovery replay, far from whatever wrote it.
+    test "returns error when the data section is short of the directory" do
+      transactions = [{100, String.duplicate("a", 64)}, {200, String.duplicate("b", 64)}]
+      {:ok, binary} = Chunk.encode(transactions)
+
+      torn = binary_part(binary, 0, byte_size(binary) - 32)
+
+      assert {:error, :truncated_chunk} = Chunk.decode(torn)
+    end
+
+    test "accepts a chunk whose data section is exactly complete" do
+      transactions = [{100, String.duplicate("a", 64)}, {200, String.duplicate("b", 64)}]
+      {:ok, binary} = Chunk.encode(transactions)
+
+      assert {:ok, chunk} = Chunk.decode(binary)
+      assert Chunk.extract_transactions(chunk) == transactions
+    end
   end
 
   describe "extract_transactions/1" do

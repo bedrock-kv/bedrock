@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T18:41:44Z",
+  "description": "Umbrella for three defects found while investigating apparently-unbounded growth in a long-running cluster's working directory (/tmp/bedrock_00000, 349 MB after ~10 days).\n\n## What the investigation actually found\n\nTwo of the three suspected causes were NOT defects:\n\n- **Object-storage chunk accumulation is policy.** Bedrock never deletes chunks; an out-of-band process compacts them if needed. Not a leak. Verified empirically that chunks are not produced without genuine activity: 754 -\u003e 754 over 2 idle minutes, because the commit proxy's empty-transaction heartbeat carries no mutations and persist_transactions/3 short-circuits on the empty list.\n- **Apparent log-directory growth is sparse-file fill-in.** :file.allocate/3 does not reserve blocks on APFS, so du grows as extents materialize under real load and then converges at (pool + 1) * 64 MiB. Bounded. (Preallocation not delivering its ENOSPC/fragmentation guarantee on macOS is a real but accepted platform quirk - explicitly out of scope.)\n\n## Exit criterion\n\nA long-running cluster's working directory stays bounded, the foreman reports healthy rather than permanently failed, and the log's segment-roll boundary tracks the demux's *configured* cut interval rather than the module default.\n\n## Children\n\nThree independent, targeted fixes - no ordering dependency between them. Each lands TDD (failing test first), gets a cold-agent adversarial audit, then a PR.",
+  "id": "bedrock-61c",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[EPIC] Working-directory hygiene: foreman enumeration, recycler bounds, roll/cut coupling",
+  "type": "epic",
+  "updated_at": "2026-08-25T18:41:44Z"
+}

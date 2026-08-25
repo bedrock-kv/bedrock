@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T16:22:58Z",
+  "description": "The single-valued `materializers/\u003ctag\u003e` family was born in 5d65c846 and replaced by the set-valued `materializers/\u003ctag\u003e/\u003cworker_id\u003e` in b54976e9 (#198, q67.21.9). Both commits are AFTER tag 0.6.1 (2026-08-19) — git rev-list 0.6.1..develop contains both, and 0.6.1's system_keys.ex has no materializers/ family at all, only materializer_keys/\u003cend_key\u003e. The shape existed only on develop, between two unreleased commits, so no released cluster can hold it and the dual-shape reader plus recovery's rewrite-and-clear migration (#208) is carrying weight for a state that cannot exist.\n\nRemoves: SystemKeys.legacy_materializer_key/1 and the {:legacy_materializer_key, tag} parse arm; Values.decode_materializer_ref/1; Reader's legacy decode clause; MaterializerBootstrapPhase's legacy_keys collection (read_prior_refs returns {:ok, refs} again); PersistencePhase.migrate_legacy_materializer_keys/2; RecoveryAttempt.legacy_materializer_keys; the three tests covering them.\n\nNOT touched: the bootstrap-record fallback for records predating system_materializers (q67.21.21 defect 1) — a different legacy, still reachable on develop clusters; and the term_to_binary shard-tag fallback (q67.20.7).",
+  "id": "bedrock-q67.21.22",
+  "labels": [],
+  "parent": "bedrock-q67.21",
+  "priority": 3,
+  "status": "open",
+  "title": "Drop the pre-q67.21.9 single-valued materializer migration: the shape never shipped",
+  "type": "task",
+  "updated_at": "2026-08-25T16:22:58Z"
+}

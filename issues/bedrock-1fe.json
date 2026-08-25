@@ -6,9 +6,15 @@
   "description": "",
   "id": "bedrock-1fe",
   "labels": [],
+  "comments": [
+    {
+      "text": "PR #220: https://github.com/bedrock-kv/bedrock/pull/220 — full gate green (quality, 2776 tests, distributed durability vs MinIO). Awaiting merge.",
+      "timestamp": "2026-08-25T20:26:56Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "Remove dead DataPlane.Proxy read-version proxy",
   "type": "task",
-  "updated_at": "2026-08-25T20:20:46Z"
+  "updated_at": "2026-08-25T20:26:56Z"
 }

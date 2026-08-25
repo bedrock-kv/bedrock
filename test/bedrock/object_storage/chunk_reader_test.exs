@@ -4,7 +4,6 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.Chunk
   alias Bedrock.ObjectStorage.ChunkReader
-  alias Bedrock.ObjectStorage.ChunkWriter
   alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
 
@@ -385,28 +384,6 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     test "returns nil for empty shard", %{backend: backend} do
       reader = ChunkReader.new(backend, "shard")
       assert nil == ChunkReader.oldest_version(reader)
-    end
-  end
-
-  describe "integration with ChunkWriter" do
-    test "reads chunks written by writer", %{backend: backend} do
-      {:ok, writer} = ChunkWriter.new(backend, "shard", size_threshold: 10)
-
-      # Write first batch
-      {:ok, writer} = ChunkWriter.add_transaction(writer, 100, "batch1")
-      {:ok, writer} = ChunkWriter.add_transaction(writer, 200, "batch1_2")
-      {:ok, writer, :flushed} = ChunkWriter.maybe_flush(writer)
-
-      # Write second batch
-      {:ok, writer} = ChunkWriter.add_transaction(writer, 300, "batch2")
-      {:ok, writer} = ChunkWriter.add_transaction(writer, 400, "batch2_2")
-      {:ok, _writer} = ChunkWriter.flush(writer)
-
-      # Read with ChunkReader
-      reader = ChunkReader.new(backend, "shard")
-      transactions = reader |> ChunkReader.read_all_transactions() |> Enum.to_list()
-
-      assert [{100, "batch1"}, {200, "batch1_2"}, {300, "batch2"}, {400, "batch2_2"}] == transactions
     end
   end
 

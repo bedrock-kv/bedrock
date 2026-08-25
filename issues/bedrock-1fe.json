@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T20:20:46Z",
+  "description": "",
+  "id": "bedrock-1fe",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Remove dead DataPlane.Proxy read-version proxy",
+  "type": "task",
+  "updated_at": "2026-08-25T20:20:46Z"
+}

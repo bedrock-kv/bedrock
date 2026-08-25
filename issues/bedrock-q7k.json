@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-25T15:47:28Z",
+  "description": "",
+  "id": "bedrock-q7k",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Resolver tracing handler crashes: it reads measurement keys the telemetry emitter never sends",
+  "type": "task",
+  "updated_at": "2026-08-25T15:47:28Z"
+}

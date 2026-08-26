@@ -250,8 +250,13 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
         {:ok, state} ->
           reply(state, :ok, continue: :ensure_min_available)
 
+        # Refill on the failure path too. An exhausted pool is the one
+        # moment a refill is most needed, and nothing else drives
+        # :ensure_min_available — so a pool that ever reached zero could
+        # never recover, and every later checkout would fail even after
+        # whatever caused the exhaustion had cleared.
         {:error, _reason} = error ->
-          reply(state, error)
+          reply(state, error, continue: :ensure_min_available)
       end
     end
 
@@ -271,7 +276,12 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       |> Logic.ensure_min_available(state.min_available)
       |> case do
         {:ok, state} -> noreply(state)
-        {:error, reason} -> stop(reason, :shutdown)
+        # stop/2 is stop(state, reason). Transposed, this exited with
+        # :shutdown — an orderly-looking stop — and installed the real
+        # cause as the state, discarding exactly the :enospc / :emfile /
+        # :enomem distinction Shale's classify_resource_error/1 exists to
+        # act on.
+        {:error, reason} -> stop(state, reason)
       end
     end
   end

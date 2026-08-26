@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-26T16:12:05Z",
   "created": "2026-08-25T19:19:09Z",
   "description": "Found during the bedrock-61c.3 audit; pre-existing.\n\nlib/bedrock/data_plane/log/shale/segment_recycler.ex, in `Server.handle_continue(:ensure_min_available, ...)`:\n\n    {:error, reason} -\u003e stop(reason, :shutdown)\n\n`Bedrock.Internal.GenServer.Replies.stop/2` is `stop(state, reason) :: {:stop, reason, state}` (lib/bedrock/internal/gen_server/replies.ex:30). The arguments are reversed, so an allocation failure stops the recycler with reason `:shutdown` and installs the error atom as the GenServer's state.\n\n## Failure scenario\n\nThe segment pool cannot allocate — ENOSPC on the log's filesystem, or EMFILE under fd pressure. The recycler exits with `:shutdown`, which reads as an orderly stop, and the actual cause (`:enospc`) is thrown away into the state field. The owning Shale log sees a benign-looking shutdown instead of a disk-full error, and the operator gets no signal identifying the real problem. `Shale.Server.classify_resource_error/1` exists precisely to distinguish `:enospc`/`:emfile`/`:enomem` — that classification is discarded here.\n\nNote bedrock-61c.3 makes this path run more often: enforcing the pool ceiling means a later burst re-allocates rather than reusing retained segments, so `create_new_segments/2` is exercised on more workloads.\n\n## Fix\n\n`stop(:shutdown, reason)` — or better, pass the state and the classified reason explicitly. Audit other `stop/2` call sites for the same transposition.\n\n## Test (write first, must fail)\n\nDrive `handle_continue(:ensure_min_available, state)` with an unwritable path and assert the returned tuple is `{:stop, reason, state}` with the posix reason preserved and the state intact.",
   "id": "bedrock-m7j",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "[BUG] SegmentRecycler handle_continue swaps stop/2 arguments, discarding the real failure reason",
   "type": "bug",
-  "updated_at": "2026-08-25T19:19:09Z"
+  "updated_at": "2026-08-26T16:12:05Z"
 }

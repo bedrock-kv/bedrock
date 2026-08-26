@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-26T19:27:45Z",
+  "description": "Noticed during the bedrock-z2e audit; a gap that change narrows but does not close.\n\nWhen a worker dies and its supervisor restarts it, the foreman now adopts the replacement — either via the recheck timer (`do_worker_recheck/3`) or via the worker's own health report (`do_worker_health/3`). Both set health and take a monitor. Neither relays the current transaction system layout.\n\nRe-advertising to the coordinator is genuinely unnecessary: `advertise_running_worker/2` registers `{otp_name, node()}`, not a pid, so the replacement is reachable under the registration the original made.\n\nThe layout is different. `do_relay_tsl/2` is driven by `{:tsl_updated, ...}` arriving from the node's Link, and `relay_current_tsl/1` — which pulls the Link's cached layout — runs only from `do_spin_up/1`, i.e. at boot. So a replacement missed every push delivered while its predecessor was dead, and gets nothing until the next recovery pushes a new layout.\n\n## Why it matters\n\nDisplacement is self-detected: `Shale.Server` decides its own retirement from the pushed layout (`handle_info({:tsl_updated, ...})` -\u003e `displaced?`), and the foreman never answers a membership question on a worker's behalf. A worker holding no layout cannot make that judgement. If it was displaced while dead, it comes back believing it is still a member until something else pushes.\n\nStrictly better than before bedrock-z2e, which sent those pushes to a dead pid — so this is a narrowing, not a regression.\n\n## Fix\n\nRelay the cached layout to a freshly adopted worker, the same way spin-up does for a rehydrated one. `relay_current_tsl/1` already pulls it from the Link and tolerates a nil layout; the work is calling it for a single worker rather than all of them.\n\n## Test (write first, must fail)\n\nPush a layout, kill a worker, let the replacement be adopted, and assert it receives the current layout without waiting for another push.",
+  "id": "bedrock-gu0.3",
+  "labels": [],
+  "parent": "bedrock-gu0",
+  "priority": 3,
+  "status": "open",
+  "title": "A worker adopted after a restart never receives the layout it missed while dead",
+  "type": "task",
+  "updated_at": "2026-08-26T19:27:45Z"
+}

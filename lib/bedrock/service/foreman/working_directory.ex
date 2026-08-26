@@ -5,10 +5,23 @@ defmodule Bedrock.Service.Foreman.WorkingDirectory do
   alias Bedrock.Service.Manifest
   alias Bedrock.Service.Worker
 
+  @manifest_file_name "manifest.json"
+
+  @doc """
+  The manifest's path within a worker's working directory.
+
+  The manifest is what makes a directory a worker directory: the foreman's
+  path also holds `object_storage/` and `raft/`, so enumeration keys off
+  this file's presence. Writer and reader must therefore agree on the
+  name exactly — hence one definition.
+  """
+  @spec manifest_path(Path.t()) :: Path.t()
+  def manifest_path(working_directory), do: Path.join(working_directory, @manifest_file_name)
+
   @spec initialize_working_directory(Path.t(), Manifest.t()) ::
           :ok | {:error, File.posix()}
   def initialize_working_directory(working_directory, manifest) do
-    path_to_manifest = Path.join(working_directory, "manifest.json")
+    path_to_manifest = manifest_path(working_directory)
 
     with :ok <- File.mkdir_p(working_directory),
          :ok <- manifest.worker.one_time_initialization(working_directory) do
@@ -32,7 +45,7 @@ defmodule Bedrock.Service.Foreman.WorkingDirectory do
              | :worker_module_failed_to_load
              | :worker_module_is_invalid}
   def read_and_validate_manifest(path, worker_id, cluster_name) do
-    with {:ok, manifest} <- load_from_file(Path.join(path, "manifest.json")),
+    with {:ok, manifest} <- load_from_file(manifest_path(path)),
          :ok <- check_manifest_id(manifest, worker_id),
          :ok <- check_manifest_cluster_name(manifest, cluster_name) do
       {:ok, manifest}

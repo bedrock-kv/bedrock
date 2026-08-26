@@ -4,14 +4,15 @@
   "blocks": [
     "bedrock-1a6"
   ],
+  "closed_at": "2026-08-26T16:12:05Z",
   "created": "2026-08-25T19:45:16Z",
   "description": "Found during the bedrock-287 audit; pre-existing.\n\n`do_remove_worker/2` (lib/bedrock/service/foreman/impl.ex:111-114) and `do_remove_workers/2` (:129) both call `recompute_health/1` but neither calls `notify_waiting_for_healthy/1`. Only `do_worker_health/3` (:241-246) pairs the two.\n\n## Failure scenario\n\nA foreman hosts two workers; one failed to start, so health is `{:failed_to_start, :at_least_one_failed_to_start}`. A caller invokes `wait_for_healthy/2` (default timeout `:infinity`) and parks in `waiting_for_healthy`. An operator removes the failed worker. `recompute_health/1` flips health to `:ok` — and the parked caller is never told. It blocks forever even though the condition it waited for now holds.\n\nSame shape as bedrock-mxt (spin-up settling health without waking waiters), but on the removal path.\n\n## Fix\n\nPipe `notify_waiting_for_healthy/1` after `recompute_health/1` on both removal paths. Consider making the pairing structural — a single `settle_health/1` helper that both recomputes and notifies — so a future call site cannot recompute without waking waiters.\n\n## Test (write first, must fail)\n\nPark a fake `{self(), tag}` in `waiting_for_healthy`, remove the only failing worker, assert the state's `waiting_for_healthy` is emptied and `assert_receive {^tag, :ok}`.",
   "id": "bedrock-n5h",
   "labels": [],
   "parent": "bedrock-gu0",
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "[BUG] Worker removal recomputes foreman health but never wakes wait_for_healthy callers",
   "type": "bug",
-  "updated_at": "2026-08-25T19:48:15Z"
+  "updated_at": "2026-08-26T16:12:05Z"
 }

@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-26T16:12:05Z",
   "created": "2026-08-25T19:18:48Z",
   "description": "Found during the bedrock-61c.2 audit; pre-existing and independent of that fix.\n\n`Impl.do_spin_up/1` (lib/bedrock/service/foreman/impl.ex) is:\n\n    load_workers_from_disk() |\u003e start_workers_that_are_stopped() |\u003e relay_current_tsl()\n\nIt never calls `recompute_health/1`. That function is reachable only from `do_worker_health/3` and `do_remove_worker(s)`. So after spin-up the foreman's health is whatever `State.new_state/1` set — `:starting` (foreman/state.ex:47) — no matter how cleanly every worker started.\n\n## Failure scenario\n\nVerified with a probe: a State over an EMPTY directory with zero workers comes out of `do_spin_up/1` with `health == :starting`, while `Impl.recompute_health/1` on that same state yields `:ok`. `do_wait_for_healthy/2` therefore does not return.\n\nThe only producer of `{:worker_health, ...}` is `Materializer.Olivine.Server` (olivine/server.ex:237). `Shale` never calls `Foreman.report_health/3`. So **a node with only the :log capability can never reach `:ok`** — nothing will ever cast the message that triggers the only recompute path.\n\nMitigating: `wait_for_healthy/2` currently has no production callers (checked lib, test, and bedrock_ex); only guides/deep-dives/architecture/infrastructure/foreman.md:111,229 claims recovery uses it. So this is latent — but the documented contract is not met, and any future caller hangs.\n\n## Fix\n\nAdd `recompute_health/1` to the end of `do_spin_up/1`. Consider whether Shale should report health like Olivine does, or whether health should be derived from worker info rather than pushed.\n\n## Test (write first, must fail)\n\nDrive `do_spin_up/1` over a directory of healthy workers and assert the resulting `state.health == :ok`. Add a log-only case.",
   "id": "bedrock-mxt",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[BUG] Foreman health is never recomputed at spin-up, so wait_for_healthy can hang forever",
   "type": "bug",
-  "updated_at": "2026-08-25T19:18:48Z"
+  "updated_at": "2026-08-26T16:12:05Z"
 }

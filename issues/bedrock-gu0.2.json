@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-26T19:16:40Z",
+  "description": "Introduced knowingly by bedrock-z2e and documented in `do_worker_recheck/3`.\n\nWhen a monitored worker dies, the `:DOWN` always arrives before the supervisor has started a replacement — the foreman is notified the instant the process dies, while the supervisor must first handle its own `EXIT`. So the foreman records `:stopped` and then rechecks on a timer, adopting the replacement when it appears.\n\nThe recheck window is bounded: `@recheck_interval_ms 25` x `@recheck_attempts 20` = 500ms in `foreman/server.ex`. A supervisor that takes longer than that — a worker whose `init/1` is slow (Shale preallocates WAL segments), or a node under heavy load — leaves the worker recorded `:stopped` while it is in fact running.\n\n## Consequence\n\nStale in the safe direction: the foreman understates readiness rather than naming a dead process as running. But it is not harmless — `do_get_all_running_services/1` filters on `{:ok, _}`, so a live worker missed by the window stops being advertised to the coordinator, and `do_relay_tsl/2` stops sending it layout pushes, which is how a worker self-detects displacement. Nothing re-resolves afterwards: `start_workers_that_are_stopped/1` runs only from `do_spin_up/1`, i.e. at boot.\n\nMaterializers self-heal — `Olivine.Server` calls `Foreman.report_health/3` after startup, which settles the foreman's view. Shale never reports, so a log worker is the exposed case.\n\n## Options\n\n- have Shale report health on startup as Olivine does, so a restarted worker announces itself and no timer is needed\n- make the foreman resolve `otp_name` at use, treating the registered name rather than a cached pid as the authority for 'is it running now'\n- keep the timer but make it adaptive, or unbounded with a long interval\n\nThe first is the smallest and matches an existing pattern; the second removes the race entirely and would also close bedrock-z2e's residual staleness, at the cost of a lookup per use.\n\n## Test (write first, must fail)\n\nStart a worker whose replacement takes longer than the recheck window to register, kill it, and assert the foreman eventually reports it running again rather than remaining `:stopped`.",
+  "id": "bedrock-gu0.2",
+  "labels": [],
+  "parent": "bedrock-gu0",
+  "priority": 3,
+  "status": "open",
+  "title": "Foreman recheck window can miss a slow supervisor restart, leaving a live worker recorded as stopped",
+  "type": "task",
+  "updated_at": "2026-08-26T19:16:40Z"
+}

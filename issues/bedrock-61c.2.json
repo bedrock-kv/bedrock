@@ -2,14 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-26T16:12:04Z",
   "created": "2026-08-25T18:42:12Z",
   "description": "`StartingWorkers.worker_paths_from_disk/1` (lib/bedrock/service/foreman/starting_workers.ex:22-27) globs EVERY entry under the foreman's path and treats each as a worker directory:\n\n    def worker_paths_from_disk(path) do\n      path |\u003e Path.join(\"*\") |\u003e Path.wildcard()\n    end\n\nBut the foreman's path is also the parent of two directories that are structurally guaranteed not to be workers:\n\n- `object_storage/` - `cluster_supervisor.ex:241` derives `object_storage_root = Path.join(path, \"object_storage\")` from the very same `:path` config it hands the Foreman.\n- `raft/` - `coordinator/server.ex:355` derives `working_directory = Path.join(base_path, \"raft\")`.\n\nBoth are enumerated, both fail manifest load with `:manifest_does_not_exist`, and both land in the worker map as `{:failed_to_start, _}`.\n\n## Failure scenario\n\n`Health.compute_health_from_worker_info/1` (foreman/health.ex:11-17) folds worker healths. The second `{:failed_to_start, _}` in the fold produces `{:failed_to_start, :at_least_one_failed_to_start}`. With `object_storage/` and `raft/` both present - which is every deployment using a shared working directory - there are always at least two such entries, so the foreman is PERMANENTLY unhealthy regardless of whether every real worker started fine. `Foreman.wait_for_healthy/2` never returns `:ok`.\n\nObserved on a live 10-day cluster: /tmp/bedrock_00000 holds `object_storage/`, `raft/`, three live worker dirs, and three manifest-less orphans side by side.\n\n## Secondary: no reclamation path\n\nDirectories that fail to load sit in the worker map as `:failed_to_start` forever. The only reclamation is `Foreman.remove_worker/3` -\u003e `cleanup_worker_directory/2` -\u003e `File.rm_rf`, which nothing calls for them. On the observed cluster that is 129 MB across `ta2y6ro4/` (an orphaned Shale log, untouched since Aug 20), `aflw25ra/`, and `d4if54s2/`.\n\n## Fix\n\nIdentify worker directories by the presence of a readable manifest, not by 'is an entry under path'. A directory without a loadable manifest is not a worker and must not enter the worker map or the health fold.\n\nDo NOT auto-delete manifest-less directories as part of this ticket - a log worker's WAL is real data and deleting it is destructive. Reclamation policy is a separate decision; note it and leave the directories in place.\n\n## Test (write first, must fail)\n\nPoint a foreman at a tmp dir containing a valid worker directory plus `object_storage/` and `raft/`. Assert: (a) the worker map contains only the real worker, (b) foreman health is `:ok`, not `{:failed_to_start, _}`. Add a case for a manifest-less orphan dir - excluded from the map, left on disk.",
   "id": "bedrock-61c.2",
   "labels": [],
   "parent": "bedrock-61c",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[BUG] Foreman enumerates object_storage/ and raft/ as workers; health permanently degraded",
   "type": "bug",
-  "updated_at": "2026-08-25T19:21:21Z"
+  "updated_at": "2026-08-26T16:12:04Z"
 }

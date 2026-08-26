@@ -60,6 +60,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     object_storage = Keyword.fetch!(opts, :object_storage)
     start_unlocked = Keyword.get(opts, :start_unlocked, false)
     reject_pushes_above_lag_us = Keyword.get(opts, :reject_pushes_above_lag_us)
+    cut_interval_us = opts |> Keyword.get(:params, %{}) |> cut_interval_us_from_params()
 
     %{
       id: {__MODULE__, id},
@@ -75,17 +76,35 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
              path,
              object_storage,
              start_unlocked,
-             reject_pushes_above_lag_us
+             reject_pushes_above_lag_us,
+             cut_interval_us
            },
            [name: otp_name]
          ]}
     }
   end
 
+  # The cut interval rides the manifest, which is what makes it survive a
+  # restart: the Foreman rebuilds a crashed worker from its manifest
+  # alone, so an interval held only in State would revert to the default
+  # and the log would resume rolling on boundaries the chunks it already
+  # wrote were not cut on. Anything but a positive integer is "unset" —
+  # manifest params are JSON, so a string or a zero is a config mistake,
+  # not an instruction.
+  @spec cut_interval_us_from_params(map()) :: pos_integer() | nil
+  defp cut_interval_us_from_params(%{"cut_interval_us" => us}) when is_integer(us) and us > 0, do: us
+  defp cut_interval_us_from_params(_params), do: nil
+
   @impl true
-  @spec init({module(), atom(), Log.id(), pid(), Path.t(), module(), boolean(), non_neg_integer() | nil}) ::
+  @spec init(
+          {module(), atom(), Log.id(), pid(), Path.t(), module(), boolean(), non_neg_integer() | nil,
+           pos_integer() | nil}
+        ) ::
           {:ok, State.t(), {:continue, :initialization}}
-  def init({cluster, otp_name, id, foreman, path, object_storage, start_unlocked, reject_pushes_above_lag_us}) do
+  def init(
+        {cluster, otp_name, id, foreman, path, object_storage, start_unlocked, reject_pushes_above_lag_us,
+         cut_interval_us}
+      ) do
     initial_mode = if start_unlocked, do: :running, else: :locked
 
     {:ok,
@@ -99,6 +118,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
        foreman: foreman,
        object_storage: object_storage,
        reject_pushes_above_lag_us: reject_pushes_above_lag_us,
+       cut_interval_us: cut_interval_us,
        available_after: Version.zero(),
        oldest_version: Version.zero(),
        last_version: Version.zero()

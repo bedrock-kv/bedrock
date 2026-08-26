@@ -91,7 +91,10 @@ defmodule Bedrock.Service.Foreman.Impl do
       |> try_to_start_worker(t.cluster, t.object_storage)
       |> advertise_running_worker(t.cluster)
 
-    t = update_workers(t, &Map.put(&1, id, worker_info))
+    t =
+      t
+      |> update_workers(&Map.put(&1, id, worker_info))
+      |> settle_health()
 
     {t, worker_info.otp_name}
   end
@@ -111,7 +114,7 @@ defmodule Bedrock.Service.Foreman.Impl do
         t =
           t
           |> update_workers(&Map.delete(&1, worker_id))
-          |> recompute_health()
+          |> settle_health()
 
         {t, result}
     end
@@ -126,7 +129,7 @@ defmodule Bedrock.Service.Foreman.Impl do
            }}
   def do_remove_workers(t, worker_ids) do
     {updated_state, results} = process_worker_removals(t, worker_ids)
-    final_state = recompute_health(updated_state)
+    final_state = settle_health(updated_state)
     {final_state, results}
   end
 
@@ -242,8 +245,7 @@ defmodule Bedrock.Service.Foreman.Impl do
   def do_worker_health(t, worker_id, health) do
     t
     |> put_health_for_worker(worker_id, health)
-    |> recompute_health()
-    |> notify_waiting_for_healthy()
+    |> settle_health()
   end
 
   @spec do_spin_up(State.t()) :: State.t()
@@ -261,12 +263,15 @@ defmodule Bedrock.Service.Foreman.Impl do
     # therefore had no path to :ok at all, and wait_for_healthy/2 could
     # not return on one.
     #
-    # No waiters can exist yet to notify: this runs in the :spin_up
-    # handle_continue, which precedes every mailbox message, so the
-    # handle_call that is the only writer of waiting_for_healthy cannot
-    # have run. A caller whose request is already queued finds health
-    # settled when it is finally served.
-    |> recompute_health()
+    # settle_health/1 rather than a bare recompute, though no waiter can
+    # exist here yet: this runs in the :spin_up handle_continue, which
+    # precedes every mailbox message, so the handle_call that is the only
+    # writer of waiting_for_healthy cannot have run. The notify is a
+    # no-op today and is here anyway, because "provably no waiters" is a
+    # property of the current call ordering rather than of this code —
+    # routing every health change through one function is what keeps the
+    # pairing from being forgotten if that ordering ever changes.
+    |> settle_health()
   end
 
   # An unstartable directory is silent by nature: with no manifest there
@@ -331,6 +336,19 @@ defmodule Bedrock.Service.Foreman.Impl do
       |> merge_worker_info_into_workers(workers)
     end)
   end
+
+  @doc """
+  Recomputes the foreman's verdict and wakes anyone waiting on it.
+
+  One act, not two. A caller parked in `wait_for_healthy/2` waits with no
+  timeout by default, so a path that recomputes without notifying leaves
+  it asleep through the exact moment its condition became true. Every
+  health change goes through here so that pairing cannot be forgotten at
+  a call site — which is how worker removal came to flip the verdict to
+  `:ok` and tell nobody.
+  """
+  @spec settle_health(State.t()) :: State.t()
+  def settle_health(t), do: t |> recompute_health() |> notify_waiting_for_healthy()
 
   @spec recompute_health(State.t()) :: State.t()
   def recompute_health(t) do

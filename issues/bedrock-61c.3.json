@@ -2,14 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-26T16:12:04Z",
   "created": "2026-08-25T18:42:35Z",
   "description": "`SegmentRecycler.check_in/2`'s docstring (lib/bedrock/data_plane/log/shale/segment_recycler.ex:16-21) states:\n\n    Return a segment to the recycler. The recycler will attempt to delete the\n    segment if it has too many on-hand.\n\nIt does not. `Logic.check_in/2` (:136-142) unconditionally prepends the returned segment to the pool:\n\n    def check_in(t, path_to_file) do\n      new_path_to_file = Path.join(t.path, generate_unused_file_name(t.next_id))\n      with :ok \u003c- File.rename(path_to_file, new_path_to_file) do\n        {:ok, %{t | segments: [new_path_to_file | t.segments], next_id: t.next_id + 1}}\n      end\n    end\n\n`max_available` is `Keyword.fetch!`'d at :43, threaded through `Logic.new/4` into `State`, and then never read again - there is no comparison against it anywhere in the module. `min_available` refills the pool; nothing drains it.\n\n## Failure scenario\n\nSteady state is fine and was verified on a live cluster: with `min_available: 2, max_available: 3` (server.ex:436-437) the pool oscillates between 2 and 3, because each roll checks one out and each trim checks one in. Observed `preallocated.{1,4,2189}` - exactly 3.\n\nThe ratchet needs a burst. A durability watermark that jumps far enough for `trim_durable_segments/1` to split off N segments at once checks in all N back-to-back with no intervening checkout. The pool then holds N segments permanently at 64 MiB each - a single 10-segment trim burst costs 640 MiB that is never released for the life of the worker. Recovery replay, a materializer catching up after a long stall, or object-storage confirmation resuming after an outage all produce exactly that shape.\n\n## Fix\n\nEnforce `max_available` in `check_in/2`: when the pool is already at `max_available`, delete the returned segment instead of pooling it. The docstring already describes the intended behaviour - make the code match it rather than weakening the doc.\n\n## Test (write first, must fail)\n\nDrive `Logic.check_in/2` past `max_available` and assert the pool length never exceeds it and the surplus files are gone from disk. Add a burst case: check in N \u003e max_available segments consecutively with no checkout between, assert pool == max_available and exactly N - max_available files were unlinked. Guard the existing behaviour too - check-in below the cap still pools and still renames.",
   "id": "bedrock-61c.3",
   "labels": [],
   "parent": "bedrock-61c",
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "SegmentRecycler max_available is never enforced; check_in docstring promises deletion that never happens",
   "type": "bug",
-  "updated_at": "2026-08-25T18:45:45Z"
+  "updated_at": "2026-08-26T16:12:04Z"
 }

@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-08-26T16:12:04Z",
   "created": "2026-08-25T19:18:48Z",
   "description": "Found during the bedrock-61c.2 audit; pre-existing.\n\n`Health.compute_health_from_worker_info/1` (lib/bedrock/service/foreman/health.ex:9-18) folds worker healths with these clauses:\n\n    {:ok, _}, :ok -\u003e :ok\n    {:ok, _}, _   -\u003e :starting        # \u003c-- downgrades a recorded failure\n    {:failed_to_start, _}, :ok -\u003e :starting\n    {:failed_to_start, _}, _   -\u003e {:failed_to_start, :at_least_one_failed_to_start}\n\nThe second clause overwrites an accumulated `{:failed_to_start, _}` back to `:starting`, so the verdict depends on element order. Measured:\n\n    [ok, bad, bad] -\u003e {:failed_to_start, :at_least_one_failed_to_start}\n    [bad, bad, ok] -\u003e :starting\n    [bad, ok, bad] -\u003e {:failed_to_start, :at_least_one_failed_to_start}\n    [ok, bad]      -\u003e :starting\n\n`recompute_health/1` folds `Map.values(t.workers)`, and for \u003c32 keys Erlang flatmaps iterate in term order — so the verdict depends on how worker ids sort. A single failed worker whose id sorts before a healthy one yields `:starting`, hiding the failure; the same set in the other order reports it.\n\n## Failure scenario\n\nA node with worker ids \"aaaa\" (failed) and \"zzzz\" (healthy) reports `:starting` forever — indistinguishable from still-booting — while ids \"zzzz\" (failed) and \"aaaa\" (healthy) correctly report `{:failed_to_start, _}`. Operators cannot tell a wedged worker from a slow one, and the signal flips if a worker id changes.\n\n## Fix\n\nA failure should be absorbing: once any worker has failed, no later healthy worker should clear it. Likely `Enum.reduce` over explicit counts (any failed -\u003e failed; else any not-ok -\u003e starting; else ok) rather than a pairwise fold whose result depends on order.\n\n## Test (write first, must fail)\n\nProperty or table test asserting the verdict is invariant under `Enum.shuffle/1` of the same worker-info list, across all combinations of ok/failed/stopped.",
   "id": "bedrock-287",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "[BUG] Foreman health fold is order-dependent: a healthy worker downgrades a recorded failure",
   "type": "bug",
-  "updated_at": "2026-08-25T19:18:48Z"
+  "updated_at": "2026-08-26T16:12:04Z"
 }

@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "bedrock-wxf.6.7"
+  ],
   "created": "2026-08-27T01:07:25Z",
   "description": "ChunkReader selects chunks by name — covering_chunk_keys/2 takes the leading run of listed keys whose named max is at or above the target — and concatenates them oldest-first. It has no notion of one chunk subsuming another, so whenever a consolidated pack coexists with the constituents it replaces, every version in the overlap is delivered twice.\n\nAdd a monotonic filter to read_next_transaction/1: carry the last emitted version in the Stream.resource state (four clauses to update) and drop any entry at or below it.\n\nThe filter is version-level, never key-level. It discards a re-delivery of the same transaction; it never discards a later transaction that happens to touch the same key. It is safe because two copies of a version are always byte-identical — a pack's copy is a byte-copy of its constituent's, and chunks are already byte-identical across replicas by determinism — so the filter never chooses between two payloads.\n\nread_all_transactions/2 has the same exposure and is unused outside its own tests: give it the same filter or delete it.\n\nThis is a DEPLOYMENT gate, not only a merge gate. Nothing may write a pack into an environment where this is not already running. IndexManager.apply_transaction/3 has no monotonicity guard, so duplicate delivery corrupts a materializer index rather than merely wasting reads.",
   "id": "bedrock-wxf.6.1",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "ChunkReader: drop re-delivered versions so overlapping chunks read correctly",
   "type": "task",
-  "updated_at": "2026-08-27T01:07:25Z"
+  "updated_at": "2026-08-27T01:07:40Z"
 }

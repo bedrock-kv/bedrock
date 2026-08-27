@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-27T01:07:26Z",
+  "description": "Promote the mix task to a supervised, non-hotpath service: placement, scheduling, telemetry (packs written, objects reclaimed, bytes moved, pass duration) and configuration for the byte cap and the staleness bound.\n\nAdd single-flight. Concurrent consolidators cannot corrupt anything — identical plans produce identical bytes at identical keys, and both puts and deletes are idempotent — so this is churn control, not a correctness requirement. Single-instance scheduling is sufficient. If that cannot be guaranteed, an advisory per-shard lease costs nothing new: the ObjectStorage behaviour already has get_with_version/2 and put_if_version_matches/5, and a lease expiring early is harmless for the same reason concurrency is.\n\nCap guidance: ChunkReader.read_chunk/2 fetches whole objects into memory, so the practical cap is bounded by what is acceptable to materialize per pull, per shard, per concurrent puller — not by the 4 GiB that the 32-bit directory offsets permit. Raising it meaningfully means ranged reads first (Chunk.byte_range_from_version/2 exists and is unused outside tests), which is deliberately not a dependency of this epic.",
+  "id": "bedrock-wxf.6.10",
+  "labels": [],
+  "parent": "bedrock-wxf.6",
+  "priority": 3,
+  "status": "open",
+  "title": "Consolidator: periodic service, placement and telemetry",
+  "type": "task",
+  "updated_at": "2026-08-27T01:07:26Z"
+}

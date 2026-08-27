@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-27T01:07:26Z",
+  "description": "Once a pack write confirms, delete the constituents it subsumes.\n\nThis removes no data. The pack already holds every version its constituents did, so any subset that survives a crash is redundant rather than missing, and a rescan resolves it. No retention floor, policy input or coordination is involved — that is a separate, blocked ticket about reclaiming a pack whose contents exist nowhere else.\n\nOrder is write-then-delete and never the reverse. Deleting first would open a hole in the version range; the overlap left by the reverse order is already handled by the reader.\n\nWait a grace period between the confirmed put and the deletes, sized well above worst-case pull duration (the default pull timeout is 30s). That structurally precludes a reader which listed a key before the delete and fetches it after, rather than adding a guard for it. The residual, if a pull ever ran longer than the grace period, is a failed pull that gets retried — not lost data.\n\nDelete order among constituents does not matter: the durable pack supersedes all of them.",
+  "id": "bedrock-wxf.6.8",
+  "labels": [],
+  "parent": "bedrock-wxf.6",
+  "priority": 3,
+  "status": "open",
+  "title": "Consolidator: delete constituents once their pack is durable",
+  "type": "task",
+  "updated_at": "2026-08-27T01:07:26Z"
+}

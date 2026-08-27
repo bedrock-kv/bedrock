@@ -8,7 +8,7 @@ The Foreman implements several critical functions for service management:
 
 ### Worker Process Management
 
-- Creates new log and storage worker processes on demand
+- Creates new log and materializer worker processes on demand
 - Maintains registry of all running workers with health status
 - Provides worker discovery and enumeration capabilities
 - Coordinates worker shutdown and cleanup operations
@@ -100,19 +100,16 @@ Foremanprocesses coordinate with cluster service discovery:
 # List all running workers
 {:ok, workers} = Foreman.all(foreman)
 
-# List only storage workers
-{:ok, storage_workers} = Foreman.storage_workers(foreman)
+# List only materializer workers
+{:ok, materializer_workers} = Foreman.materializer_workers(foreman)
 ```
 
 ### Health Monitoring
 
 ```elixir
-# Wait for all workers to report healthy
-:ok = Foreman.wait_for_healthy(foreman, timeout: 30_000)
-
-# Workers report health to their foreman
-:ok = Foreman.report_health(foreman, worker_id, :ok)
-:ok = Foreman.report_health(foreman, worker_id, {:error, reason})
+# Workers report health to their foreman, naming their own process
+:ok = Foreman.report_health(foreman, worker_id, {:ok, self()})
+:ok = Foreman.report_health(foreman, worker_id, {:error, :unavailable})
 ```
 
 ### Service Registration Support
@@ -123,7 +120,7 @@ Foremanprocesses coordinate with cluster service discovery:
 
 # Services returned as compact tuples
 [
-  {"storage_1", :storage, :bedrock_storage_1},  
+  {"materializer_1", :materializer, :bedrock_materializer_1},
   {"log_1", :log, :bedrock_log_1}
 ]
 ```
@@ -132,11 +129,11 @@ Foremanprocesses coordinate with cluster service discovery:
 
 ```elixir
 # Remove single worker with cleanup
-:ok = Foreman.remove_worker(foreman, "storage_1")
+:ok = Foreman.remove_worker(foreman, "materializer_1")
 
 # Batch remove multiple workers
-results = Foreman.remove_workers(foreman, ["storage_1", "storage_2", "log_1"])
-# Returns: %{"storage_1" => :ok, "storage_2" => :ok, "log_1" => :ok}
+results = Foreman.remove_workers(foreman, ["materializer_1", "materializer_2", "log_1"])
+# Returns: %{"materializer_1" => :ok, "materializer_2" => :ok, "log_1" => :ok}
 ```
 
 ## Working Directory Management
@@ -170,10 +167,21 @@ Foreman implements comprehensive health monitoring:
 
 ### Aggregated Health Checking
 
-- Foreman tracks health status for all managed workers
-- `wait_for_healthy/2` blocks until all workers report healthy
-- Health transitions are logged and made available to cluster monitoring
-- Failed workers can trigger automated recovery procedures
+- Foreman folds its workers' health into a single verdict, recomputed on
+  every change to the worker set: at spin-up, when a worker reports its
+  own health, when one is created or removed, and when a monitored
+  worker's process dies
+- The Foreman monitors each running worker, so a process that dies stops
+  counting toward healthy and stops appearing in the roll call the
+  Foreman answers for service registration
+- Two limits are worth knowing. The Coordinator withdraws a registration
+  on deliberate removal rather than on death, so the cluster directory
+  catches up at the next roll call. And the Foreman adopts a replacement
+  the supervisor starts only when it registers within the recheck
+  window; past that, the worker reads as stopped until the next spin-up
+- Nothing reads the verdict yet. No call returns it and nothing emits it
+  as telemetry, so an operator has no way to see it and cluster
+  monitoring has nothing to act on
 
 ## Fault Tolerance Characteristics
 
@@ -226,7 +234,7 @@ Foreman serves as the **service creation foundation** in Bedrock's service regis
 - **From Director**: Receives worker creation requests during recovery
   - **Worker Specification**: `new_worker/4` creates specific worker types on demand, carrying startup params (a materializer's shard assignment) into the worker manifest
   - **Resource Allocation**: Coordinates working directory creation and process supervision
-  - **Health Validation**: `wait_for_healthy/2` ensures workers are operational before recovery proceeds
+  - **Validation**: recovery validates a worker by locking it into the epoch and reading back its recovery info. Foreman health is a node-local summary, and plays no part in that decision
   - **Batch Creation**: Supports creation of multiple workers for efficient recovery scaling
 
 **Error Propagation**:

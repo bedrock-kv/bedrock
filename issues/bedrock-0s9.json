@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-27T13:51:02Z",
+  "description": "Found while correcting cluster.md for bedrock-5tq.4.\n\n`Bedrock.Cluster.capability/0` (lib/bedrock/cluster.ex:23) is:\n\n    :coordination | :log | :materializer | :resolution\n\nBut `children_for_capabilities/3` (lib/bedrock/internal/cluster_supervisor.ex:193-195) maps EVERY declared capability through `module_for_capability/1` (:251-255), which handles only `:coordination`, `:materializer` and `:log` and otherwise raises `\"Unknown capability: ...\"`.\n\n## Failure scenario\n\nA node configured per the type — `capabilities: [:coordination, :materializer, :log, :resolution]` — raises at supervisor start and never boots. The guide documented exactly that configuration, which is how this surfaced.\n\n`:resolution` is not meaningless: the Coordinator derives it (coordinator/state.ex:187 maps `:resolution` to the coordination nodes) so resolvers are PLACED on coordination nodes rather than advertised by a node. So the atom belongs to the derived capability map, not to the node-advertised list — but the type does not distinguish the two.\n\n## Fix\n\nDecide which it is and make the type say so. Either narrow `Cluster.capability/0` to the three a node may advertise and give the coordinator's derived map its own type, or teach `module_for_capability/1` that `:resolution` contributes no children. The current state lets the type invite a configuration the supervisor rejects.\n\n## Test (write first, must fail)\n\nStart a cluster supervisor with `:resolution` among the capabilities and assert it either boots or returns a clear configuration error — not a raise from a catch-all clause.",
+  "id": "bedrock-0s9",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "[BUG] Cluster.capability/0 permits :resolution but starting a node with it raises",
+  "type": "bug",
+  "updated_at": "2026-08-27T13:51:02Z"
+}

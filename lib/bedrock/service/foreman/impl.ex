@@ -101,7 +101,7 @@ defmodule Bedrock.Service.Foreman.Impl do
     t =
       t
       |> update_workers(&Map.put(&1, id, worker_info))
-      |> settle_health()
+      |> recompute_health()
 
     {t, worker_info.otp_name}
   end
@@ -121,7 +121,7 @@ defmodule Bedrock.Service.Foreman.Impl do
         t =
           t
           |> update_workers(&Map.delete(&1, worker_id))
-          |> settle_health()
+          |> recompute_health()
 
         {t, result}
     end
@@ -136,7 +136,7 @@ defmodule Bedrock.Service.Foreman.Impl do
            }}
   def do_remove_workers(t, worker_ids) do
     {updated_state, results} = process_worker_removals(t, worker_ids)
-    final_state = settle_health(updated_state)
+    final_state = recompute_health(updated_state)
     {final_state, results}
   end
 
@@ -257,11 +257,6 @@ defmodule Bedrock.Service.Foreman.Impl do
     end
   end
 
-  @spec do_wait_for_healthy(State.t(), GenServer.from()) :: :ok | State.t()
-  def do_wait_for_healthy(%{health: :ok}, _), do: :ok
-  @spec do_wait_for_healthy(State.t(), GenServer.from()) :: State.t()
-  def do_wait_for_healthy(t, from), do: add_pid_to_waiting_for_healthy(t, from)
-
   @doc """
   Records that a monitored worker's process is gone.
 
@@ -304,7 +299,7 @@ defmodule Bedrock.Service.Foreman.Impl do
         info |> WorkerInfo.put_health(:stopped) |> WorkerInfo.put_monitor_ref(nil)
       end)
     )
-    |> settle_health()
+    |> recompute_health()
   end
 
   @doc """
@@ -341,7 +336,7 @@ defmodule Bedrock.Service.Foreman.Impl do
             info |> WorkerInfo.put_health({:ok, pid}) |> monitor_worker()
           end)
         )
-        |> settle_health()
+        |> recompute_health()
 
       {t, :done}
     else
@@ -355,7 +350,7 @@ defmodule Bedrock.Service.Foreman.Impl do
     t
     |> put_health_for_worker(worker_id, health)
     |> rewatch_worker(worker_id, Map.get(t.workers, worker_id))
-    |> settle_health()
+    |> recompute_health()
   end
 
   # A worker reporting its own health can name a DIFFERENT process than
@@ -397,18 +392,8 @@ defmodule Bedrock.Service.Foreman.Impl do
     # keeps the :starting it was constructed with: recompute_health/1 is
     # otherwise reachable only from a worker's own health cast, and the
     # sole sender is Olivine — Shale never reports. A log-only node
-    # therefore had no path to :ok at all, and wait_for_healthy/2 could
-    # not return on one.
-    #
-    # settle_health/1 rather than a bare recompute, though no waiter can
-    # exist here yet: this runs in the :spin_up handle_continue, which
-    # precedes every mailbox message, so the handle_call that is the only
-    # writer of waiting_for_healthy cannot have run. The notify is a
-    # no-op today and is here anyway, because "provably no waiters" is a
-    # property of the current call ordering rather than of this code —
-    # routing every health change through one function is what keeps the
-    # pairing from being forgotten if that ordering ever changes.
-    |> settle_health()
+    # therefore had no path off :starting at all.
+    |> recompute_health()
   end
 
   # An unstartable directory is silent by nature: with no manifest there
@@ -494,19 +479,6 @@ defmodule Bedrock.Service.Foreman.Impl do
 
   def monitor_worker(worker_info), do: worker_info
 
-  @doc """
-  Recomputes the foreman's verdict and wakes anyone waiting on it.
-
-  One act, not two. A caller parked in `wait_for_healthy/2` waits with no
-  timeout by default, so a path that recomputes without notifying leaves
-  it asleep through the exact moment its condition became true. Every
-  health change goes through here so that pairing cannot be forgotten at
-  a call site — which is how worker removal came to flip the verdict to
-  `:ok` and tell nobody.
-  """
-  @spec settle_health(State.t()) :: State.t()
-  def settle_health(t), do: t |> recompute_health() |> notify_waiting_for_healthy()
-
   @spec recompute_health(State.t()) :: State.t()
   def recompute_health(t) do
     put_health(t, t.workers |> Map.values() |> compute_health_from_worker_info())
@@ -518,20 +490,6 @@ defmodule Bedrock.Service.Foreman.Impl do
         ) ::
           %{Worker.id() => WorkerInfo.t()}
   defp merge_worker_info_into_workers(worker_info, workers), do: Enum.into(worker_info, workers, &{&1.id, &1})
-
-  @spec add_pid_to_waiting_for_healthy(State.t(), GenServer.from()) :: State.t()
-  def add_pid_to_waiting_for_healthy(t, pid), do: update_waiting_for_healthy(t, &[pid | &1])
-
-  @spec notify_waiting_for_healthy(State.t()) :: State.t()
-  def notify_waiting_for_healthy(%{health: :ok, waiting_for_healthy: waiting_for_healthy} = t)
-      when waiting_for_healthy != [] do
-    :ok = Enum.each(t.waiting_for_healthy, &GenServer.reply(&1, :ok))
-
-    put_waiting_for_healthy(t, [])
-  end
-
-  @spec notify_waiting_for_healthy(State.t()) :: State.t()
-  def notify_waiting_for_healthy(t), do: t
 
   @spec worker_for_kind(:log) :: module()
   defp worker_for_kind(:log), do: Bedrock.DataPlane.Log.Shale

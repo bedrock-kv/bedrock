@@ -45,15 +45,6 @@ defmodule Bedrock.Service.Foreman do
   def materializer_workers(foreman, opts \\ []), do: call(foreman, :materializer_workers, opts[:timeout] || :infinity)
 
   @doc """
-  Wait until the foreman signals that it (and all of it's workers) are
-  reporting that they are healthy, or the timeout happens... whichever comes
-  first.
-  """
-  @spec wait_for_healthy(foreman :: ref(), opts :: [timeout: timeout()]) ::
-          :ok | {:error, :unavailable | :timeout | :unknown}
-  def wait_for_healthy(foreman, opts \\ []), do: call(foreman, :wait_for_healthy, opts[:timeout] || :infinity)
-
-  @doc """
   Remove a worker and clean up its resources.
 
   This will:

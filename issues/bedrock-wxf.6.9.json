@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-27T01:07:26Z",
+  "description": "The consolidator persists no state: it rescans, replans and re-executes. This ticket is what earns that claim.\n\nAssert the read-sequence invariant — identical {version, data} sequence for any target version — holds at EVERY intermediate state, not only before and after:\n\n- interrupt between the pack write and the deletes\n- interrupt part-way through the deletes\n- run two consolidators against the same shard concurrently\n- include a shard whose chunks straddle a cut boundary\n\nThe last case needs the known-committed version to lag by more than the cut interval, so that one cut flushes several buckets' worth of buffered data into a single chunk. No captured sample contains one (0 of 754 objects in /tmp/bedrock_00000), so it must be built synthetically rather than assumed rare enough to skip.\n\nExpected outcomes: reads are correct and identical at every point; repeated runs converge rather than oscillate; concurrent runs produce identical bytes at identical keys, so both the puts and the deletes are idempotent.",
+  "id": "bedrock-wxf.6.9",
+  "labels": [],
+  "parent": "bedrock-wxf.6",
+  "priority": 3,
+  "status": "open",
+  "title": "Consolidator: interruption and concurrency tests",
+  "type": "task",
+  "updated_at": "2026-08-27T01:07:26Z"
+}

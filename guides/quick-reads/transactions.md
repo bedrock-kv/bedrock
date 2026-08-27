@@ -16,10 +16,10 @@ Bedrock provides strict ACID guarantees using MVCC[^1] with per-transaction proc
 ### Performance Optimizations
 
 - **Lazy versioning**: No network traffic until first read
-- **Version leasing**: Read versions have expiration to prevent indefinite holds
+- **Bounded read versions**: a materializer retains a sliding window of versions, so a read version ages out rather than being held indefinitely — the transaction retries against a fresh one
 - **Local caching**: Immediate read-your-writes visibility
 - **Batching**: Multiple transactions processed together with intra-batch conflict detection
-- **Horse racing**: Parallel queries to materializer replicas
+- **Horse racing**: try a shard's members and keep the one that answers first — which finds both the quickest member and one current enough to answer
 - **Binary format**: Efficient Transaction encoding with tagged sections and CRC validation
 
 ## Basic Usage

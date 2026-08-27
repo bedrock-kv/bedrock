@@ -93,6 +93,28 @@ The control plane component responsible for recovery coordination, health monito
 
 A database system that stores data as key-value pairs across multiple machines, providing scalability and fault tolerance. Bedrock implements this with strong consistency guarantees.
 
+### **Distributor**
+
+The control-plane component that decides which
+[materializers](#materializer) cover which shard tags. It recruits a
+materializer on demand, publishes the assignment into the
+`materializers/<tag>/` family in the [system keyspace](#system-keys), and
+removes one that has retired — so a tag's membership is a set that
+changes during normal operation rather than a fixed team.
+
+FoundationDB's data distributor is the closest analogue, and the contrast
+is instructive. FDB's balances load and splits or merges shards by size,
+and it repairs replication by moving shards between storage teams when a
+member fails. Bedrock's materializers hold no durable copy, so the
+replication half has no counterpart here — there is nothing to replicate
+and nothing to move. Coverage is what remains.
+
+Ownership rides the keyspace rather than supervision. Two system keys
+under `distributor_lock/` hold opaque UIDs, and every mutating
+distributor transaction proves inside its own serializable commit that no
+newer owner has appeared — which is what makes a superseded distributor's
+writes impossible rather than merely unlikely.
+
 ### **Durability Guarantee**
 
 The promise that once a transaction is committed and acknowledged, it will survive system failures and be permanently stored. In Bedrock, log acknowledgment means WAL append + fsync has completed on required log replicas; async object persistence may still be catching up.
@@ -261,6 +283,20 @@ A concurrency control method where transactions proceed without locking, with co
 ---
 
 ## P
+
+### **Placeholder**
+
+The member the [Distributor](#distributor) publishes for a shard tag that
+no [materializer](#materializer) currently covers. It speaks the
+materializer read API and parks reads instead of serving them, shedding
+`{:error, :unavailable}` — which clients already treat as retryable — if
+coverage does not arrive in time.
+
+It is an ordinary member of the tag's set rather than a separate
+mechanism, so an uncovered tag is visible in the keyspace like any other
+assignment. The commit proxy is what keeps it out of the way: its
+one-member pick deprioritizes the placeholder and returns it only when
+nothing else covers the tag.
 
 ### **Pipelining**
 

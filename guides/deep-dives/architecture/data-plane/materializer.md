@@ -1,59 +1,232 @@
 # Materializer
 
-[Materializer](../../../glossary.md#materializer)s solve a fundamental problem in distributed databases: how to serve fast, consistent reads while maintaining strong transactional guarantees. They sit between the authoritative [Transaction](../../../glossary.md#transaction) [Log](../../../glossary.md#log) and the applications that need to read data, creating a layer that optimizes for read performance without sacrificing consistency.
+A [Materializer](../../../glossary.md#materializer) turns a shard's
+committed transactions into queryable, versioned key-value state and
+serves reads from it. It holds one shard, streams that shard's slices
+from a log's Demux, and answers `get` at a version.
 
 **Location**: [`lib/bedrock/data_plane/materializer.ex`](../../../../lib/bedrock/data_plane/materializer.ex)
 
-## The Performance Problem
+## Why the read path is a separate component
 
-When Bedrock [commits](../../../glossary.md#commit) a transaction, that transaction is immediately durable in the log servers. But serving reads directly from logs would be prohibitively slow—logs are optimized for append-only writes, not random key lookups. The solution is materializers that maintain read-optimized copies of the data, updated asynchronously from a per-shard stream produced by each log's Demux.
+A committed transaction is durable the moment the logs acknowledge it,
+but a log is an append-only record. Answering "what is the value of key
+`k` at version `v`" from a log means replaying it, so Bedrock keeps a
+component whose whole job is to hold the answer already computed.
 
-This creates a classic consistency challenge: how do you serve fast reads from local caches while ensuring that transactions see a consistent view of the world? Materializers solve this fundamental tension between performance and correctness through [Multi-Version Concurrency Control (MVCC)](../../../glossary.md#multi-version-concurrency-control), [eventually consistent](../../../glossary.md#eventually-consistent) handling, and pluggable architecture that can adapt to different workloads while maintaining strict [ACID](../../../glossary.md#acid) guarantees.
+FoundationDB solves this with storage servers, and the resemblance is
+real — but the ownership model is where Bedrock diverges, and it is worth
+being precise about how.
 
-## Multi-Version Time Travel
+## The deviation from FoundationDB: no teams, zero or more members
 
-Materializers solve the consistency problem through multi-version concurrency control. Every piece of data in Bedrock exists at multiple points in time. When a key gets updated by different transactions, materializers keep all the historical [versions](../../../glossary.md#version) rather than overwriting the old value. This enables "time travel"—a transaction can ask for the value of a key as it existed at any point after the [minimum read version](../../../glossary.md#minimum-read-version).
+In FoundationDB a shard is maintained by a **server team**: *k* storage
+servers, *k* being the replication factor. The team *is* the durable copy.
+Data distribution exists largely to keep teams healthy — when a member
+fails, DD issues a `RelocateShard` to rebuild the replication factor by
+copying data from one server to another, and every shard belongs to a
+team at all times.
 
-This multi-version approach is what makes [Optimistic Concurrency Control (OCC)](../../../glossary.md#optimistic-concurrency-control) possible. When the system needs to detect [conflict](../../../glossary.md#conflict) between transactions, it can look at exactly which versions each transaction read and determine whether they interfered with each other. Without version history, this conflict detection would be impossible.
+Bedrock has no teams, and no replication factor among materializers.
+That is not because a materializer matters less — clients need exactly
+what it holds, and it is the whole read path — but because nothing in it
+exists only there. Every byte derives from the logs and from the
+[chunks](../../../glossary.md#chunk) their Demux writes to
+[object storage](../../../glossary.md#object-storage), which is where
+durability lives. A materializer is a view of that record rather than
+part of it.
 
-Version management also solves garbage collection elegantly. Materializers can safely delete old versions once they know that no future transaction will need them, based on tracking the [minimum read version](../../../glossary.md#minimum-read-version) still in use across the cluster.
+So the question a replication factor answers — how many copies must
+survive for the data to survive — does not arise. Losing a materializer
+costs the work of rebuilding one, and nothing else.
 
-## The Eventual Consistency Dance
+The consequence is that a shard has **zero or more** materializers at any
+moment, and the number changes during normal operation:
 
-Materializers maintain an eventually consistent relationship with the transaction log. Committed transactions arrive asynchronously over each server's shard stream: the log's Demux slices every transaction by shard, and each materializer streams exactly its own shard's slice — object-storage chunks for history, the ShardServer's in-memory buffer for recent data, one continuous stream from any starting position. Every stream reply also carries version currency ("nothing for you, but you are current through v"), so a server whose shard is idle keeps advancing without ever polling. There is still always a window where a transaction has been committed but not yet reflected in all materializers.
+- The [Distributor](../../../glossary.md#distributor) recruits a
+  materializer for a tag on demand and publishes it into the
+  `materializers/<tag>/` family in the system keyspace
+- A materializer can retire itself when idle: it uploads a snapshot and
+  is removed, leaving the tag with one fewer member. This is opt-in per
+  worker and nothing in the shipped configuration sets the parameter, so
+  today the count shrinks through failure healing rather than through
+  idleness
+- When a tag has no materializer at all, the Distributor publishes a
+  [Placeholder](../../../glossary.md#placeholder): an ordinary member of
+  the set that speaks the read API and *parks* reads rather than serving
+  them, shedding `{:error, :unavailable}` — which clients already treat
+  as retryable — if coverage does not arrive in time
 
-Bedrock handles this carefully through version leasing. The [Link](../../../glossary.md#link) ensures that transactions only read at versions that are guaranteed to be available on all materializers they'll access. If a transaction tries to read at version 100, the system first confirms that all relevant materializers have applied transactions up to at least version 100.
+Losing a materializer therefore loses nothing but a cache. There is no
+team to repair, no shard to relocate, and no data movement between
+members; a replacement is recruited and rebuilds from the durable
+record.
 
-This coordination enables the best of both worlds: writes achieve immediate durability through the log, while reads get fast local access through materializers. The version-based consistency model ensures that despite the asynchronous updates, every transaction sees a coherent snapshot of the data.
+## How a materializer gets its data
 
-## Horizontal Scaling Through Partitioning
+A materializer never reads the WAL, and never reads
+[chunks](../../../glossary.md#chunk) itself — those reach it through the
+log's [ShardServer](../../../glossary.md#shardserver), as one continuous
+stream. (An implementation that keeps a durable baseline may read object
+storage directly for that one thing: Olivine downloads its own snapshot on
+cold start, then joins the stream from there.)
 
-As data grows, materializers scale horizontally through key range partitioning. Each materializer owns specific ranges of keys and only maintains data for those ranges. From a performance perspective, each materializer can optimize its storage layout and caching strategies for its specific key ranges. Hot keys can be identified and cached more aggressively, and the storage engine can be tuned for the access patterns of its particular data.
+1. A commit reaches the logs, which push it to their
+   [Demux](../../../glossary.md#demux)
+2. The Demux slices each transaction by shard and routes the slice to
+   that shard's ShardServer
+3. The ShardServer buffers slices in memory, and on a Demux-commanded
+   [cut](../../../glossary.md#cut) writes everything at or below the cut
+   version to object storage as one chunk
+4. A materializer calls `pull/3` from one past the version it already
+   holds. Where the reply comes from is one comparison against the last
+   confirmed cut: at or below it, the chunk range in object storage;
+   above it, the buffer
 
-Operationally, range partitioning enables dynamic load balancing. If one key range becomes a hotspot, it can be split and redistributed across multiple materializers. The [Director](../../../glossary.md#director) manages these range assignments and can adapt them during recovery or rebalancing operations.
+The two regions always meet, because a buffered entry is only evicted
+once its chunk write confirms. That is what makes the stream continuous
+from any starting position, and why a materializer that has been offline
+simply has more stream to drink rather than a special catch-up path. Its
+only contact with a log is discovery — `Log.get_shard_server/2`, once per
+session and again on failover.
 
-## Pluggable Storage Engines
+Every reply carries currency: `%{high_water: v, kcv: k}`. An empty reply
+still says something — "nothing for you, but you are current through
+`v`" — so a materializer whose shard is idle keeps advancing its version,
+and keeps serving fresh reads, without polling.
 
-Materializers implement an abstract interface that separates the materializer's logic from the engine implementation. The interface is minimal—essentially versioned key-value reads, transaction application, and recovery coordination. But this simplicity enables radical implementation differences. Some storage engines might prioritize ultra-low latency using pure in-memory storage, while others might optimize for cost using cloud object storage.
+## Versions and their bounds
 
-This pluggability enables experimentation and gradual migration. A cluster could run proven disk-based storage engines alongside experimental new technologies, gradually shifting load as confidence in the new engines grows.
+A materializer serves reads at a version, which is what lets a
+transaction see a consistent snapshot while writes continue underneath
+it. Three outcomes are possible, and they are part of the role rather
+than of any implementation:
 
-## Recovery: the Materializer as Cache, Not Source of Truth
+- the version is available, and the read is answered
+- the version has not been applied yet, so the read parks briefly and
+  then answers `{:error, :version_too_new}`
+- the version is older than the implementation still keeps, and the read
+  answers `{:error, :version_too_old}`
 
-The relationship between materializers and the durable stream becomes crucial during recovery. A materializer can be completely rebuilt from its shard's snapshot and chunk history in object storage, which means it is not a point of failure for data durability—that responsibility belongs to the logs and the chunk pipeline behind them.
+Neither miss reaches the caller. Both are classified retryable, and a
+transaction that hits one restarts against a fresh read version. Reads are
+addressed by version and cannot return stale state, so the cost of
+crossing a bound is a retry, not a wrong answer.
 
-Materializers apply transactions eagerly for read currency but only persist to disk up to the known committed version, so their disk can never hold a version a recovery would discard. When a recovery rolls the cluster back, the rollback is a pure in-memory pointer discard—no disk surgery. A server that has been offline simply resumes its shard stream from its own applied position; the stream serves any starting point, so a stale server just has more stream to drink.
+*How far back* a materializer can reach is a policy of the implementation
+and of how it was configured at boot, not a property of the role. Olivine
+keeps a sliding window whose width is a boot parameter, defaulting to five
+seconds; a different implementation could keep more, less, or something
+shaped differently.
 
-## Integration with the Transaction System
+Conflict detection does not depend on any of this. That is the
+[Resolver](../../../glossary.md#resolver)'s work, done against conflict
+ranges it keeps itself; resolvers never query a materializer.
 
-Materializers integrate with the transaction system at several key points. [Transaction Builder](../../../glossary.md#transaction-builder) are their primary consumers, using "horse racing" to query multiple materializer replicas in parallel and take the first successful response. The materializer also supports conflict detection indirectly by maintaining the version history that Resolvers need. Version leasing creates another integration point with the Link, ensuring that transactions only read at versions that are guaranteed to be available across all materializers they'll access.
+## Recovery: a cache, never a source of truth
 
-For the complete transaction flow, see **[Transaction Processing Deep Dive](../../../deep-dives/transactions.md)**.
+Because the durable record is the log plus its chunks, a materializer is
+never a point of failure for durability, and can be rebuilt from that
+record.
+
+What recovery asks of the role is narrow: on `lock_for_recovery/2` a
+materializer reports the version it holds, and on
+`unlock_after_recovery/4` it is told where to resume and given its pull
+sources. The obligation behind that report is the important part — a
+materializer must never claim a version that a recovery could discard.
+
+Nothing not known-committed ever becomes durable in object storage, so
+recovery needs no chunk cleanup either: the uncommitted tail lives only in
+ShardServer buffers, which die with the Demux tree.
+
+How an implementation keeps its own claim honest is its business. Olivine
+applies transactions eagerly for read currency but persists only up to the
+known committed version, which makes a rollback a pointer discard rather
+than disk surgery. An implementation that never touched disk would satisfy
+the same obligation trivially.
+
+## Reading: ask, do not pre-confirm
+
+A transaction acquires a read version from the
+[Sequencer](../../../glossary.md#sequencer) on its first read, and from
+then on it simply **asks** — there is no step that confirms in advance
+that a materializer has reached that version, and there could not usefully
+be one. Membership is a set that changes, members lag independently, and
+a pre-flight check across them would put a synchronous barrier on the
+critical path of every read to buy a guarantee that is stale the moment
+it is given.
+
+Instead, currency is discovered by asking. A member that has not applied
+the read version yet parks the request briefly and then answers
+`{:error, :version_too_new}`; one whose window has already moved past it
+answers `{:error, :version_too_old}`. Both are retryable, and neither
+reaches the caller.
+
+### The race
+
+This is what racing is for, and it is not only about speed. Members of a
+shard's set are **not replicas of a durable copy** — each streams the
+shard independently and applies at its own pace, so at any instant they
+sit at different versions. A client holding a read version tries the
+members it has, takes the first successful answer, and caches that member
+as the fastest for the key range; subsequent reads in the transaction go
+straight to it.
+
+So a race settles two questions at once: which member is quickest, and
+which is far enough along to answer at all. The second has no counterpart
+in FoundationDB, where every member of a team holds the data and racing is
+purely a tail-latency hedge.
+
+When the cached-fastest member comes back slow, unavailable, or
+`:version_too_new`, the read races the remaining members and re-caches the
+winner. `:version_too_old` is the exception: it fails straight out rather
+than racing, because a version below the retention window is below it
+everywhere.
+
+### What ships today
+
+The commit proxy currently resolves a key to exactly one member —
+`pick_member/1`, deterministic, with a
+[Placeholder](../../../glossary.md#placeholder) deprioritized so real
+coverage always wins — and hands the builder a single ref. That keeps
+every proxy answering alike and a retry landing consistently, and it means
+the special case for an uncovered shard lives in the proxy rather than in
+the reader.
+
+With one runner the race has nothing to choose between. A failure surfaces
+as `:no_servers_to_race`, which invalidates the cached route, so the retry
+re-resolves and may land on a different member — the retry loop doing
+coarsely what a race does directly. Placing several materializers per
+shard by load and locality is its own piece of work; the selection rule
+belongs here when it arrives.
+
+## The role and its implementations
+
+Everything above describes a **role**, and the role is the abstraction
+that matters. `Bedrock.DataPlane.Materializer` is its surface: `get/4` and
+`get_range/5` for versioned reads, `lock_for_recovery/2` and
+`unlock_after_recovery/4` for the recovery handshake — the latter carrying
+the pull sources a materializer streams from — and `info/3` for the facts
+recovery and operators ask of it.
+
+Anything that answers those calls honestly is a materializer. Nothing in
+the role says how state is represented, whether it touches disk at all,
+or how far back it can reach. An implementation that kept a fast in-memory
+window and never persisted a byte would be a perfectly good materializer:
+the durable record is elsewhere, so persistence is an optimisation for
+rebuild cost, not a requirement of the role.
+
+[Olivine](../implementations/olivine.md) is the implementation in use, and
+the only one today — the Foreman starts it for every `:materializer`
+worker. Its page index, its retention window, its disk format and its
+snapshot handling are Olivine's own design, described there rather than
+here. Where this page names a concrete number, it is Olivine's default and
+is marked as such.
 
 ## Related Components
 
-- **[Olivine](../implementations/olivine.md)**: The materializer engine implementation
-- **[Log System](log.md)**: Hosts the Demux whose per-shard streams feed materializer updates
-- **[Transaction Builder](../infrastructure/transaction-builder.md)**: Primary consumer of materializer read operations with horse racing performance optimization
-- **[Link](../infrastructure/link.md)**: Coordinates read version leasing to ensure Materializer data availability
-- **[Director](../control-plane/director.md)**: Control plane component that manages materializer recovery and key range assignment
+- **[Olivine](../implementations/olivine.md)**: the implementation of the role in use today, and where its internals are described
+- **[Log System](log.md)**: hosts the Demux and ShardServers a materializer streams from
+- **[Distributor](../../../glossary.md#distributor)**: recruits materializers, publishes coverage, and parks uncovered tags behind a [Placeholder](../../../glossary.md#placeholder)
+- **[Transaction Builder](../infrastructure/transaction-builder.md)**: races a shard's members for reads
+- **[Object Storage](../../../glossary.md#object-storage)**: holds the chunks and snapshots a materializer is rebuilt from

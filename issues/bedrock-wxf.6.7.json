@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-wxf.6.6"
+  ],
   "blocks": [],
   "created": "2026-08-27T01:07:26Z",
   "description": "Execute a plan for a single shard. Writes only; deletion is the next ticket.\n\nScan the shard prefix by name and size — an interval already holding a single object needs no work. For each planned pack: read its constituents, concatenate their transaction payloads in version order, and put the result at the pack's max-named key. That key is the one its newest constituent already occupies, because a chunk is named for the max version it contains and a pack's max is its newest constituent's max. So a pack write is an overwrite, using put/4 rather than put_if_not_exists/4. Set the consolidation level in the header flags.\n\nChecks:\n\n- Before the put, assert the pack's data section equals the byte concatenation of its constituents' data sections. Cheap, and it catches a mis-assembled pack before it is durable.\n- Primary test: for any target version, ChunkReader.read_from_version/3 yields an identical sequence of {version, data} tuples before and after. This is the exit criterion of the whole epic, expressed as an exact equality rather than a \"nothing was lost\" check.\n\nShip as a mix task. Placement, scheduling and supervision are deliberately deferred to a later ticket so this can be validated by hand against real data first.\n\nNote for rollout: packs written without deletion sit alongside their constituents, so reads fetch both and discard the overlap. That is a temporary read regression by design. Gate this to staging or behind a flag until deletion lands.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Consolidator: write packs for one shard (no deletion)",
   "type": "task",
-  "updated_at": "2026-08-27T01:07:26Z"
+  "updated_at": "2026-08-27T01:07:39Z"
 }

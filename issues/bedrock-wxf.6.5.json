@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "bedrock-wxf.6.6"
+  ],
   "created": "2026-08-27T01:07:25Z",
   "description": "The chunk header reserves a flags byte (\"1 byte: Flags (reserved)\"). decode_header/1 already parses it into the header map and no caller reads it, so populating it is backward compatible with every existing reader.\n\nUse it as a consolidation level: 0 for a chunk written by the demux, N+1 for a pack built from level-N inputs.\n\nThe planner merges only runs of equal level. That seals an emitted pack against being merged again with newer neighbours, which is what keeps a hot shard's trailing pack from being rewritten on every pass — the objects a live puller is most likely to be reading. It also leaves room for later leveling without a second format change.",
   "id": "bedrock-wxf.6.5",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Chunk header flags byte carries a consolidation level",
   "type": "task",
-  "updated_at": "2026-08-27T01:07:25Z"
+  "updated_at": "2026-08-27T01:07:39Z"
 }

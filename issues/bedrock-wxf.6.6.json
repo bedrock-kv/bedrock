@@ -1,7 +1,8 @@
 {
   "assignee": "",
   "blocked_by": [
-    "bedrock-wxf.6.4"
+    "bedrock-wxf.6.4",
+    "bedrock-wxf.6.5"
   ],
   "blocks": [],
   "created": "2026-08-27T01:07:25Z",

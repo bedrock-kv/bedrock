@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "bedrock-wxf.6.6"
+  ],
   "created": "2026-08-27T01:07:25Z",
   "description": "ObjectStorage.list/3 yields bare key strings, discarding the Size that S3's ListObjectsV2 already returns in the very same response.\n\nThe consolidator decides pack membership from sizes and must do so without downloading anything, so this is a prerequisite for the planner rather than an optimization.\n\nAdd a size-carrying listing as a NEW optional callback rather than changing list/3's return shape, so existing callers and test doubles are unaffected. S3 reads Size from the listing response; LocalFilesystem uses File.stat.",
   "id": "bedrock-wxf.6.4",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "ObjectStorage listing can return object sizes",
   "type": "task",
-  "updated_at": "2026-08-27T01:07:25Z"
+  "updated_at": "2026-08-27T01:07:39Z"
 }

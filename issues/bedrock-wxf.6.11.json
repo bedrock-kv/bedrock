@@ -7,11 +7,13 @@
   "created": "2026-08-27T01:07:26Z",
   "description": "Deleting a pack whose contents exist nowhere else — as distinct from deleting constituents that a durable pack has already replaced, which is data-preserving and needs none of this.\n\nRequires a floor: a version below which nothing will ever pull. Pass it into the read as a value rather than persisting a marker beside the chunks; a marker inside the c/{tag}/ prefix would also appear in chunk listings and fail to parse as a base36 version. Delete only objects whose max_version is strictly below the floor, never one that straddles it.\n\nBLOCKED: the floor's producer is materializer-side and out of scope for this epic. It has to account for at least the latest snapshot version per shard and the position of every live replica, and for the fact that a materializer with no snapshot resumes from its own applied position, which starts at zero.\n\nThree sites currently state that chunks are never deleted — ShardServer.terminate/2 and two comments in materializer_bootstrap_phase.ex. This is the ticket that retires those statements and replaces them with the floor invariant. Until it lands they remain accurate: consolidation deletes only superseded copies, never history.",
   "id": "bedrock-wxf.6.11",
-  "labels": [],
+  "labels": [
+    "future"
+  ],
   "parent": "bedrock-wxf.6",
   "priority": 4,
   "status": "open",
   "title": "Reclaim consolidated packs below a retention floor",
   "type": "task",
-  "updated_at": "2026-08-27T01:07:41Z"
+  "updated_at": "2026-08-27T01:08:27Z"
 }

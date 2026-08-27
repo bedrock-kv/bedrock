@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-27T01:07:25Z",
+  "description": "LocalFilesystem.put/4 is File.write straight onto the target path, so it truncates in place and a concurrent reader can observe a partially written object.\n\nThe exposure is limited today because production writes go through put_if_not_exists/4, which opens with :exclusive and so never touches an existing object. Consolidation overwrites live keys, which makes the torn read reachable.\n\nWrite to a temporary file in the same directory and rename onto the target. S3 is already atomic per object and needs no change.",
+  "id": "bedrock-wxf.6.3",
+  "labels": [],
+  "parent": "bedrock-wxf.6",
+  "priority": 3,
+  "status": "open",
+  "title": "LocalFilesystem.put writes via temp file and rename",
+  "type": "task",
+  "updated_at": "2026-08-27T01:07:25Z"
+}

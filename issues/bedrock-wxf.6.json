@@ -9,10 +9,9 @@
   "description": "The demux writes one small object per cut per active shard. That cadence IS the persistence guarantee and does not change. The cost lands on replay instead: a shard's history is read as O(objects), not O(bytes).\n\nMeasured on a captured 8.3h sample (/tmp/bedrock_00000, two shards):\n\n- shard 0: 698 objects, 364,626 B, 3,438 transactions. Average object 522 B. 21.2% of each object is header+directory framing. On a 4K-block filesystem that is 2.79 MB of disk for 356 KB of data (7.8x).\n- shard 1: 56 objects, 1,963,409 B, 5,851 transactions.\n\nReplaying shard 0 costs 698 GETs for 356 KB.\n\nConsolidation repacks a run of adjacent chunks into one larger object with identical contents. It is purely a read-efficiency transform: transactions are CONCATENATED, never COALESCED. Several writes to the same key across a sequence of transactions stay that same sequence of transactions, byte for byte, in the same order. Collapsing redundant writes to a key is what a materializer snapshot does; this is not that. The consolidator never decodes a transaction — the chunk data section is opaque bytes to it.\n\nExit criterion: for any target version, ChunkReader.read_from_version/3 yields an identical sequence of {version, data} tuples before and after consolidation, while the object count for a full replay falls to roughly bytes/cap. Greedy packing at a 256 KB cap takes the sample from 754 objects to 11 (shard 0: 698 -\u003e 2, shard 1: 56 -\u003e 9) at 83% mean fill, and shard 0's disk footprint from 2.79 MB to ~344 KB.\n\nNaming: this is consolidation, not compaction. Olivine already owns \"compaction\" for the coalescing sense (start_compaction/1, CompactionWriter, trace_compaction_started), which is precisely the semantics ruled out here.\n\nOut of scope: everything materializer-side. The retention floor needed to reclaim a pack outright is tracked as a blocked child.",
   "id": "bedrock-wxf.6",
   "labels": [],
-  "parent": "bedrock-wxf",
   "priority": 3,
   "status": "open",
   "title": "[EPIC] Chunk consolidation: repack shard chunks for replay efficiency",
   "type": "task",
-  "updated_at": "2026-08-27T01:07:24Z"
+  "updated_at": "2026-08-27T01:08:27Z"
 }

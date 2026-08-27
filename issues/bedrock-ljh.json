@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-27T01:07:27Z",
+  "description": "IndexManager.apply_transaction/3 prepends {commit_version, ...} to index_manager.versions and sets current_version: commit_version unconditionally. Nothing checks that the version advances.\n\nA re-delivered or out-of-order transaction would therefore push a non-monotonic entry onto a list every other function treats as descending (rollback_to/2, page_for_key/3 and friends compare against it), regress current_version backwards, and double-count keys_added/keys_removed in n_keys.\n\nNothing can currently produce such a delivery, so this is latent rather than live. It is worth a guard as defence in depth: the failure is silent index corruption rather than a crash, which is the worst shape for it to take.",
+  "id": "bedrock-ljh",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "IndexManager.apply_transaction/3 accepts non-monotonic versions",
+  "type": "bug",
+  "updated_at": "2026-08-27T01:07:27Z"
+}

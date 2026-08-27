@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [
     "bedrock-wxf.6.1",
+    "bedrock-wxf.6.2",
     "bedrock-wxf.6.6"
   ],
   "blocks": [],

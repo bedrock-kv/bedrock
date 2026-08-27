@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "bedrock-wxf.6.7"
+  ],
   "created": "2026-08-27T01:07:25Z",
   "description": "Chunk.encode/1 writes whatever list it is handed, building directory entries in argument order, without checking that versions ascend or that they are unique. Every reader assumes both: the directory is binary-searched, and read_from_version/3 walks it forward.\n\nA consolidator assembling a pack from a bad selection would therefore write a corrupt object silently, and it would surface much later as a replay anomaly far from its cause.\n\nAdd the validation to encode/1. Confirm no existing test depends on passing unsorted or duplicated input.",
   "id": "bedrock-wxf.6.2",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Chunk.encode/1 rejects unordered or duplicate versions",
   "type": "task",
-  "updated_at": "2026-08-27T01:07:25Z"
+  "updated_at": "2026-08-27T01:07:40Z"
 }

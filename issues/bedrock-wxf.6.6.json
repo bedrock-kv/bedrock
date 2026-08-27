@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-27T01:07:25Z",
+  "description": "A pure function, no I/O: an ordered list of chunk keys with sizes, ranges and levels, plus a byte cap, in — a set of packs, out. This is where the determinism argument lives and where it is tested.\n\nRules:\n\n1. Weigh each object by payload + directory bytes, i.e. object_size - 32. That quantity is invariant under repacking: consolidation never coalesces, so the payloads and the 16-byte-per-transaction directory entries over a version range never change. Only the per-object 32-byte header count varies with how a range is packed, and excluding it makes the cap test return the same answer no matter how the range currently happens to be packed.\n\n2. Reduce the input to its minimal covering set first, dropping any object whose [min_version, max_version] is contained in another's. Ranges come from headers, which cost nothing extra: the scan only needs names and sizes to find intervals worth touching, and an interval being acted on is downloaded anyway.\n\n3. Pack greedily from the oldest end. A chunk belongs to a pack by its max_version — the same rule the key names already encode.\n\n4. Emit only full packs, plus a non-full prefix whose newest member has aged past a staleness bound. That lets a shard which never fills a pack still consolidate, while never rewriting a hot tail.\n\n5. Merge only runs of equal consolidation level.\n\nRule 2 is load-bearing, not defensive. Between a pack write and the deletes that follow it, a pack coexists with the constituents it replaces and the interval briefly holds up to ~2x its true bytes. A plan computed from that inflated total disagrees with the plan a clean run computes, and successive runs then repack each other's output indefinitely — no corruption, but unbounded churn.\n\nVerified against the captured sample (/tmp/bedrock_00000) at a 256 KB cap; land all three as regression tests:\n\n- clean plan: 698 objects -\u003e 2 packs (shard 0), 56 -\u003e 9 (shard 1), 83% mean fill\n- re-plan after completion: identical boundaries\n- re-plan mid-crash from the minimal covering set: identical boundaries\n- re-plan mid-crash WITHOUT rule 2: diverges (3 packs vs 2, 10 vs 9)",
+  "id": "bedrock-wxf.6.6",
+  "labels": [],
+  "parent": "bedrock-wxf.6",
+  "priority": 3,
+  "status": "open",
+  "title": "Pack planner: greedy packing on a repack-invariant weight",
+  "type": "task",
+  "updated_at": "2026-08-27T01:07:25Z"
+}

@@ -25,4 +25,4 @@ Health monitoring tracks functional capability of each component, ensuring servi
 - **[Coordinator](coordinator.md)**: Creates and manages Director lifecycle with epoch assignment
 - **[Foreman](../infrastructure/foreman.md)**: Infrastructure component that creates workers under Director coordination  
 - **[Log](../data-plane/log.md)**: Critical data plane component requiring Director-managed recovery sequencing
-- **[Storage](../data-plane/storage.md)**: Data plane component with complex dependency requirements during recovery
+- **[Materializer](../data-plane/materializer.md)**: Data plane component with complex dependency requirements during recovery

@@ -55,7 +55,7 @@ The Transaction binary format is Bedrock's tagged binary encoding for transactio
 Section Access Patterns:
 • Commit Proxy → Resolver: READ_CONFLICTS + WRITE_CONFLICTS only
 • Commit Proxy → Logs: All sections for persistence  
-• Logs → Storage: MUTATIONS + COMMIT_VERSION for application
+• Logs → Materializers: MUTATIONS + COMMIT_VERSION for application
 ```
 
 ## Header Specification
@@ -249,7 +249,7 @@ Different system components extract specific sections for optimal performance:
 - Sends: All sections including COMMIT_VERSION
 - Purpose: Durable persistence of complete transaction
 
-**Logs → Storage:**
+**Logs → Materializers:**
 
 - Extracts: MUTATIONS + COMMIT_VERSION
 - Purpose: Apply operations to versioned key-value store

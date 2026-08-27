@@ -6,7 +6,7 @@ The [Log](../../../glossary.md#log) system is the [durability](../../../glossary
 
 ## The Write-Ahead Log Pattern
 
-In any distributed database, there's a fundamental tension between performance and durability. Bedrock resolves this by using a write-ahead log pattern where transactions are first committed to a fast, append-only log before being applied to the main storage servers. This approach provides immediate durability guarantees while allowing storage updates to happen asynchronously.
+In any distributed database, there's a fundamental tension between performance and durability. Bedrock resolves this by using a write-ahead log pattern where transactions are first committed to a fast, append-only log before being applied to the main materializers. This approach provides immediate durability guarantees while allowing storage updates to happen asynchronously.
 
 The Log system acts as the single source of truth for what transactions have been committed. When the Commit Proxy decides that a batch of transactions should be committed, those transactions don't become durable until they're written to the logs. Only after all log servers acknowledge the write does the Commit Proxy inform clients that their transactions have succeeded. This design creates a clean separation of concerns—the transaction processing pipeline focuses on conflict detection and coordination, while the Log system handles the critical task of ensuring that committed data survives system failures.
 
@@ -18,7 +18,7 @@ This simple contract enables the complex behaviors that follow, while keeping th
 
 ## Version-Based Ordering
 
-Every transaction carries a version number that determines its position in the global transaction order, and every push names the preceding committed version. Versions need not be numerically consecutive: the `{predecessor, commit}` links define the chain. Logs append and acknowledge only the connected prefix, parking future links until their predecessor arrives. When a gap closes, the log drains the newly connected chain in order and forwards every original encoded transaction binary to its Demux unchanged. This ordering is crucial because it enables storage servers to receive transactions in the exact same order across all replicas, ensuring that every storage server converges to the same state regardless of timing variations or processing delays.
+Every transaction carries a version number that determines its position in the global transaction order, and every push names the preceding committed version. Versions need not be numerically consecutive: the `{predecessor, commit}` links define the chain. Logs append and acknowledge only the connected prefix, parking future links until their predecessor arrives. When a gap closes, the log drains the newly connected chain in order and forwards every original encoded transaction binary to its Demux unchanged. This ordering is crucial because it enables materializers to receive transactions in the exact same order across all replicas, ensuring that every materializer converges to the same state regardless of timing variations or processing delays.
 
 The version-based ordering also enables efficient conflict detection throughout the system. Since every transaction has a precise position in the global sequence, components like the Resolver can determine conflicts by comparing version numbers and accessed keys.
 
@@ -57,6 +57,6 @@ The minimal contract means that different log servers can coexist in the same cl
 
 - **[Shale](../implementations/shale.md)**: Primary disk-based implementation of the Log interface
 - **[Commit Proxy](commit-proxy.md)**: Orchestrates transaction durability through Log persistence coordination
-- **[Storage](storage.md)**: Streams per-shard transactions from the log's Demux for local state updates
+- **[Materializer](materializer.md)**: Streams per-shard transactions from the log's Demux for local state updates
 - **[Director](../control-plane/director.md)**: Control plane component that manages Log recovery and infrastructure planning
 - **[Foreman](../infrastructure/foreman.md)**: Infrastructure component that creates and manages Log worker processes

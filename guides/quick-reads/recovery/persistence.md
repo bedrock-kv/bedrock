@@ -12,7 +12,7 @@ Instead of running separate tests, Bedrock uses an elegant approach: the new sys
 - **[Commit proxies](../../deep-dives/architecture/data-plane/commit-proxy.md)** coordinate submission
 - **[Resolvers](../../deep-dives/architecture/data-plane/resolver.md)** perform conflict detection
 - **[Logs](../../deep-dives/architecture/data-plane/log.md)** ensure durable persistence
-- **[Storage](../../deep-dives/architecture/data-plane/storage.md)** servers commit the data
+- **[Materializers](../../deep-dives/architecture/data-plane/materializer.md)** commit the data
 
 Successful completion proves the system can process real transactions with full [ACID](../../glossary.md#acid) guarantees, not just exist as isolated components.
 

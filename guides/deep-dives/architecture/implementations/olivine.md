@@ -1,6 +1,6 @@
 # Olivine
 
-[Olivine](../../../glossary.md#olivine) is Bedrock's materializer engine — the [storage](../../../glossary.md#storage) implementation that maintains versioned key-value state for a single [shard](../../../glossary.md#shard) and serves [MVCC](../../../glossary.md#multi-version-concurrency-control) reads. It builds its state from one continuous stream: a snapshot for the deep past, object-storage [chunks](../../../glossary.md#chunk) for history, and its ShardServer's in-memory buffer for the most recent transactions.
+[Olivine](../../../glossary.md#olivine) is Bedrock's [materializer](../../../glossary.md#materializer) engine: the implementation that maintains versioned key-value state for a single [shard](../../../glossary.md#shard) and serves [MVCC](../../../glossary.md#multi-version-concurrency-control) reads. It builds its state from one continuous stream: a snapshot for the deep past, object-storage [chunks](../../../glossary.md#chunk) for history, and its ShardServer's in-memory buffer for the most recent transactions.
 
 **Location**: `lib/bedrock/data_plane/materializer/olivine/`
 
@@ -43,7 +43,7 @@ Background compaction rewrites the data and index files without blocking reads o
 
 ## Related Components
 
-- **[Storage System](../data-plane/storage.md)**: General materializer concepts and interface
+- **[Materializer](../data-plane/materializer.md)**: General materializer concepts and interface
 - **[Log System](../data-plane/log.md)**: Hosts the Demux whose ShardServers feed olivine
 - **[Transaction Builder](../infrastructure/transaction-builder.md)**: Primary consumer of olivine read operations
 - **[Director](../control-plane/director.md)**: Control plane component that manages materializer recovery and shard assignment

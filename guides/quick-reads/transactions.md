@@ -19,7 +19,7 @@ Bedrock provides strict ACID guarantees using MVCC[^1] with per-transaction proc
 - **Version leasing**: Read versions have expiration to prevent indefinite holds
 - **Local caching**: Immediate read-your-writes visibility
 - **Batching**: Multiple transactions processed together with intra-batch conflict detection
-- **Horse racing**: Parallel queries to storage replicas
+- **Horse racing**: Parallel queries to materializer replicas
 - **Binary format**: Efficient Transaction encoding with tagged sections and CRC validation
 
 ## Basic Usage

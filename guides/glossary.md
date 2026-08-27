@@ -79,7 +79,7 @@ The management layer consisting of Coordinators and Directors that handle cluste
 
 ### **Data Plane**
 
-The transaction processing layer consisting of Sequencers, Commit Proxies, Resolvers, Logs, and Storage servers that handle client transactions.
+The transaction processing layer consisting of Sequencers, Commit Proxies, Resolvers, Logs, and Materializers that handle client transactions.
 
 ### **Demux**
 
@@ -115,7 +115,7 @@ A recovery generation number that increases with each cluster recovery, used to 
 
 ### **Eventually Consistent**
 
-The property that storage servers will eventually reflect all committed transactions, though there may be temporary delays in applying changes.
+The property that materializers will eventually reflect all committed transactions, though there may be temporary delays in applying changes.
 
 ---
 
@@ -147,7 +147,7 @@ One recovery's set of logs. Recovery does not repair old logs in place: it recru
 
 ### **Horse Racing**
 
-A distributed systems performance optimization technique where multiple equivalent service endpoints are queried simultaneously, using the first successful response while canceling remaining requests. This approach automatically adapts to varying network conditions, server load, and geographic latency without requiring complex load balancing logic. See [Transaction Builder implementation](deep-dives/architecture/infrastructure/transaction-builder.md#storage-server-selection-and-performance-optimization) for Bedrock's specific use of horse racing in storage server selection.
+A distributed systems performance optimization technique where multiple equivalent service endpoints are queried simultaneously, using the first successful response while canceling remaining requests. This approach automatically adapts to varying network conditions, server load, and geographic latency without requiring complex load balancing logic. See [Transaction Builder implementation](deep-dives/architecture/infrastructure/transaction-builder.md#materializer-selection-and-performance-optimization) for Bedrock's specific use of horse racing in materializer selection.
 
 ### **Hot Key**
 
@@ -159,11 +159,11 @@ A key that receives disproportionately high read or write traffic, potentially b
 
 ### **Key Distribution**
 
-The process of spreading keys across multiple storage servers to balance load and avoid hotspots.
+The process of spreading keys across multiple materializers to balance load and avoid hotspots.
 
 ### **Key Range**
 
-A contiguous segment of the key space, defined by start and end keys (e.g., `{"a", "m"}` covers keys from "a" to just before "m"). Used for sharding data across storage servers and resolvers.
+A contiguous segment of the key space, defined by start and end keys (e.g., `{"a", "m"}` covers keys from "a" to just before "m"). Used for sharding data across materializers and resolvers.
 
 ### **Known Committed Version**
 
@@ -203,7 +203,11 @@ The component that provides durable, ordered transaction storage and serves as t
 
 ### **Materializer**
 
-The codebase's name for a [Storage](deep-dives/architecture/data-plane/storage.md) server: the component that materializes queryable, versioned key-value state for a single shard by streaming that shard's slices from a log's Demux. See also: [Olivine](#olivine), the materializer engine implementation.
+The component that materializes queryable, versioned key-value state for a single shard: it streams that shard's slices from a log's Demux and serves reads from the result. See [Materializer](deep-dives/architecture/data-plane/materializer.md), and [Olivine](#olivine) for the engine that implements it.
+
+FoundationDB calls this role a *storage server*. Bedrock calls it a materializer; [Storage](#storage) notes the two places the older word still appears in the code.
+
+A materializer is not [Object Storage](#object-storage), which holds the durable bytes its history comes from.
 
 ### **Manifest**
 
@@ -224,6 +228,25 @@ A concurrency control method that maintains multiple versions of each data item,
 ---
 
 ## O
+
+### **Object Storage**
+
+The durability substrate beneath the data plane: a key-value store of
+binary objects, backed by the local filesystem or S3.
+
+A log's Demux writes each shard's committed transactions here as
+[chunks](#chunk), and that log's [ShardServer](#shardserver) reads them
+back to serve a materializer's history. A [Materializer](#materializer)
+therefore reaches object storage through a ShardServer, and never reads a
+log's WAL directly. A log trims a WAL segment once object storage
+confirms the transactions that segment holds.
+
+Chunks and snapshots are written once and never modified — each is
+published with a create-only put. The cluster-state object is the
+exception, and is updated in place.
+
+Object storage serves no client reads and holds no queryable state.
+Serving reads is a [Materializer](#materializer)'s work.
 
 ### **Olivine**
 
@@ -301,7 +324,9 @@ An anonymous per-shard process owned by exactly one log's Demux. It buffers that
 
 ### **Storage**
 
-The component that serves read requests and maintains versioned key-value data by streaming its shard's committed transactions from a log's Demux (called a [Materializer](#materializer) in the codebase). See also: [Storage implementation](deep-dives/architecture/data-plane/storage.md).
+The earlier name for a [Materializer](#materializer). The code uses *materializer* today, with two exceptions that still carry the older word: `Bedrock.Internal.TransactionBuilder.StorageRacing`, and the `mix bedrock.dump_storage` task.
+
+[Object Storage](#object-storage) is a separate component whose name also contains the word — the durable byte store beneath the data plane, rather than anything that serves reads.
 
 ### **Strict Serialization**
 
@@ -357,4 +382,4 @@ A situation where a commit version was assigned but the transaction failed to co
 
 ### **Worker**
 
-A generic term for any service process in the Bedrock cluster (storage servers, log servers, etc.).
+A generic term for any service process in the Bedrock cluster (materializers, log servers, etc.).

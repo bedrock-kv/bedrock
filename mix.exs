@@ -139,7 +139,7 @@ defmodule Bedrock.MixProject do
         "guides/deep-dives/architecture/data-plane/log.md",
         "guides/deep-dives/architecture/data-plane/resolver.md",
         "guides/deep-dives/architecture/data-plane/sequencer.md",
-        "guides/deep-dives/architecture/data-plane/storage.md",
+        "guides/deep-dives/architecture/data-plane/materializer.md",
         "guides/deep-dives/architecture/implementations/README.md",
         "guides/deep-dives/architecture/implementations/olivine.md",
         "guides/deep-dives/architecture/implementations/shale.md",

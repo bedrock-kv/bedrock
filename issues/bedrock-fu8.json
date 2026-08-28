@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-08-28T22:48:22Z",
+  "description": "Bedrock pinned {:flatbuffer, \"~\u003e 0.3\"} (resolving 0.3.1). Upstream is now 0.5.0, which fixes a packaging defect: 0.3.1's tarball shipped the generated src/*.erl leex/yecc output alongside the .xrl/.yrl grammars, so the published parser was whatever the maintainer's local OTP generated rather than a build from the grammars in git. 0.5.0 declares an explicit files: list and ships grammars only.\n\nBedrock's API surface is a single call site — lib/bedrock/system_keys/cluster_bootstrap.ex:57, 'use Flatbuffer, file: \"priv/schemas/cluster_bootstrap.fbs\"' — so the upgrade risk is minimal.\n\nFiled upstream as fb-r3l in jallum/flatbuffer; already fixed and closed there.",
+  "id": "bedrock-fu8",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Bump flatbuffer to ~\u003e 0.5",
+  "type": "task",
+  "updated_at": "2026-08-28T22:48:22Z"
+}

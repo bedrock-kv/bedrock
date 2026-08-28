@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 — 2026-08-25
+## 0.7.0 — 2026-08-28
 
 This release moves cluster metadata out of the broadcast layout and into the
 committed keyspace, and introduces the Distributor — the component that owns
@@ -102,6 +102,28 @@ describes; the broadcast carries only this epoch's wiring.
   listing errors rather than halting**, and consumers of `list/3` should
   expect a raise.
 
+- **The local object storage backend publishes atomically.** Readers of the
+  object store are written against S3's contract — an object is complete or
+  absent, and `put_if_not_exists` claims a key only by publishing a whole
+  object. The local backend opened the key `:exclusive` and wrote to it as a
+  *second* step, so between the two the key existed at zero length. A crash
+  there claimed the key permanently: every later attempt gets `:eexist`, and
+  callers read `{:error, :already_exists}` as success, so a short object would
+  report success forever and could never be rewritten. Both operations now
+  write to a scratch file in the target's own directory, fsync, and publish in
+  one step — `rename` for `put/4`, `link` for `put_if_not_exists/4`. Write
+  errors are returned rather than raised, so a full disk no longer becomes a
+  `MatchError` with a poisoned key left behind. **Custom backends built on the
+  local one should adopt the same shape**; a two-step write cannot honour the
+  contract its readers assume.
+
+  `Chunk.decode/1` also validates the data section against the directory's
+  extents. A chunk torn past its directory used to decode as `{:ok, chunk}`
+  and fail later as an `ArgumentError` from `binary_part/3`, deep inside a
+  materializer's catch-up; it is now a decode error at the boundary. A header
+  claiming zero transactions is rejected too — `encode/1` refuses to emit one,
+  so an empty directory is corruption however well-formed it looks.
+
 - **Workers retire themselves.** The foreman no longer decides which workers
   to reap by diffing the durable layout; it relays the layout and janitors
   what a retiring worker leaves behind. A log checks itself against the
@@ -111,6 +133,83 @@ describes; the broadcast carries only this epoch's wiring.
   clear, addressed to the shard's own tag, so a materializer whose
   assignment is withdrawn mid-epoch learns from its own stream instead of
   waiting for the next recovery broadcast.
+
+- **The foreman's health verdict is now trustworthy.** `wait_for_healthy/2`
+  rested on a verdict that four separate defects could each falsify, and a
+  node with only the `:log` capability could never reach `:ok` at all — not
+  slowly, but never, because the only recompute path was a cast that Shale
+  never sends. Four fixes together:
+
+  - Spin-up settles the verdict. A successful boot used to leave the state at
+    the `:starting` it was constructed with, however cleanly every worker
+    started.
+  - The verdict is stated as precedence over the whole worker collection
+    rather than as a pairwise fold, so it no longer depends on the order
+    workers arrive in. Previously a foreman hosting exactly one worker, and
+    that worker failed to start, reported `:starting`.
+  - Recomputing health and waking waiters became one act. Removing the last
+    failing worker flipped health to `:ok` and told nobody, so a caller parked
+    in `wait_for_healthy/2` (default timeout `:infinity`) slept through the
+    moment its condition came true.
+  - The foreman monitors the workers it hosts. Health was recorded once, at
+    start, and never revisited, so `{:ok, pid}` outlived the process it named
+    — layout pushes went to a dead pid (and that push is how a worker learns
+    it has been displaced), the coordinator kept being told a dead process was
+    available, and the verdict folded over corpses. Workers are `:transient`,
+    so a dead worker is marked `:stopped` and a bounded recheck adopts the
+    restarted replacement rather than dropping a live worker from the roll
+    call.
+
+- **Directories without a manifest are reported, not adopted.** The foreman
+  globbed every entry under its path and called each a worker, but that path
+  is shared — the cluster supervisor derives `object_storage/` from the same
+  `:path`, and deployments put the coordinator's `raft/` alongside it. Both
+  landed in the worker map as `{:failed_to_start,
+  :manifest_does_not_exist}`, as did the remains of workers whose manifests
+  are gone. Those orphans are stuck by construction: retirement runs *through*
+  a live worker, so a directory that starts no process can never retire
+  itself, and it is retried and re-failed on every boot while holding its disk
+  invisibly. Enumeration is now keyed on the manifest's presence, and
+  **absence is the only thing that excludes** — a corrupt manifest is a worker
+  in trouble, and one that cannot be stat'ed for any other reason is a worker
+  we cannot rule out, so neither vanishes from the foreman's view. Manifest-less
+  directories are named in the log at boot and left alone: they may hold a WAL,
+  and deleting data on a guess is not the foreman's call. Reclamation is the
+  operator's, which is why the log names the paths.
+
+- **The write-ahead log rolls on the Demux's configured cut interval.** A
+  segment holds exactly one cut bucket — that is what lets trimming drop
+  history at the cut cadence even though the active segment is trim-immune.
+  The two sides agreed only by coincidence: the roll boundary read the Demux's
+  *default* directly, and the log's Demux was started without
+  `:cut_interval_us` at all, so the documented option was unreachable from a
+  log. Both now resolve through one point, and the value rides the worker's
+  manifest params, so a restarted worker does not revert to the default and
+  resume rolling on boundaries its already-written chunks were not cut on. A
+  drift's cost was retention, not durability — an unaligned segment stays
+  un-trimmable until the last cut covering it lands, and is never trimmed
+  early.
+
+- **The segment pool ceiling is enforced.** `SegmentRecycler.check_in/2` has
+  always documented that it deletes a returned segment when the pool is full;
+  `max_available` was fetched, threaded into state, and never compared against
+  anything. Steady state hides this — one checkout per roll and one check-in
+  per trim oscillates at the cap — but a trim burst does not: a jumped
+  durability watermark checks in every segment below it back-to-back with no
+  intervening checkout, and the pool keeps each at full `segment_size` for the
+  life of the worker. At the 64 MiB production size a ten-segment burst pinned
+  640 MiB that was never released. A recycler constructed with `min_available
+  >= max_available` is now a startup error rather than silent degradation,
+  since with no slack every cycle allocates a replacement and recycles nothing.
+
+- **The segment recycler reports its failures instead of masking them.** Its
+  post-init failure path called `stop/2` with the arguments transposed, so it
+  exited with `:shutdown` and installed the real cause as its state.
+  `gen_server` suppresses error reporting for `:shutdown`, so the crash was
+  silent and the cause was discarded — a log whose disk filled looked like it
+  had shut down politely. `:enospc` and `:eacces` now reach the log. An
+  exhausted checkout also schedules a refill: the one moment the pool most
+  needed one was the one moment nothing asked for it.
 
 - **Cold shards park and revive on demand.** A materializer with an
   `idle_timeout` set uploads a snapshot and exits when no *client reads*
@@ -138,6 +237,15 @@ describes; the broadcast carries only this epoch's wiring.
   `Bedrock.SystemKeys.Reader`). System-key values now use explicit versioned
   encodings; decoders handle durable bytes, never raise, and never create
   atoms.
+
+  Four more modules go with a dead-code sweep:
+  `Bedrock.ObjectStorage.ChunkWriter` (superseded — the demux shard server
+  encodes and writes chunks directly through `Chunk.encode/1`, cutting on the
+  demux's own interval), `Bedrock.ControlPlane.RateKeeper` (a name with no
+  implementation since the initial cut), `Bedrock.DataPlane.Proxy` (a read-version
+  proxy; clients get read versions through the transaction builder and commit
+  proxies), and `Bedrock.ControlPlane.Director.ChangingParameters` (uncalled
+  since 2025-08).
 
 - **The guides are published, and accurate.** The README linked 18 guides that
   were never listed in `mix.exs` extras, so every architecture link on the

@@ -8,7 +8,7 @@ The [Resolver](../../../glossary.md#resolver) implements Bedrock's [Multi-Versio
 
 Bedrock uses [Optimistic Concurrency Control (OCC)](../../../glossary.md#optimistic-concurrency-control), where transactions proceed without acquiring locks and conflicts are detected only at commit time. This approach maximizes concurrency and eliminates deadlocks, but it requires sophisticated conflict detection to maintain correctness. The fundamental challenge is determining whether a set of transactions, if committed together, would produce a result equivalent to some serial execution of those same transactions.
 
-Resolvers detect two primary types of conflicts that can violate serializability. Read-write conflicts occur when a transaction reads a key, then another transaction commits a write to that same key before the first transaction commits—the reading transaction based its decisions on stale data. Write-write conflicts happen when two transactions attempt to write to overlapping key ranges, which would produce arbitrary results depending on [storage](../../../glossary.md#storage) server timing.
+Resolvers detect two primary types of conflicts that can violate serializability. Read-write conflicts occur when a transaction reads a key, then another transaction commits a write to that same key before the first transaction commits—the reading transaction based its decisions on stale data. Write-write conflicts happen when two transactions attempt to write to overlapping key ranges, which would produce arbitrary results depending on [materializer](../../../glossary.md#materializer) timing.
 
 ## Version History Through Interval Trees
 
@@ -184,5 +184,5 @@ Resolver serves as the **MVCC conflict detection authority** with these specific
 
 - **[Commit Proxy](commit-proxy.md)**: Coordinates conflict resolution and provides transaction data to Resolvers
 - **[Sequencer](sequencer.md)**: Provides version ordering that enables consistent conflict detection
-- **[Storage](storage.md)**: Provides key range assignments and transaction data for state recovery
+- **[Materializer](materializer.md)**: Provides key range assignments and transaction data for state recovery
 - **[Director](../control-plane/director.md)**: Control plane component that manages Resolver recovery and range assignment

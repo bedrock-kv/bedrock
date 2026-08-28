@@ -1,6 +1,6 @@
 # Transaction Builder
 
-The [Transaction Builder](../../../glossary.md#transaction-builder) manages the complete lifecycle of individual [transactions](../../../glossary.md#transaction), acting as each client's dedicated transaction coordinator. Every transaction gets its own Transaction Builder process, which handles everything from [read version](../../../glossary.md#read-version) acquisition to final [commit](../../../glossary.md#commit) coordination while maintaining [read-your-writes consistency](../../../glossary.md#read-your-writes-consistency) and optimizing performance through intelligent [storage](../../../glossary.md#storage) server selection.
+The [Transaction Builder](../../../glossary.md#transaction-builder) manages the complete lifecycle of individual [transactions](../../../glossary.md#transaction), acting as each client's dedicated transaction coordinator. Every transaction gets its own Transaction Builder process, which handles everything from [read version](../../../glossary.md#read-version) acquisition to final [commit](../../../glossary.md#commit) coordination while maintaining [read-your-writes consistency](../../../glossary.md#read-your-writes-consistency) and optimizing performance through intelligent [materializer](../../../glossary.md#materializer) selection.
 
 **Location**: [`lib/bedrock/internal/transaction_builder.ex`](../../../lib/bedrock/internal/transaction_builder.ex)
 
@@ -12,9 +12,9 @@ Transaction Builder exemplifies Bedrock's embedded distributed approach by bring
 
 The Transaction Builder represents a fundamental departure from traditional distributed database architectures. Instead of applications sending transaction requests to remote database servers, the Transaction Builder embeds transaction management logic directly within application processes. This local-first approach means transaction state, caching, and coordination logic run co-located with application code.
 
-This embedded design enables transaction performance characteristics impossible in client-server architectures. [Read-your-writes consistency](../../../glossary.md#read-your-writes-consistency) requires no network round-trips because the write cache operates in local memory. Transaction state management happens at memory speeds rather than network speeds. Performance optimizations like [storage server](../../../glossary.md#storage-server) selection and caching develop organically within each transaction's local context.
+This embedded design enables transaction performance characteristics impossible in client-server architectures. [Read-your-writes consistency](../../../glossary.md#read-your-writes-consistency) requires no network round-trips because the write cache operates in local memory. Transaction state management happens at memory speeds rather than network speeds. Performance optimizations like [materializer](../../../glossary.md#materializer) selection and caching develop organically within each transaction's local context.
 
-The per-process model also enables sophisticated local optimizations. Each Transaction Builder can maintain its own performance characteristics, learning which storage servers respond fastest for its particular access patterns. This localized learning creates transaction coordination that adapts to application-specific usage patterns rather than relying on global optimization heuristics.
+The per-process model also enables sophisticated local optimizations. Each Transaction Builder can maintain its own performance characteristics, learning which materializers respond fastest for its particular access patterns. This localized learning creates transaction coordination that adapts to application-specific usage patterns rather than relying on global optimization heuristics.
 
 ### Unified Failure Domain Benefits
 
@@ -36,7 +36,7 @@ This design also enables new programming paradigms. Applications can create hund
 
 Most databases handle multiple transactions within shared processes, but Bedrock takes a different approach. Each transaction gets its own dedicated process that exists for the entire transaction lifetime. This design choice enables several important capabilities that would be difficult to achieve with shared processes.
 
-First, it provides perfect isolation between transactions. Each Transaction Builder maintains its own read and write sets, [version](../../../glossary.md#version) information, and performance optimizations without any risk of cross-transaction interference. Second, it enables sophisticated state management including nested transactions and complex read-your-writes semantics. Finally, it allows each transaction to develop its own performance characteristics, learning which storage servers are fastest for its particular access patterns.
+First, it provides perfect isolation between transactions. Each Transaction Builder maintains its own read and write sets, [version](../../../glossary.md#version) information, and performance optimizations without any risk of cross-transaction interference. Second, it enables sophisticated state management including nested transactions and complex read-your-writes semantics. Finally, it allows each transaction to develop its own performance characteristics, learning which materializers are fastest for its particular access patterns.
 
 The per-process model also simplifies error handling and [recovery](../../../glossary.md#recovery). If something goes wrong with one transaction, it can fail independently without affecting other transactions. The process can handle timeouts and coordinate complex multi-step operations without worrying about other transactions.
 
@@ -44,27 +44,27 @@ The per-process model also simplifies error handling and [recovery](../../../glo
 
 One of the Transaction Builder's most important responsibilities is maintaining read-your-writes consistency within transactions. When a transaction writes to a key and then immediately reads it back, it must see the value it just wrote, even though that write hasn't been committed yet.
 
-Transaction Builder solves this by maintaining a local cache of all writes made within the transaction. When a read operation occurs, it first checks this local write cache before going to storage servers. This ensures that writes are immediately visible to subsequent reads within the same transaction, maintaining the illusion that the transaction's changes are immediately applied.
+Transaction Builder solves this by maintaining a local cache of all writes made within the transaction. When a read operation occurs, it first checks this local write cache before going to materializers. This ensures that writes are immediately visible to subsequent reads within the same transaction, maintaining the illusion that the transaction's changes are immediately applied.
 
 This local caching also provides significant performance benefits. Repeated reads of the same key within a transaction only hit the network once, with subsequent reads served from the local cache. For workloads that read and modify the same keys multiple times, this can dramatically reduce network overhead.
 
-## Storage Server Selection and Performance Optimization
+## Materializer Selection and Performance Optimization
 
-Transaction Builder maintains knowledge about which storage servers handle which [key ranges](../../../glossary.md#key-range), enabling it to route read requests efficiently. This mapping is derived from the [transaction system layout](../../../glossary.md#transaction-system-layout) and is kept current as the cluster configuration changes.
+Transaction Builder maintains knowledge about which materializers handle which [key ranges](../../../glossary.md#key-range), enabling it to route read requests efficiently. This mapping is derived from the [transaction system layout](../../../glossary.md#transaction-system-layout) and is kept current as the cluster configuration changes.
 
-When a read operation needs data from storage servers, Transaction Builder faces a performance challenge: which storage server should it contact? Key ranges are typically served by multiple storage servers for redundancy, but these servers might have different response times due to load, network conditions, hardware differences, or physical location—servers in different data centers or regions can have significantly different network latencies.
+When a read operation needs data from materializers, Transaction Builder faces a performance challenge: which materializer should it contact? Key ranges are typically served by multiple materializers for redundancy, but these servers might have different response times due to load, network conditions, hardware differences, or physical location—servers in different data centers or regions can have significantly different network latencies.
 
-Transaction Builder solves this through "[horse racing](../../../glossary.md#horse-racing)"—simultaneously querying multiple storage servers that have the needed data and using the first successful response. This approach minimizes read latency by automatically adapting to current network and server conditions without requiring complex load balancing logic.
+Transaction Builder solves this through "[horse racing](../../../glossary.md#horse-racing)"—simultaneously querying multiple materializers that have the needed data and using the first successful response. This approach minimizes read latency by automatically adapting to current network and server conditions without requiring complex load balancing logic.
 
-The system also learns from these races. Transaction Builder caches information about which storage servers are fastest for different key ranges, enabling it to optimize future reads by preferring servers that have performed well recently. For subsequent reads to the same key range, it will try the cached fastest server first, falling back to horse racing if that server fails or performs poorly.
+The system also learns from these races. Transaction Builder caches information about which materializers are fastest for different key ranges, enabling it to optimize future reads by preferring servers that have performed well recently. For subsequent reads to the same key range, it will try the cached fastest server first, falling back to horse racing if that server fails or performs poorly.
 
-This creates a feedback loop where read performance improves over the lifetime of a transaction as the Transaction Builder builds up knowledge about the current performance characteristics of different storage servers. The component also handles automatic fallback and retry logic that keeps transactions running smoothly even when individual storage servers have problems.
+This creates a feedback loop where read performance improves over the lifetime of a transaction as the Transaction Builder builds up knowledge about the current performance characteristics of different materializers. The component also handles automatic fallback and retry logic that keeps transactions running smoothly even when individual materializers have problems.
 
 ## Version Management
 
 Transaction Builder uses lazy read version acquisition to minimize the [conflict](../../../glossary.md#conflict) detection window and ensure transactions see the latest committed data. Rather than acquiring a read version when the transaction begins, it waits until the first read operation to obtain a version. This optimization is crucial because the span from read version to [commit version](../../../glossary.md#commit-version) defines the window where this transaction could conflict with others—delaying the read version acquisition shortens that conflict window significantly. It also ensures that the transaction sees the most recent committed state available at the time of its first read, rather than potentially stale data from when the transaction was created.
 
-When the first read occurs, Transaction Builder gets the next read version directly from the [Sequencer](../../../glossary.md#sequencer). The system tracks active transactions to determine the [minimum read version](../../../glossary.md#minimum-read-version) needed—storage servers cannot garbage collect any data at or after this version because active transactions might still need it. This creates a coordinated retention policy where data is kept as long as any transaction might read it.
+When the first read occurs, Transaction Builder gets the next read version directly from the [Sequencer](../../../glossary.md#sequencer). The system tracks active transactions to determine the [minimum read version](../../../glossary.md#minimum-read-version) needed—materializers cannot garbage collect any data at or after this version because active transactions might still need it. This creates a coordinated retention policy where data is kept as long as any transaction might read it.
 
 ## Nested Transactions and State Stacking
 
@@ -96,7 +96,7 @@ Transaction Builder serves as the **per-transaction coordinator** with these spe
 
 - **Process-Per-Transaction**: Dedicated process lifecycle management for individual transactions
 - **Read-Your-Writes Cache**: Local write cache providing immediate consistency within transactions
-- **Storage Server Selection**: Intelligent routing and "horse racing" across storage replicas for optimal read performance
+- **Materializer Selection**: Intelligent routing and "horse racing" across materializer replicas for optimal read performance
 - **Version Management**: Lazy read version acquisition from Sequencer
 - **Nested Transaction Support**: Local state stacking for nested transaction semantics without distributed overhead
 - **Commit Coordination**: Transaction preparation and handoff to Commit Proxy for distributed processing
@@ -107,5 +107,5 @@ Transaction Builder serves as the **per-transaction coordinator** with these spe
 
 - **[Link](link.md)**: Creates and manages Transaction Builder lifecycle
 - **[Commit Proxy](../data-plane/commit-proxy.md)**: Receives transaction data for batch processing and durability
-- **[Storage](../data-plane/storage.md)**: Serves versioned reads to Transaction Builder processes
+- **[Materializer](../data-plane/materializer.md)**: Serves versioned reads to Transaction Builder processes
 - **[Sequencer](../data-plane/sequencer.md)**: Provides read versions for transaction consistency

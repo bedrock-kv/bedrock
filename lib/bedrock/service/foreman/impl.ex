@@ -85,11 +85,18 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec do_new_worker(State.t(), Worker.id(), :log | :materializer, params :: map()) ::
           {State.t(), Worker.ref()}
   def do_new_worker(t, id, kind, params \\ %{}) do
+    # An id already in the map means a retried creation — a director that
+    # timed out and asked again. The entry is about to be overwritten, so
+    # release its monitor first or the ref leaks: nothing else can reach
+    # it once the entry is gone.
+    release_monitor(Map.get(t.workers, id))
+
     worker_info =
       id
       |> initialize_new_worker(worker_for_kind(kind), params, t.path, t.cluster)
       |> try_to_start_worker(t.cluster, t.object_storage)
       |> advertise_running_worker(t.cluster)
+      |> monitor_worker()
 
     t =
       t
@@ -189,10 +196,24 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec remove_worker_completely(WorkerInfo.t(), module(), String.t()) ::
           :ok | {:error, {:failed_to_remove_directory, File.posix(), Path.t()}}
   defp remove_worker_completely(worker_info, cluster, base_path) do
+    # Release the monitor before terminating, with :flush so an already
+    # queued :DOWN is discarded. A deliberate removal is not a death, and
+    # must not be reported as one.
+    release_monitor(worker_info)
+
     with :ok <- terminate_worker_process(worker_info, cluster),
          :ok <- unadvertise_worker(worker_info, cluster) do
       cleanup_worker_directory(worker_info, base_path)
     end
+  end
+
+  @spec release_monitor(WorkerInfo.t() | nil) :: :ok
+  defp release_monitor(nil), do: :ok
+  defp release_monitor(%{monitor_ref: nil}), do: :ok
+
+  defp release_monitor(%{monitor_ref: ref}) do
+    Process.demonitor(ref, [:flush])
+    :ok
   end
 
   @spec terminate_worker_process(WorkerInfo.t(), module()) :: :ok | {:error, :not_found}
@@ -241,12 +262,128 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec do_wait_for_healthy(State.t(), GenServer.from()) :: State.t()
   def do_wait_for_healthy(t, from), do: add_pid_to_waiting_for_healthy(t, from)
 
+  @doc """
+  Records that a monitored worker's process is gone.
+
+  The process is gone right now, so `:stopped` is what is true right now
+  — and it is the state the worker held before it ever started, so no
+  health value the fold does not already understand.
+
+  It may not stay true. Workers are `:transient` under a
+  DynamicSupervisor, so an abnormal exit is restarted under the same OTP
+  name, and leaving the worker at `:stopped` would drop a LIVE worker out
+  of the roll call `do_get_all_running_services/1` advertises to the
+  coordinator — the original bug's mirror image. Adopting that
+  replacement cannot happen here, because the `:DOWN` always beats the
+  restart: it is delivered the instant the process dies, while the
+  supervisor must first handle its own `EXIT`. The caller therefore
+  schedules `do_worker_recheck/3`, and the worker id is returned for
+  exactly that purpose.
+
+  A `:DOWN` whose ref matches no worker is ignored, which is the ordinary
+  case for one the foreman deliberately removed:
+  `remove_worker_completely/3` demonitors with `:flush`, so a queued
+  `:DOWN` is discarded before it can be mistaken for a death.
+  """
+  @spec do_worker_down(State.t(), reference(), term()) ::
+          {State.t(), Worker.id() | :no_such_worker}
+  def do_worker_down(t, ref, reason) do
+    case Enum.find(t.workers, fn {_id, worker_info} -> worker_info.monitor_ref == ref end) do
+      nil -> {t, :no_such_worker}
+      {worker_id, _worker_info} -> {resettle_worker(t, worker_id, reason), worker_id}
+    end
+  end
+
+  @spec resettle_worker(State.t(), Worker.id(), term()) :: State.t()
+  defp resettle_worker(t, worker_id, reason) do
+    Logger.warning("Bedrock foreman: worker #{worker_id} died (#{inspect(reason)})")
+
+    t
+    |> update_workers(
+      &Map.update!(&1, worker_id, fn info ->
+        info |> WorkerInfo.put_health(:stopped) |> WorkerInfo.put_monitor_ref(nil)
+      end)
+    )
+    |> settle_health()
+  end
+
+  @doc """
+  Adopts the replacement a supervisor started for a worker that died.
+
+  Split from `do_worker_down/3` because the two events race and the
+  `:DOWN` always wins: it is delivered the instant the process dies,
+  while the supervisor must first handle its own `EXIT` and only then
+  start a child. Re-resolving at `:DOWN` time therefore finds nothing
+  almost every time, which would leave a worker the supervisor DID
+  restart parked at `:stopped` — dropping a live worker out of the roll
+  call `do_get_all_running_services/1` advertises from, which is the
+  original bug's mirror image.
+
+  Only a worker still `:stopped` is adopted, so this can never overwrite
+  a health the worker reported for itself in the meantime. Attempts are
+  bounded: a `:transient` child that exited normally is never coming
+  back, and retrying forever would mean a timer per dead worker for the
+  life of the node. A restart slower than that window therefore leaves a
+  live worker recorded as `:stopped` until the next spin-up
+  (bedrock-gu0.2) — stale toward unhealthy, which is the safe direction.
+  """
+  @spec do_worker_recheck(State.t(), Worker.id(), non_neg_integer()) ::
+          {State.t(), :done | :retry}
+  def do_worker_recheck(t, worker_id, attempts_left) do
+    with %{health: :stopped, otp_name: otp_name} <- Map.get(t.workers, worker_id),
+         pid when is_pid(pid) <- Process.whereis(otp_name) do
+      Logger.info("Bedrock foreman: worker #{worker_id} was replaced; adopting #{inspect(pid)}")
+
+      t =
+        t
+        |> update_workers(
+          &Map.update!(&1, worker_id, fn info ->
+            info |> WorkerInfo.put_health({:ok, pid}) |> monitor_worker()
+          end)
+        )
+        |> settle_health()
+
+      {t, :done}
+    else
+      _ when attempts_left > 0 -> {t, :retry}
+      _ -> {t, :done}
+    end
+  end
+
   @spec do_worker_health(State.t(), Worker.id(), WorkerInfo.health()) :: State.t()
   def do_worker_health(t, worker_id, health) do
     t
     |> put_health_for_worker(worker_id, health)
+    |> rewatch_worker(worker_id, Map.get(t.workers, worker_id))
     |> settle_health()
   end
+
+  # A worker reporting its own health can name a DIFFERENT process than
+  # the one being watched. Olivine's replacement casts {:ok, self()} the
+  # moment its startup completes, which for a small shard beats the
+  # recheck timer — and `do_worker_recheck/3` only adopts a worker still
+  # `:stopped`, so it would then retry to exhaustion and give up. The new
+  # pid would be left carrying a stale ref or none at all, no further
+  # :DOWN would ever arrive for it, and the worker would be back in
+  # exactly the state this whole change exists to eliminate.
+  @spec rewatch_worker(State.t(), Worker.id(), WorkerInfo.t() | nil) :: State.t()
+  defp rewatch_worker(t, worker_id, previous) do
+    update_workers(
+      t,
+      &Map.update!(&1, worker_id, fn info ->
+        if watching?(previous, info.health) do
+          info
+        else
+          release_monitor(previous)
+          info |> WorkerInfo.put_monitor_ref(nil) |> monitor_worker()
+        end
+      end)
+    )
+  end
+
+  @spec watching?(WorkerInfo.t() | nil, WorkerInfo.health()) :: boolean()
+  defp watching?(%{monitor_ref: ref, health: {:ok, pid}}, {:ok, pid}) when is_reference(ref), do: true
+  defp watching?(_previous, _health), do: false
 
   @spec do_spin_up(State.t()) :: State.t()
   def do_spin_up(t) do
@@ -333,9 +470,29 @@ defmodule Bedrock.Service.Foreman.Impl do
       |> Enum.filter(&(&1.health == :stopped))
       |> try_to_start_workers(t.cluster, t.object_storage)
       |> advertise_running_workers(t.cluster)
+      |> Enum.map(&monitor_worker/1)
       |> merge_worker_info_into_workers(workers)
     end)
   end
+
+  @doc """
+  Watches a running worker so its death is observable.
+
+  A worker's health is otherwise recorded once, at start, and never
+  revisited — so `{:ok, pid}` outlives the process it names. The foreman
+  would go on relaying layout pushes to a dead worker, advertising it to
+  the coordinator as a running service, and folding it into a verdict of
+  `:ok`.
+
+  The monitor must be taken by the foreman itself. Starting happens
+  inside a `Task.async_stream`, and a monitor established there would
+  belong to the task and die with it.
+  """
+  @spec monitor_worker(WorkerInfo.t()) :: WorkerInfo.t()
+  def monitor_worker(%{health: {:ok, pid}, monitor_ref: nil} = worker_info),
+    do: WorkerInfo.put_monitor_ref(worker_info, Process.monitor(pid))
+
+  def monitor_worker(worker_info), do: worker_info
 
   @doc """
   Recomputes the foreman's verdict and wakes anyone waiting on it.

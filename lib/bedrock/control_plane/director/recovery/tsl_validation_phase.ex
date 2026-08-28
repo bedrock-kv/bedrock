@@ -1,15 +1,24 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   @moduledoc """
-  Early recovery phase that validates TSL type safety to prevent data corruption.
+  Early recovery phase that type-checks the PRIOR CORE STATE before any
+  later phase trusts it.
 
-  This phase runs defensively on recovered TSL data, checking for type mismatches
-  like integer-to-binary version conversion errors that can cause MVCC lookup failures.
-  It specifically validates:
+  On a cold boot the record is genuinely durable — written by a previous
+  epoch, possibly by a previous version of this software, and read back
+  off object storage. (On a warm relaunch it is projected in memory from
+  this coordinator's own last layout and never round-trips storage, so
+  the check is cheap there and meaningful here.) Everything after this
+  point locks and copies from the logs it names, so a type mismatch
+  (integer tag ranges arriving as Version.t() binaries, say) would
+  otherwise surface as an MVCC lookup failure far from its cause.
+  Validating at the boundary makes the durable record the thing that
+  fails, with diagnostics naming it.
 
-  - `logs` field has integer ranges (not Version.t() binaries)
-  - `version_vector` field contains Version.t() binaries (not integers)
-  - `durable_version` field contains Version.t() binary (not integer)
-  - `resolvers` structure is valid
+  What it checks is the `logs` field: each entry's tag ranges must be
+  integers, not binaries. The validator also has a `resolvers` check,
+  which is vacuous against this record — the prior core state carries no
+  resolvers, and the previous epoch's resolver pids would be worthless
+  if it did.
 
   ## Error Handling
 
@@ -33,7 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   alias Bedrock.ControlPlane.Config.TSLTypeValidator
 
   @doc """
-  Validates TSL type safety using defensive validation.
+  Validates the prior core state's type safety.
 
   Returns `{:stalled, {:corrupted_tsl, validation_error}}` on validation failure
   to halt recovery and provide clear diagnostics. Logs detailed error information
@@ -43,14 +52,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   recovery attempt (this is a pure validation phase).
   """
   @impl true
-  def execute(%RecoveryAttempt{} = recovery_attempt, %{old_transaction_system_layout: %{} = tsl_to_validate}) do
-    case TSLTypeValidator.validate_type_safety(tsl_to_validate) do
+  def execute(%RecoveryAttempt{} = recovery_attempt, %{prior_core_state: %{} = core_state}) do
+    case TSLTypeValidator.validate_type_safety(core_state) do
       :ok ->
         trace_recovery_tsl_validation_success()
         {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LockingPhase}
 
       {:error, validation_error} ->
-        trace_recovery_tsl_validation_failed(tsl_to_validate, validation_error)
+        trace_recovery_tsl_validation_failed(core_state, validation_error)
         {recovery_attempt, {:stalled, {:corrupted_tsl, validation_error}}}
     end
   end

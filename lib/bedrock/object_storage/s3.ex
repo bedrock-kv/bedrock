@@ -8,6 +8,8 @@ defmodule Bedrock.ObjectStorage.S3 do
 
   @behaviour Bedrock.ObjectStorage
 
+  alias Bedrock.ObjectStorage
+
   @impl true
   def put(config, key, data, opts \\ []) do
     bucket = Keyword.fetch!(config, :bucket)
@@ -156,8 +158,11 @@ defmodule Bedrock.ObjectStorage.S3 do
       {:ok, keys, continuation_token, exhausted?} ->
         next_list_item(%{state | buffer: keys, continuation_token: continuation_token, exhausted?: exhausted?})
 
-      {:error, _reason} ->
-        {:halt, %{state | exhausted?: true}}
+      {:error, reason} ->
+        # A failed page is NOT the end of the listing. Halting here would
+        # report the prefix as empty (or truncated) without ever having
+        # looked, and every consumer downstream reads that as fact.
+        raise ObjectStorage.ListError, reason: reason, prefix: state.prefix
     end
   end
 

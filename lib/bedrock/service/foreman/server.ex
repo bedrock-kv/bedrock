@@ -89,17 +89,54 @@ defmodule Bedrock.Service.Foreman.Server do
   @impl true
   def handle_cast({:worker_health, worker_id, health}, t), do: t |> do_worker_health(worker_id, health) |> noreply()
 
+  # A hosted worker decided its own retirement; the foreman only janitors.
+  @impl true
+  def handle_cast({:worker_retired, worker_id}, t), do: t |> do_worker_retired(worker_id) |> noreply()
+
   @impl true
   def handle_cast(_, t), do: noreply(t)
 
   # A newly durable transaction system layout arrived (forwarded by this
-  # node's Link): retire any hosted worker the layout doesn't reference.
+  # node's Link): relay it to the hosted workers, which self-detect
+  # displacement. The foreman never answers a membership question.
   @impl true
   def handle_info({:tsl_updated, transaction_system_layout}, t),
-    do: t |> do_reconcile_workers(transaction_system_layout) |> noreply()
+    do: t |> do_relay_tsl(transaction_system_layout) |> noreply()
+
+  # How long to keep looking for the replacement a supervisor starts for
+  # a worker that died, and how often. The :DOWN beats the restart every
+  # time, so the first look is always too early; these bound how long a
+  # restarted worker can stay recorded as :stopped.
+  @recheck_interval_ms 25
+  @recheck_attempts 20
+
+  # A hosted worker's process is gone. Without this the monitor's :DOWN
+  # would fall into the catch-all below and the foreman would go on
+  # naming a dead process as running.
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, t) do
+    case do_worker_down(t, ref, reason) do
+      {t, :no_such_worker} -> noreply(t)
+      {t, worker_id} -> t |> schedule_recheck(worker_id, @recheck_attempts) |> noreply()
+    end
+  end
+
+  # The worker died; see whether its supervisor has since replaced it.
+  @impl true
+  def handle_info({:worker_recheck, worker_id, attempts_left}, t) do
+    case do_worker_recheck(t, worker_id, attempts_left) do
+      {t, :done} -> noreply(t)
+      {t, :retry} -> t |> schedule_recheck(worker_id, attempts_left - 1) |> noreply()
+    end
+  end
 
   @impl true
   def handle_info(_, t), do: noreply(t)
+
+  defp schedule_recheck(t, worker_id, attempts_left) do
+    Process.send_after(self(), {:worker_recheck, worker_id, attempts_left}, @recheck_interval_ms)
+    t
+  end
 
   @impl true
   def handle_continue(:spin_up, t), do: t |> do_spin_up() |> noreply()

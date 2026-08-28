@@ -55,7 +55,7 @@ end)  # Only this commits to distributed system
 
 ## Transaction Flow
 
-1. **Start**: Gateway creates dedicated Transaction Builder process[^2]
+1. **Start**: The Repo fetches this epoch's wiring from the Link and starts a dedicated Transaction Builder process[^2]
 2. **Read**: First read gets consistent version from Sequencer[^3]  
 3. **Write**: Changes accumulate locally (immediate visibility within transaction)
 4. **Commit**: Distributed coordination with validation, conflict resolution, and durability

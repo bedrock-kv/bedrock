@@ -2,7 +2,7 @@
 
 **Starting MVCC conflict detection components to prevent transaction conflicts.**
 
-The resolver startup phase converts abstract [resolver](../../deep-dives/architecture/data-plane/resolver.md) descriptors from [vacancy creation](vacancy-creation.md) into operational processes that implement [Multi-Version Concurrency Control (MVCC)](../../glossary.md#multi-version-concurrency-control) conflict detection across the distributed system.
+The resolver startup phase converts abstract [resolver](../../deep-dives/architecture/data-plane/resolver.md) descriptors from [log recovery planning](log-recovery-planning.md) into operational processes that implement [Multi-Version Concurrency Control (MVCC)](../../glossary.md#multi-version-concurrency-control) conflict detection across the distributed system.
 
 ## What Happens
 
@@ -28,7 +28,7 @@ Recovery fails fast if resolution-capable nodes become unavailable or individual
 
 **Source**: `lib/bedrock/control_plane/director/recovery/resolver_startup_phase.ex`
 
-**Key Inputs**: Resolver descriptors, storage team assignments, transaction logs, version vector bounds
+**Key Inputs**: Resolver descriptors, shard assignments, transaction logs, version vector bounds
 
 **Output**: Operational resolver processes ready for MVCC conflict detection
 

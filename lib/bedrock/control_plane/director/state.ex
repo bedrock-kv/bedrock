@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Director.State do
 
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.Service.Worker
 
@@ -12,12 +13,17 @@ defmodule Bedrock.ControlPlane.Director.State do
   @type timer_registry :: %{atom() => reference()}
 
   @type t :: %__MODULE__{
+          distributor: pid() | nil,
+          distributor_monitor: reference() | nil,
+          distributor_retry_ms: pos_integer(),
+          distributor_start_fn: (keyword() -> {:ok, pid()} | {:error, term()}) | nil,
+          distributor_wiring: %{logs: map(), log_refs: map()} | nil,
           state: state(),
           epoch: Bedrock.epoch(),
           cluster: module(),
           config: Config.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
-          old_transaction_system_layout: TransactionSystemLayout.t() | nil,
+          prior_core_state: CoreState.t() | nil,
           coordinator: pid(),
           node_capabilities: %{Cluster.capability() => [node()]},
           timers: timer_registry() | nil,
@@ -25,12 +31,17 @@ defmodule Bedrock.ControlPlane.Director.State do
           lock_token: binary(),
           recovery_attempt: Config.RecoveryAttempt.t() | nil
         }
-  defstruct state: :starting,
+  defstruct distributor: nil,
+            distributor_monitor: nil,
+            distributor_retry_ms: 1_000,
+            distributor_start_fn: nil,
+            distributor_wiring: nil,
+            state: :starting,
             epoch: nil,
             cluster: nil,
             config: nil,
             transaction_system_layout: nil,
-            old_transaction_system_layout: nil,
+            prior_core_state: nil,
             coordinator: nil,
             node_capabilities: %{},
             timers: nil,

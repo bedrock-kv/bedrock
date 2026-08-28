@@ -79,6 +79,12 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
   @spec list_chunks(t(), keyword()) :: Enumerable.t()
   def list_chunks(%__MODULE__{} = reader, opts \\ []) do
     prefix = Keys.chunks_prefix(reader.shard_tag)
+
+    # Raises ObjectStorage.ListError if the listing cannot be completed.
+    # That propagates deliberately: returning fewer chunks than exist IS
+    # a silent replay gap, which is the very thing this module raises to
+    # prevent when a header will not decode. A caller cannot tell a short
+    # listing from an empty shard, so it must not be handed one.
     ObjectStorage.list(reader.backend, prefix, opts)
   end
 

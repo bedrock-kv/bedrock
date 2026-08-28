@@ -12,7 +12,7 @@ Leader readiness states prevent race conditions: `:leader_waiting_consensus` del
 
 ## Service Directory Authority
 
-[Gateway](../../../glossary.md#gateway) nodes register services with the leader Coordinator through `register_gateway/4` or `register_services/2` operations. Service mappings replicate across all coordinators through consensus, providing Directors with complete topology information during [recovery](../../../glossary.md#recovery).
+[Link](../../../glossary.md#link) nodes register services with the leader Coordinator through `register_link/4` or `register_services/2` operations. Service mappings replicate across all coordinators through consensus, providing Directors with complete topology information during [recovery](../../../glossary.md#recovery).
 
 ## Director Lifecycle Management
 
@@ -23,5 +23,5 @@ Coordinator creates Directors with unique, monotonically increasing [epoch](../.
 ## Related Components
 
 - **[Director](director.md)**: Recovery orchestration component created and managed by Coordinator
-- **[Gateway](../infrastructure/gateway.md)**: Infrastructure component that registers services with Coordinator
+- **[Link](../infrastructure/link.md)**: Infrastructure component that registers services with Coordinator
 - **[Foreman](../infrastructure/foreman.md)**: Infrastructure component coordinated through Coordinator's service directory

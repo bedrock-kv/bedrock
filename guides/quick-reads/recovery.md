@@ -76,7 +76,7 @@ flowchart TD
    replay cost is bounded by the untrimmed tail, not the cluster's age.
 5. **[Sequencer Startup](recovery/sequencer-startup.md)** - Start the
    global version authority at the recovery version.
-6. **Materializer Bootstrap** - Reuse the surviving materializers: hand
+6. **[Materializer Bootstrap](recovery/materializer-bootstrap.md)** - Reuse the surviving materializers: hand
    each one its shard back, unlocked at the recovery version so it resumes
    streaming from its own applied position. The system-shard materializer
    catches up and serves the shard layout, which drives resolver placement
@@ -121,7 +121,7 @@ director start goes stale immediately.
 - **Main Recovery Module**: `lib/bedrock/control_plane/director/recovery.ex`
 - **Phase Implementations**: `lib/bedrock/control_plane/director/recovery/*_phase.ex`
 - **Recovery Attempt State**: `lib/bedrock/control_plane/config/recovery_attempt.ex`
-- **Worker Reconciliation**: `lib/bedrock/service/foreman/impl.ex` (`do_reconcile_workers/2`)
+- **Worker Self-Displacement**: `lib/bedrock/service/foreman/impl.ex` (`do_relay_tsl/2`; workers decide their own retirement)
 
 ## See Also
 

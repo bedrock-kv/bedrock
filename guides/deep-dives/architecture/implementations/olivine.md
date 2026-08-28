@@ -2,7 +2,7 @@
 
 [Olivine](../../../glossary.md#olivine) is Bedrock's materializer engine — the [storage](../../../glossary.md#storage) implementation that maintains versioned key-value state for a single [shard](../../../glossary.md#shard) and serves [MVCC](../../../glossary.md#multi-version-concurrency-control) reads. It builds its state from one continuous stream: a snapshot for the deep past, object-storage [chunks](../../../glossary.md#chunk) for history, and its ShardServer's in-memory buffer for the most recent transactions.
 
-**Location**: [`lib/bedrock/data_plane/materializer/olivine/`](../../../../lib/bedrock/data_plane/materializer/olivine/)
+**Location**: `lib/bedrock/data_plane/materializer/olivine/`
 
 ## One Stream, From Snapshot to Live
 

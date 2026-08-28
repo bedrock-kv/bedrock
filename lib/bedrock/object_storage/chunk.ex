@@ -229,7 +229,8 @@ defmodule Bedrock.ObjectStorage.Chunk do
          dir_size = header.directory_size,
          true <- byte_size(rest) >= dir_size,
          <<dir_binary::binary-size(^dir_size), data::binary>> = rest,
-         {:ok, directory} <- decode_directory(dir_binary, header.txn_count) do
+         {:ok, directory} <- decode_directory(dir_binary, header.txn_count),
+         true <- data_section_complete?(directory, data) do
       {:ok, %{header: header, directory: directory, data: data}}
     else
       false -> {:error, :truncated_chunk}
@@ -239,6 +240,26 @@ defmodule Bedrock.ObjectStorage.Chunk do
 
   def decode(_) do
     {:error, :truncated_chunk}
+  end
+
+  # The directory is a map of extents into the data section; a chunk whose
+  # data stops short of them is torn, not merely odd. Checking it here
+  # keeps truncation a decode error: without it the header and directory
+  # parse cleanly, decode reports success, and the missing bytes surface
+  # only as an ArgumentError out of binary_part/3 in
+  # `extract_transactions/1` — at read time, far from the write.
+  #
+  # An empty directory is rejected rather than waved through: `encode/1`
+  # refuses to emit one (`{:error, :empty_chunk}`), so a chunk claiming
+  # zero transactions is corrupt however well-formed its header looks —
+  # and accepting it would decode as an empty chunk and read as a silent
+  # replay gap.
+  defp data_section_complete?([], _data), do: false
+
+  defp data_section_complete?(directory, data) do
+    required = Enum.reduce(directory, 0, fn %{offset: offset, length: length}, acc -> max(acc, offset + length) end)
+
+    byte_size(data) >= required
   end
 
   @doc """

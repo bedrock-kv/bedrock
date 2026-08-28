@@ -29,7 +29,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
     [
       epoch: 1,
       resolver_layout: %ResolverLayout.Single{resolver_ref: :test_resolver},
-      resolver_fn: fn _, _, _, _, _, _, _ -> {:ok, [], []} end,
+      resolver_fn: fn _, _, last, commit, _, _, _ -> last |> Support.tiling_window(commit) |> then(&{:ok, [], &1}) end,
       batch_log_push_fn: fn _, _, _, _ -> :ok end
     ]
   end
@@ -63,8 +63,11 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       routing_data = Support.build_routing_data(layout)
       opts = create_finalization_opts()
 
-      assert {:ok, 0, 0, _metadata} =
-               Finalization.finalize_batch(batch, opts ++ [routing_data: routing_data, sequencer: layout.sequencer])
+      assert {:ok, 0, 0} =
+               Finalization.finalize_batch(
+                 batch,
+                 opts ++ [metadata_apply_fn: Support.metadata_apply_fn(routing_data), sequencer: layout.sequencer]
+               )
 
       assert_receive {:sequencer_notified, 100}, 100
 
@@ -80,7 +83,10 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
       opts = create_finalization_opts()
 
       assert {:error, :unavailable} =
-               Finalization.finalize_batch(batch, opts ++ [routing_data: routing_data, sequencer: layout.sequencer])
+               Finalization.finalize_batch(
+                 batch,
+                 opts ++ [metadata_apply_fn: Support.metadata_apply_fn(routing_data), sequencer: layout.sequencer]
+               )
     end
   end
 end

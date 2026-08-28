@@ -3,6 +3,8 @@ defmodule Bedrock.Encoding.TupleTest do
 
   alias Bedrock.Encoding.Tuple, as: TupleEncoding
 
+  doctest TupleEncoding
+
   describe "pack/1 and unpack/1 for integers" do
     test "encodes and decodes zero" do
       assert 0 |> TupleEncoding.pack() |> TupleEncoding.unpack() == 0

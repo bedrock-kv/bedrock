@@ -10,13 +10,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
 
   ## Discovery
 
-  Shard-to-log placement is deterministic arithmetic shared with the commit
-  proxies: the index map is the sorted log ids and the golden-ratio walk is
-  `ShardRouter.get_log_indices/3` (see `topology_phase.build_routing_data/1`
-  — the two sites must agree). Any replica works: every replica sees the
-  same slices and the same cuts, so their chunks are byte-identical and
-  their buffers hold the same suffix. Failover walks the replica set with
-  the same circuit-breaker pattern the old log puller used.
+  The replica set arrives in the unlock seed: `[{log_id, log_ref}]`,
+  resolved once by the director through the same `ShardRouter` walk the
+  commit proxies route with (`ShardRouter.log_ids_for_tag/3`) — the
+  puller never re-derives placement. Any replica works: every replica
+  sees the same slices and the same cuts, so their chunks are
+  byte-identical and their buffers hold the same suffix. Failover walks
+  the replica set with the same circuit-breaker pattern the old log
+  puller used.
 
   ## Currency
 
@@ -33,21 +34,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
   """
   import Bedrock.DataPlane.Materializer.Telemetry
 
-  alias Bedrock.ControlPlane.Config.LogDescriptor
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.DataPlane.Demux.ShardServer
   alias Bedrock.DataPlane.Log
-  alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
 
   @type ingest_fn :: ([Transaction.encoded()], kcv :: Bedrock.version() | nil -> :ok)
 
+  @type source :: {Log.id(), Log.ref()}
+
   @type puller_state :: %{
           shard_num: non_neg_integer(),
           next_version: Bedrock.version(),
-          logs: %{Log.id() => LogDescriptor.t()},
-          services: %{String.t() => ServiceDescriptor.t()},
+          sources: [source()],
           failed_logs: %{Log.id() => integer()},
           shard_server: pid() | nil,
           current_log_id: Log.id() | nil,
@@ -57,16 +56,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
   @spec start_pulling(
           shard_num :: non_neg_integer(),
           start_after :: Bedrock.version(),
-          logs :: %{Log.id() => LogDescriptor.t()},
-          services :: %{String.t() => ServiceDescriptor.t()},
+          sources :: [source()],
           ingest_fn()
         ) :: Task.t()
-  def start_pulling(shard_num, start_after, logs, services, ingest_fn) do
+  def start_pulling(shard_num, start_after, sources, ingest_fn) do
     state = %{
       shard_num: shard_num,
       next_version: Version.increment(start_after),
-      logs: logs,
-      services: services,
+      sources: sources,
       failed_logs: %{},
       shard_server: nil,
       current_log_id: nil,
@@ -93,27 +90,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
 
   @spec pull_limit() :: pos_integer()
   def pull_limit, do: 100
-
-  @doc """
-  The replica set for a shard: the log ids that receive this shard's
-  slices, in golden-ratio order over the sorted log-id list.
-
-  Mirrors the commit proxies' routing exactly (the index map built in
-  `topology_phase.build_routing_data/1` is the sorted log ids, and the
-  replication factor currently spans all logs).
-  """
-  @spec candidate_log_ids(non_neg_integer(), %{Log.id() => LogDescriptor.t()}) :: [Log.id()]
-  def candidate_log_ids(_shard_num, logs) when map_size(logs) == 0, do: []
-
-  def candidate_log_ids(shard_num, logs) do
-    sorted = logs |> Map.keys() |> Enum.sort()
-    n = length(sorted)
-    m = max(1, n)
-
-    shard_num
-    |> ShardRouter.get_log_indices(n, m)
-    |> Enum.map(&Enum.at(sorted, &1))
-  end
 
   @spec stream_loop(puller_state()) :: no_return()
   def stream_loop(state) do
@@ -164,7 +140,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
 
   def ensure_shard_server(state) do
     case select_log(state) do
-      {:ok, {log_id, %{status: {:up, worker}}}} ->
+      {:ok, {log_id, worker}} ->
         case safe_get_shard_server(worker, state.shard_num) do
           {:ok, pid} ->
             {:ok, %{state | shard_server: pid, current_log_id: log_id}}
@@ -180,20 +156,17 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Streaming do
 
   # Select a replica for this shard, excluding those with active circuit breakers
   @spec select_log(puller_state()) ::
-          {:ok, {Log.id(), ServiceDescriptor.t()}} | :no_available_logs
-  def select_log(%{shard_num: shard_num, logs: logs, services: services, failed_logs: failed_logs}) do
+          {:ok, source()} | :no_available_logs
+  def select_log(%{sources: sources, failed_logs: failed_logs}) do
     now = System.monotonic_time(:millisecond)
 
-    shard_num
-    |> candidate_log_ids(logs)
-    |> Enum.filter(fn log_id ->
+    sources
+    |> Enum.filter(fn {log_id, _ref} ->
       case Map.get(failed_logs, log_id) do
         nil -> true
         retry_timestamp -> now >= retry_timestamp
       end
     end)
-    |> Enum.map(&{&1, Map.get(services, &1)})
-    |> Enum.reject(&match?({_, nil}, &1))
     |> case do
       [] -> :no_available_logs
       available -> {:ok, Enum.random(available)}

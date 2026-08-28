@@ -36,7 +36,7 @@ defmodule Bedrock.ControlPlane.Coordinator.InitializationTest do
     assert {:ok, state, {:continue, :check_recovery_consensus}} =
              Server.init({TestCluster, TestCluster.otp_name(:coordinator)})
 
-    assert state.old_transaction_system_layout == %{logs: %{"old-log" => []}}
+    assert state.prior_core_state == %{logs: %{"old-log" => []}, system_materializers: %{}}
     assert state.transaction_system_layout == nil
   end
 end

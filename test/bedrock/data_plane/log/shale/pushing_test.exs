@@ -384,6 +384,55 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       assert length(state.segments) == 2
       assert state.active_segment.min_version == Version.from_integer(4 * interval + 1)
     end
+
+    # The roll boundary exists to match the Demux's cut boundary exactly —
+    # a segment holds one cut bucket, which is what lets trimming drop
+    # history at the cut cadence despite the active segment being
+    # trim-immune. The Demux's bucket width is configurable, so reading
+    # the module default here would silently break that correspondence
+    # for any log whose Demux was configured otherwise.
+    defp state_with_cut_interval(dir, recycler, cut_interval_us) do
+      %State{
+        mode: :running,
+        path: dir,
+        segment_recycler: recycler,
+        writer: nil,
+        active_segment: nil,
+        segments: [],
+        last_version: Version.from_integer(0),
+        cut_interval_us: cut_interval_us
+      }
+    end
+
+    test "rolls on a configured interval narrower than the default", %{dir: dir, recycler: recycler} do
+      interval = div(Demux.Server.default_cut_interval_us(), 5)
+      state = state_with_cut_interval(dir, recycler, interval)
+
+      state = write!(state, 1_000)
+      assert state.segments == []
+
+      # Crosses the configured boundary while still inside bucket 0 at the
+      # default width — only a state-driven interval can see this roll.
+      state = write!(state, interval + 1)
+
+      assert [_predecessor] = state.segments
+      assert state.active_segment.min_version == Version.from_integer(interval + 1)
+    end
+
+    test "does not roll at the default boundary when configured wider", %{dir: dir, recycler: recycler} do
+      default = Demux.Server.default_cut_interval_us()
+      state = state_with_cut_interval(dir, recycler, default * 4)
+
+      state = write!(state, 1_000)
+
+      # Crosses the DEFAULT boundary but not the configured one.
+      state = write!(state, default + 1)
+
+      assert state.segments == [],
+             "the roll must follow the configured cut interval, not the module default"
+
+      assert state.active_segment.min_version == Version.from_integer(1_000)
+    end
   end
 
   describe "rollover publishes only after the successor cursor is durable" do

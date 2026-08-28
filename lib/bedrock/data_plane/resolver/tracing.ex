@@ -7,19 +7,18 @@ defmodule Bedrock.DataPlane.Resolver.Tracing do
   @spec handler_id() :: String.t()
   defp handler_id, do: "bedrock_trace_data_plane_resolver"
 
+  # Exactly what `Resolver.Telemetry` emits. A subscription without an
+  # emitter is dead weight; a handler clause that reads a key the emitter
+  # never sends raises, and :telemetry detaches the whole handler on the
+  # first event — so the two lists have to be kept in step.
   @spec start() :: :ok | {:error, :already_exists}
   def start do
     :telemetry.attach_many(
       handler_id(),
       [
         [:bedrock, :resolver, :resolve_transactions, :received],
-        [:bedrock, :resolver, :resolve_transactions, :processing],
         [:bedrock, :resolver, :resolve_transactions, :completed],
-        [:bedrock, :resolver, :resolve_transactions, :reply_sent],
-        [:bedrock, :resolver, :resolve_transactions, :validation_error],
-        [:bedrock, :resolver, :resolve_transactions, :waiting_list],
         [:bedrock, :resolver, :resolve_transactions, :waiting_list_inserted],
-        [:bedrock, :resolver, :resolve_transactions, :waiting_list_validation_error],
         [:bedrock, :resolver, :resolve_transactions, :waiting_resolved]
       ],
       &__MODULE__.handler/4,
@@ -35,55 +34,30 @@ defmodule Bedrock.DataPlane.Resolver.Tracing do
     do: log_event(event, measurements, metadata)
 
   @spec log_event(atom(), map(), map()) :: :ok
-  def log_event(:received, measurements, metadata) do
+  def log_event(:received, %{transactions: transactions}, %{next_version: next_version}) do
+    info("Received #{length(transactions)} transactions: next_version=#{Version.to_string(next_version)}")
+  end
+
+  def log_event(:completed, %{transactions: transactions, aborted: aborted}, %{next_version: next_version}) do
     info(
-      "Received #{measurements.transaction_count} transactions: last_version=#{Version.to_string(metadata.last_version)}, next_version=#{Version.to_string(metadata.next_version)}, resolver_last_version=#{Version.to_string(metadata.resolver_last_version)}"
+      "Completed #{length(transactions)} transactions (#{length(aborted)} aborted): next_version=#{Version.to_string(next_version)}"
     )
   end
 
-  def log_event(:processing, measurements, metadata) do
+  def log_event(:waiting_list_inserted, %{transactions: transactions, waiting_list: waiting_list}, %{
+        next_version: next_version
+      }) do
     info(
-      "Processing #{measurements.transaction_count} transactions: last_version=#{Version.to_string(metadata.last_version)}, next_version=#{Version.to_string(metadata.next_version)}"
+      "Inserted #{length(transactions)} transactions into waiting list (size: #{map_size(waiting_list)}): next_version=#{Version.to_string(next_version)}"
     )
   end
 
-  def log_event(:completed, measurements, metadata) do
+  # The emitter always passes an empty aborted list here — the aborts are
+  # computed later, and reported by the :completed event this transaction
+  # goes on to raise — so there is nothing to count.
+  def log_event(:waiting_resolved, %{transactions: transactions}, %{next_version: next_version}) do
     info(
-      "Completed #{measurements.transaction_count} transactions (#{measurements.aborted_count} aborted): last_version=#{Version.to_string(metadata.last_version)}, next_version=#{Version.to_string(metadata.next_version)}, resolver_last_version_after=#{Version.to_string(metadata.resolver_last_version_after)}"
-    )
-  end
-
-  def log_event(:reply_sent, measurements, metadata) do
-    info(
-      "Reply sent for #{measurements.transaction_count} transactions (#{measurements.aborted_count} aborted): last_version=#{Version.to_string(metadata.last_version)}, next_version=#{Version.to_string(metadata.next_version)}"
-    )
-  end
-
-  def log_event(:validation_error, measurements, metadata) do
-    info("Validation error for #{measurements.transaction_count} transactions: #{inspect(metadata.reason)}")
-  end
-
-  def log_event(:waiting_list, measurements, metadata) do
-    info(
-      "Adding #{measurements.transaction_count} transactions to waiting list: last_version=#{Version.to_string(metadata.last_version)} > resolver_last_version=#{Version.to_string(metadata.resolver_last_version)}"
-    )
-  end
-
-  def log_event(:waiting_list_inserted, measurements, _metadata) do
-    info(
-      "Inserted #{measurements.transaction_count} transactions into waiting list (size: #{measurements.waiting_list_size})"
-    )
-  end
-
-  def log_event(:waiting_list_validation_error, measurements, metadata) do
-    info(
-      "Waiting list validation error for #{measurements.transaction_count} transactions: #{inspect(metadata.reason)}"
-    )
-  end
-
-  def log_event(:waiting_resolved, measurements, metadata) do
-    info(
-      "Resolved waiting transaction: #{measurements.transaction_count} transactions (#{measurements.aborted_count} aborted), next_version=#{Version.to_string(metadata.next_version)}, resolver_last_version_after=#{Version.to_string(metadata.resolver_last_version_after)}"
+      "Resolved waiting transaction: #{length(transactions)} transactions, next_version=#{Version.to_string(next_version)}"
     )
   end
 

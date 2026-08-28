@@ -10,7 +10,7 @@ Version assignment requires exactly one authority cluster-wide. Multiple sequenc
 
 ## Startup Process
 
-The sequencer starts on the [director's](../../glossary.md#director) node using the recovery baseline from [version determination](version-determination.md). This initialization preserves three critical properties:
+The sequencer starts on the [director's](../../glossary.md#director) node using the recovery baseline from [log recovery planning](log-recovery-planning.md). This initialization preserves three critical properties:
 
 - **Continuity**: New versions begin exactly where the old system left off
 - **Uniqueness**: No previously assigned version numbers get reused  
@@ -31,7 +31,7 @@ Rather than attempting repairs, recovery terminates immediately—better to rest
 Once operational, the sequencer coordinates with other components through its three version counters:
 
 - [Commit proxies](../../deep-dives/architecture/data-plane/commit-proxy.md) request version assignments for transaction batches
-- [Gateways](../../deep-dives/architecture/infrastructure/gateway.md) obtain read versions for consistent snapshots
+- [Links](../../deep-dives/architecture/infrastructure/link.md) obtain read versions for consistent snapshots
 - [Storage servers](../../deep-dives/architecture/data-plane/storage.md) organize MVCC data structures using the version timeline
 
 This creates system-wide synchronization where all components operate from a shared understanding of transaction ordering.

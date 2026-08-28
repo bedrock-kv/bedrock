@@ -24,7 +24,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   """
   import Bedrock.DataPlane.Log.Telemetry
 
-  alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Log.Shale.Writer
@@ -198,7 +197,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   end
 
   defp maybe_roll_and_append(t, encoded_transaction, version) do
-    if crosses_cut_boundary?(t.active_segment, version) do
+    if crosses_cut_boundary?(t, t.active_segment, version) do
       # Roll on the cut cadence, not just on byte size: the active
       # segment is trim-immune, so a low-traffic log that never fills a
       # segment would otherwise hold its entire history in one
@@ -262,11 +261,13 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   end
 
   # Same version arithmetic as the Demux's deterministic cuts: a segment
-  # holds exactly one cut bucket of versions.
-  defp crosses_cut_boundary?(nil, _version), do: false
+  # holds exactly one cut bucket of versions. The width comes from the
+  # log's own state — the same value `DemuxControl` starts the Demux
+  # with — so the two boundaries cannot drift apart.
+  defp crosses_cut_boundary?(_t, nil, _version), do: false
 
-  defp crosses_cut_boundary?(%{min_version: min_version}, version) do
-    interval = Demux.Server.default_cut_interval_us()
+  defp crosses_cut_boundary?(t, %{min_version: min_version}, version) do
+    interval = State.cut_interval_us(t)
 
     div(Version.to_integer(version), interval) > div(Version.to_integer(min_version), interval)
   end

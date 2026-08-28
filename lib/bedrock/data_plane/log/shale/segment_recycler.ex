@@ -14,10 +14,14 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
   def check_out(segment_recycler, new_path), do: GenServer.call(segment_recycler, {:check_out, new_path})
 
   @doc """
-  Return a segment to the recycler. The recycler will attempt to delete the
-  segment if it has too many on-hand.
+  Return a segment to the recycler. The recycler will delete the segment
+  if it is already holding `max_available` of them.
+
+  Returns the unlink's error if that deletion fails; callers that match
+  on `:ok` will crash the log and re-recover, which is the same exposure
+  the rename this replaced always had.
   """
-  @spec check_in(server(), path :: String.t()) :: :ok
+  @spec check_in(server(), path :: String.t()) :: :ok | {:error, File.posix()}
   def check_in(segment_recycler, segment), do: GenServer.call(segment_recycler, {:check_in, segment})
 
   @spec child_spec(term()) :: Supervisor.child_spec()
@@ -83,21 +87,32 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
             max_available :: pos_integer()
           ) :: {:ok, State.t()} | {:error, atom()}
     def new(path_to_dir, size, min_available, max_available) do
-      if File.dir?(path_to_dir) do
-        segments = find_existing_preallocated_files(path_to_dir)
-        highest_id = find_highest_id(segments)
+      cond do
+        # min == max leaves no slack for a returned segment to land in:
+        # a checkout drops the pool to max - 1, the min-refill allocates a
+        # replacement, and the check-in then finds the pool full and
+        # unlinks. Every cycle costs a fresh allocation and recycles
+        # nothing — the module's whole purpose, silently off. Refuse the
+        # config instead of quietly degrading under it.
+        min_available >= max_available ->
+          {:error, :max_available_must_exceed_min_available}
 
-        {:ok,
-         %State{
-           path: path_to_dir,
-           segments: segments,
-           size: size,
-           next_id: highest_id + 1,
-           min_available: min_available,
-           max_available: max_available
-         }}
-      else
-        {:error, :path_is_not_a_directory}
+        not File.dir?(path_to_dir) ->
+          {:error, :path_is_not_a_directory}
+
+        true ->
+          segments = find_existing_preallocated_files(path_to_dir)
+          highest_id = find_highest_id(segments)
+
+          {:ok,
+           %State{
+             path: path_to_dir,
+             segments: segments,
+             size: size,
+             next_id: highest_id + 1,
+             min_available: min_available,
+             max_available: max_available
+           }}
       end
     end
 
@@ -131,8 +146,21 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       end
     end
 
+    # The pool is a cache, not a ledger: every preallocated file is
+    # interchangeable, so at the cap the cheapest correct move is to
+    # unlink the segment being returned rather than rename it in and
+    # evict another. Without this, a trim burst — `trim_durable_segments/1`
+    # splitting off many segments at once when a durability watermark
+    # jumps — checks them all in back-to-back with no intervening
+    # checkout, and the pool keeps every one of them at `size` bytes
+    # apiece for the life of the worker.
     @spec check_in(State.t(), path_to_file :: String.t()) ::
-            {:ok, State.t()} | {:error, :file_is_not_closed}
+            {:ok, State.t()} | {:error, File.posix()}
+    def check_in(%{segments: segments, max_available: max_available} = t, path_to_file)
+        when length(segments) >= max_available do
+      with :ok <- File.rm(path_to_file), do: {:ok, t}
+    end
+
     def check_in(t, path_to_file) do
       new_path_to_file = Path.join(t.path, generate_unused_file_name(t.next_id))
 
@@ -222,8 +250,13 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
         {:ok, state} ->
           reply(state, :ok, continue: :ensure_min_available)
 
+        # Refill on the failure path too. An exhausted pool is the one
+        # moment a refill is most needed, and nothing else drives
+        # :ensure_min_available — so a pool that ever reached zero could
+        # never recover, and every later checkout would fail even after
+        # whatever caused the exhaustion had cleared.
         {:error, _reason} = error ->
-          reply(state, error)
+          reply(state, error, continue: :ensure_min_available)
       end
     end
 
@@ -243,7 +276,12 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       |> Logic.ensure_min_available(state.min_available)
       |> case do
         {:ok, state} -> noreply(state)
-        {:error, reason} -> stop(reason, :shutdown)
+        # stop/2 is stop(state, reason). Transposed, this exited with
+        # :shutdown — an orderly-looking stop — and installed the real
+        # cause as the state, discarding exactly the :enospc / :emfile /
+        # :enomem distinction Shale's classify_resource_error/1 exists to
+        # act on.
+        {:error, reason} -> stop(state, reason)
       end
     end
   end

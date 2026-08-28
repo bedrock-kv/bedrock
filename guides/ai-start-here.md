@@ -80,7 +80,7 @@ The recovery subsystem documentation provides detailed process flows for system 
 
 - **[Log Recovery Planning](quick-reads/recovery/log-recovery-planning.md)** - Strategic planning for log reconstruction and consistency restoration
 - **[Component Recruitment](quick-reads/recovery/log-recruitment.md)** - Service discovery and dynamic cluster membership management
-- **[Storage Recruitment](quick-reads/recovery/storage-recruitment.md)** - Storage layer integration during recovery operations
+- **[Materializer Bootstrap](quick-reads/recovery/materializer-bootstrap.md)** - Recovering the shard layout from the system materializer
 - **[Component Startup Sequences](quick-reads/recovery/sequencer-startup.md)** - Detailed initialization protocols for core components
 - **[State Persistence](quick-reads/recovery/persistence.md)** - Persistent state management and version determination algorithms
 

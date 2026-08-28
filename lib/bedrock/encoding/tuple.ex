@@ -1,5 +1,33 @@
 defmodule Bedrock.Encoding.Tuple do
-  @moduledoc false
+  @moduledoc """
+  FoundationDB's tuple layer: an order-preserving encoding for structured keys.
+
+  This is the encoding to reach for when keys are composite —
+  `{"balances", account_id}`, `{user_id, timestamp}` — because the byte
+  ordering of packed keys matches the logical ordering of the values inside
+  them. Sorting the encoded keys sorts the tuples, which is what makes a range
+  read over a prefix return the rows you meant, in the order you meant.
+
+      iex> Bedrock.Encoding.Tuple.pack({"balances", 1}) <
+      ...>   Bedrock.Encoding.Tuple.pack({"balances", 2})
+      true
+
+      iex> Bedrock.Encoding.Tuple.unpack(Bedrock.Encoding.Tuple.pack({"a", 1, nil}))
+      {"a", 1, nil}
+
+  ## Supported types
+
+  Binaries, integers (64-bit signed range), floats, `nil`, lists, and tuples,
+  nested arbitrarily. Anything else raises `ArgumentError` on `pack/1`.
+
+  Integers are encoded by magnitude, smallest representation first, with
+  negatives stored as complements so that the ordering property holds across
+  zero. Null bytes inside binaries are escaped, so a binary containing `0x00`
+  still sorts correctly against one that does not.
+
+  The wire format is FoundationDB's, so keys written here are readable by any
+  other FDB tuple-layer implementation.
+  """
 
   @behaviour Bedrock.Encoding
 

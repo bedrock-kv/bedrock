@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator.RecoveryCapabilityTracker
   alias Bedrock.ControlPlane.Director
@@ -23,8 +24,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           supervisor_otp_name: atom(),
           last_durable_txn_id: Raft.transaction_id(),
           config: Config.t() | nil,
-          old_transaction_system_layout:
-            TransactionSystemLayout.t() | %{required(:logs) => TransactionSystemLayout.log_map()} | nil,
+          prior_core_state: CoreState.t() | nil,
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           waiting_list: %{Raft.transaction_id() => pid()},
           service_directory: %{String.t() => {atom(), {atom(), node()}}},
@@ -43,7 +43,7 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             supervisor_otp_name: nil,
             last_durable_txn_id: nil,
             config: nil,
-            old_transaction_system_layout: nil,
+            prior_core_state: nil,
             transaction_system_layout: nil,
             waiting_list: %{},
             service_directory: %{},
@@ -92,12 +92,16 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     @spec put_last_durable_txn_id(t :: State.t(), Raft.transaction_id()) :: State.t()
     def put_last_durable_txn_id(t, last_durable_txn_id), do: %{t | last_durable_txn_id: last_durable_txn_id}
 
-    @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t()) ::
+    @spec put_transaction_system_layout(t :: State.t(), TransactionSystemLayout.t(), CoreState.t()) ::
             State.t()
-    def put_transaction_system_layout(t, transaction_system_layout) do
+    def put_transaction_system_layout(t, transaction_system_layout, core_state) do
+      # The completed layout becomes the next recovery's PRIOR STATE, but
+      # only its durable half may: the layout's pids die with this epoch,
+      # and the prior-state slot exists to outlive it. (This worked
+      # before only because both shapes happen to carry a :logs field.)
       updated_state = %{
         t
-        | old_transaction_system_layout: transaction_system_layout,
+        | prior_core_state: core_state,
           transaction_system_layout: transaction_system_layout
       }
 
@@ -133,7 +137,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     Broadcasts only reach subscribers that existed when the layout was
     published. A Link that registers after the layout stabilized would
     otherwise keep a nil cache until the next recovery — its clients
-    unavailable and its foreman never handed the reconciliation trigger.
+    unavailable and its node's workers never handed the layout they
+    self-validate against.
     The message is identical to a live broadcast, so the subscriber's
     handling is too. With no layout yet (bootstrap, mid-recovery) nothing
     is sent: an incomplete layout is not a runtime layout.

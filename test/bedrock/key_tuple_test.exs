@@ -2,9 +2,10 @@ defmodule Bedrock.Key.TupleTest do
   use ExUnit.Case
   use ExUnitProperties
 
+  # Aliased as `Key` for historical reasons: these property tests predate the
+  # module's move under Bedrock.Encoding. Its doctests are declared in
+  # test/bedrock/encoding/tuple_test.exs, the module's own test file.
   alias Bedrock.Encoding.Tuple, as: Key
-
-  doctest Key
 
   # Helper function to test roundtrip property
   defp assert_roundtrip(data) do

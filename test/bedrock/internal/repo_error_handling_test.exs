@@ -212,7 +212,18 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
 
   describe "error classification" do
     test "tuple is thrown for retryable errors" do
-      retryable_errors = [:unavailable, :timeout, :version_too_new]
+      # Routing-shaped failures (layout_lookup_failed, no_servers_to_race,
+      # locked) and version-window misses retry - FDB's wrong_shard_server
+      # model: staleness costs a retry, never surfaces to the user.
+      retryable_errors = [
+        :unavailable,
+        :timeout,
+        :version_too_new,
+        :version_too_old,
+        :layout_lookup_failed,
+        :no_servers_to_race,
+        :locked
+      ]
 
       for error_reason <- retryable_errors do
         txn =
@@ -235,7 +246,7 @@ defmodule Bedrock.Internal.RepoErrorHandlingTest do
     end
 
     test "TransactionError tuple is thrown for non-retryable errors" do
-      non_retryable_errors = [:invalid_key, :permission_denied, :version_too_old]
+      non_retryable_errors = [:invalid_key, :permission_denied]
 
       for error_reason <- non_retryable_errors do
         txn =

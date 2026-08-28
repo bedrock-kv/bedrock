@@ -3,11 +3,43 @@ defmodule Bedrock.Internal.Repo do
   import Bitwise
 
   alias Bedrock.Cluster.Link
+  alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.Internal.Repo.TransactionContext
   alias Bedrock.Internal.TransactionBuilder
   alias Bedrock.KeySelector
 
   @default_timeout_in_ms 5_000
+  @max_retry_delay_in_ms 1_000
+
+  # Read failures that never resolve without new information, only with a
+  # retry: version window misses resolve with a fresh read version, and the
+  # rest are routing- or liveness-shaped (FDB's wrong_shard_server model:
+  # they cost the caller a retry, never surface to the user).
+  # :unknown is a rescued unexpected exception inside a routing or read
+  # call (Internal.GenServer.Calls) - transient by construction, and the
+  # by-key routing path makes several such calls per miss; raising a user
+  # transaction over it would turn a blip into an error.
+  @retryable_read_failures [
+    :timeout,
+    :unavailable,
+    :version_too_new,
+    :version_too_old,
+    :layout_lookup_failed,
+    :no_servers_to_race,
+    :locked,
+    :unknown
+  ]
+
+  # Of those, the ones that are DEFINITIVELY routing-shaped evict the
+  # node's routing cache: an unroutable key, no servers to race, a dead
+  # ref (:unavailable - a dead pid is exactly what a stale snapshot looks
+  # like), or a locked proxy (recovery in flight; the new epoch's entries
+  # must be refetched). :timeout and :unknown stay retryable but keep the
+  # cache - FDB's locationCache survives timeouts for the same reason:
+  # slow is not stale, and evicting on it converts overload latency into
+  # node-wide cache-thrash and refetch traffic. Version window misses are
+  # not routing's fault and keep the cache too.
+  @routing_invalidating_failures [:layout_lookup_failed, :no_servers_to_race, :unavailable, :locked]
 
   @type transaction :: pid()
   @type key :: term()
@@ -37,7 +69,7 @@ defmodule Bedrock.Internal.Repo do
       {:error, :not_found} ->
         nil
 
-      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
+      {:failure, reason} when reason in @retryable_read_failures ->
         throw({__MODULE__, t, :retryable_failure, reason})
 
       {failure_or_error, reason} when failure_or_error in [:error, :failure] and is_atom(reason) ->
@@ -59,7 +91,7 @@ defmodule Bedrock.Internal.Repo do
       {:error, :not_found} ->
         nil
 
-      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new] ->
+      {:failure, reason} when reason in @retryable_read_failures ->
         throw({__MODULE__, t, :retryable_failure, reason})
 
       {failure_or_error, reason} when failure_or_error in [:error, :failure] and is_atom(reason) ->
@@ -169,7 +201,7 @@ defmodule Bedrock.Internal.Repo do
       {:ok, {[first_row | rest], has_more}} ->
         emit_row_from_buffer(%{state | current_batch: rest, has_more: has_more}, first_row, rest)
 
-      {:failure, reason} when reason in [:timeout, :unavailable, :version_too_new, :no_servers_to_race] ->
+      {:failure, reason} when reason in @retryable_read_failures ->
         throw({__MODULE__, state.txn, :retryable_failure, reason})
 
       {:error, reason} ->
@@ -238,9 +270,10 @@ defmodule Bedrock.Internal.Repo do
     timeout_in_ms = Keyword.get(opts, :timeout_in_ms, @default_timeout_in_ms)
 
     TransactionContext.with_deadline(repo, timeout_in_ms, fn ->
-      run_retryable_transaction(repo, fun, 0, retry_limit, fn ->
+      run_retryable_transaction(repo, fun, 0, retry_limit, fn last_reason ->
+        maybe_invalidate_routing(link, last_reason)
         tsl = fetch_tsl_for_transaction(repo, provided_tsl, link)
-        start_transaction_builder(tsl, repo)
+        start_transaction_builder(tsl, routing_fn_for_transaction(cluster, provided_tsl, link), repo)
       end)
     end)
   after
@@ -251,12 +284,19 @@ defmodule Bedrock.Internal.Repo do
     timeout_in_ms = Keyword.get(opts, :timeout_in_ms, @default_timeout_in_ms)
 
     TransactionContext.with_deadline(repo, timeout_in_ms, fn ->
-      run_retryable_transaction(repo, fun, 0, nil, fn ->
+      run_retryable_transaction(repo, fun, 0, nil, fn _last_reason ->
         call_transaction(repo, txn, :nested_transaction)
         txn
       end)
     end)
   end
+
+  defp maybe_invalidate_routing(nil, _last_reason), do: :ok
+
+  defp maybe_invalidate_routing(link, last_reason) when last_reason in @routing_invalidating_failures,
+    do: Link.invalidate_routing(link)
+
+  defp maybe_invalidate_routing(_link, _last_reason), do: :ok
 
   defp fetch_tsl_for_transaction(repo, nil, link) do
     case Link.fetch_transaction_system_layout(link,
@@ -269,8 +309,64 @@ defmodule Bedrock.Internal.Repo do
 
   defp fetch_tsl_for_transaction(_repo, tsl, _link), do: tsl
 
-  defp start_transaction_builder(tsl, repo) do
-    case TransactionBuilder.start_link(transaction_system_layout: tsl) do
+  # A caller-provided TSL is wiring only and gets no routing_fn: the
+  # builder's index stays empty and reads fail as layout_lookup_failed
+  # (the escape hatch serves commit-only flows and tests). Otherwise
+  # routing is proxy-served, BY KEY, and lazy: the builder calls this on
+  # each local index miss - Link cache first (the node's locationCache),
+  # fetch-through to a random commit proxy for the single covering entry
+  # on a miss, caching the raw entry back for the next transaction on
+  # this node. Never a whole-map fetch: materializers can number in the
+  # thousands, and FDB's GetKeyServerLocations answers per key. Runs in
+  # the builder process, so failures are returned (they surface as read
+  # failures), never thrown.
+  defp routing_fn_for_transaction(_cluster, provided_tsl, _link) when not is_nil(provided_tsl), do: nil
+
+  defp routing_fn_for_transaction(cluster, nil, link) do
+    fn key ->
+      # A direct ETS read, so the only outcomes are hit and miss. There is
+      # no unavailable/timeout arm any more: the cache is not a process to
+      # be asked, and a table that does not exist reads as a miss.
+      case Link.fetch_covering_entry(cluster, key) do
+        {:ok, {{start_key, end_key}, raw_ref}} -> {:ok, {start_key, end_key, [callable_ref(cluster, raw_ref)]}}
+        {:error, :not_cached} -> fetch_and_cache_entry(cluster, link, key)
+      end
+    end
+  end
+
+  defp fetch_and_cache_entry(cluster, link, key) do
+    with {:ok, tsl} <- Link.fetch_transaction_system_layout(link),
+         [_ | _] = proxies <- Map.get(tsl, :proxies, []),
+         {:ok, {start_key, end_key, _tag, raw_ref}} <- proxies |> Enum.random() |> CommitProxy.fetch_routing(key) do
+      Link.cache_routing_entry(link, {start_key, end_key, raw_ref})
+      {:ok, {start_key, end_key, [callable_ref(cluster, raw_ref)]}}
+    else
+      [] ->
+        {:error, :unavailable}
+
+      # The proxy's committed state names no shard or no materializer for
+      # the key - to the client that is an unroutable key, and the retry
+      # loop's routing-shaped classification handles it.
+      {:error, :not_found} ->
+        {:error, :layout_lookup_failed}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Turn a string-encoded materializer ref into a callable
+  # `{otp_name, node}` ref. Worker OTP names are deterministic in the
+  # worker id; the node atom conversion is the documented exception to the
+  # no-atoms-on-decode rule - the values come from system-mode-gated
+  # writers and the atom count is bounded by cluster membership.
+  defp callable_ref(cluster, {worker_id, node}) do
+    # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
+    {cluster.otp_name_for_worker(worker_id), String.to_atom(node)}
+  end
+
+  defp start_transaction_builder(tsl, routing_fn, repo) do
+    case TransactionBuilder.start_link(transaction_system_layout: tsl, routing_fn: routing_fn) do
       {:ok, txn} ->
         TransactionContext.put_builder(repo, txn)
         txn
@@ -280,15 +376,15 @@ defmodule Bedrock.Internal.Repo do
     end
   end
 
-  defp run_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn) do
+  defp run_retryable_transaction(repo, fun, retry_count, retry_limit, restart_fn, last_reason \\ nil) do
     TransactionContext.remaining_timeout!(repo, :timeout)
-    run_transaction(repo, restart_fn.(), fun)
+    run_transaction(repo, restart_fn.(last_reason), fun)
   catch
     {__MODULE__, failed_txn, :retryable_failure, reason} ->
       try_to_rollback(failed_txn)
       enforce_retry_limit(retry_count, retry_limit, reason)
       wait_before_retry(repo, retry_count, reason)
-      run_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn)
+      run_retryable_transaction(repo, fun, retry_count + 1, retry_limit, restart_fn, reason)
 
     {__MODULE__, :rollback, reason} ->
       try_to_rollback(txn(repo))
@@ -313,10 +409,33 @@ defmodule Bedrock.Internal.Repo do
       reraise exception, __STACKTRACE__
   end
 
+  @doc """
+  The delay before retry number `retry_count`, in milliseconds.
+
+  FULL JITTER: a uniform draw from the whole interval below a ceiling
+  that doubles, capped. The ceiling schedule is unchanged — what changed
+  is that the delay is drawn from ALL of it rather than from a 3ms band
+  at the top.
+
+  That distinction is the whole point. Transactions contending on one key
+  fail at nearly the same instant; if they then compute nearly the same
+  delay they wake together and collide again, and the round trip repeats
+  at twice the delay. Spreading them across the interval means some
+  contender arrives while the key is uncontended instead of every
+  contender re-colliding. Identical 100-way workloads varied 278ms to
+  2059ms on the old schedule.
+
+  This is FDB's client backoff (`NativeAPI.actor.cpp:4436`:
+  `returnedBackoff *= deterministicRandom()->random01()`, with the
+  ceiling grown at :4446 by `BACKOFF_GROWTH_RATE`). Never zero, so a
+  retry can never become a spin.
+  """
+  @spec retry_delay_in_ms(non_neg_integer()) :: pos_integer()
+  def retry_delay_in_ms(retry_count) when is_integer(retry_count) and retry_count >= 0,
+    do: :rand.uniform(min(1 <<< retry_count, @max_retry_delay_in_ms))
+
   defp wait_before_retry(repo, retry_count, last_reason) do
-    base_delay = 1 <<< retry_count
-    jitter = :rand.uniform(3)
-    wait_time_in_ms = min(base_delay + jitter, 1000)
+    wait_time_in_ms = retry_delay_in_ms(retry_count)
     remaining = TransactionContext.remaining_timeout!(repo, last_reason)
 
     Process.sleep(min_timeout(wait_time_in_ms, remaining))
@@ -333,9 +452,23 @@ defmodule Bedrock.Internal.Repo do
 
   defp try_to_commit(repo, txn, result) do
     case call_transaction(repo, txn, :commit) do
-      :ok -> result
-      {:ok, _commit_version} -> result
-      {:error, reason} -> throw({__MODULE__, txn, :retryable_failure, reason})
+      :ok ->
+        result
+
+      {:ok, _commit_version} ->
+        result
+
+      # A key outside the caller's legal range or an undecodable transaction
+      # is a permanent client error - retrying cannot change the outcome, so
+      # surface it instead of burning the transaction deadline.
+      {:error, {:key_out_of_range, _key} = reason} ->
+        throw({__MODULE__, :rollback, reason})
+
+      {:error, :invalid_transaction = reason} ->
+        throw({__MODULE__, :rollback, reason})
+
+      {:error, reason} ->
+        throw({__MODULE__, txn, :retryable_failure, reason})
     end
   end
 

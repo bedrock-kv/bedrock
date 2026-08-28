@@ -30,7 +30,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   def try_to_start_director(t) when t.leader_node == t.my_node and t.director == :unavailable do
     t = maybe_put_default_config(t)
 
-    trace_director_launch(t.epoch, t.old_transaction_system_layout)
+    trace_director_launch(t.epoch, t.prior_core_state)
 
     case start_director_with_monitoring(t) do
       {:ok, new_director} ->
@@ -64,7 +64,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
             [
               cluster: t.cluster,
               config: t.config,
-              old_transaction_system_layout: t.old_transaction_system_layout,
+              prior_core_state: t.prior_core_state,
               epoch: t.epoch,
               coordinator: self(),
               services: t.service_directory,

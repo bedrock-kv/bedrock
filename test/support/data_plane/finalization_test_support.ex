@@ -35,25 +35,6 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   end
 
   # Fake resolver for testing conflict resolution without self-calls
-  defmodule FakeResolver do
-    @moduledoc false
-    use GenServer
-
-    def start_link(opts \\ []) do
-      GenServer.start_link(__MODULE__, :ok, opts)
-    end
-
-    def init(:ok), do: {:ok, %{}}
-
-    def handle_call(
-          {:resolve_transactions, _epoch, {_last_version, _commit_version}, _transaction_summaries},
-          _from,
-          state
-        ) do
-      # Return no conflicts (empty list) for simple test scenarios
-      {:reply, {:ok, []}, state}
-    end
-  end
 
   @doc """
   Creates a fake sequencer that handles synchronous report_successful_commit calls.
@@ -61,14 +42,6 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
   """
   def create_fake_sequencer do
     ExUnit.Callbacks.start_supervised!(FakeSequencer)
-  end
-
-  @doc """
-  Creates a fake resolver that handles resolve_transactions calls without conflicts.
-  Uses start_supervised! for proper test lifecycle management.
-  """
-  def create_fake_resolver do
-    ExUnit.Callbacks.start_supervised!(FakeResolver)
   end
 
   @doc """
@@ -124,19 +97,12 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
 
   @doc """
   Builds routing data from a transaction system layout.
-  Used by finalize_batch opts.
+  Used to seed metadata_apply_fn/1 for finalize_batch opts.
   """
   def build_routing_data(transaction_system_layout) do
     logs = Map.get(transaction_system_layout, :logs, %{})
     services = Map.get(transaction_system_layout, :services, %{})
     shard_layout = Map.get(transaction_system_layout, :shard_layout, default_shard_layout())
-
-    table = :ets.new(:test_shard_keys, [:ordered_set, :public])
-
-    # Populate shard_keys from shard_layout: %{end_key => {tag, start_key}}
-    Enum.each(shard_layout, fn {end_key, {tag, _start_key}} ->
-      :ets.insert(table, {end_key, tag})
-    end)
 
     log_map =
       logs
@@ -165,22 +131,47 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
 
     replication_factor = max(1, map_size(logs))
 
-    %RoutingData{
-      shard_table: table,
+    RoutingData.from_snapshot(%{
+      shard_layout: shard_layout,
       log_map: log_map,
       log_services: log_services,
       replication_factor: replication_factor
-    }
+    })
+  end
+
+  @doc """
+  An exact metadata window with no entries that tiles correctly for a proxy
+  whose batches chain from Version.zero(): the first window's from is nil
+  (first contact), every later window's from is the batch's last_version -
+  which equals the proxy's applied version, exactly as the real resolver
+  serves them.
+  """
+  def tiling_window(last_version, commit_version) do
+    from = if last_version == Version.zero(), do: nil, else: last_version
+    {from, commit_version, []}
+  end
+
+  @doc """
+  A stand-in for the commit proxy server's serialized apply-and-route step:
+  applies the batch's committed window entries to the given routing data and
+  returns the snapshot the batch should push with. The window arrives with
+  verdicts already resolved (plain `{version, [mutation]}` entries).
+  """
+  def metadata_apply_fn(%RoutingData{} = routing_data) do
+    fn _commit_version, window ->
+      entries =
+        case window do
+          nil -> []
+          {_from, _to, entries} -> entries
+        end
+
+      {:ok, RoutingData.apply_mutations(routing_data, entries)}
+    end
   end
 
   # Default shard layout covering entire keyspace with a single shard (tag 0)
   defp default_shard_layout do
     %{<<0xFF, 0xFF>> => {0, <<>>}}
-  end
-
-  # Helper function to create test resolver task
-  defp create_test_resolver_task(binary) do
-    Task.async(fn -> %{:test_resolver => binary} end)
   end
 
   @doc """
@@ -207,11 +198,8 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
 
     default_binary = Transaction.encode(default_transaction_map)
 
-    # Create a simple task that returns single resolver map (for tests)
-    default_task = create_test_resolver_task(default_binary)
-
     default_transactions = [
-      {0, fn result -> send(self(), {:reply, result}) end, default_binary, default_task}
+      {0, fn result -> send(self(), {:reply, result}) end, default_binary, :user}
     ]
 
     buffer = if Enum.empty?(transactions), do: default_transactions, else: transactions
@@ -219,17 +207,18 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
     # Ensure buffer contains indexed transactions
     indexed_buffer =
       case buffer do
-        # If buffer already has indexed format {index, reply_fn, binary, task}, use as-is
-        [{_idx, _reply_fn, _binary, _task} | _] ->
+        # If buffer already has indexed format {index, reply_fn, binary, commit_mode}, use as-is
+        [{_idx, _reply_fn, _binary, _commit_mode} | _] ->
           buffer
 
-        # If buffer has old format {reply_fn, binary}, add indices and tasks
+        # If buffer has {reply_fn, binary} or {reply_fn, binary, mode} entries,
+        # add indices (mode defaults to :user)
         _ ->
           buffer
           |> Enum.with_index()
-          |> Enum.map(fn {{reply_fn, binary}, idx} ->
-            task = create_test_resolver_task(binary)
-            {idx, reply_fn, binary, task}
+          |> Enum.map(fn
+            {{reply_fn, binary}, idx} -> {idx, reply_fn, binary, :user}
+            {{reply_fn, binary, mode}, idx} -> {idx, reply_fn, binary, mode}
           end)
       end
 

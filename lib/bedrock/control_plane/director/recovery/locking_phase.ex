@@ -20,6 +20,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.Service.Worker
@@ -28,7 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   def execute(recovery_attempt, context) do
     old_system_services =
       extract_old_system_services(
-        context.old_transaction_system_layout,
+        context.prior_core_state,
         context.available_services
       )
 
@@ -150,12 +151,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   # state — including the shard layout the bootstrap phase reads — and
   # locking them both fences old epochs and collects their recovery info
   # (durable version, shard assignment) for reuse.
-  defp extract_old_system_services(old_layout, available_services) do
-    old_log_ids =
-      old_layout
-      |> Map.get(:logs, %{})
-      |> Map.keys()
-      |> MapSet.new()
+  defp extract_old_system_services(prior_core_state, available_services) do
+    old_log_ids = CoreState.log_ids(prior_core_state)
 
     available_services
     |> Enum.filter(fn

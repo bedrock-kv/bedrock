@@ -2,7 +2,7 @@
 
 [Storage](../../../glossary.md#storage) servers solve a fundamental problem in distributed databases: how to serve fast, consistent reads while maintaining strong transactional guarantees. They sit between the authoritative [Transaction](../../../glossary.md#transaction) [Log](../../../glossary.md#log) and the applications that need to read data, creating a layer that optimizes for read performance without sacrificing consistency.
 
-**Location**: [`lib/bedrock/data_plane/storage.ex`](../../../../lib/bedrock/data_plane/storage.ex)
+**Location**: [`lib/bedrock/data_plane/materializer.ex`](../../../../lib/bedrock/data_plane/materializer.ex)
 
 ## The Performance Problem
 
@@ -22,7 +22,7 @@ Version management also solves garbage collection elegantly. Storage servers can
 
 Storage servers maintain an eventually consistent relationship with the transaction log. Committed transactions arrive asynchronously over each server's shard stream: the log's Demux slices every transaction by shard, and each storage server streams exactly its own shard's slice — object-storage chunks for history, the ShardServer's in-memory buffer for recent data, one continuous stream from any starting position. Every stream reply also carries version currency ("nothing for you, but you are current through v"), so a server whose shard is idle keeps advancing without ever polling. There is still always a window where a transaction has been committed but not yet reflected in all storage servers.
 
-Bedrock handles this carefully through version leasing. The [Gateway](../../../glossary.md#gateway) ensures that transactions only read at versions that are guaranteed to be available on all storage servers they'll access. If a transaction tries to read at version 100, the system first confirms that all relevant storage servers have applied transactions up to at least version 100.
+Bedrock handles this carefully through version leasing. The [Link](../../../glossary.md#link) ensures that transactions only read at versions that are guaranteed to be available on all storage servers they'll access. If a transaction tries to read at version 100, the system first confirms that all relevant storage servers have applied transactions up to at least version 100.
 
 This coordination enables the best of both worlds: writes achieve immediate durability through the log, while reads get fast local access through storage servers. The version-based consistency model ensures that despite the asynchronous updates, every transaction sees a coherent snapshot of the data.
 
@@ -46,7 +46,7 @@ Storage servers apply transactions eagerly for read currency but only persist to
 
 ## Integration with the Transaction System
 
-Storage servers integrate with the transaction system at several key points. [Transaction Builder](../../../glossary.md#transaction-builder) are their primary consumers, using "horse racing" to query multiple storage replicas in parallel and take the first successful response. The storage system also supports conflict detection indirectly by maintaining the version history that Resolvers need. Version leasing creates another integration point with the Gateway, ensuring that transactions only read at versions that are guaranteed to be available across all storage servers they'll access.
+Storage servers integrate with the transaction system at several key points. [Transaction Builder](../../../glossary.md#transaction-builder) are their primary consumers, using "horse racing" to query multiple storage replicas in parallel and take the first successful response. The storage system also supports conflict detection indirectly by maintaining the version history that Resolvers need. Version leasing creates another integration point with the Link, ensuring that transactions only read at versions that are guaranteed to be available across all storage servers they'll access.
 
 For the complete transaction flow, see **[Transaction Processing Deep Dive](../../../deep-dives/transactions.md)**.
 
@@ -55,5 +55,5 @@ For the complete transaction flow, see **[Transaction Processing Deep Dive](../.
 - **[Olivine](../implementations/olivine.md)**: The materializer engine implementation
 - **[Log System](log.md)**: Hosts the Demux whose per-shard streams feed storage updates
 - **[Transaction Builder](../infrastructure/transaction-builder.md)**: Primary consumer of storage read operations with horse racing performance optimization
-- **[Gateway](../infrastructure/gateway.md)**: Coordinates read version leasing to ensure Storage server data availability
+- **[Link](../infrastructure/link.md)**: Coordinates read version leasing to ensure Storage server data availability
 - **[Director](../control-plane/director.md)**: Control plane component that manages storage recovery and key range assignment

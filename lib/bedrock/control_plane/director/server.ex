@@ -21,11 +21,10 @@ defmodule Bedrock.ControlPlane.Director.Server do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.ControlPlane.Config
-  alias Bedrock.ControlPlane.Config.ServiceDescriptor
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
-  alias Bedrock.Service.Worker
 
   require Logger
 
@@ -34,7 +33,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
           opts :: [
             cluster: module(),
             config: Config.t(),
-            old_transaction_system_layout: TransactionSystemLayout.t() | nil,
+            prior_core_state: CoreState.t() | nil,
             epoch: Bedrock.epoch(),
             coordinator: Coordinator.ref(),
             services: %{String.t() => {atom(), {atom(), node()}}} | nil,
@@ -48,7 +47,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     coordinator = opts[:coordinator] || raise "Missing :coordinator param"
     services = opts[:services] || %{}
     node_capabilities = opts[:node_capabilities] || %{}
-    old_transaction_system_layout = opts[:old_transaction_system_layout] || nil
+    prior_core_state = opts[:prior_core_state] || nil
 
     %{
       id: __MODULE__,
@@ -56,19 +55,19 @@ defmodule Bedrock.ControlPlane.Director.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, config, old_transaction_system_layout, epoch, coordinator, services, node_capabilities}
+           {cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({cluster, config, old_transaction_system_layout, epoch, coordinator, services, node_capabilities}) do
+  def init({cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities}) do
     state = %State{
       epoch: epoch,
       cluster: cluster,
       config: config,
-      old_transaction_system_layout: old_transaction_system_layout,
+      prior_core_state: prior_core_state,
       coordinator: coordinator,
       node_capabilities: node_capabilities,
       lock_token: :crypto.strong_rand_bytes(32),
@@ -93,6 +92,17 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> ping_all_coordinators()
     |> noreply()
   end
+
+  # The distributor is the one monitored process whose death is NOT
+  # epoch-fatal: it is a per-epoch singleton the director re-recruits
+  # (ceded :normal exits excepted). This clause must precede the
+  # component-failure catch-all.
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{distributor_monitor: ref} = t) when ref != nil,
+    do: t |> Recovery.handle_distributor_down(reason) |> noreply()
+
+  @impl true
+  def handle_info({:timeout, :start_distributor}, t), do: t |> Recovery.maybe_start_distributor() |> noreply()
 
   @impl true
   def handle_info({:DOWN, _monitor_ref, :process, failed_pid, reason}, t) do
@@ -179,12 +189,6 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   @spec now() :: DateTime.t()
   defp now, do: DateTime.utc_now()
-
-  @spec get_services_from_transaction_system_layout(TransactionSystemLayout.t()) ::
-          %{Worker.id() => ServiceDescriptor.t()}
-  def get_services_from_transaction_system_layout(%{services: services}), do: services || %{}
-
-  def get_services_from_transaction_system_layout(_), do: %{}
 
   @spec add_services_to_directory(State.t(), [{String.t(), atom(), {atom(), node()}}]) ::
           State.t()

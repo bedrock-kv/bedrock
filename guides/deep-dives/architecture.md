@@ -4,7 +4,7 @@ This directory organizes Bedrock's components by their architectural role within
 
 ## Architecture Overview
 
-Bedrock follows a layered architecture that separates concerns between transaction coordination, data persistence, and storage engine implementations. The **Infrastructure** layer provides foundational cluster interface, client gateway, and worker process management. The **Control Plane** handles transaction coordination, version management, conflict detection, and commit orchestration. The **Data Plane** manages persistent storage interfaces and distributed system coordination. The **Service Layer** provides service abstractions and lifecycle patterns. Finally, **Implementations** are concrete storage engines that implement data plane interfaces with specific performance characteristics. These layers interact with Infrastructure feeding into both Control Plane and Data Plane, Control Plane coordinating with Data Plane, and both feeding through the Service Layer to the concrete Implementations.
+Bedrock follows a layered architecture that separates concerns between transaction coordination, data persistence, and storage engine implementations. The **Infrastructure** layer provides foundational cluster interface, the client Link, and worker process management. The **Control Plane** handles transaction coordination, version management, conflict detection, and commit orchestration. The **Data Plane** manages persistent storage interfaces and distributed system coordination. The **Service Layer** provides service abstractions and lifecycle patterns. Finally, **Implementations** are concrete storage engines that implement data plane interfaces with specific performance characteristics. These layers interact with Infrastructure feeding into both Control Plane and Data Plane, Control Plane coordinating with Data Plane, and both feeding through the Service Layer to the concrete Implementations.
 
 ## Control Plane Components
 
@@ -38,10 +38,10 @@ Implementation components can be swapped or configured based on performance requ
 
 ## Infrastructure Components
 
-These components provide foundational cluster interface, client gateway, and worker process management:
+These components provide foundational cluster interface, the client Link, and worker process management:
 
 - **[Cluster](architecture/infrastructure/cluster.md)** - Foundational interface and configuration management for Bedrock distributed database instances
-- **[Gateway](architecture/infrastructure/gateway.md)** - Client-facing interface that handles requests and routes them to appropriate components
+- **[Link](architecture/infrastructure/link.md)** - Client-facing interface that handles requests and routes them to appropriate components
 - **[Transaction Builder](architecture/infrastructure/transaction-builder.md)** - Constructs and validates transactions from client operations
 - **[Foreman](architecture/infrastructure/foreman.md)** - Manages worker processes and service lifecycle operations across cluster nodes
 

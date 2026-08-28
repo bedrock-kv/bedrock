@@ -26,8 +26,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     buffer =
       transactions
       |> Enum.with_index()
-      |> Enum.map(fn {{reply_fn, tx_binary, task}, index} ->
-        {index, reply_fn, tx_binary, task}
+      |> Enum.map(fn {{reply_fn, tx_binary, commit_mode}, index} ->
+        {index, reply_fn, tx_binary, commit_mode}
       end)
 
     %Batch{
@@ -46,7 +46,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       assert commit_version == Version.from_integer(100)
       assert is_list(summaries)
       assert Keyword.has_key?(opts, :timeout)
-      {:ok, aborted_indices, []}
+      {:ok, aborted_indices, Support.tiling_window(last_version, commit_version)}
     end
   end
 
@@ -83,7 +83,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
           epoch: 1,
           sequencer: :test_sequencer,
           resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
-          routing_data: routing_data
+          metadata_apply_fn: Support.metadata_apply_fn(routing_data)
         )
 
       assert result == {:error, {:resolver_unavailable, :unavailable}}
@@ -102,15 +102,13 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       # Create reply functions and tasks
       reply_fn1 = create_reply_fn(self(), :reply1)
       reply_fn2 = create_reply_fn(self(), :reply2)
-      task1 = Task.async(fn -> %{:test_resolver => tx1_binary} end)
-      task2 = Task.async(fn -> %{:test_resolver => tx2_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
           # index 0 - will be aborted
-          {reply_fn1, tx1_binary, task1},
+          {reply_fn1, tx1_binary, :system},
           # index 1 - success
-          {reply_fn2, tx2_binary, task2}
+          {reply_fn2, tx2_binary, :system}
         ])
 
       # Mock resolver that aborts first transaction (index 0)
@@ -124,7 +122,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
           end
         end)
 
-      assert {:ok, 1, 1, _routing_data} =
+      assert {:ok, 1, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -133,7 +131,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_successful_log_push(),
                  sequencer_notify_fn: mock_sequencer_notify(),
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       expected_version = Version.from_integer(100)
@@ -144,12 +142,12 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     test "handles empty batch", %{transaction_system_layout: transaction_system_layout, routing_data: routing_data} do
       batch = create_batch_with_transactions(100, 99, [])
 
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [], []}
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
-      assert {:ok, 0, 0, _routing_data} =
+      assert {:ok, 0, 0} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -161,7 +159,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                    assert sequencer == :test_sequencer
                    :ok
                  end,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
     end
 
@@ -178,22 +176,20 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       # Create reply functions and tasks
       reply_fn1 = create_reply_fn(self(), :reply1)
       reply_fn2 = create_reply_fn(self(), :reply2)
-      task1 = Task.async(fn -> %{:test_resolver => tx1_binary} end)
-      task2 = Task.async(fn -> %{:test_resolver => tx2_binary} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn1, tx1_binary, task1},
-          {reply_fn2, tx2_binary, task2}
+          {reply_fn1, tx1_binary, :system},
+          {reply_fn2, tx2_binary, :system}
         ])
 
       # Mock resolver that aborts both transactions
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [0, 1], []}
+        {:ok, [0, 1], Support.tiling_window(last_version, commit_version)}
       end
 
-      assert {:ok, 2, 0, _routing_data} =
+      assert {:ok, 2, 0} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -205,7 +201,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                    assert sequencer == :test_sequencer
                    :ok
                  end,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Both should be aborted
@@ -219,9 +215,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     } do
       batch = Support.create_test_batch(100, 99)
 
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [], []}
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
       mock_log_push_fn = fn _last_version, _tx_by_log, _commit_version, _opts ->
@@ -236,7 +232,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Transaction should be aborted due to log failure
@@ -249,9 +245,9 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
     } do
       batch = Support.create_test_batch(100, 99)
 
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
-        {:ok, [], []}
+        last_version |> Support.tiling_window(commit_version) |> then(&{:ok, [], &1})
       end
 
       mock_log_push_fn = fn _last_version, _tx_by_log, _commit_version, _opts ->
@@ -266,7 +262,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  batch_log_push_fn: mock_log_push_fn,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Transaction should be aborted due to insufficient acknowledgments
@@ -296,7 +292,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                             _metadata_per_tx,
                             _opts ->
         send(test_pid, {:resolver_called, last_version, received_commit_version})
-        {:ok, [], []}
+        {:ok, [], Support.tiling_window(last_version, received_commit_version)}
       end
 
       # Mock log push function that captures version parameters
@@ -305,7 +301,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
         :ok
       end
 
-      assert {:ok, 0, 1, _routing_data} =
+      assert {:ok, 0, 1} =
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
@@ -317,7 +313,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                    assert sequencer == :test_sequencer
                    :ok
                  end,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       # Verify both resolver and log push received correct versions
@@ -342,11 +338,10 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       transaction_map = create_test_transaction(<<"key">>, <<"value">>)
       binary_transaction = Transaction.encode(transaction_map)
       reply_fn = create_reply_fn(self(), :reply)
-      task = Task.async(fn -> %{:test_resolver => binary_transaction} end)
 
       batch =
         create_batch_with_transactions(100, 99, [
-          {reply_fn, binary_transaction, task}
+          {reply_fn, binary_transaction, :user}
         ])
 
       # Custom abort function that tracks calls
@@ -358,7 +353,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock resolver that fails
-      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
         {:error, :timeout}
       end
@@ -371,7 +366,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
                  abort_reply_fn: custom_abort_fn,
-                 routing_data: routing_data
+                 metadata_apply_fn: Support.metadata_apply_fn(routing_data)
                )
 
       assert_receive {:custom_abort_called, 1}

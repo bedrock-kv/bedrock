@@ -13,13 +13,13 @@ Control Plane components deal with:
 - **Recovery Orchestration**: Coordinating systematic recovery when failures occur
 - **Distributed Consensus**: Managing Raft-based consensus for critical cluster decisions
 
-This contrasts with the Data Plane, which handles transaction processing, conflict resolution, and data persistence, and the Gateway layer, which manages client interfaces and request routing.
+This contrasts with the Data Plane, which handles transaction processing, conflict resolution, and data persistence, and the Link layer, which manages client interfaces and request routing.
 
 ## Components
 
 ### [Coordinator](../deep-dives/architecture/control-plane/coordinator.md)
 
-The foundational authority for cluster state management through Raft distributed consensus. The Coordinator maintains the authoritative service directory, handles service registrations from Gateway nodes, and coordinates Director lifecycle during leadership changes.
+The foundational authority for cluster state management through Raft distributed consensus. The Coordinator maintains the authoritative service directory, handles service registrations from cluster nodes, and coordinates Director lifecycle during leadership changes.
 
 **Core Responsibilities:**
 
@@ -44,7 +44,7 @@ The Control Plane provides the coordination foundation that enables the Data Pla
 ## Key Operations Flow
 
 1. **Cluster Startup**: Coordinators establish consensus, elect leader, populate service directory
-2. **Service Registration**: Gateways register available services with leader Coordinator  
+2. **Service Registration**: Foremen advertise their running services to the leader Coordinator  
 3. **Recovery Initiation**: Coordinator leader creates Director with current epoch
 4. **Recovery Orchestration**: Director coordinates systematic recovery of Data Plane components
 5. **Operational State**: Cluster serves transactions while Control Plane monitors health
@@ -73,7 +73,7 @@ The Control Plane follows these design principles to maintain system reliability
 ## See Also
 
 - [Data Plane Overview](data-plane.md) - Transaction processing and conflict resolution components coordinated by the Control Plane
-- [Infrastructure Components](../deep-dives/architecture/infrastructure/README.md) - Foundational cluster interface and client gateway components  
+- [Infrastructure Components](../deep-dives/architecture/infrastructure/README.md) - Foundational cluster interface and client Link components  
 - [Recovery Deep Dive](../deep-dives/recovery.md) - Detailed examination of Control Plane recovery coordination
 - [Cluster Startup](../deep-dives/cluster-startup.md) - Control Plane role in cluster initialization
 - [Architecture Overview](../deep-dives/architecture.md) - System-wide architectural context and component relationships

@@ -72,6 +72,7 @@ defmodule Bedrock.Cluster do
       @coordinator_otp_name Cluster.otp_name(@name, :coordinator)
       @foreman_otp_name Cluster.otp_name(@name, :foreman)
       @link_otp_name Cluster.otp_name(@name, :link)
+      @link_routing_otp_name Cluster.otp_name(@name, :link_routing)
       @sequencer_otp_name Cluster.otp_name(@name, :sequencer)
       @worker_supervisor_otp_name Cluster.otp_name(@name, :worker_supervisor)
 
@@ -193,6 +194,10 @@ defmodule Bedrock.Cluster do
       def otp_name(:coordinator), do: @coordinator_otp_name
       def otp_name(:foreman), do: @foreman_otp_name
       def otp_name(:link), do: @link_otp_name
+      # The node-wide routing cache table (Bedrock.Cluster.Link.RoutingCache).
+      # Resolved at compile time: it is read on every key lookup, so it must
+      # not build an atom per call.
+      def otp_name(:link_routing), do: @link_routing_otp_name
       def otp_name(:sup), do: @supervisor_otp_name
       def otp_name(:worker_supervisor), do: @worker_supervisor_otp_name
 

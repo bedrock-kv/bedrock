@@ -100,41 +100,4 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogOperationsTest do
       assert {:error, {:log_failures, [{"log_1", :disk_full}]}} = call_push_direct(layout, transactions_by_log)
     end
   end
-
-  describe "try_to_push_transaction_to_log/3" do
-    defp call_try_push(service_descriptor, transaction \\ "mock_encoded_transaction", version \\ 99) do
-      Finalization.try_to_push_transaction_to_log(service_descriptor, transaction, version)
-    end
-
-    test "succeeds when log server responds with :ok" do
-      log_server = Support.create_mock_log_server()
-      service_descriptor = %{kind: :log, status: {:up, log_server}}
-
-      assert :ok = call_try_push(service_descriptor)
-    end
-
-    test "returns error when log server is down" do
-      service_descriptor = %{kind: :log, status: {:down, :some_reason}}
-
-      assert {:error, :unavailable} = call_try_push(service_descriptor)
-    end
-
-    test "returns error when log server responds with error" do
-      failing_server = create_failing_log_server(:disk_full)
-      service_descriptor = %{kind: :log, status: {:up, failing_server}}
-
-      assert {:error, :disk_full} = call_try_push(service_descriptor)
-    end
-
-    test "handles log server process exit" do
-      dead_server = spawn(fn -> exit(:normal) end)
-      ref = Process.monitor(dead_server)
-      # :noproc if process died before monitor was set up, :normal otherwise
-      assert_receive {:DOWN, ^ref, :process, ^dead_server, reason} when reason in [:normal, :noproc]
-
-      service_descriptor = %{kind: :log, status: {:up, dead_server}}
-
-      assert {:error, _reason} = call_try_push(service_descriptor)
-    end
-  end
 end

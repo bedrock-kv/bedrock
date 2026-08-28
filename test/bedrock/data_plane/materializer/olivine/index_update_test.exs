@@ -151,6 +151,29 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       # keys_removed counts first-page (b, c), middle-page (d, e, f) and last-page (g, h) keys
       assert update.keys_removed == 7
     end
+
+    test "clear_range followed by sets of in-range keys in the same batch keeps only the re-set keys", %{
+      database: database
+    } do
+      # The recovery-rewrite pattern: one transaction clear_ranges a keyed
+      # family, then re-writes the current entries. The re-set keys must
+      # survive (set overwrites the pending :clear for the same key) and
+      # subset keys that are not re-written must be gone.
+      {index, allocator} = build_index([{1, ["a", "b", "c"]}])
+
+      update =
+        run_mutations(index, allocator, database, [
+          {:clear_range, "a", "d"},
+          {:set, "b", "rewritten-b"},
+          {:set, "d", "new-d"}
+        ])
+
+      {final_index, final_db, _allocator, _modified} = IndexUpdate.finish(update)
+
+      assert all_keys(final_index) == ["b", "d"]
+      assert {:ok, _page, locator} = Index.locator_for_key(final_index, "b")
+      assert {:ok, "rewritten-b"} = Database.load_value(final_db, locator)
+    end
   end
 
   describe "page 0 protection during range clears" do

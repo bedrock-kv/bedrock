@@ -41,12 +41,15 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
         resolution: [Node.self()]
       })
 
-    old_transaction_system_layout =
-      Keyword.get(opts, :old_transaction_system_layout, %{logs: %{}})
+    prior_core_state =
+      Keyword.get(opts, :prior_core_state, %{logs: %{}})
 
     %{
       node_capabilities: node_capabilities,
-      old_transaction_system_layout: old_transaction_system_layout,
+      prior_core_state: prior_core_state,
+      # Deterministic default for the bootstrap's durable-family read;
+      # tests exercising the read path override it.
+      read_prior_refs_fn: fn _materializer_pid, _read_version -> {:ok, %{}} end,
       cluster_config: %{
         coordinators: [],
         parameters: %{
@@ -96,7 +99,6 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       transaction_services: %{},
       service_pids: %{},
       transaction_system_layout: nil,
-      metadata_materializer: nil,
       shard_layout: nil
     }
 
@@ -267,27 +269,6 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
   """
   def mock_node_tracking(nodes \\ [:node1@host]) do
     %{log: nodes, storage: nodes}
-  end
-
-  @doc """
-  Sets old transaction system layout.
-  """
-  def with_old_layout(context, opts) do
-    layout = %{
-      logs:
-        case Keyword.get(opts, :logs) do
-          nil ->
-            %{}
-
-          count when is_integer(count) ->
-            for i <- 1..count, into: %{}, do: {{:log, i}, ["tag_#{i}"]}
-
-          logs when is_map(logs) ->
-            logs
-        end
-    }
-
-    Map.put(context, :old_transaction_system_layout, layout)
   end
 
   @doc """

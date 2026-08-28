@@ -11,7 +11,14 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
 
   @type mutation :: Bedrock.Internal.TransactionBuilder.Tx.mutation()
 
-  @type entry :: {version :: Bedrock.version(), mutations :: [mutation()]}
+  @typedoc """
+  One metadata-carrying transaction's mutations with this resolver's LOCAL
+  verdict. The commit proxy ANDs verdicts positionally across all resolvers'
+  windows to obtain the global verdict.
+  """
+  @type transaction_metadata :: {mutations :: [mutation()], committed? :: boolean()}
+
+  @type entry :: {version :: Bedrock.version(), [transaction_metadata()]}
 
   @type t :: %__MODULE__{
           reversed_entries: [entry()]
@@ -35,34 +42,30 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
 
   ## Examples
 
-      iex> acc = new() |> append(v(1), [{:set, <<0xFF, "a">>, "1"}])
+      iex> acc = new() |> append(v(1), [{[{:set, <<0xFF, "a">>, "1"}], true}])
       iex> entries(acc)
-      [{<<0, 0, 0, 0, 0, 0, 0, 1>>, [{:set, <<0xFF, "a">>, "1"}]}]
+      [{<<0, 0, 0, 0, 0, 0, 0, 1>>, [{[{:set, <<0xFF, "a">>, "1"}], true}]}]
   """
   @spec entries(t()) :: [entry()]
   def entries(%__MODULE__{reversed_entries: reversed}), do: Enum.reverse(reversed)
 
   @doc """
-  Appends mutations at a given version to the accumulator.
+  Appends a version's transaction metadata (with local verdicts) to the
+  accumulator.
 
-  Mutations are stored in version order. If mutations is empty, this is a no-op.
-
-  ## Parameters
-    - `accumulator` - The accumulator to append to
-    - `version` - The commit version for these mutations
-    - `mutations` - List of metadata mutations to append
+  Entries are stored in version order. If the list is empty, this is a no-op.
 
   ## Examples
 
-      iex> acc = new() |> append(v(1), [{:set, <<0xFF, "key">>, "value"}])
+      iex> acc = new() |> append(v(1), [{[{:set, <<0xFF, "key">>, "value"}], true}])
       iex> length(entries(acc))
       1
   """
-  @spec append(t(), Bedrock.version(), [mutation()]) :: t()
+  @spec append(t(), Bedrock.version(), [transaction_metadata()]) :: t()
   def append(accumulator, _version, []), do: accumulator
 
-  def append(%__MODULE__{reversed_entries: reversed} = accumulator, version, mutations) do
-    %{accumulator | reversed_entries: [{version, mutations} | reversed]}
+  def append(%__MODULE__{reversed_entries: reversed} = accumulator, version, transaction_metadata) do
+    %{accumulator | reversed_entries: [{version, transaction_metadata} | reversed]}
   end
 
   @doc """
@@ -78,10 +81,10 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
   ## Examples
 
       iex> acc = new()
-      iex>   |> append(v(1), [{:set, <<0xFF, "a">>, "1"}])
-      iex>   |> append(v(2), [{:set, <<0xFF, "b">>, "2"}])
+      iex>   |> append(v(1), [{[{:set, <<0xFF, "a">>, "1"}], true}])
+      iex>   |> append(v(2), [{[{:set, <<0xFF, "b">>, "2"}], true}])
       iex> mutations_since(acc, v(1))
-      [{<<0, 0, 0, 0, 0, 0, 0, 2>>, [{:set, <<0xFF, "b">>, "2"}]}]
+      [{<<0, 0, 0, 0, 0, 0, 0, 2>>, [{[{:set, <<0xFF, "b">>, "2"}], true}]}]
   """
   @spec mutations_since(t(), Bedrock.version() | nil) :: [entry()]
   def mutations_since(%__MODULE__{reversed_entries: reversed}, nil), do: Enum.reverse(reversed)
@@ -102,27 +105,28 @@ defmodule Bedrock.DataPlane.Resolver.MetadataAccumulator do
   end
 
   @doc """
-  Removes all entries with versions strictly before the given version.
+  Removes all entries with versions at or below the given version.
 
-  This prunes old entries that are no longer needed, keeping memory bounded.
+  This prunes entries every proxy has been served (windows are exact, so a
+  served entry can never be requested again), keeping memory bounded.
 
   ## Parameters
     - `accumulator` - The accumulator to prune
-    - `before_version` - Remove entries with versions < this version
+    - `through_version` - Remove entries with versions <= this version
 
   ## Examples
 
       iex> acc = new()
-      iex>   |> append(v(1), [{:set, <<0xFF, "a">>, "1"}])
-      iex>   |> append(v(2), [{:set, <<0xFF, "b">>, "2"}])
-      iex>   |> prune_before(v(2))
+      iex>   |> append(v(1), [{[{:set, <<0xFF, "a">>, "1"}], true}])
+      iex>   |> append(v(2), [{[{:set, <<0xFF, "b">>, "2"}], true}])
+      iex>   |> prune_through(v(1))
       iex> length(entries(acc))
       1
   """
-  @spec prune_before(t(), Bedrock.version()) :: t()
-  def prune_before(%__MODULE__{reversed_entries: reversed} = accumulator, before_version) do
-    # Keep entries where version >= before_version (from newest end)
-    pruned = Enum.take_while(reversed, fn {version, _} -> version >= before_version end)
+  @spec prune_through(t(), Bedrock.version()) :: t()
+  def prune_through(%__MODULE__{reversed_entries: reversed} = accumulator, through_version) do
+    # Keep entries where version > through_version (from newest end)
+    pruned = Enum.take_while(reversed, fn {version, _} -> version > through_version end)
     %{accumulator | reversed_entries: pruned}
   end
 end

@@ -3,6 +3,8 @@ defmodule Bedrock.Encoding.BERTTest do
 
   alias Bedrock.Encoding.BERT
 
+  doctest BERT
+
   describe "pack/1" do
     test "packs various Erlang terms" do
       # Atoms

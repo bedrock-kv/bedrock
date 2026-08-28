@@ -74,7 +74,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Segment do
     end
   end
 
-  @spec return_to_recycler(t(), SegmentRecycler.server()) :: :ok
+  @spec return_to_recycler(t(), SegmentRecycler.server()) :: :ok | {:error, File.posix()}
   def return_to_recycler(segment, segment_recycler), do: SegmentRecycler.check_in(segment_recycler, segment.path)
 
   @doc """

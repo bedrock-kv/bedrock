@@ -1,68 +1,84 @@
 # Transaction System Layout
 
-**The coordination blueprint that enables distributed transaction processing.**
+**This epoch's wiring — and nothing else.**
 
-After recovery brings individual components online, they need to know who handles what. The Transaction System Layout (TSL) provides this coordination map—without it, the sequencer can't notify logs, proxies can't route to resolvers, and storage teams operate in isolation.
+After recovery brings individual components online, they need to know how to
+reach each other. The Transaction System Layout (TSL) carries exactly that:
+the process references a transaction needs to find the sequencer, a commit
+proxy, the resolvers, and the logs.
 
-## Core Function
+It is deliberately small. The TSL is FoundationDB's `ServerDBInfo` — *"transient
+information which is broadcast to all workers for a database, permitting them
+to communicate with each other"* — and it is republished on every recovery, to
+every node. So nothing that grows with the cluster may ride on it.
 
-The TSL maps every component relationship needed for transaction processing. Think of it as the distributed system's phone book and organizational chart combined.
+## What is not in it
 
-## Essential Components
+Shard topology and worker membership used to live here and no longer do. They
+are durable facts about the cluster, so they live in the committed keyspace
+instead (see [The System Keyspace](system-keyspace.md)):
 
-### Process References
+- **Shard boundaries** are `\xFF/system/shard_keys/`, and clients resolve them
+  one key at a time through a commit proxy — FDB's `GetKeyServerLocations` —
+  rather than receiving the whole map in a broadcast.
+- **Materializer membership** is `\xFF/system/materializers/`, read by routing
+  and by a worker validating its own rejoin.
+- **The durable record** the next recovery must find is `CoreState`, kept in
+  object storage — FDB's `DBCoreState`, as against `ServerDBInfo`.
 
-- **Sequencer**: Global transaction ordering authority
-- **Rate Keeper**: System-wide rate limiting and flow control
-- **Commit Proxies**: Transaction entry points and batching coordinators  
-- **Resolvers**: MVCC conflict detection by key range
+The rule this encodes: the broadcast carries wiring, the keyspace carries
+state. Nothing O(workers) may be added back to the TSL.
 
-### System Topology
+## Fields
 
-- **Logs**: Transaction persistence with shard-to-server mappings
-- **Storage Teams**: Data storage with key range assignments
-- **Services**: Complete worker registry with operational status
+- **`epoch`** — the recovery generation this wiring belongs to. Every call
+  carries it, and a mismatch means the caller is talking to a dead epoch.
+- **`sequencer`** — the pid that hands out read and commit versions.
+- **`proxies`** — the commit proxy pids: commit entry points, and the servers
+  that answer per-key routing.
+- **`resolvers`** — `%{start_key: ..., resolver: pid}` descriptors, ordered by
+  start key, consumed when a proxy unlocks.
+- **`logs`** — a map of log id to the list of shard tags that log services.
 
-### Coordination Metadata
+## When created
 
-- **Layout ID**: Unique identifier for this system configuration
-- **Epoch**: Recovery generation for change tracking
-- **Director**: Current cluster coordination authority
+Recovery builds the layout once all components are locked and started, then
+publishes it. Workers receive it through their foreman, which relays rather
+than reconciles — each worker decides its own retirement from it.
 
-## When Created
+## Quick reference
 
-TSL construction happens during recovery phase 12—after all components are operational but before they can coordinate transactions. The layout is immediately persisted as the authoritative system configuration.
-
-## Quick Reference
+The layout is a plain map, not a struct:
 
 ```elixir
-# View current layout
-{:ok, layout} = Bedrock.ControlPlane.Director.fetch_transaction_system_layout(director_pid)
+# From a client node
+{:ok, layout} = Bedrock.Cluster.Link.fetch_transaction_system_layout(link)
 
-# Layout structure
-%TransactionSystemLayout{
-  id: 42,
+# Or straight from the director
+{:ok, layout} = Bedrock.ControlPlane.Director.fetch_transaction_system_layout(director)
+
+%{
   epoch: 5,
-  director: #PID<0.123.45>,
   sequencer: #PID<0.124.46>,
-  rate_keeper: #PID<0.126.48>,
   proxies: [#PID<0.125.47>, #PID<0.127.49>],
   resolvers: [
     %{start_key: "", resolver: #PID<0.128.50>},
     %{start_key: "m", resolver: #PID<0.129.51>}
   ],
-  logs: %{0 => log_descriptor, 1 => log_descriptor},
-  storage_teams: [storage_team_descriptor, ...]
+  logs: %{"log_a" => [0, 1], "log_b" => [2, 3]}
 }
 ```
 
 ## Implementation
 
 - **Main Module**: `lib/bedrock/control_plane/config/transaction_system_layout.ex`
-- **Creation Phase**: `lib/bedrock/control_plane/director/recovery/transaction_system_layout_phase.ex`
+- **Durable Counterpart**: `lib/bedrock/control_plane/config/core_state.ex`
+- **Assembly**: `lib/bedrock/control_plane/director/recovery/topology_phase.ex`
+- **Validation**: `lib/bedrock/control_plane/director/recovery/tsl_validation_phase.ex`
+- **Publication**: `lib/bedrock/control_plane/director/recovery/persistence_phase.ex`
 
 ## See Also
 
-- [Transaction System Layout Phase](recovery/transaction-system-layout.md) - Detailed creation process
-- [Recovery](recovery.md) - Recovery phase context  
-- [Transactions](transactions.md) - How TSL enables transaction coordination
+- [The System Keyspace](system-keyspace.md) - Where shard topology and membership live
+- [Recovery](recovery.md) - How the layout gets built
+- [Transactions](transactions.md) - How the wiring is used

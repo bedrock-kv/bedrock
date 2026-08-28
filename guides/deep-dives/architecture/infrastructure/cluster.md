@@ -22,14 +22,14 @@ The Cluster implements several fundamental functions for distributed database op
 
 ### Service Discovery Integration
 
-- Provides access to Coordinators, Gateways, and other cluster services
+- Provides access to Coordinators, Links, and other cluster services
 - Handles service reference resolution and connection management
 - Offers both synchronous and asynchronous service access patterns
 - Abstracts service location and failover complexity
 
 ## Architecture Integration
 
-The Cluster interface sits at the top of the architecture, providing a single entry point for all cluster operations while hiding distributed system complexity. Applications interact with Bedrock through the Cluster interface, which manages access to Coordinators, Gateways, Directors, and other cluster services. The Cluster integrates multiple configuration sources including application config, static config, and descriptor files, while providing service discovery capabilities through service directory and node capability management.
+The Cluster interface sits at the top of the architecture, providing a single entry point for all cluster operations while hiding distributed system complexity. Applications interact with Bedrock through the Cluster interface, which manages access to Coordinators, Links, Directors, and other cluster services. The Cluster integrates multiple configuration sources including application config, static config, and descriptor files, while providing service discovery capabilities through service directory and node capability management.
 
 ## Cluster Definition and Usage
 
@@ -61,7 +61,7 @@ defmodule MyApp.Cluster do
       coordinator_nodes: [Node.self()],
       capabilities: [:coordination, :storage, :log, :resolution],
       coordinator_ping_timeout_ms: 5000,
-      gateway_ping_timeout_ms: 10000
+      link_ping_timeout_ms: 10000
     ]
 end
 ```
@@ -89,7 +89,7 @@ capabilities = MyCluster.node_capabilities()
 {:ok, coordinator} = MyCluster.fetch_coordinator()
 coordinator = MyCluster.coordinator!()  # Raises on error
 
-{:ok, gateway} = MyCluster.fetch_gateway()
+{:ok, link} = MyCluster.fetch_link()
 {:ok, nodes} = MyCluster.fetch_coordinator_nodes()
 ```
 
@@ -101,12 +101,12 @@ coordinator = MyCluster.coordinator!()  # Raises on error
 layout = MyCluster.transaction_system_layout!()
 
 # Layout contains service assignments
-%TransactionSystemLayout{
-  sequencer: "sequencer_1",
-  commit_proxy: "proxy_1", 
-  resolver: "resolver_1",
-  logs: ["log_1", "log_2"],
-  storage_teams: [storage_team_configs]
+%{
+  epoch: 5,
+  sequencer: #PID<0.124.46>,
+  proxies: [#PID<0.125.47>],
+  resolvers: [%{start_key: "", resolver: #PID<0.128.50>}],
+  logs: %{"log_1" => [0, 1], "log_2" => [2, 3]}
 }
 ```
 
@@ -116,7 +116,7 @@ layout = MyCluster.transaction_system_layout!()
 # Generate OTP names for cluster components
 cluster_name = MyCluster.otp_name()          # :bedrock_my_cluster
 coordinator_name = MyCluster.otp_name(:coordinator)  # :bedrock_my_cluster_coordinator
-gateway_name = MyCluster.otp_name(:gateway)         # :bedrock_my_cluster_gateway
+link_name = MyCluster.otp_name(:link)         # :bedrock_my_cluster_link
 
 # Worker-specific naming
 worker_name = MyCluster.otp_name_for_worker("storage_1")  # :bedrock_my_cluster_worker_storage_1
@@ -179,10 +179,10 @@ Clusters provide configurable timeouts for different operations:
 - Balances failure detection speed with network variability
 - Affects coordinator leadership detection timing
 
-### Gateway Communication
+### Link Communication
 
-- `gateway_ping_timeout_ms`: Timeout for gateway-director communication
-- Controls how quickly gateways detect director failures
+- `link_ping_timeout_ms`: Timeout for link-director communication
+- Controls how quickly links detect director failures
 - Influences cluster reconfiguration responsiveness
 
 ## Fault Tolerance Characteristics
@@ -200,6 +200,6 @@ The Cluster interface provides several fault tolerance features:
 ## See Also
 
 - [Coordinator](../control-plane/coordinator.md) - Primary cluster service accessed through Cluster interface
-- [Gateway](gateway.md) - Client interface managed by Cluster
+- [Link](link.md) - Client interface managed by Cluster
 - [Cluster Startup](../../../deep-dives/cluster-startup.md) - Cluster initialization process
 - [Recovery](../../../deep-dives/recovery.md) - Cluster interface role in recovery coordination

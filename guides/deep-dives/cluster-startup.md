@@ -26,7 +26,7 @@ Bedrock's startup coordination operates through a robust Raft-based consensus sy
 
 The pattern centers on the Coordinator processes, which implement comprehensive Raft consensus with persistent state storage via DETS. Once a Coordinator is elected leader, it actively manages cluster startup by accepting service registrations, coordinating timing through leader readiness states, and directly starting and supervising the Director process.
 
-[Gateway](architecture/infrastructure/gateway.md) components serve as reactive discovery clients that find the elected Coordinator leader and register their local services. Rather than driving the process, Gateways respond to the coordinator-established infrastructure by discovering leadership and connecting to the centrally managed cluster state.
+[Link](architecture/infrastructure/link.md) components serve as reactive discovery clients that find the elected Coordinator leader and register their local services. Rather than driving the process, Links respond to the coordinator-established infrastructure by discovering leadership and connecting to the centrally managed cluster state.
 
 This approach provides several critical advantages: it ensures deterministic startup ordering through Raft consensus, provides persistent leadership state across failures, and centralizes coordination logic in the well-understood Coordinator processes. The system handles network partitions, variable startup timing, and partial component failures through proven distributed consensus mechanisms.
 
@@ -38,16 +38,16 @@ The most straightforward startup scenario occurs when nodes join a cluster with 
 
 ## Leader Discovery Through Coordinator Polling
 
-The [Gateway](architecture/infrastructure/gateway.md) discovers the current leader by polling known coordinators, seeking the established Raft leader. This discovery approach works efficiently because Raft followers can immediately identify the current leader, while the leader identifies itself. The Gateway selects the coordinator reporting the highest [epoch](../../../glossary.md#epoch) number, which provides definitive leader identification even during brief leadership transitions.
+The [Link](architecture/infrastructure/link.md) discovers the current leader by polling known coordinators, seeking the established Raft leader. This discovery approach works efficiently because Raft followers can immediately identify the current leader, while the leader identifies itself. The Link selects the coordinator reporting the highest [epoch](../../../glossary.md#epoch) number, which provides definitive leader identification even during brief leadership transitions.
 
 ## Service Registration with Coordinator
 
-Once the Coordinator leader is identified, the Gateway queries its local Foreman for all running services and registers them with the Coordinator. This registration provides the Coordinator with the service inventory needed for cluster coordination. The Coordinator stores this information through Raft consensus and uses it to make informed decisions about when to start the [Director](../glossary.md#director) with complete topology information.
+Once the Coordinator leader is identified, the Link queries its local Foreman for all running services and registers them with the Coordinator. This registration provides the Coordinator with the service inventory needed for cluster coordination. The Coordinator stores this information through Raft consensus and uses it to make informed decisions about when to start the [Director](../glossary.md#director) with complete topology information.
 
 ```mermaid
 sequenceDiagram
     participant F as Foreman
-    participant G as Gateway  
+    participant G as Link  
     participant C1 as Coordinator (Follower)
     participant C2 as Coordinator (Leader)
     participant D as Director
@@ -78,11 +78,11 @@ sequenceDiagram
 
 ### Scenario 2: Coordination During Leadership Elections
 
-The more complex scenario occurs when nodes bootstrap while Raft leadership elections are still in progress among Coordinators. This timing creates a coordination challenge where Gateways must discover leadership that doesn't yet exist, requiring retry logic while the Coordinator consensus system resolves leadership.
+The more complex scenario occurs when nodes bootstrap while Raft leadership elections are still in progress among Coordinators. This timing creates a coordination challenge where Links must discover leadership that doesn't yet exist, requiring retry logic while the Coordinator consensus system resolves leadership.
 
 ## Polling Strategy During Elections
 
-When leadership elections are active, coordinators respond to discovery polls with `nil` for the leader field—indicating the election remains unresolved. Rather than failing immediately, Gateways implement exponential backoff retry logic, continuing discovery attempts until leadership stabilizes. This resilient approach doesn't assume specific election timing but simply waits for the cluster to establish clear authority.
+When leadership elections are active, coordinators respond to discovery polls with `nil` for the leader field—indicating the election remains unresolved. Rather than failing immediately, Links implement exponential backoff retry logic, continuing discovery attempts until leadership stabilizes. This resilient approach doesn't assume specific election timing but simply waits for the cluster to establish clear authority.
 
 ## Coordinator Leader Readiness Protocol
 
@@ -92,7 +92,7 @@ Bedrock solves this through a two-phase leader readiness protocol implemented in
 
 ```mermaid
 sequenceDiagram
-    participant G as Gateway
+    participant G as Link
     participant C1 as Coordinator
     participant C2 as Coordinator (Future Leader)
     participant D as Director
@@ -126,14 +126,14 @@ Distributed systems rarely achieve perfect timing synchronization—services may
 
 ## Post-Coordination Service Discovery
 
-After Coordinator leadership stabilizes and initial [recovery](recovery.md) begins, late-starting services can still join the cluster seamlessly. When the local Foreman detects new services becoming operational, it advertises them to the local [Gateway](architecture/infrastructure/gateway.md). The Gateway registers these services with the Coordinator leader, which updates the service directory through Raft consensus and actively notifies the [Director](../glossary.md#director).
+After Coordinator leadership stabilizes and initial [recovery](recovery.md) begins, late-starting services can still join the cluster seamlessly. When the local Foreman detects new services becoming operational, it advertises them to the local [Link](architecture/infrastructure/link.md). The Link registers these services with the Coordinator leader, which updates the service directory through Raft consensus and actively notifies the [Director](../glossary.md#director).
 
 This dynamic registration enables the Director to incorporate newly available resources into ongoing [recovery](recovery.md) operations or future [transaction system layouts](../../../quick-reads/transaction-system-layout.md), ensuring that all available resources contribute to system capacity and fault tolerance.
 
 ```mermaid
 sequenceDiagram
     participant F as Foreman  
-    participant G as Gateway
+    participant G as Link
     participant C as Coordinator (Leader)
     participant D as Director
 
@@ -150,7 +150,7 @@ sequenceDiagram
 
 **Implementation Notes**:
 
-- Service advertisement: Internal Foreman notification to Gateway
+- Service advertisement: Internal Foreman notification to Link
 - Individual registration: `Coordinator.register_services(coordinator, [service_info])`
 - Coordinator notification: `GenServer.cast(director, {:service_registered, service_info})`
 - Persistent storage: Service directory maintained via Raft/DETS
@@ -161,7 +161,7 @@ Leader failover represents the most sophisticated coordination scenario, combini
 
 ## Adaptive Polling Strategy
 
-During normal operation, Gateways optimize for efficiency by polling the known leader directly rather than broadcasting to all coordinators. When the leader fails, these direct polls fail, triggering an automatic fallback to full cluster discovery mode. This two-phase approach optimizes for the common case—stable leadership—while maintaining resilience for failure scenarios without requiring complex failure detection logic.
+During normal operation, Links optimize for efficiency by polling the known leader directly rather than broadcasting to all coordinators. When the leader fails, these direct polls fail, triggering an automatic fallback to full cluster discovery mode. This two-phase approach optimizes for the common case—stable leadership—while maintaining resilience for failure scenarios without requiring complex failure detection logic.
 
 ## Service Directory Inheritance Through Raft
 
@@ -169,7 +169,7 @@ The new Coordinator leader inherits the complete service directory through Raft 
 
 ```mermaid
 sequenceDiagram
-    participant G as Gateway
+    participant G as Link
     participant C1 as Coordinator (Old Leader)
     participant C2 as Coordinator (New Leader)
     participant D2 as Director (New)
@@ -205,7 +205,7 @@ The most sophisticated challenge in distributed cluster startup occurs when lead
 
 Without proper coordination, a newly elected Coordinator leader might immediately start the [Director](../glossary.md#director) upon winning the Raft election, before service registrations from other nodes complete their propagation through Raft consensus. This timing creates a dangerous race condition where the Coordinator starts [recovery](recovery.md) with incomplete service topology information, potentially missing available resources that are still in transit through the consensus protocol.
 
-The hazard becomes particularly acute during system-wide failures where multiple nodes restart simultaneously—each node's [Gateway](architecture/infrastructure/gateway.md) attempts service registration with the new Coordinator leader at roughly the same time, creating a burst of concurrent Raft operations that must complete before [recovery](recovery.md) can safely begin.
+The hazard becomes particularly acute during system-wide failures where multiple nodes restart simultaneously—each node's [Link](architecture/infrastructure/link.md) attempts service registration with the new Coordinator leader at roughly the same time, creating a burst of concurrent Raft operations that must complete before [recovery](recovery.md) can safely begin.
 
 ## Bedrock's Coordinator Solution
 
@@ -213,8 +213,8 @@ Bedrock resolves this race through the two-phase leader readiness protocol imple
 
 ```mermaid
 sequenceDiagram
-    participant G1 as Gateway (Node 1)
-    participant G2 as Gateway (Node 2)
+    participant G1 as Link (Node 1)
+    participant G2 as Link (Node 2)
     participant C1 as Coordinator (Old Leader)
     participant C2 as Coordinator (New Leader)
     participant D as Director
@@ -266,13 +266,13 @@ This clear separation of concerns allows each component to focus on its essentia
 ## Related Components and Processes
 
 - **[Recovery Architecture](recovery.md)**: The comprehensive reconstruction process that follows successful cluster startup
-- **[Gateway Component](architecture/infrastructure/gateway.md)**: Node-level coordination and service registration
+- **[Link Component](architecture/infrastructure/link.md)**: Node-level coordination and service registration
 - **[Transaction System Layout](../../../quick-reads/transaction-system-layout.md)**: The coordination blueprint created during recovery
 - **[Architecture Overview](architecture.md)**: System-wide architectural context for startup coordination
 
 ## Implementation References
 
 - **Coordinator State Management**: `lib/bedrock/control_plane/coordinator.ex`
-- **Gateway Discovery Logic**: `lib/bedrock/cluster/gateway/discovery.ex`
-- **Service Registration**: `lib/bedrock/cluster/gateway/worker_advertisement.ex`
+- **Link Discovery Logic**: `lib/bedrock/cluster/link/discovery.ex`
+- **Service Registration**: `lib/bedrock/service/foreman/impl.ex` (`advertise_running_workers/2`)
 - **Director Recovery Interface**: `lib/bedrock/control_plane/director/recovery.ex`

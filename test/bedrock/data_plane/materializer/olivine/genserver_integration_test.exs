@@ -376,12 +376,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
 
           # Test unlock after recovery
           durable_version = Version.zero()
-          transaction_system_layout = %{logs: [], services: []}
 
           unlock_result =
             GenServer.call(
               pid,
-              {:unlock_after_recovery, durable_version, transaction_system_layout},
+              {:unlock_after_recovery, durable_version, []},
               @timeout
             )
 
@@ -649,9 +648,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
 
           # Test unlock
           durable_version = Version.zero()
-          tsl = %{logs: [], services: []}
 
-          unlock_result = Materializer.unlock_after_recovery(pid, durable_version, tsl)
+          unlock_result = Materializer.unlock_after_recovery(pid, durable_version, [])
           assert unlock_result == :ok
 
         {:error, _reason} ->
@@ -703,6 +701,29 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
 
       # Process should survive and remain functional - GenServer.call synchronizes
       assert {:ok, :materializer} = GenServer.call(pid, {:info, :kind}, @timeout)
+    end
+  end
+
+  describe "unlock authority (assignment verification, bedrock-q67.21.5)" do
+    @tag :tmp_dir
+    test "only the locker may unlock: a foreign caller's unlock is refused", %{tmp_dir: tmp_dir} do
+      {_worker_id, _otp_name, pid} = setup_supervised_worker(tmp_dir, "unlock_auth")
+
+      # Lock from THIS process: we are the lock owner.
+      assert {:ok, ^pid, _info} = GenServer.call(pid, {:lock_for_recovery, 5}, @timeout)
+
+      # A different process's unlock — a superseded adopter's late call —
+      # must be refused, not flip the worker to :running with the
+      # loser's pull sources.
+      task =
+        Task.async(fn ->
+          GenServer.call(pid, {:unlock_after_recovery, Version.zero(), []}, @timeout)
+        end)
+
+      assert {:error, :not_lock_owner} = Task.await(task)
+
+      # The owner's unlock still works.
+      assert :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), []}, @timeout)
     end
   end
 end

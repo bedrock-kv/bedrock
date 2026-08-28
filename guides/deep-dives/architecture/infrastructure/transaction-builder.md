@@ -2,7 +2,7 @@
 
 The [Transaction Builder](../../../glossary.md#transaction-builder) manages the complete lifecycle of individual [transactions](../../../glossary.md#transaction), acting as each client's dedicated transaction coordinator. Every transaction gets its own Transaction Builder process, which handles everything from [read version](../../../glossary.md#read-version) acquisition to final [commit](../../../glossary.md#commit) coordination while maintaining [read-your-writes consistency](../../../glossary.md#read-your-writes-consistency) and optimizing performance through intelligent [storage](../../../glossary.md#storage) server selection.
 
-**Location**: [`lib/bedrock/cluster/gateway/transaction_builder.ex`](../../../lib/bedrock/cluster/gateway/transaction_builder.ex)
+**Location**: [`lib/bedrock/internal/transaction_builder.ex`](../../../lib/bedrock/internal/transaction_builder.ex)
 
 ## Embedded Distributed Architecture Role
 
@@ -105,7 +105,7 @@ Transaction Builder serves as the **per-transaction coordinator** with these spe
 
 ## Related Components
 
-- **[Gateway](gateway.md)**: Creates and manages Transaction Builder lifecycle
+- **[Link](link.md)**: Creates and manages Transaction Builder lifecycle
 - **[Commit Proxy](../data-plane/commit-proxy.md)**: Receives transaction data for batch processing and durability
 - **[Storage](../data-plane/storage.md)**: Serves versioned reads to Transaction Builder processes
 - **[Sequencer](../data-plane/sequencer.md)**: Provides read versions for transaction consistency

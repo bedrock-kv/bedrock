@@ -11,13 +11,13 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 ## Key Components
 
 - **Client**: Application code that initiates and executes transactions
-- **[Gateway](architecture/infrastructure/gateway.md)**: Client interface that manages transaction coordination
+- **[Link](architecture/infrastructure/link.md)**: Per-node client interface — cluster discovery, this epoch's wiring, and the node's routing cache
 - **[Transaction Builder](architecture/infrastructure/transaction-builder.md)**: Per-transaction process that accumulates reads/writes and manages transaction state
 - **[Sequencer](architecture/data-plane/sequencer.md)**: Assigns global version numbers for reads and commits (Lamport clock)
 - **[Commit Proxy](architecture/data-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
 - **[Resolver](architecture/data-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
 - **[Log System](architecture/data-plane/log.md)**: Provides durable transaction storage with strict ordering
-- **[Storage (Olivine)](architecture/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
+- **[Materializer (Olivine)](architecture/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
 
 > 💡 **Deep Dive Available**: Click on any component name above to access detailed technical documentation including APIs, implementation details, performance characteristics, and code references.
 
@@ -26,7 +26,7 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Gateway
+    participant Link
     participant TransactionBuilder as Transaction Builder
     participant Sequencer
     participant CommitProxy as Commit Proxy
@@ -35,11 +35,11 @@ sequenceDiagram
     participant Storage
     
     Note over Client, Storage: Phase 1: Transaction Initiation
-    Client->>Gateway: begin_transaction()
-    Gateway->>TransactionBuilder: start_link()
+    Client->>Link: fetch_transaction_system_layout()
+    Link-->>Client: {:ok, layout}
+    Client->>TransactionBuilder: start_link()
     activate TransactionBuilder
-    TransactionBuilder-->>Gateway: {:ok, transaction_pid}
-    Gateway-->>Client: {:ok, transaction_pid}
+    TransactionBuilder-->>Client: {:ok, transaction_pid}
     
     Note over Client, Storage: Phase 2: Read Operations
     Client->>TransactionBuilder: fetch(key)
@@ -118,14 +118,14 @@ sequenceDiagram
 
 For detailed technical documentation on any component, see the [Components Documentation](./architecture.md) directory:
 
-- **[Gateway Deep Dive](architecture/infrastructure/gateway.md)** - Client interface, version leasing, worker advertisement
+- **[Link Deep Dive](architecture/infrastructure/link.md)** - Client interface, cluster discovery, routing cache
 - **[Transaction Builder Deep Dive](architecture/infrastructure/transaction-builder.md)** - Per-transaction processes, read-your-writes, storage coordination  
 - **[Sequencer Deep Dive](architecture/data-plane/sequencer.md)** - Version assignment, Lamport clock, global ordering
 - **[Commit Proxy Deep Dive](architecture/data-plane/commit-proxy.md)** - Transaction batching, finalization pipeline, client coordination
 - **[Resolver Deep Dive](architecture/data-plane/resolver.md)** - MVCC conflict detection, version history, range processing
 - **[Log System Deep Dive](architecture/data-plane/log.md)** - Durable storage, replication, recovery coordination
 - **[Shale Deep Dive](architecture/implementations/shale.md)** - Disk-based log implementation, WAL architecture
-- **[Storage Deep Dive](architecture/data-plane/storage.md)** - Multi-version storage, MVCC reads, log integration
+- **[Materializer Deep Dive](architecture/data-plane/storage.md)** - Multi-version storage, MVCC reads, Demux streaming
 
 ## Transaction Format
 
@@ -165,15 +165,19 @@ This approach improves efficiency and reduces data transfer overhead between com
 
 **Process**:
 
-1. Client calls `Bedrock.Repo.transact/1`
-2. Gateway creates a new Transaction Builder process via `start_link/1`
-3. Transaction Builder initializes with gateway reference and transaction system layout
-4. Client receives transaction builder PID for subsequent operations
+1. Client calls `c:Bedrock.Repo.transact/1`
+2. The Repo fetches the transaction system layout from the Link and starts a
+   new Transaction Builder process via `start_link/1`
+3. Transaction Builder initializes with that layout plus a routing function —
+   routing is resolved lazily, per key, through a commit proxy rather than
+   carried in the layout
+4. The builder PID is stashed in the transaction context for subsequent operations
 
 **Key Code Locations**:
 
-- Gateway creation: `lib/bedrock/cluster/gateway.ex:19`
-- Transaction Builder startup: `lib/bedrock/cluster/gateway/transaction_builder.ex:22`
+- Transaction entry point: `lib/bedrock/internal/repo.ex`
+- Cluster wiring and the node's routing cache: `lib/bedrock/cluster/link.ex`
+- Transaction Builder startup: `lib/bedrock/internal/transaction_builder.ex`
 
 ### Phase 2: Read Operations
 
@@ -185,16 +189,20 @@ This approach improves efficiency and reduces data transfer overhead between com
 2. Transaction builder checks local writes first (read-your-writes consistency)
 3. If not found locally and no read version exists:
    - Request read version from Sequencer via `next_read_version/1`
-4. Fetch data from Storage servers at the read version
-5. Storage performs "horse race" across replicas for performance
-6. Transaction builder tracks the read key and value
-7. Return value to client
+4. Resolve the key's materializer — local index first, then the node's routing
+   cache, then a per-key fetch from a commit proxy on a miss
+5. Fetch data from the materializers at the read version
+6. Reads race across replicas for performance
+7. Transaction builder tracks the read key and value
+8. Return value to client
 
 **Key Code Locations**:
 
-- Fetching logic: `lib/bedrock/cluster/gateway/transaction_builder/fetching.ex:10`
-- Read version management: `lib/bedrock/cluster/gateway/transaction_builder/read_versions.ex:11`
-- Storage fetch: `lib/bedrock/data_plane/storage.ex:33`
+- Point reads: `lib/bedrock/internal/transaction_builder/point_reads.ex`
+- Range reads: `lib/bedrock/internal/transaction_builder/range_reads.ex`
+- Read version management: `lib/bedrock/internal/transaction_builder/read_versions.ex`
+- Replica racing: `lib/bedrock/internal/transaction_builder/storage_racing.ex`
+- Materializer fetch: `lib/bedrock/data_plane/materializer.ex`
 
 **Read-Your-Writes Consistency**: The transaction builder maintains local writes in memory, ensuring that reads within the same transaction immediately see previous writes without network calls.
 
@@ -211,8 +219,8 @@ This approach improves efficiency and reduces data transfer overhead between com
 
 **Key Code Locations**:
 
-- Write accumulation: `lib/bedrock/cluster/gateway/transaction_builder/putting.ex`
-- Local write storage: `lib/bedrock/cluster/gateway/transaction_builder/state.ex:16`
+- Write accumulation: `lib/bedrock/internal/transaction_builder/tx.ex`
+- Local write storage: `lib/bedrock/internal/transaction_builder/state.ex`
 
 **Optimization**: This batching approach minimizes network traffic and allows for optimistic concurrency control.
 
@@ -235,8 +243,8 @@ This is the most complex phase involving multiple distributed components working
 
 **Key Code Locations**:
 
-- Commit preparation: `lib/bedrock/cluster/gateway/transaction_builder/committing.ex:8`
-- Transaction format: `lib/bedrock/data_plane/bedrock_transaction.ex`
+- Commit preparation: `lib/bedrock/internal/transaction_builder/finalization.ex`
+- Transaction format: `lib/bedrock/data_plane/transaction.ex`
 
 #### Step 4.2: Batch Formation and Version Assignment
 
@@ -298,13 +306,13 @@ This is the most complex phase involving multiple distributed components working
 
 #### Step 4.5: Prepare for Logging
 
-**Purpose**: Organize successful transactions by storage team tags for efficient log distribution.
+**Purpose**: Organize successful transactions by shard tag for efficient log distribution.
 
 **Process**:
 
-1. Group writes by storage team tags (key ranges)
-2. Build transaction shards for each tag
-3. Ensure all keys are covered by storage teams (coverage validation)
+1. Split each mutation across the shards its keys fall in (`split_mutation_by_shards/2`)
+2. Build a per-tag transaction for each shard touched
+3. Ensure every key is covered by some shard (coverage validation)
 
 **Key Code Locations**:
 
@@ -432,7 +440,7 @@ This is the most complex phase involving multiple distributed components working
 
 ### Latency Sources
 
-1. **Network Round Trips**: Client ↔ Gateway ↔ Data Plane components
+1. **Network Round Trips**: Client ↔ Link ↔ Data Plane components
 2. **Conflict Resolution**: Resolver processing time
 3. **Log Durability**: Disk I/O for transaction persistence
 4. **Version Assignment**: Sequencer coordination
@@ -562,21 +570,33 @@ end
 
 ### Repository Configuration
 
+A repo names its cluster and nothing else — the repo API is binary in, binary out:
+
 ```elixir
 defmodule BedrockEx.Repo do
-  use Bedrock.Repo,
-    cluster: BedrockEx.Cluster,
-    key_codecs: [
-      default: Bedrock.KeyCodec.TupleKeyCodec  # Supports structured keys like {"balances", "account1"}
-    ],
-    value_codecs: [
-      default: Bedrock.ValueCodec.BertValueCodec  # Elixir term serialization
-    ]
+  use Bedrock.Repo, cluster: BedrockEx.Cluster
 end
-
-# Note: Transaction binary format handles the low-level encoding/decoding
-# of mutations and conflict ranges transparently to client applications
 ```
+
+Structured keys and values are the job of a `Bedrock.Keyspace`, which carries
+its own encodings and packs them into the binary keys the repo stores:
+
+```elixir
+alias Bedrock.{Encoding, Keyspace}
+
+balances =
+  "app"
+  |> Keyspace.new(key_encoding: Encoding.Tuple)
+  |> Keyspace.partition("balances", value_encoding: Encoding.BERT)
+
+# The keyspace packs the key and encodes the value; the repo stores binaries
+Repo.transact(fn -> Repo.put(balances, {"account1"}, %{cents: 500}) end)
+```
+
+`Encoding.Tuple` (FDB-compatible tuple layer), `Encoding.None` (pass-through),
+and `Encoding.BERT` (Elixir terms) ship with Bedrock. The transaction binary
+format handles the low-level encoding of mutations and conflict ranges
+transparently below all of this.
 
 ## Key Transaction Patterns
 
@@ -610,7 +630,7 @@ Using tuple keys for hierarchical data organization:
 ```elixir
 key_for_account_balance(account) -> {"balances", account}
 # This creates keys like {"balances", "123"} which can be efficiently 
-# range-queried and distributed across storage teams
+# range-queried, and which fall into shards by key range
 ```
 
 ### 4. Error Handling

@@ -3,6 +3,8 @@ defmodule Bedrock.Encoding.NoneTest do
 
   alias Bedrock.Encoding.None
 
+  doctest None
+
   describe "pack/1" do
     test "returns binary value unchanged" do
       assert None.pack(<<"test">>) == <<"test">>

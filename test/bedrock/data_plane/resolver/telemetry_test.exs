@@ -19,14 +19,9 @@ defmodule Bedrock.DataPlane.Resolver.TelemetryTest do
       handler_id,
       [
         [:bedrock, :resolver, :resolve_transactions, :received],
-        [:bedrock, :resolver, :resolve_transactions, :processing],
         [:bedrock, :resolver, :resolve_transactions, :completed],
-        [:bedrock, :resolver, :resolve_transactions, :reply_sent],
-        [:bedrock, :resolver, :resolve_transactions, :waiting_list],
         [:bedrock, :resolver, :resolve_transactions, :waiting_list_inserted],
-        [:bedrock, :resolver, :resolve_transactions, :waiting_resolved],
-        [:bedrock, :resolver, :resolve_transactions, :validation_error],
-        [:bedrock, :resolver, :resolve_transactions, :waiting_list_validation_error]
+        [:bedrock, :resolver, :resolve_transactions, :waiting_resolved]
       ],
       &__MODULE__.handle_event/4,
       %{test_pid: test_pid}
@@ -45,18 +40,6 @@ defmodule Bedrock.DataPlane.Resolver.TelemetryTest do
       assert :ok = Telemetry.emit_received(transactions, version)
 
       assert_received {:telemetry_event, [:bedrock, :resolver, :resolve_transactions, :received],
-                       %{transactions: ^transactions}, %{next_version: ^version}}
-    end
-  end
-
-  describe "emit_processing/2" do
-    test "emits telemetry event with correct data" do
-      transactions = ["tx1", "tx2", "tx3"]
-      version = Version.from_integer(42)
-
-      assert :ok = Telemetry.emit_processing(transactions, version)
-
-      assert_received {:telemetry_event, [:bedrock, :resolver, :resolve_transactions, :processing],
                        %{transactions: ^transactions}, %{next_version: ^version}}
     end
   end
@@ -81,31 +64,6 @@ defmodule Bedrock.DataPlane.Resolver.TelemetryTest do
       assert :ok = Telemetry.emit_completed(transactions, aborted, version)
 
       assert_received {:telemetry_event, _, %{aborted: []}, _}
-    end
-  end
-
-  describe "emit_reply_sent/3" do
-    test "emits telemetry event when reply is sent" do
-      transactions = ["tx1"]
-      aborted = ["tx2"]
-      version = Version.from_integer(5)
-
-      assert :ok = Telemetry.emit_reply_sent(transactions, aborted, version)
-
-      assert_received {:telemetry_event, [:bedrock, :resolver, :resolve_transactions, :reply_sent],
-                       %{transactions: ^transactions, aborted: ^aborted}, %{next_version: ^version}}
-    end
-  end
-
-  describe "emit_waiting_list/2" do
-    test "emits telemetry event for waiting list operations" do
-      transactions = ["tx1", "tx2"]
-      version = Version.from_integer(10)
-
-      assert :ok = Telemetry.emit_waiting_list(transactions, version)
-
-      assert_received {:telemetry_event, [:bedrock, :resolver, :resolve_transactions, :waiting_list],
-                       %{transactions: ^transactions}, %{next_version: ^version}}
     end
   end
 
@@ -135,65 +93,17 @@ defmodule Bedrock.DataPlane.Resolver.TelemetryTest do
     end
   end
 
-  describe "emit_validation_error/2" do
-    test "emits telemetry event for validation errors" do
-      transactions = ["bad_tx1"]
-      reason = :invalid_format
-
-      assert :ok = Telemetry.emit_validation_error(transactions, reason)
-
-      assert_received {:telemetry_event, [:bedrock, :resolver, :resolve_transactions, :validation_error],
-                       %{transactions: ^transactions}, %{reason: ^reason}}
-    end
-
-    test "handles complex error reasons" do
-      transactions = ["tx1"]
-      reason = {:error, {:conflict, "key1", "key2"}}
-
-      assert :ok = Telemetry.emit_validation_error(transactions, reason)
-
-      assert_received {:telemetry_event, _, _, %{reason: ^reason}}
-    end
-  end
-
-  describe "emit_waiting_list_validation_error/2" do
-    test "emits telemetry event for waiting list validation errors" do
-      transactions = ["bad_tx1", "bad_tx2"]
-      reason = :timeout
-
-      assert :ok = Telemetry.emit_waiting_list_validation_error(transactions, reason)
-
-      assert_received {:telemetry_event, [:bedrock, :resolver, :resolve_transactions, :waiting_list_validation_error],
-                       %{transactions: ^transactions}, %{reason: ^reason}}
-    end
-
-    test "handles atom error reasons" do
-      transactions = ["tx"]
-      reason = :stale_version
-
-      assert :ok = Telemetry.emit_waiting_list_validation_error(transactions, reason)
-
-      assert_received {:telemetry_event, _, %{transactions: ^transactions}, %{reason: :stale_version}}
-    end
-  end
-
   describe "integration" do
     test "all emit functions return :ok" do
       version = Version.from_integer(1)
       transactions = ["tx"]
       aborted = []
       waiting_list = %{}
-      reason = :test
 
       assert :ok = Telemetry.emit_received(transactions, version)
-      assert :ok = Telemetry.emit_processing(transactions, version)
       assert :ok = Telemetry.emit_completed(transactions, aborted, version)
-      assert :ok = Telemetry.emit_reply_sent(transactions, aborted, version)
-      assert :ok = Telemetry.emit_waiting_list(transactions, version)
       assert :ok = Telemetry.emit_waiting_list_inserted(transactions, waiting_list, version)
       assert :ok = Telemetry.emit_waiting_resolved(transactions, aborted, version)
-      assert :ok = Telemetry.emit_validation_error(transactions, reason)
-      assert :ok = Telemetry.emit_waiting_list_validation_error(transactions, reason)
     end
   end
 end

@@ -1,6 +1,6 @@
 # Link Component Deep Dive
 
-The [Link](../../../glossary.md#gateway) is the client-facing interface component that manages [transaction](../../../glossary.md#transaction) coordination and serves as the entry point for all client operations in the Bedrock system.
+The [Link](../../../glossary.md#link) is the client-facing interface component that manages [transaction](../../../glossary.md#transaction) coordination and serves as the entry point for all client operations in the Bedrock system.
 
 ## Overview
 
@@ -55,7 +55,7 @@ This design also enables sophisticated performance optimizations. The Link can l
 ### Transaction Management
 
 ```elixir
-@spec begin_transaction(gateway_ref :: ref(), opts :: keyword()) :: 
+@spec begin_transaction(link_ref :: ref(), opts :: keyword()) :: 
   {:ok, transaction_pid :: pid()} | {:error, :timeout}
 ```
 
@@ -64,19 +64,19 @@ This design also enables sophisticated performance optimizations. The Link can l
 **Process**:
 
 1. Creates a new Transaction Builder process via `start_link/1`
-2. Passes gateway reference and [transaction system layout](../../../glossary.md#transaction-system-layout) to builder
+2. Passes link reference and [transaction system layout](../../../glossary.md#transaction-system-layout) to builder
 3. Returns the transaction builder PID for subsequent operations
 
 **Usage**:
 
 ```elixir
-{:ok, transaction_pid} = Link.begin_transaction(gateway)
+{:ok, transaction_pid} = Link.begin_transaction(link)
 ```
 
 ### Worker Advertisement
 
 ```elixir
-@spec advertise_worker(gateway :: ref(), worker :: pid()) :: :ok
+@spec advertise_worker(link :: ref(), worker :: pid()) :: :ok
 ```
 
 **Purpose**: Handles dynamic [worker](../../../glossary.md#worker) registration for cluster membership.

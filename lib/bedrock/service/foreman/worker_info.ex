@@ -16,11 +16,15 @@ defmodule Bedrock.Service.Foreman.WorkerInfo do
     :path,
     :health,
     :manifest,
-    :otp_name
+    :otp_name,
+    :monitor_ref
   ]
 
   @spec put_health(t(), health()) :: t()
   def put_health(t, health), do: %{t | health: health}
+
+  @spec put_monitor_ref(t(), reference() | nil) :: t()
+  def put_monitor_ref(t, monitor_ref), do: %{t | monitor_ref: monitor_ref}
 
   @spec put_manifest(t(), Manifest.t()) :: t()
   def put_manifest(t, manifest), do: %{t | manifest: manifest}

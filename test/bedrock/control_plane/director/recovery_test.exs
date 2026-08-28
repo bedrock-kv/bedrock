@@ -21,7 +21,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       cluster: __MODULE__.TestCluster,
       epoch: 1,
       node_capabilities: node_capabilities,
-      old_transaction_system_layout: %{
+      prior_core_state: %{
         logs: %{}
       },
       config: %{
@@ -169,21 +169,80 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   end
 
   describe "ghost_directory_ids/2" do
-    test "selects exactly the directory entries the layout does not reference" do
+    test "selects exactly the directory entries the completed recovery does not reference" do
+      live_mat_pid = spawn(fn -> Process.sleep(:infinity) end)
+
       services = %{
         "live_log" => {:log, {:a, :node1}},
         "live_mat" => {:materializer, {:b, :node1}},
         "ghost" => {:log, {:c, :dead@nowhere}}
       }
 
-      layout = %{services: %{"live_log" => %{}, "live_mat" => %{}}}
+      completed = %{
+        logs: %{"live_log" => []},
+        shard_materializers: %{0 => %{"live_mat" => Atom.to_string(node())}},
+        transaction_services: %{
+          "live_log" => %{kind: :log, status: {:up, self()}},
+          "live_mat" => %{kind: :materializer, status: {:up, live_mat_pid}}
+        }
+      }
 
-      assert Recovery.ghost_directory_ids(services, layout) == ["ghost"]
+      assert Recovery.ghost_directory_ids(services, completed) == ["ghost"]
     end
 
-    test "an invalid layout selects nothing" do
-      assert Recovery.ghost_directory_ids(%{"x" => {:log, {:a, :n}}}, %{}) == []
-      assert Recovery.ghost_directory_ids(%{"x" => {:log, {:a, :n}}}, nil) == []
+    test "a worker created this attempt (not yet in the directory) is referenced — never pruned" do
+      # Attempt-created workers reach transaction_services at creation;
+      # advertisement to the coordinator directory is async and may lag.
+      # The reference set is computed from the attempt alone, so the lag
+      # can never deregister a worker the epoch references.
+      services = %{"old_log" => {:log, {:a, :node1}}}
+
+      completed = %{
+        logs: %{"old_log" => [], "brand_new_log" => []},
+        shard_materializers: %{},
+        transaction_services: %{
+          "old_log" => %{kind: :log, status: {:up, self()}},
+          "brand_new_log" => %{kind: :log, status: {:up, self()}}
+        }
+      }
+
+      assert Recovery.ghost_directory_ids(services, completed) == []
+    end
+
+    test "an assigned materializer with no services record is still referenced — never pruned" do
+      # Worker ids ride the assignment refs, so the reference set does
+      # not depend on the services map at all; a missing record cannot
+      # deregister the worker the epoch assigned.
+      services = %{"assigned_mat" => {:materializer, {:a, :node1}}}
+
+      completed = %{
+        logs: %{},
+        shard_materializers: %{0 => %{"assigned_mat" => Atom.to_string(node())}},
+        transaction_services: %{}
+      }
+
+      assert Recovery.ghost_directory_ids(services, completed) == []
+    end
+
+    test "a locked-but-inactive materializer is not referenced — it is a ghost candidate" do
+      active_pid = spawn(fn -> Process.sleep(:infinity) end)
+      inactive_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      services = %{
+        "active_mat" => {:materializer, {:a, :node1}},
+        "inactive_mat" => {:materializer, {:b, :node1}}
+      }
+
+      completed = %{
+        logs: %{},
+        shard_materializers: %{0 => %{"active_mat" => Atom.to_string(node())}},
+        transaction_services: %{
+          "active_mat" => %{kind: :materializer, status: {:up, active_pid}},
+          "inactive_mat" => %{kind: :materializer, status: {:up, inactive_pid}}
+        }
+      }
+
+      assert Recovery.ghost_directory_ids(services, completed) == ["inactive_mat"]
     end
   end
 
@@ -363,7 +422,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       context =
         create_test_context(
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"existing_log_1" => [0, 100]}
           }
         )
@@ -413,16 +472,15 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # Should complete without errors
       recovery_attempt =
         recovery_attempt(%{
-          transaction_system_layout: %{
-            sequencer: spawn(fn -> :ok end),
-            proxies: [spawn(fn -> :ok end), spawn(fn -> :ok end)],
-            resolvers: [{"start", spawn(fn -> :ok end)}],
-            services: %{
-              "log_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
-              "log_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
-              "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer},
-              "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer}
-            }
+          sequencer: spawn(fn -> :ok end),
+          proxies: [spawn(fn -> :ok end), spawn(fn -> :ok end)],
+          resolvers: [{"start", spawn(fn -> :ok end)}],
+          logs: %{"log_service_1" => [], "log_service_2" => []},
+          transaction_services: %{
+            "log_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
+            "log_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :log},
+            "storage_service_1" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer},
+            "storage_service_2" => %{status: {:up, spawn(fn -> :ok end)}, kind: :materializer}
           }
         })
 
@@ -462,7 +520,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     test "recovery with coordinator-format services handles existing cluster (regression test)" do
       # Validates coordinator services work with existing cluster recovery
       old_layout = %{
-        logs: %{"existing_log_1" => [0, 100]}
+        logs: %{"existing_log_1" => [0, 100]},
+        system_materializers: %{"metadata_materializer" => "node1"}
       }
 
       durable_version = Version.from_integer(100)
@@ -489,7 +548,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       context =
         coordinator_services
-        |> create_coordinator_format_context(old_transaction_system_layout: old_layout)
+        |> create_coordinator_format_context(prior_core_state: old_layout)
         |> Map.update!(
           :available_services,
           &Map.put(&1, "metadata_materializer", {:materializer, {:materializer, :node1}})
@@ -527,7 +586,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       # Mock lock_service_fn to return newer_epoch_exists
       context =
         [
-          old_transaction_system_layout: %{
+          prior_core_state: %{
             logs: %{"existing_log_1" => [0, 100]}
           }
         ]
@@ -622,7 +681,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       |> with_complete_mocking()
 
     # Apply any additional overrides that weren't handled by create_test_context
-    additional_overrides = Keyword.delete(overrides, :old_transaction_system_layout)
+    additional_overrides = Keyword.delete(overrides, :prior_core_state)
 
     Enum.reduce(additional_overrides, base_context, fn {key, value}, ctx ->
       Map.put(ctx, key, value)
@@ -790,5 +849,49 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     |> Map.put(:foreman_all_fn, foreman_all_fn)
     |> Map.put(:remove_workers_fn, remove_workers_fn)
     |> Map.put(:monitor_fn, monitor_fn)
+  end
+
+  describe "publishing the completed recovery to the coordinator" do
+    test "publishes the members the recovery ACTUALLY adopted, not the ones it started with" do
+      # t.recovery_attempt is the attempt as it was BEFORE the phases
+      # ran, and is never updated with the result — which is why every
+      # sibling in this pipeline takes `completed` explicitly. Reading
+      # the members from t would publish the struct default (%{}), and
+      # the next WARM recovery would then find no system materializers
+      # and stall: exactly what this record exists to prevent.
+      test_pid = self()
+      coordinator = spawn_link(fn -> relay_casts(test_pid) end)
+
+      layout = %{epoch: 3, sequencer: self(), proxies: [self()], resolvers: [], logs: %{"log_1" => [0]}}
+      adopted = %{"mat_sys" => "node1@host"}
+
+      state = %{
+        coordinator: coordinator,
+        transaction_system_layout: layout,
+        # Deliberately EMPTY here, and populated only on `completed`.
+        recovery_attempt: %RecoveryAttempt{
+          cluster: TestCluster,
+          epoch: 3,
+          attempt: 1,
+          started_at: DateTime.utc_now(),
+          shard_materializers: %{}
+        }
+      }
+
+      completed = %{state.recovery_attempt | shard_materializers: %{0 => adopted}}
+
+      Recovery.persist_new_transaction_system_layout(state, completed)
+
+      assert_receive {:cast, {:notify_transaction_system_layout, ^layout, core_state}}, 500
+      assert core_state.system_materializers == adopted
+    end
+
+    defp relay_casts(test_pid) do
+      receive do
+        {:"$gen_cast", msg} ->
+          send(test_pid, {:cast, msg})
+          relay_casts(test_pid)
+      end
+    end
   end
 end

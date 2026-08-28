@@ -16,6 +16,7 @@ defmodule Bedrock.Cluster.Link do
   use Bedrock.Internal.GenServerApi, for: __MODULE__.Server
 
   alias Bedrock.Cluster.Descriptor
+  alias Bedrock.Cluster.Link.RoutingCache
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
 
@@ -60,6 +61,49 @@ defmodule Bedrock.Cluster.Link do
       {:error, reason} -> raise "Failed to fetch transaction system layout: #{inspect(reason)}"
     end
   end
+
+  @doc """
+  The cached covering entry for one key: the shard range and its raw
+  `{worker_id, node}` materializer ref.
+
+  Read DIRECTLY from the node's routing cache — no message to the Link.
+  Every transaction on the node looks up every key, so routing a key must
+  not require the Link to be scheduled.
+
+  The Link still owns that cache (FDB's `DatabaseContext` locationCache),
+  a partial coalescing index that only stores. On a miss the caller
+  fetches the single covering entry from a commit proxy and caches it
+  back with `cache_routing_entry/2`.
+  """
+  @spec fetch_covering_entry(module(), Bedrock.key()) ::
+          {:ok, {Bedrock.key_range(), {String.t(), String.t()}}} | {:error, :not_cached}
+  def fetch_covering_entry(cluster, key) do
+    case RoutingCache.lookup(cluster.otp_name(:link_routing), key) do
+      {:ok, entry} -> {:ok, entry}
+      :not_cached -> {:error, :not_cached}
+    end
+  end
+
+  @doc "Caches one covering entry fetched from a commit proxy."
+  @spec cache_routing_entry(ref(), {Bedrock.key(), Bedrock.key(), {String.t(), String.t()}}) :: :ok
+  def cache_routing_entry(link, entry), do: cast(link, {:cache_routing_entry, entry})
+
+  @doc """
+  Drops the cached routing entries — the whole index, never a patch.
+
+  Called by the client retry loop when a read fails in a routing-shaped way
+  (unroutable key, dead materializer, unavailable) - a dead pid is exactly
+  what a stale snapshot looks like, so the next transaction refetches.
+  Coarse on purpose (a named divergence from FDB's per-range eviction):
+  failures are rare and simple beats surgical.
+
+  Synchronous on purpose: the retry that invalidates must not be able to
+  read the stale entries back on its next fetch. A cast would be
+  ordered only by accident of the intervening wiring call.
+  """
+  @spec invalidate_routing(ref(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+          :ok | {:error, :unavailable | :timeout | :unknown}
+  def invalidate_routing(link, opts \\ []), do: call(link, :invalidate_routing, opts[:timeout_in_ms] || 1000)
 
   @doc """
   Fetch the cluster descriptor.

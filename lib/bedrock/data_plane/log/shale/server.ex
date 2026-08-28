@@ -29,6 +29,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Service.Foreman
 
   require Logger
 
@@ -59,6 +60,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     object_storage = Keyword.fetch!(opts, :object_storage)
     start_unlocked = Keyword.get(opts, :start_unlocked, false)
     reject_pushes_above_lag_us = Keyword.get(opts, :reject_pushes_above_lag_us)
+    cut_interval_us = opts |> Keyword.get(:params, %{}) |> cut_interval_us_from_params()
 
     %{
       id: {__MODULE__, id},
@@ -74,17 +76,35 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
              path,
              object_storage,
              start_unlocked,
-             reject_pushes_above_lag_us
+             reject_pushes_above_lag_us,
+             cut_interval_us
            },
            [name: otp_name]
          ]}
     }
   end
 
+  # The cut interval rides the manifest, which is what makes it survive a
+  # restart: the Foreman rebuilds a crashed worker from its manifest
+  # alone, so an interval held only in State would revert to the default
+  # and the log would resume rolling on boundaries the chunks it already
+  # wrote were not cut on. Anything but a positive integer is "unset" —
+  # manifest params are JSON, so a string or a zero is a config mistake,
+  # not an instruction.
+  @spec cut_interval_us_from_params(map()) :: pos_integer() | nil
+  defp cut_interval_us_from_params(%{"cut_interval_us" => us}) when is_integer(us) and us > 0, do: us
+  defp cut_interval_us_from_params(_params), do: nil
+
   @impl true
-  @spec init({module(), atom(), Log.id(), pid(), Path.t(), module(), boolean(), non_neg_integer() | nil}) ::
+  @spec init(
+          {module(), atom(), Log.id(), pid(), Path.t(), module(), boolean(), non_neg_integer() | nil,
+           pos_integer() | nil}
+        ) ::
           {:ok, State.t(), {:continue, :initialization}}
-  def init({cluster, otp_name, id, foreman, path, object_storage, start_unlocked, reject_pushes_above_lag_us}) do
+  def init(
+        {cluster, otp_name, id, foreman, path, object_storage, start_unlocked, reject_pushes_above_lag_us,
+         cut_interval_us}
+      ) do
     initial_mode = if start_unlocked, do: :running, else: :locked
 
     {:ok,
@@ -98,6 +118,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
        foreman: foreman,
        object_storage: object_storage,
        reject_pushes_above_lag_us: reject_pushes_above_lag_us,
+       cut_interval_us: cut_interval_us,
        available_after: Version.zero(),
        oldest_version: Version.zero(),
        last_version: Version.zero()
@@ -194,6 +215,39 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   # reset) or outside :running are dropped; confirmations are re-derived from
   # fresh flushes, so losing them is always safe.
   def handle_info({:min_durable_version, _demux, _version}, t), do: noreply(t)
+
+  # A newly durable layout, relayed by this node's foreman. Log topology is
+  # epoch-constant, so membership is decided by the push itself: if the
+  # layout omits us, we are displaced — our WAL was already replayed into
+  # the new generation before the layout became durable. FDB's TLog
+  # computes the same verdict from ServerDBInfo (isDisplaced /
+  # 'DBInfoDoesNotContain') and throws worker_removed on itself; nobody
+  # else decides. A layout may judge every worker it had the chance to
+  # include (pushed epoch >= ours — the locking phase locks old-layout
+  # logs into the judging epoch, so the displacing push carries OUR
+  # epoch); only a push older than our lock is off-limits: that is an
+  # in-flight recovery's past, and absence there is not a death sentence.
+  def handle_info({:tsl_updated, %{epoch: pushed_epoch, logs: logs}}, t) do
+    if displaced?(t, pushed_epoch, logs) do
+      Logger.info("Bedrock log #{t.id}: displaced by epoch #{pushed_epoch} layout; retiring")
+      Foreman.worker_retired(t.foreman, t.id)
+      {:stop, {:shutdown, :displaced}, t}
+    else
+      noreply(t)
+    end
+  end
+
+  def handle_info({:tsl_updated, _}, t), do: noreply(t)
+
+  # Displacement verdict: the pushed layout had the chance to include us
+  # (its epoch is at or past the one we were locked into; nil means never
+  # locked — a cold-boot resurrection any completed layout may judge) and
+  # its log set does not name us.
+  @spec displaced?(State.t(), Bedrock.epoch(), %{Log.id() => term()}) :: boolean()
+  defp displaced?(%{epoch: my_epoch, id: id}, pushed_epoch, logs) do
+    may_judge? = is_nil(my_epoch) or pushed_epoch >= my_epoch
+    may_judge? and not Map.has_key?(logs, id)
+  end
 
   @impl true
   @spec handle_call(

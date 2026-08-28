@@ -25,13 +25,11 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchTest do
       batch = Batch.new_batch(1000, <<1::64>>, <<2::64>>)
       transaction = <<1, 2, 3>>
       reply_fn = fn _ -> :ok end
-      task = nil
-
-      batch = Batch.add_transaction(batch, transaction, reply_fn, task)
+      batch = Batch.add_transaction(batch, transaction, reply_fn, :user)
 
       assert batch.n_transactions == 1
       assert length(batch.buffer) == 1
-      assert [{0, ^reply_fn, ^transaction, nil}] = batch.buffer
+      assert [{0, ^reply_fn, ^transaction, :user}] = batch.buffer
     end
 
     test "increments transaction count and index" do
@@ -40,13 +38,13 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchTest do
 
       batch =
         batch
-        |> Batch.add_transaction(<<1>>, reply_fn, nil)
-        |> Batch.add_transaction(<<2>>, reply_fn, nil)
-        |> Batch.add_transaction(<<3>>, reply_fn, nil)
+        |> Batch.add_transaction(<<1>>, reply_fn, :user)
+        |> Batch.add_transaction(<<2>>, reply_fn, :user)
+        |> Batch.add_transaction(<<3>>, reply_fn, :user)
 
       assert batch.n_transactions == 3
       # Buffer is in reverse order (most recent first)
-      assert [{2, _, <<3>>, nil}, {1, _, <<2>>, nil}, {0, _, <<1>>, nil}] = batch.buffer
+      assert [{2, _, <<3>>, :user}, {1, _, <<2>>, :user}, {0, _, <<1>>, :user}] = batch.buffer
     end
   end
 
@@ -57,14 +55,14 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchTest do
 
       batch =
         batch
-        |> Batch.add_transaction(<<1>>, reply_fn, nil)
-        |> Batch.add_transaction(<<2>>, reply_fn, nil)
-        |> Batch.add_transaction(<<3>>, reply_fn, nil)
+        |> Batch.add_transaction(<<1>>, reply_fn, :user)
+        |> Batch.add_transaction(<<2>>, reply_fn, :user)
+        |> Batch.add_transaction(<<3>>, reply_fn, :user)
 
       # Should reverse the buffer to get original insertion order
       transactions = Batch.transactions_in_order(batch)
 
-      assert [{0, _, <<1>>, nil}, {1, _, <<2>>, nil}, {2, _, <<3>>, nil}] = transactions
+      assert [{0, _, <<1>>, :user}, {1, _, <<2>>, :user}, {2, _, <<3>>, :user}] = transactions
     end
   end
 
@@ -77,9 +75,9 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchTest do
 
       batch =
         batch
-        |> Batch.add_transaction(<<1>>, reply_fn_1, nil)
-        |> Batch.add_transaction(<<2>>, reply_fn_2, nil)
-        |> Batch.add_transaction(<<3>>, reply_fn_3, nil)
+        |> Batch.add_transaction(<<1>>, reply_fn_1, :user)
+        |> Batch.add_transaction(<<2>>, reply_fn_2, :user)
+        |> Batch.add_transaction(<<3>>, reply_fn_3, :user)
 
       callers = Batch.all_callers(batch)
 
@@ -94,10 +92,10 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchTest do
 
       assert Batch.transaction_count(batch) == 0
 
-      batch = Batch.add_transaction(batch, <<1>>, fn _ -> :ok end, nil)
+      batch = Batch.add_transaction(batch, <<1>>, fn _ -> :ok end, :user)
       assert Batch.transaction_count(batch) == 1
 
-      batch = Batch.add_transaction(batch, <<2>>, fn _ -> :ok end, nil)
+      batch = Batch.add_transaction(batch, <<2>>, fn _ -> :ok end, :user)
       assert Batch.transaction_count(batch) == 2
     end
   end

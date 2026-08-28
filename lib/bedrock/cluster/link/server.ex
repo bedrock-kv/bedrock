@@ -14,6 +14,7 @@ defmodule Bedrock.Cluster.Link.Server do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.Cluster.Descriptor
+  alias Bedrock.Cluster.Link.RoutingCache
   alias Bedrock.Cluster.Link.State
 
   @spec child_spec(
@@ -65,6 +66,10 @@ defmodule Bedrock.Cluster.Link.Server do
       %State{
         node: Node.self(),
         cluster: cluster,
+        # The Link owns the table; every process on the node READS it
+        # directly. One writer keeps invalidation ordered against the
+        # pushes that trigger it.
+        routing_table: RoutingCache.new(cluster.otp_name(:link_routing)),
         descriptor: descriptor,
         path_to_descriptor: path_to_descriptor,
         known_coordinator: :unavailable,
@@ -114,6 +119,29 @@ defmodule Bedrock.Cluster.Link.Server do
     reply(t, {:ok, t.descriptor})
   end
 
+  # The node-wide routing cache (FDB DatabaseContext locationCache): a
+  # partial coalescing index of covering entries. The Link only stores;
+  # callers fetch the single covering entry from a commit proxy on miss
+  # and cast it back. No TTL - entries live until invalidated or a wiring
+  # push drops them; staleness is backstopped by the client retry loop.
+  # Synchronous: when the reply arrives the stale entries are gone -
+  # ordering by construction, not by accident of intervening calls.
+  # Coarse (whole index): failures are rare and simple beats surgical.
+  @spec handle_call(:invalidate_routing, GenServer.from(), State.t()) :: {:reply, :ok, State.t()}
+  def handle_call(:invalidate_routing, _, t) do
+    RoutingCache.clear(t.routing_table)
+    reply(t, :ok)
+  end
+
+  @doc false
+  @impl true
+  @spec handle_cast({:cache_routing_entry, {Bedrock.key(), Bedrock.key(), term()}}, State.t()) ::
+          {:noreply, State.t()}
+  def handle_cast({:cache_routing_entry, {start_key, end_key, ref}}, t) do
+    RoutingCache.insert(t.routing_table, start_key, end_key, ref)
+    noreply(t)
+  end
+
   @doc false
   @impl true
   @spec handle_info({:timeout, :find_a_live_coordinator}, State.t()) ::
@@ -123,15 +151,18 @@ defmodule Bedrock.Cluster.Link.Server do
   @spec handle_info({:tsl_updated, term()}, State.t()) :: {:noreply, State.t()}
   def handle_info({:tsl_updated, new_tsl}, t) do
     # Update cached TSL when coordinator broadcasts updates, and forward to
-    # this node's foreman (if any): a newly durable layout is the trigger
-    # for retiring workers the layout no longer references.
+    # this node's foreman (if any), which relays it to hosted workers: a
+    # newly durable layout is what workers self-detect displacement
+    # against.
     case Process.whereis(t.cluster.otp_name(:foreman)) do
       nil -> :ok
       foreman -> send(foreman, {:tsl_updated, new_tsl})
     end
 
-    updated_state = %{t | transaction_system_layout: new_tsl}
-    noreply(updated_state)
+    # A wiring push means a recovery happened: drop the routing cache so
+    # new-epoch wiring can never pair with old-epoch routing.
+    RoutingCache.clear(t.routing_table)
+    noreply(%{t | transaction_system_layout: new_tsl})
   end
 
   @spec handle_info({:DOWN, reference(), :process, term(), term()}, State.t()) ::

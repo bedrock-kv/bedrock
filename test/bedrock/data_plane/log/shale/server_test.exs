@@ -2,6 +2,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   use ExUnit.Case, async: false
 
   alias Bedrock.Cluster
+  alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Demux.ShardServer
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.Server
@@ -51,6 +52,37 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
                id: {Server, ^expected_id},
                start: {GenServer, :start_link, [Server, _, [name: ^expected_name]]}
              } = spec
+    end
+
+    # The interval has to ride the manifest, not just live in State: the
+    # Foreman rebuilds a restarted worker purely from opts, so an
+    # init-only field would silently revert to the default after a crash
+    # and the log would resume rolling on different boundaries than the
+    # chunks it already wrote were cut on.
+    defp init_state(opts) do
+      %{start: {GenServer, :start_link, [Server, init_arg, _]}} = Server.child_spec(opts)
+      {:ok, state, _continue} = Server.init(init_arg)
+      state
+    end
+
+    test "carries a cut interval from the manifest params", %{server_opts: opts} do
+      state = init_state(Keyword.put(opts, :params, %{"cut_interval_us" => 1_000_000}))
+
+      assert State.cut_interval_us(state) == 1_000_000
+    end
+
+    test "falls back to the default when the manifest says nothing", %{server_opts: opts} do
+      assert State.cut_interval_us(init_state(opts)) ==
+               Demux.Server.default_cut_interval_us()
+    end
+
+    test "ignores a manifest cut interval that is not a positive integer", %{server_opts: opts} do
+      for bad <- [0, -1, "5000000", nil] do
+        state = init_state(Keyword.put(opts, :params, %{"cut_interval_us" => bad}))
+
+        assert State.cut_interval_us(state) == Demux.Server.default_cut_interval_us(),
+               "#{inspect(bad)} must not be accepted as an interval"
+      end
     end
 
     test "raises error when cluster option is missing" do

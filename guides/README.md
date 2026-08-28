@@ -28,8 +28,9 @@ For comprehensive technical coverage:
 - **[Architecture Analysis](deep-dives/architecture.md)** - Complete architectural patterns and design principles
 - **[Control Plane Overview](quick-reads/control-plane.md)** - How cluster coordination and consensus work
 - **[Data Plane Overview](quick-reads/data-plane.md)** - Transaction processing and data persistence
-- **[Storage Implementations](deep-dives/architecture/implementations/README.md)** - Available storage engines and their
+- **[Storage Implementations](deep-dives/architecture/implementations/README.md)** - Available storage engines and their trade-offs
 - **[Transaction System Layout](quick-reads/transaction-system-layout.md)** - The big picture of how components work together
+- **[The System Keyspace](quick-reads/system-keyspace.md)** - The `\xFF/system` families: the only channel for cluster metadata
 - **[Transaction Processing](deep-dives/transactions.md)** - Full details of MVCC implementation and commit protocols
 - **[Cluster Startup](deep-dives/cluster-startup.md)** - Bootstrap processes and system initialization
 - **[Recovery](quick-reads/recovery.md)** - High-level understanding of system resilience ([More Detail](deep-dives/recovery.md))

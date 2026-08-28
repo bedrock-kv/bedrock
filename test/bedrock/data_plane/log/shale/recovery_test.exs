@@ -18,7 +18,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
 
   setup %{tmp_dir: tmp_dir} do
     {:ok, recycler} =
-      start_supervised({SegmentRecycler, path: tmp_dir, min_available: 1, max_available: 1, segment_size: 1024 * 1024})
+      start_supervised({SegmentRecycler, path: tmp_dir, min_available: 1, max_available: 2, segment_size: 1024 * 1024})
 
     state = %State{
       mode: :locked,

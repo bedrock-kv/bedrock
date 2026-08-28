@@ -4,7 +4,7 @@ defmodule Bedrock.MixProject do
   def project do
     [
       app: :bedrock,
-      version: "0.6.1",
+      version: "0.7.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -102,13 +102,78 @@ defmodule Bedrock.MixProject do
   defp docs do
     [
       main: "Bedrock",
+      # Named in prose by the architecture guides, but carrying
+      # `@moduledoc false` on purpose. Listing them here documents that the
+      # silence is deliberate, rather than leaving ex_doc to warn on each.
+      skip_code_autolink_to: [
+        "Bedrock.Cluster.Link.Server",
+        "Bedrock.Cluster.Link.State",
+        "Bedrock.Internal.GenServerApi"
+      ],
+      # Every guide the README links to has to be an extra, or ex_doc
+      # resolves the link to nothing and it 404s on hexdocs.
       extras: [
         "README.md",
+        "guides/quick-reads/users-perspective.md",
+        "guides/quick-reads/transactions.md",
+        "guides/quick-reads/transaction-format.md",
+        "guides/quick-reads/data-plane.md",
+        "guides/quick-reads/control-plane.md",
+        "guides/quick-reads/transaction-system-layout.md",
+        "guides/quick-reads/system-keyspace.md",
+        "guides/quick-reads/recovery.md",
+        "guides/deep-dives/architecture.md",
+        "guides/deep-dives/transactions.md",
+        "guides/deep-dives/cluster-startup.md",
+        "guides/deep-dives/recovery.md",
         "guides/durability-foundation.md",
         "guides/durability-profile.md",
         "guides/object-storage-s3.md",
         "guides/async-persistence-queue.md",
-        "guides/distributed-durability-tests.md"
+        "guides/distributed-durability-tests.md",
+        "guides/glossary.md",
+        "guides/ai-start-here.md",
+        "guides/deep-dives/architecture/control-plane/coordinator.md",
+        "guides/deep-dives/architecture/control-plane/director.md",
+        "guides/deep-dives/architecture/data-plane/commit-proxy.md",
+        "guides/deep-dives/architecture/data-plane/log.md",
+        "guides/deep-dives/architecture/data-plane/resolver.md",
+        "guides/deep-dives/architecture/data-plane/sequencer.md",
+        "guides/deep-dives/architecture/data-plane/storage.md",
+        "guides/deep-dives/architecture/implementations/README.md",
+        "guides/deep-dives/architecture/implementations/olivine.md",
+        "guides/deep-dives/architecture/implementations/shale.md",
+        "guides/deep-dives/architecture/infrastructure/cluster.md",
+        "guides/deep-dives/architecture/infrastructure/foreman.md",
+        "guides/deep-dives/architecture/infrastructure/link.md",
+        "guides/deep-dives/architecture/infrastructure/transaction-builder.md",
+        "guides/quick-reads/recovery/log-recovery-planning.md",
+        "guides/quick-reads/recovery/log-recruitment.md",
+        "guides/quick-reads/recovery/log-replay.md",
+        "guides/quick-reads/recovery/materializer-bootstrap.md",
+        "guides/quick-reads/recovery/monitoring.md",
+        "guides/quick-reads/recovery/persistence.md",
+        "guides/quick-reads/recovery/proxy-startup.md",
+        "guides/quick-reads/recovery/resolver-startup.md",
+        "guides/quick-reads/recovery/sequencer-startup.md",
+        "guides/quick-reads/recovery/service-locking.md",
+        "guides/quick-reads/recovery/transaction-system-layout.md",
+        "guides/quick-reads/recovery/tsl-validation.md",
+        "LICENSE"
+      ],
+      groups_for_extras: [
+        "Recovery Phases": ~r"guides/quick-reads/recovery/",
+        "Component Deep Dives": ~r"guides/deep-dives/architecture/",
+        "Quick Reads": ~r"guides/quick-reads/",
+        "Deep Dives": ~r"guides/deep-dives/",
+        Durability: [
+          "guides/durability-foundation.md",
+          "guides/durability-profile.md",
+          "guides/object-storage-s3.md",
+          "guides/async-persistence-queue.md",
+          "guides/distributed-durability-tests.md"
+        ],
+        Reference: ["guides/glossary.md", "guides/ai-start-here.md", "LICENSE"]
       ]
     ]
   end

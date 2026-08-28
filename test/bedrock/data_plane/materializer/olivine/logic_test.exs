@@ -139,11 +139,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
     test "without a shard assignment the materializer unlocks static — no puller", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
       locked_state = %{state | mode: :locked, epoch: 1}
-      layout = %{logs: %{}, services: %{}}
       durable_version = Version.from_integer(100)
 
       assert {:ok, %State{mode: :running, pull_task: nil}} =
-               Logic.unlock_after_recovery(locked_state, durable_version, layout)
+               Logic.unlock_after_recovery(locked_state, durable_version, [])
 
       Logic.shutdown(locked_state)
     end
@@ -151,11 +150,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
     test "with a shard assignment the stream puller is installed", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
       locked_state = %{state | mode: :locked, epoch: 1, shard_num: 1}
-      layout = %{logs: %{}, services: %{}}
       durable_version = Version.from_integer(100)
 
       assert {:ok, %State{mode: :running, pull_task: %Task{}} = unlocked_state} =
-               Logic.unlock_after_recovery(locked_state, durable_version, layout)
+               Logic.unlock_after_recovery(locked_state, durable_version, [])
 
       Logic.shutdown(unlocked_state)
     end
@@ -518,6 +516,20 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       {:error, :not_found} ->
         Process.sleep(50)
         await_snapshot(snapshot, attempts_left - 1)
+    end
+  end
+
+  describe "the :epoch info fact (assignment verification, bedrock-q67.21.5)" do
+    test "a never-locked worker reports nil; a locked worker reports its epoch", %{test_dir: test_dir} do
+      {:ok, state} = Logic.startup(:epoch_fact_test, self(), "epoch_wkr", test_dir)
+
+      assert {:ok, %{epoch: nil}} = Logic.info(state, [:epoch])
+
+      {:ok, locked} = Logic.lock_for_recovery(state, self(), 7)
+      assert {:ok, %{epoch: 7}} = Logic.info(locked, [:epoch])
+      assert :epoch in elem(Logic.info(locked, [:supported_info]), 1).supported_info
+
+      Logic.shutdown(locked)
     end
   end
 end

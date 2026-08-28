@@ -71,7 +71,7 @@ defmodule Bedrock.MixProject do
   defp deps do
     add_deps_for_dev_and_test([
       {:bedrock_raft, "~> 0.9"},
-      {:flatbuffer, "~> 0.3"},
+      {:flatbuffer, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"},
       {:ex_aws, "~> 2.7"},

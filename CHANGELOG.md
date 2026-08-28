@@ -288,6 +288,14 @@ describes; the broadcast carries only this epoch's wiring.
   `unpack/1` uses `:erlang.binary_to_term/1` without `:safe` — fine for values
   your own application wrote, not for bytes from anywhere else.
 
+- **flatbuffer is now `~> 0.5`.** The 0.3.1 tarball shipped the *generated*
+  leex/yecc output (`src/*.erl`) alongside the `.xrl`/`.yrl` grammars it was
+  built from, so the schema parser Bedrock compiled was whatever the
+  package maintainer's local OTP happened to emit at publish time rather than
+  a build from the grammars in source control — and a generated file newer
+  than an edited grammar would ship stale, silently. 0.5.0 ships the grammars
+  only, and they are regenerated during Bedrock's own build.
+
 ## 0.6.1 — 2026-08-19
 
 - **Security: remove hackney from the dependency tree.** An audit found the

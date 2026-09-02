@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-02T20:34:15Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-54w",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Bump bedrock_raft to 0.10, flatbuffer to 0.6; implement new Raft.Log callbacks",
   "type": "task",
-  "updated_at": "2026-09-02T20:34:15Z"
+  "updated_at": "2026-09-02T20:34:19Z"
 }

@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-02T20:34:15Z",
+  "description": "bedrock_raft 0.10.0 (tagged, hex publish pending) adds Log protocol callbacks: voted_for/1, save_election_state/3, previous_transaction_id/2, transactions_from/4 (bounded), and a stricter purge_transactions_after/2 contract that rejects deleting committed entries. save_current_term/2 now clears an earlier vote only when advancing. DiskRaftLog must implement all of these; the raft telemetry ack handlers must switch to the new metadata keys (success, request_transaction_id, follower_newest_transaction_id). flatbuffer 0.6.0 keeps the public use-API but moves to compile-time codegen and iodata ~\u003e 0.9.",
+  "id": "bedrock-54w",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Bump bedrock_raft to 0.10, flatbuffer to 0.6; implement new Raft.Log callbacks",
+  "type": "task",
+  "updated_at": "2026-09-02T20:34:15Z"
+}

@@ -70,8 +70,11 @@ defmodule Bedrock.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     add_deps_for_dev_and_test([
-      {:bedrock_raft, "~> 0.9"},
-      {:flatbuffer, "~> 0.5"},
+      # TODO: switch to {:bedrock_raft, "~> 0.10"} once 0.10.0 is published to
+      # hex; the tag is on GitHub but not yet on hex, and a git dep blocks
+      # `mix hex.publish`.
+      {:bedrock_raft, github: "bedrock-kv/raft", tag: "0.10.0"},
+      {:flatbuffer, "~> 0.6"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"},
       {:ex_aws, "~> 2.7"},

@@ -52,10 +52,4 @@ defmodule Bedrock.SystemKeys.ClusterBootstrap do
   # Flatbuffer 0.6 declares the .fbs file as an @external_resource itself,
   # so a schema edit recompiles this module without further help.
   use Flatbuffer, file: "priv/schemas/cluster_bootstrap.fbs"
-
-  # Flatbuffer 0.6 generates schema-specialized readers and writers at
-  # compile time, with clauses for every scalar type the format defines.
-  # Our schema only uses a few of them, so dialyzer sees the rest as
-  # unreachable generated code; nothing hand-written lives in this module.
-  @dialyzer [:no_match, :no_unused]
 end

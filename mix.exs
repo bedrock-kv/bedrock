@@ -70,8 +70,8 @@ defmodule Bedrock.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     add_deps_for_dev_and_test([
-      {:bedrock_raft, "~> 0.9"},
-      {:flatbuffer, "~> 0.5"},
+      {:bedrock_raft, "~> 0.10"},
+      {:flatbuffer, "~> 0.6"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"},
       {:ex_aws, "~> 2.7"},

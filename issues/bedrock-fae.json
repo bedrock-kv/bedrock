@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-05T15:51:40Z",
+  "description": "Use an isolated worktree and TDD to reproduce GitHub #141, investigate current LayoutIndex behavior, fix boundary construction, validate, and obtain a cold-agent review before pushing a pedagogical PR.",
+  "id": "bedrock-fae",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "gh-141: Reproduce and fix duplicate layout boundaries",
+  "type": "bug",
+  "updated_at": "2026-09-05T15:51:40Z"
+}

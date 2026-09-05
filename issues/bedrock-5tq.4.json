@@ -8,6 +8,12 @@
   "id": "bedrock-5tq.4",
   "labels": [],
   "parent": "bedrock-5tq",
+  "comments": [
+    {
+      "text": "Closed retroactively: done by #224/#227, which decided on Materializer and applied it. Verified on develop: data-plane/materializer.md exists; zero storage.md / #storage-server / :storage refs remain; the 4 surviving 'Storage' mentions are legitimate (engine implementations, the deliberate glossary bridge entry, and 'Dual Storage Format').",
+      "timestamp": "2026-09-05T23:54:36Z"
+    }
+  ],
   "priority": 2,
   "status": "closed",
   "title": "Storage vs Materializer terminology pass across all guides",

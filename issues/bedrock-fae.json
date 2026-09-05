@@ -18,11 +18,15 @@
     {
       "text": "Rebased unchanged two-file diff onto latest develop abc99faa (#229/#230). Refreshed lock-resolved dependencies; final full OTP29 suite passes 3066 tests with 2 excluded. Commit cdc134df. Final mix quality rerun in progress.",
       "timestamp": "2026-09-05T16:00:22Z"
+    },
+    {
+      "text": "Published PR https://github.com/bedrock-kv/bedrock/pull/231 after cold review. Final rebase compile warnings-as-errors and mix quality passed; full suite 3066 passed, 2 distributed excluded. Commit cdc134df pushed.",
+      "timestamp": "2026-09-05T16:01:21Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "gh-141: Reproduce and fix duplicate layout boundaries",
   "type": "bug",
-  "updated_at": "2026-09-05T16:00:22Z"
+  "updated_at": "2026-09-05T16:01:21Z"
 }

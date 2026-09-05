@@ -6,9 +6,15 @@
   "description": "Final read-only review of exact commit e2d29570 after reachable-only recovery traversal fix. Must be clean before branch push and PR.",
   "id": "bedrock-2p1",
   "labels": [],
+  "comments": [
+    {
+      "text": "Final cold release review of exact commit 2c2356d0 (parent df02343e): NO BLOCKERS. Reviewed full diff and surrounding Olivine persistence/recovery paths. Right-edge routing correctly falls back to the gb_tree largest page. Recovery uses newest-wins page versions and admits only the transitive needed frontier; per-block closure against updated_all_pages handles both (a) valid snapshot 0-\u003e1-\u003e2-\u003e3-\u003e4 plus a newer normal non-leftmost split 3-\u003e5-\u003e4 and (b) downstream pages cached in a newer block before an older root reveals them, stopping without loading a missing unused predecessor. It still ignores stale snapshot pages bypassed by newer deletion root 0-\u003e3-\u003e4. Complete snapshots validate page IDs, page-0 presence, reachability/cycles, and strict global key ordering/duplicates; unresolved history, missing blocks, and invalid version descent fail closed. IndexManager propagates errors and restores the data-file offset; analyzer reports corruption. Evidence: git diff --check clean; exact parent confirmed; candidate focused suite plus two independent adversarial probes: 28 tests, 0 failures. Parent reports post-rebase Olivine 317 tests/23 properties; full 2846 tests/158 properties/17 doctests; format, Credo strict, Dialyzer green.",
+      "timestamp": "2026-09-05T14:30:12Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Release cold review exact GH #158 commit",
   "type": "task",
-  "updated_at": "2026-09-05T14:24:51Z"
+  "updated_at": "2026-09-05T14:30:12Z"
 }

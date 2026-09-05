@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T23:46:41Z",
   "created": "2026-09-05T13:30:44Z",
   "description": "test/bedrock/control_plane/distributor/placeholder_test.exs:193 'at most one coverage demand per tag until covered'. Line 199 assert_receive {:\"$gen_cast\", {:coverage_demand, 1}} uses the default 100ms window, which must cover two async_get Task spawns plus the placeholder serving both gets and casting the demand. Under load it times out with an EMPTY mailbox — the demand hadn't arrived yet, not a dedupe failure. Two sightings: main CI OTP 27.3 on the 0.7.0 release merge (run 33218502281, 2026-08-28), and a local full-suite run 2026-09-03 (passed on immediate rerun). Fix: explicit generous timeout on the assert_receive (the subsequent refute_receive 50ms dedupe check is unaffected once the first demand has arrived). Sibling flakes for reference: bedrock-s9x, bedrock-uvk.",
   "id": "bedrock-n9w",
@@ -17,8 +18,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[BUG] Flaky test: PlaceholderTest demand-dedupe misses coverage_demand in default 100ms assert_receive window",
   "type": "task",
-  "updated_at": "2026-09-05T13:49:52Z"
+  "updated_at": "2026-09-05T23:46:41Z"
 }

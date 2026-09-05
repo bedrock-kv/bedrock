@@ -258,12 +258,13 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       expected = [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}]
       assert result == expected
 
-      # The actual record may still exist in DETS but shouldn't be reachable
-      # Physical record exists
-      assert Log.has_transaction_id?(log, {1, 3})
+      # The purged record is deleted outright: the leader consults
+      # has_transaction_id?/2 to reposition its send cursor on a follower's
+      # hint, so a stale physical record would confirm an unreachable entry.
+      refute Log.has_transaction_id?(log, {1, 3})
     end
 
-    test "adjusts commit level when purging committed transactions", %{log: log} do
+    test "refuses to purge committed transactions", %{log: log} do
       {:ok, _log} =
         Log.append_transactions(log, {0, 0}, [
           {{1, 1}, {1, :data1}},
@@ -275,11 +276,28 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
       assert {1, 3} = Log.newest_safe_transaction_id(log)
 
-      # Purge after {1, 1} - should adjust commit level
-      assert {:ok, _log} = Log.purge_transactions_after(log, {1, 1})
+      # Raft's commit index must never decrease.
+      assert {:error, :would_delete_committed_transactions} =
+               Log.purge_transactions_after(log, {1, 1})
 
-      # Commit level should be reduced to {1, 1}
-      assert {1, 1} = Log.newest_safe_transaction_id(log)
+      # The log is untouched.
+      assert {1, 3} = Log.newest_safe_transaction_id(log)
+      assert {1, 3} = Log.newest_transaction_id(log)
+      assert Log.has_transaction_id?(log, {1, 2})
+      assert Log.has_transaction_id?(log, {1, 3})
+    end
+
+    test "purge at or beyond the newest transaction is a no-op", %{log: log} do
+      {:ok, _log} =
+        Log.append_transactions(log, {0, 0}, [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}])
+
+      assert {:ok, _log} = Log.purge_transactions_after(log, {1, 2})
+      assert {1, 2} = Log.newest_transaction_id(log)
+      assert [_, _] = Log.transactions_to(log, :newest)
+
+      assert {:ok, _log} = Log.purge_transactions_after(log, {7, 9})
+      assert {1, 2} = Log.newest_transaction_id(log)
+      assert [_, _] = Log.transactions_to(log, :newest)
     end
 
     test "leaves commit level unchanged when purging beyond commit", %{log: log} do
@@ -461,6 +479,201 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
       assert {2, 4} = Log.newest_transaction_id(log2)
 
       DiskRaftLog.close(log2)
+    end
+  end
+
+  describe "transactions_from/4 (bounded reads)" do
+    setup :with_log
+
+    test "limit 0 returns no transactions", %{log: log} do
+      create_test_chain(log)
+
+      assert [] = Log.transactions_from(log, {0, 0}, :newest, 0)
+    end
+
+    test "limit bounds the batch, preserving order from the front", %{log: log} do
+      create_test_chain(log)
+
+      assert [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}] =
+               Log.transactions_from(log, {0, 0}, :newest, 2)
+
+      assert [{{2, 3}, {2, :data3}}] = Log.transactions_from(log, {1, 2}, :newest, 1)
+    end
+
+    test ":infinity behaves exactly like transactions_from/3", %{log: log} do
+      create_test_chain(log)
+
+      assert Log.transactions_from(log, {1, 1}, :newest, :infinity) ==
+               Log.transactions_from(log, {1, 1}, :newest)
+    end
+
+    test "limit larger than the available range returns everything", %{log: log} do
+      create_test_chain(log)
+
+      assert [_, _, _, _] = Log.transactions_from(log, {0, 0}, :newest, 100)
+    end
+
+    test "respects the to bound together with the limit", %{log: log} do
+      create_test_chain(log)
+
+      assert [{{1, 1}, {1, :data1}}] = Log.transactions_from(log, {0, 0}, {1, 2}, 1)
+      assert [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}] = Log.transactions_from(log, {0, 0}, {1, 2}, 100)
+    end
+
+    test ":newest_safe bound honors the commit point", %{log: log} do
+      create_test_chain(log)
+      {:ok, _log} = Log.commit_up_to(log, {1, 2})
+
+      assert [{{1, 1}, {1, :data1}}, {{1, 2}, {1, :data2}}] =
+               Log.transactions_from(log, {0, 0}, :newest_safe, :infinity)
+    end
+  end
+
+  describe "previous_transaction_id/2" do
+    setup :with_log
+
+    test "returns the predecessor of a middle entry", %{log: log} do
+      create_test_chain(log)
+
+      assert {1, 2} = Log.previous_transaction_id(log, {2, 3})
+      assert {2, 3} = Log.previous_transaction_id(log, {2, 4})
+    end
+
+    test "returns the initial id for the first entry", %{log: log} do
+      create_test_chain(log)
+
+      assert {0, 0} = Log.previous_transaction_id(log, {1, 1})
+    end
+
+    test "returns the initial id for the initial id itself", %{log: log} do
+      create_test_chain(log)
+
+      assert {0, 0} = Log.previous_transaction_id(log, {0, 0})
+    end
+
+    test "returns the newest older entry for an absent id", %{log: log} do
+      create_test_chain(log)
+
+      # {1, 7} sorts between {1, 2} and {2, 3}
+      assert {1, 2} = Log.previous_transaction_id(log, {1, 7})
+      # Beyond the newest entry, the newest entry is the predecessor.
+      assert {2, 4} = Log.previous_transaction_id(log, {9, 9})
+    end
+
+    test "returns the initial id on an empty log", %{log: log} do
+      assert {0, 0} = Log.previous_transaction_id(log, {5, 5})
+    end
+
+    test "does not resurrect purged entries", %{log: log} do
+      create_test_chain(log)
+      {:ok, _log} = Log.purge_transactions_after(log, {1, 1})
+      {:ok, _log} = Log.append_transactions(log, {1, 1}, [{{3, 2}, {3, :after_purge}}])
+
+      # {2, 3} and {2, 4} were purged; the predecessor of {3, 2} is {1, 1}.
+      assert {1, 1} = Log.previous_transaction_id(log, {3, 2})
+    end
+  end
+
+  describe "election state" do
+    setup :with_log
+
+    test "a fresh log has term 0 and no vote", %{log: log} do
+      assert 0 = Log.current_term(log)
+      assert nil == Log.voted_for(log)
+    end
+
+    test "save_election_state/3 advancing the term records term and vote", %{log: log} do
+      assert {:ok, _log} = Log.save_election_state(log, 3, :node_a)
+      assert 3 = Log.current_term(log)
+      assert :node_a = Log.voted_for(log)
+    end
+
+    test "advancing the term with nil clears the earlier vote", %{log: log} do
+      {:ok, _log} = Log.save_election_state(log, 3, :node_a)
+
+      assert {:ok, _log} = Log.save_election_state(log, 4, nil)
+      assert 4 = Log.current_term(log)
+      assert nil == Log.voted_for(log)
+    end
+
+    test "an equal-term write may set a vote when none exists", %{log: log} do
+      {:ok, _log} = Log.save_election_state(log, 3, nil)
+
+      assert {:ok, _log} = Log.save_election_state(log, 3, :node_b)
+      assert :node_b = Log.voted_for(log)
+    end
+
+    test "an equal-term write may repeat the existing vote", %{log: log} do
+      {:ok, _log} = Log.save_election_state(log, 3, :node_a)
+
+      assert {:ok, _log} = Log.save_election_state(log, 3, :node_a)
+      assert :node_a = Log.voted_for(log)
+    end
+
+    test "an equal-term write must not change or clear an existing vote", %{log: log} do
+      {:ok, _log} = Log.save_election_state(log, 3, :node_a)
+
+      assert {:error, :already_voted} = Log.save_election_state(log, 3, :node_b)
+      assert {:error, :already_voted} = Log.save_election_state(log, 3, nil)
+      assert :node_a = Log.voted_for(log)
+    end
+
+    test "a lower-term write is rejected as stale", %{log: log} do
+      {:ok, _log} = Log.save_election_state(log, 3, :node_a)
+
+      assert {:error, :stale_term} = Log.save_election_state(log, 2, :node_b)
+      assert 3 = Log.current_term(log)
+      assert :node_a = Log.voted_for(log)
+    end
+
+    test "save_current_term/2 clears an earlier vote when advancing", %{log: log} do
+      {:ok, _log} = Log.save_election_state(log, 3, :node_a)
+
+      assert {:ok, _log} = Log.save_current_term(log, 5)
+      assert 5 = Log.current_term(log)
+      assert nil == Log.voted_for(log)
+    end
+
+    test "save_current_term/2 at or below the current term keeps term and vote", %{log: log} do
+      {:ok, _log} = Log.save_election_state(log, 3, :node_a)
+
+      assert {:ok, _log} = Log.save_current_term(log, 3)
+      assert {:ok, _log} = Log.save_current_term(log, 2)
+      assert 3 = Log.current_term(log)
+      assert :node_a = Log.voted_for(log)
+    end
+
+    test "election state survives close and reopen", %{tmp_dir: tmp_dir} do
+      # A separate directory, so this open doesn't collide with the table the
+      # with_log setup already holds on this test's raft_log.dets.
+      tmp_dir = Path.join(tmp_dir, "reopen")
+      log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :election_reopen_test)
+      {:ok, log} = DiskRaftLog.open(log)
+      {:ok, _log} = Log.save_election_state(log, 7, :node_c)
+      DiskRaftLog.close(log)
+
+      log2 = DiskRaftLog.new(log_dir: tmp_dir, table_name: :election_reopen_test)
+      {:ok, log2} = DiskRaftLog.open(log2)
+      on_exit(fn -> DiskRaftLog.close(log2) end)
+
+      assert 7 = Log.current_term(log2)
+      assert :node_c = Log.voted_for(log2)
+    end
+
+    test "a legacy current_term record is still read, with no vote", %{log: log} do
+      # Logs written before 0.10 persisted the term under :current_term.
+      :ok = :dets.insert(log.table_name, {:current_term, 4})
+
+      assert 4 = Log.current_term(log)
+      assert nil == Log.voted_for(log)
+
+      # An equal-term vote grant works against the legacy record.
+      assert {:ok, _log} = Log.save_election_state(log, 4, :node_a)
+      assert 4 = Log.current_term(log)
+      assert :node_a = Log.voted_for(log)
+
+      # And a stale write is still rejected against it.
+      assert {:error, :stale_term} = Log.save_election_state(log, 3, :node_b)
     end
   end
 end

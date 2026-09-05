@@ -49,12 +49,7 @@ defmodule Bedrock.SystemKeys.ClusterBootstrap do
   See `Bedrock.ClusterBootstrap.Discovery` for the discovery logic.
   """
 
-  # The schema is read at macro-expansion time and the library declares
-  # no @external_resource, so without this a .fbs edit does not recompile
-  # this module: the build keeps the OLD schema, encoders silently drop
-  # new fields, and the test suite passes against a binary layout that no
-  # longer matches the file on disk.
+  # Flatbuffer 0.6 declares the .fbs file as an @external_resource itself,
+  # so a schema edit recompiles this module without further help.
   use Flatbuffer, file: "priv/schemas/cluster_bootstrap.fbs"
-
-  @external_resource "priv/schemas/cluster_bootstrap.fbs"
 end

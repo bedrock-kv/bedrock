@@ -6,9 +6,15 @@
   "description": "An empty materializer response returns before local-write merging and conflict tracking. This breaks read-your-writes and can admit phantom-dependent transactions that should conflict.\n\nConfirmed at `8f962e09` through `RangeReads.get_range/4` with an injected empty storage response and the real transaction encoder. The distributed anomaly below follows from the omitted conflict set; a full-cluster reproduction should be added.\n\n```elixir\nalias Bedrock.DataPlane.{Transaction, Version}\nalias Bedrock.Internal.TransactionBuilder.{State, Tx, RangeReads}\nv = Version.from_integer(100)\ns = %State{read_version: v, tx: Tx.set(Tx.new(), \"b\", \"local\"),\n  routing_fn: fn _ -\u003e {:ok, {\"\", \"z\", [self()]}} end}\n{s, result} = RangeReads.get_range(s, {\"a\", \"c\"}, 10,\n  storage_get_range_fn: fn _, _, _, _, _ -\u003e {:ok, {[], false}} end)\nIO.inspect(result) # actual {:ok, {[], false}}; expected b=local\nIO.inspect(Transaction.decode(Tx.commit(s.tx, v))) # read_conflicts: {nil, []}\n```\n\nRun with `MIX_ENV=test mix run --no-start /tmp/repro.exs`.\n\n[lib/bedrock/internal/transaction_builder/range_reads.ex](https://github.com/bedrock-kv/bedrock/blob/8f962e09b24765265eeb6bd818f5b26da8d91b99/lib/bedrock/internal/transaction_builder/range_reads.ex#L97) special-cases `{[], false}` before `Tx.merge_storage_range_with_writes/5`, even though that helper has an empty-storage branch.\n\nTwo transactions can both observe the same empty range and each insert a different key based on that absence. With no range read conflicts, both can commit despite an invariant permitting only one insertion.\n\n## Acceptance criteria\n\n- Empty storage still merges all applicable pending writes and clears.\n- Ordinary empty reads record the effective half-open read range; snapshot reads honor their conflict policy.\n- A public Repo test covers pending put followed by an empty-storage range read.\n- Concurrent empty-range conditional inserts into different keys produce the appropriate conflict/retry.\n- Cover bounded ranges, empty shards, and pagination.\n",
   "id": "bedrock-oep",
   "labels": [],
+  "comments": [
+    {
+      "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/235. Published the 2026-09-05 implementation evaluation, pinned to 8f962e09, with evidence and acceptance criteria. Reproduced findings are distinguished from source-level risks. No implementation fix is included.",
+      "timestamp": "2026-09-05T23:58:12Z"
+    }
+  ],
   "priority": 1,
   "status": "open",
   "title": "Empty range reads omit pending writes and read-conflict ranges",
   "type": "bug",
-  "updated_at": "2026-09-05T23:58:11Z"
+  "updated_at": "2026-09-05T23:58:12Z"
 }

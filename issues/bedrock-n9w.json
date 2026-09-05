@@ -10,11 +10,15 @@
     {
       "text": "Diagnosis proven with a deterministic spike: suspending the placeholder via :sys.suspend and resuming 150ms later reproduces the exact CI failure ('no matching message after 100ms / The process mailbox is empty') — the demand cast is delivered, just late; product behavior is correct. The hazard class is every assert_receive whose message crosses a spawned relay (Task spawn → GenServer.call → cast, or telemetry handler → send, or spawned stub relay) with the default 100ms window. Census: placeholder_test.exs had 15 such sites (one previously hardened ad hoc to 1s at the coverage-failure test with a comment 'the default 100ms flakes under full-suite load' — the cautionary tale: one site got hardened, line 199 then bit main). server_test.exs had 18 more (assignment_verified/adopt_locked/placeholder_got/:probed relays). Remedy per repo idiom (inline numeric windows; no global assert_receive_timeout config, matching yp2/c4u precedent of fixing all sightings of a mechanism at once): ', 5_000' on all 33 sites. Deliberately untouched: assert_received sites (message already delivered synchronously), :DOWN monitor assertions (single-hop runtime delivery, no relay — yp2 handled those with reason guards instead), refute_receive absence windows (state-based dedupe checks; widening only slows the suite), and server_test's explicit 500ms recruitment window (a deliberate budget, no recorded flake). Validated: spike fails pre-fix / passes post-fix; both files repeated 30x green; full suite 2835 tests 0 failures; format+credo strict clean.",
       "timestamp": "2026-09-05T13:42:43Z"
+    },
+    {
+      "text": "Fix pushed as draft PR #228 (branch fix/bedrock-n9w-placeholder-flake, commit 464e8fd3). Cold-reviewed pre-push by a context-free agent: approve, with two findings folded in — the RuntimeError :DOWN at server_test.exs:923 is relay-class (monitored recruit task must be scheduled, run, and crash) and is now widened, as is the 500ms recruitment window at :782 (undercut by the bedrock-uvk 1.5s-missed datum). 36 sites total carry 5_000. Ticket stays in_progress until the PR lands.",
+      "timestamp": "2026-09-05T13:49:52Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "[BUG] Flaky test: PlaceholderTest demand-dedupe misses coverage_demand in default 100ms assert_receive window",
   "type": "task",
-  "updated_at": "2026-09-05T13:42:43Z"
+  "updated_at": "2026-09-05T13:49:52Z"
 }

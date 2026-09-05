@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T14:30:32Z",
+  "close_reason": "Implemented and cold-reviewed in 2c2356d0; ready for PR",
   "created": "2026-09-05T13:34:11Z",
   "description": "Reproduce GitHub #158 with failing tests, fix new-maximum routing after index splits, validate recovered page chains/global key order/duplicates/reachable page count, and document behavior for damaged stores. Deliver via isolated worktree and PR.",
   "id": "bedrock-p5v",
@@ -29,8 +31,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Fix Olivine right-edge routing and reject corrupt recovered indexes",
   "type": "task",
-  "updated_at": "2026-09-05T14:29:28Z"
+  "updated_at": "2026-09-05T14:30:32Z"
 }

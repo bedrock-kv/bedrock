@@ -18,11 +18,15 @@
     {
       "text": "Third cold review found fail-open recovery for missing/cyclic predecessor history plus embedded page-ID mismatch. Added red reproductions, then made history traversal reject absent, repeated, or non-descending versions and validate map IDs before reconstruction. Gates: Olivine 315 tests + 23 properties; full suite 2,846 tests + 158 properties + 17 doctests; format, strict Credo, and Dialyzer clean.",
       "timestamp": "2026-09-05T14:16:09Z"
+    },
+    {
+      "text": "Fourth cold review exposed a valid range-clear history falsely rejected because recovery followed stale snapshot pointers. Added a red five-page snapshot/newer 0-\u003e3-\u003e4 chain regression, removed speculative traversal from unreachable historical pages, and documented/tested early termination once the live chain is resolved. Final gates now: Olivine 317 tests + 23 properties; full suite 2,848 tests + 158 properties + 17 doctests; format, strict Credo, Dialyzer all green.",
+      "timestamp": "2026-09-05T14:24:15Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Fix Olivine right-edge routing and reject corrupt recovered indexes",
   "type": "task",
-  "updated_at": "2026-09-05T14:16:09Z"
+  "updated_at": "2026-09-05T14:24:15Z"
 }

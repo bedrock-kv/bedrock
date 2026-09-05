@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T14:03:53Z",
   "created": "2026-09-05T13:59:03Z",
   "description": "Fresh independent review of final commit 845026d5 after the first cold review rejected automatic repair. Verify fail-closed recovery validation, snapshot provenance handling, routing fix, tests, and API/error propagation before PR push.",
   "id": "bedrock-5co",
@@ -13,7 +14,7 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Cold re-review final GitHub #158 fix",
   "type": "task",
   "updated_at": "2026-09-05T14:03:53Z"

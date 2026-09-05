@@ -8,9 +8,15 @@
   "id": "bedrock-q67.21.21",
   "labels": [],
   "parent": "bedrock-q67.21",
+  "comments": [
+    {
+      "text": "Closed retroactively: fixed by #207 (Ticket: bedrock-q67.21.21). Verified on develop: materializer_bootstrap_phase.ex resolve_system_materializer takes the 'nil when named == %{}' legacy path into discover_system_materializer/1. #208's migration was later dropped as never-shipped (q67.21.22, closed).",
+      "timestamp": "2026-09-05T23:54:37Z"
+    }
+  ],
   "priority": 0,
   "status": "closed",
   "title": "P0: a bootstrap record predating system_materializers bricks recovery on upgrade",
   "type": "bug",
-  "updated_at": "2026-09-05T23:54:36Z"
+  "updated_at": "2026-09-05T23:54:37Z"
 }

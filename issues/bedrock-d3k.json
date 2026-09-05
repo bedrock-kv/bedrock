@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T23:46:39Z",
   "created": "2026-08-25T20:20:46Z",
   "description": "",
   "id": "bedrock-d3k",
@@ -13,8 +14,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Remove dead ChunkWriter: superseded by inline chunk writes in shard_server",
   "type": "task",
-  "updated_at": "2026-08-25T20:26:56Z"
+  "updated_at": "2026-09-05T23:46:39Z"
 }

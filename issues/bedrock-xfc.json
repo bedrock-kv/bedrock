@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-05T18:41:18Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-xfc",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Fix DiskRaftLogProtocolTest incompatible_arguments CI failure",
   "type": "bug",
-  "updated_at": "2026-09-05T18:41:18Z"
+  "updated_at": "2026-09-05T18:41:26Z"
 }

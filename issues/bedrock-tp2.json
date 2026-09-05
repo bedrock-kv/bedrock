@@ -11,6 +11,10 @@
     {
       "text": "PR #220: https://github.com/bedrock-kv/bedrock/pull/220 — full gate green (quality, 2776 tests, distributed durability vs MinIO). Awaiting merge.",
       "timestamp": "2026-08-25T20:26:57Z"
+    },
+    {
+      "text": "Closed retroactively: work merged to develop in 61dae68f, which carried a Closes line for this ticket but the tracker was never updated.",
+      "timestamp": "2026-09-05T23:46:42Z"
     }
   ],
   "priority": 3,

@@ -14,11 +14,15 @@
     {
       "text": "Same-seed full-suite rerun also failed the same 100ms DOWN assertion on OTP27.3.3/Elixir1.17.3. Both logs show expected FunctionClauseError, only delivery deadline fails.",
       "timestamp": "2026-09-05T18:48:24Z"
+    },
+    {
+      "text": "The isolated test at line319 passes with the same toolchain and seed346337; failure remains specific to the full-suite run.",
+      "timestamp": "2026-09-05T18:48:54Z"
     }
   ],
   "priority": 3,
   "status": "open",
   "title": "Flaky test: TransactionBuilderTest unknown-info crash misses 100ms DOWN window on loaded CI",
   "type": "task",
-  "updated_at": "2026-09-05T18:48:24Z"
+  "updated_at": "2026-09-05T18:48:54Z"
 }

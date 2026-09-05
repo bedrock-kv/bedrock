@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T23:46:42Z",
   "created": "2026-08-25T20:20:46Z",
   "description": "",
   "id": "bedrock-tp2",
@@ -13,8 +14,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Remove dead Director.ChangingParameters",
   "type": "task",
-  "updated_at": "2026-08-25T20:26:57Z"
+  "updated_at": "2026-09-05T23:46:42Z"
 }

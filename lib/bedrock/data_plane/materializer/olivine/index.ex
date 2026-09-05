@@ -131,7 +131,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
   """
   @spec load_from(Database.t(), keyword()) ::
           {:ok, t(), Page.id(), [Page.id()], non_neg_integer()}
-          | {:error, :missing_pages}
+          | {:error, :missing_pages | {:corrupt_index, term()}}
   def load_from({_data_db, index_db}, opts \\ []) do
     {:ok, durable_version} = IndexDatabase.load_durable_version(index_db)
     max_keys = Keyword.get(opts, :max_keys_per_page, @default_max_keys_per_page)
@@ -142,12 +142,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
     else
       needed_page_ids = MapSet.new([0])
 
-      case load_needed_pages(index_db, %{}, %{}, needed_page_ids, durable_version) do
-        {:ok, final_page_map} ->
-          build_index_from_page_map(final_page_map, max_keys, target_keys)
-
-        {:error, :missing_pages} ->
-          {:error, :missing_pages}
+      with {:ok, final_page_map} <-
+             load_needed_pages(index_db, %{}, %{}, needed_page_ids, MapSet.new(), durable_version),
+           :ok <- validate_recovered_page_map(final_page_map) do
+        build_index_from_page_map(final_page_map, max_keys, target_keys)
       end
     end
   end
@@ -160,46 +158,93 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
           page_map :: %{Page.id() => {Page.t(), Page.id()}},
           all_pages_seen :: %{Page.id() => {Page.t(), Page.id()}},
           needed_page_ids :: MapSet.t(Page.id()),
+          visited_versions :: MapSet.t(Bedrock.version()),
           Bedrock.version()
-        ) :: {:ok, %{Page.id() => {Page.t(), Page.id()}}} | {:error, :missing_pages}
-  defp load_needed_pages(index_db, page_map, all_pages_seen, needed_page_ids, current_version) do
+        ) ::
+          {:ok, %{Page.id() => {Page.t(), Page.id()}}}
+          | {:error, :missing_pages | {:corrupt_index, term()}}
+  defp load_needed_pages(index_db, page_map, all_pages_seen, needed_page_ids, visited_versions, current_version) do
     cond do
       MapSet.size(needed_page_ids) == 0 ->
+        # Incremental blocks are a page-version store, not an audit log. Once
+        # the live chain is complete, older blocks are intentionally unused;
+        # requiring them would make obsolete history part of availability.
         {:ok, page_map}
 
       current_version == nil || current_version == Version.zero() ->
-        missing = Enum.reject(needed_page_ids, &Map.has_key?(all_pages_seen, &1))
+        finish_loading_pages(page_map, all_pages_seen, needed_page_ids)
 
-        case missing do
-          [] ->
-            final_page_map = Enum.reduce(needed_page_ids, page_map, &Map.put_new(&2, &1, all_pages_seen[&1]))
-            {:ok, final_page_map}
-
-          [0] ->
-            {:ok, Map.put(page_map, 0, {Page.new(0, []), 0})}
-
-          _ ->
-            {:error, :missing_pages}
-        end
+      MapSet.member?(visited_versions, current_version) ->
+        {:error, {:corrupt_index, {:version_cycle, current_version}}}
 
       true ->
-        load_needed_pages_from_version(index_db, page_map, all_pages_seen, needed_page_ids, current_version)
+        load_needed_pages_from_version(
+          index_db,
+          page_map,
+          all_pages_seen,
+          needed_page_ids,
+          visited_versions,
+          current_version
+        )
     end
   end
 
-  defp load_needed_pages_from_version(index_db, page_map, all_pages_seen, needed_page_ids, current_version) do
+  defp finish_loading_pages(page_map, all_pages_seen, needed_page_ids) do
+    {final_page_map, unresolved_page_ids} =
+      process_version_pages(all_pages_seen, page_map, needed_page_ids, all_pages_seen)
+
+    case MapSet.to_list(unresolved_page_ids) do
+      [] ->
+        {:ok, final_page_map}
+
+      [0] when map_size(all_pages_seen) == 0 ->
+        {:ok, Map.put(page_map, 0, {Page.new(0, []), 0})}
+
+      [0] ->
+        {:error, {:corrupt_index, :missing_page_zero}}
+
+      _ ->
+        {:error, :missing_pages}
+    end
+  end
+
+  defp load_needed_pages_from_version(
+         index_db,
+         page_map,
+         all_pages_seen,
+         needed_page_ids,
+         visited_versions,
+         current_version
+       ) do
     case IndexDatabase.load_page_block(index_db, current_version) do
       {:ok, version_pages, next_version} ->
-        updated_all_pages = Map.merge(version_pages, all_pages_seen)
+        with :ok <- validate_previous_version(current_version, next_version),
+             :ok <- validate_snapshot_page_map(version_pages, next_version) do
+          updated_all_pages = Map.merge(version_pages, all_pages_seen)
 
-        {updated_page_map, updated_needed} =
-          process_version_pages(version_pages, page_map, needed_page_ids, updated_all_pages)
+          {updated_page_map, updated_needed} =
+            process_version_pages(updated_all_pages, page_map, needed_page_ids, updated_all_pages)
 
-        load_needed_pages(index_db, updated_page_map, updated_all_pages, updated_needed, next_version)
+          load_needed_pages(
+            index_db,
+            updated_page_map,
+            updated_all_pages,
+            updated_needed,
+            MapSet.put(visited_versions, current_version),
+            next_version
+          )
+        end
 
       {:error, :not_found} ->
-        load_needed_pages(index_db, page_map, all_pages_seen, needed_page_ids, Version.zero())
+        {:error, {:corrupt_index, {:missing_version, current_version}}}
     end
+  end
+
+  defp validate_previous_version(_current_version, nil), do: :ok
+  defp validate_previous_version(current_version, previous_version) when previous_version < current_version, do: :ok
+
+  defp validate_previous_version(current_version, previous_version) do
+    {:error, {:corrupt_index, {:invalid_previous_version, current_version, previous_version}}}
   end
 
   defp process_version_pages(version_pages, page_map, needed_page_ids, updated_all_pages) do
@@ -208,11 +253,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
 
   defp process_version_pages_loop(version_pages, page_map, needed_page_ids, updated_all_pages) do
     version_page_ids = MapSet.new(Map.keys(version_pages))
-
-    to_process =
-      needed_page_ids
-      |> MapSet.intersection(version_page_ids)
-      |> find_additional_needed_pages(page_map, updated_all_pages, version_page_ids)
+    to_process = MapSet.intersection(needed_page_ids, version_page_ids)
 
     case MapSet.size(to_process) do
       0 ->
@@ -232,20 +273,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
     end
   end
 
-  defp find_additional_needed_pages(initial_set, page_map, all_pages_seen, version_page_ids) do
-    Enum.reduce(all_pages_seen, initial_set, fn
-      {_id, {_page, next_id}}, acc when next_id != 0 ->
-        if MapSet.member?(version_page_ids, next_id) and not Map.has_key?(page_map, next_id) do
-          MapSet.put(acc, next_id)
-        else
-          acc
-        end
-
-      _, acc ->
-        acc
-    end)
-  end
-
   defp process_needed_page(page_id, acc_map, acc_needed, updated_all_pages) do
     {resolved_page, resolved_next_id} = Map.get(updated_all_pages, page_id)
     new_map = Map.put(acc_map, page_id, {resolved_page, resolved_next_id})
@@ -261,24 +288,113 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
     {new_map, final_needed}
   end
 
+  # The page map is not sufficient to repair an invalid index safely. A stale
+  # duplicate can have a greater locator after compaction, and a clear can
+  # remove the routed copy while leaving an older copy on an overlapping page.
+  # Fail closed so recovery never selects a stale value or resurrects a key.
+  defp validate_recovered_page_map(page_map) do
+    case validate_page_map(page_map) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:corrupt_index, reason}}
+    end
+  end
+
+  # A snapshot block is a complete page map, unlike an incremental block,
+  # whose unreachable pages may be stale versions intentionally ignored by
+  # the loader. Validate complete membership before selective loading can
+  # hide an orphan page or synthesize a missing page 0.
+  defp validate_snapshot_page_map(page_map, nil), do: validate_recovered_page_map(page_map)
+  defp validate_snapshot_page_map(_page_map, _previous_version), do: :ok
+
+  defp validate_page_map(page_map) do
+    with :ok <- validate_page_ids(page_map),
+         {:ok, pages} <- page_chain(page_map),
+         :ok <- validate_reachable_page_count(pages, page_map) do
+      validate_global_key_order(pages)
+    end
+  end
+
+  defp validate_page_ids(page_map) do
+    Enum.reduce_while(page_map, :ok, fn {map_page_id, {page, _next_id}}, :ok ->
+      embedded_page_id = Page.id(page)
+
+      if map_page_id == embedded_page_id do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:page_id_mismatch, map_page_id, embedded_page_id}}}
+      end
+    end)
+  end
+
+  defp page_chain(page_map) do
+    case Map.fetch(page_map, 0) do
+      {:ok, {page, next_id}} ->
+        collect_page_chain(page_map, next_id, MapSet.new([0]), [page])
+
+      :error ->
+        {:error, :missing_page_zero}
+    end
+  end
+
+  defp collect_page_chain(_page_map, 0, _seen, pages), do: {:ok, Enum.reverse(pages)}
+
+  defp collect_page_chain(page_map, page_id, seen, pages) do
+    cond do
+      MapSet.member?(seen, page_id) ->
+        {:error, {:cycle, page_id}}
+
+      not Map.has_key?(page_map, page_id) ->
+        {:error, {:missing_page, page_id}}
+
+      true ->
+        {page, next_id} = Map.fetch!(page_map, page_id)
+        collect_page_chain(page_map, next_id, MapSet.put(seen, page_id), [page | pages])
+    end
+  end
+
+  defp validate_reachable_page_count(pages, page_map) do
+    reachable_count = length(pages)
+    stored_count = map_size(page_map)
+
+    if reachable_count == stored_count do
+      :ok
+    else
+      {:error, {:unreachable_pages, stored_count - reachable_count}}
+    end
+  end
+
+  defp validate_global_key_order(pages) do
+    pages
+    |> Enum.reduce_while({:ok, nil}, fn page, {:ok, previous_key} ->
+      case validate_page_keys(Page.keys(page), previous_key) do
+        {:ok, _previous_key} = state -> {:cont, state}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, _previous_key} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp validate_page_keys([], previous_key), do: {:ok, previous_key}
+
+  defp validate_page_keys([key | keys], previous_key) do
+    cond do
+      key == previous_key ->
+        {:error, :duplicate_keys}
+
+      previous_key != nil and key < previous_key ->
+        {:error, :keys_out_of_order}
+
+      true ->
+        validate_page_keys(keys, key)
+    end
+  end
+
   @spec build_index_from_page_map(%{Page.id() => {Page.t(), Page.id()}}, pos_integer(), pos_integer()) ::
           {:ok, t(), Page.id(), [Page.id()], non_neg_integer()}
   defp build_index_from_page_map(page_map, max_keys_per_page, target_keys_per_page) do
-    case verify_page_chain(page_map) do
-      :ok ->
-        :ok
-
-      {:error, {:broken_chain, missing_page_id}} ->
-        require Logger
-
-        Logger.error("Page chain is broken: page #{missing_page_id} is referenced but not in page_map")
-
-      {:error, {:cycle, page_id}} ->
-        require Logger
-
-        Logger.error("Page chain has a cycle at page #{page_id}")
-    end
-
     tree = Tree.from_page_map(page_map)
     page_ids = page_map |> Map.keys() |> MapSet.new()
     max_id = if MapSet.size(page_ids) > 0, do: Enum.max(page_ids), else: 0
@@ -309,32 +425,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
     }
 
     {:ok, index, max_id, free_ids, total_key_count}
-  end
-
-  defp verify_page_chain(page_map) do
-    case Map.get(page_map, 0) do
-      nil ->
-        :ok
-
-      {_page, next_id} ->
-        verify_chain_walk(page_map, next_id, MapSet.new([0]))
-    end
-  end
-
-  defp verify_chain_walk(_page_map, 0, _visited), do: :ok
-
-  defp verify_chain_walk(page_map, page_id, visited) do
-    cond do
-      MapSet.member?(visited, page_id) ->
-        {:error, {:cycle, page_id}}
-
-      not Map.has_key?(page_map, page_id) ->
-        {:error, {:broken_chain, page_id}}
-
-      true ->
-        {_page, next_id} = page_map[page_id]
-        verify_chain_walk(page_map, next_id, MapSet.put(visited, page_id))
-    end
   end
 
   defp calculate_free_ids(0, _all_existing_page_ids), do: []

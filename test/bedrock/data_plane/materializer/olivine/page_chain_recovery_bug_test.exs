@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageChainRecoveryBugTest do
 
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.Index
+  alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
@@ -37,11 +38,428 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageChainRecoveryBugTest do
 
   defp data_size_in_bytes({data_db, _index_db}), do: data_db.file_offset
 
+  defp persist_page_map(database, page_map, version, previous_version \\ nil) do
+    {:ok, database, _metadata} =
+      Database.advance_durable_version(
+        database,
+        version,
+        previous_version || version,
+        data_size_in_bytes(database),
+        [page_map]
+      )
+
+    Database.close(database)
+  end
+
   describe "page chain recovery bug" do
     @tag :tmp_dir
 
     setup context do
       setup_tmp_dir(context)
+    end
+
+    test "increasing single-key transactions remain readable after page splits", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "increasing_keys.dets")
+      {:ok, database} = Database.open(:increasing_keys, file_path)
+
+      [first_key | _] = keys = for i <- 1..600, do: "key_#{String.pad_leading("#{i}", 4, "0")}"
+      last_key = List.last(keys)
+
+      transactions =
+        keys
+        |> Enum.with_index(1)
+        |> Enum.map(fn {key, version} -> create_transaction([{:set, key, key}], version) end)
+
+      {index_manager, database} =
+        IndexManager.apply_transactions(IndexManager.new(), transactions, database)
+
+      [{_version, {index, _modified_pages}} | _] = index_manager.versions
+
+      assert map_size(index.page_map) > 1
+
+      missing_keys =
+        Enum.reject(keys, fn key ->
+          match?({:ok, _page, _locator}, Index.locator_for_key(index, key))
+        end)
+
+      assert missing_keys == []
+
+      assert {:ok, pages} = Index.pages_for_range(index, first_key, last_key <> <<0>>)
+      assert Enum.flat_map(pages, &Page.keys/1) == keys
+
+      Database.close(database)
+    end
+
+    test "rejects overlapping recovered pages with duplicate keys", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "overlapping_pages.dets")
+      {:ok, database} = Database.open(:overlapping_pages, file_path)
+      version = Version.from_integer(10_000_000)
+      locator = <<0::64>>
+
+      persist_page_map(
+        database,
+        %{
+          0 => {Page.new(0, [{"a", locator}]), 1},
+          1 => {Page.new(1, [{"a", locator}, {"m", locator}]), 0}
+        },
+        version
+      )
+
+      {:ok, recovered_database} = Database.open(:overlapping_pages_recovery, file_path)
+
+      assert {:error, {:corrupt_index, :duplicate_keys}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
+    end
+
+    test "rejects globally out-of-order recovered pages", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "out_of_order_pages.dets")
+      {:ok, database} = Database.open(:out_of_order_pages, file_path)
+      version = Version.from_integer(10_000_000)
+      locator = <<0::64>>
+
+      persist_page_map(
+        database,
+        %{
+          0 => {Page.new(0, [{"a", locator}, {"z", locator}]), 1},
+          1 => {Page.new(1, [{"m", locator}]), 0}
+        },
+        version
+      )
+
+      {:ok, recovered_database} = Database.open(:out_of_order_pages_recovery, file_path)
+
+      assert {:error, {:corrupt_index, :keys_out_of_order}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
+    end
+
+    test "rejects a cyclic recovered page chain", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "cyclic_pages.dets")
+      {:ok, database} = Database.open(:cyclic_pages, file_path)
+      version = Version.from_integer(10_000_000)
+      locator = <<0::64>>
+
+      persist_page_map(
+        database,
+        %{
+          0 => {Page.new(0, [{"a", locator}]), 1},
+          1 => {Page.new(1, [{"b", locator}]), 1}
+        },
+        version
+      )
+
+      {:ok, recovered_database} = Database.open(:cyclic_pages_recovery, file_path)
+
+      assert {:error, {:corrupt_index, {:cycle, 1}}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
+    end
+
+    test "rejects orphan pages in a complete snapshot", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "orphan_pages.dets")
+      {:ok, database} = Database.open(:orphan_pages, file_path)
+      version = Version.from_integer(10_000_000)
+      locator = <<0::64>>
+
+      persist_page_map(
+        database,
+        %{
+          0 => {Page.new(0, [{"a", locator}]), 0},
+          1 => {Page.new(1, [{"z", locator}]), 0}
+        },
+        version
+      )
+
+      {:ok, recovered_database} = Database.open(:orphan_pages_recovery, file_path)
+
+      assert {:error, {:corrupt_index, {:unreachable_pages, 1}}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
+    end
+
+    test "rejects a non-empty snapshot without page 0", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "missing_page_zero.dets")
+      {:ok, database} = Database.open(:missing_page_zero, file_path)
+      version = Version.from_integer(10_000_000)
+      locator = <<0::64>>
+
+      persist_page_map(database, %{1 => {Page.new(1, [{"z", locator}]), 0}}, version)
+
+      {:ok, recovered_database} = Database.open(:missing_page_zero_recovery, file_path)
+
+      assert {:error, {:corrupt_index, :missing_page_zero}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
+    end
+
+    test "rejects an empty complete snapshot", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "empty_snapshot.dets")
+      {:ok, database} = Database.open(:empty_snapshot, file_path)
+      version = Version.from_integer(10_000_000)
+
+      persist_page_map(database, %{}, version)
+
+      {:ok, recovered_database} = Database.open(:empty_snapshot_recovery, file_path)
+
+      assert {:error, {:corrupt_index, :missing_page_zero}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
+    end
+
+    test "rejects non-empty incremental history that never defines page 0", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "missing_page_zero_incremental.dets")
+      {:ok, database} = Database.open(:missing_page_zero_incremental, file_path)
+      version = Version.from_integer(10_000_000)
+      locator = <<0::64>>
+
+      persist_page_map(
+        database,
+        %{1 => {Page.new(1, [{"z", locator}]), 0}},
+        version,
+        Version.zero()
+      )
+
+      {:ok, recovered_database} =
+        Database.open(:missing_page_zero_incremental_recovery, file_path)
+
+      assert {:error, {:corrupt_index, :missing_page_zero}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
+    end
+
+    test "rejects unresolved incremental history with a missing predecessor", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "missing_predecessor.dets")
+      {:ok, database} = Database.open(:missing_predecessor, file_path)
+      missing_version = Version.from_integer(10_000_000)
+      durable_version = Version.from_integer(20_000_000)
+
+      persist_page_map(database, %{}, durable_version, missing_version)
+
+      {:ok, recovered_database} = Database.open(:missing_predecessor_recovery, file_path)
+
+      assert {:error, {:corrupt_index, {:missing_version, ^missing_version}}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
+    end
+
+    test "does not load an unused predecessor after the live chain is resolved", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "unused_predecessor.dets")
+      {:ok, database} = Database.open(:unused_predecessor, file_path)
+      missing_version = Version.from_integer(10_000_000)
+      durable_version = Version.from_integer(20_000_000)
+
+      persist_page_map(database, %{0 => {Page.new(0, []), 0}}, durable_version, missing_version)
+
+      {:ok, recovered_database} = Database.open(:unused_predecessor_recovery, file_path)
+
+      assert {:ok, recovered_index_manager} = IndexManager.recover_from_database(recovered_database)
+      [{_version, {recovered_index, _modified_pages}} | _] = recovered_index_manager.versions
+      assert Map.keys(recovered_index.page_map) == [0]
+
+      Database.close(recovered_database)
+    end
+
+    test "resolves the live chain through pages cached from a newer block", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "newer_cached_pages.dets")
+      {:ok, database} = Database.open(:newer_cached_pages, file_path)
+      missing_version = Version.from_integer(10_000_000)
+      root_version = Version.from_integer(20_000_000)
+      durable_version = Version.from_integer(30_000_000)
+      locator = <<0::64>>
+
+      {:ok, database, _metadata} =
+        Database.advance_durable_version(
+          database,
+          root_version,
+          missing_version,
+          data_size_in_bytes(database),
+          [%{0 => {Page.new(0, [{"a", locator}]), 3}}]
+        )
+
+      newer_pages = %{
+        3 => {Page.new(3, [{"d", locator}]), 5},
+        5 => {Page.new(5, [{"e", locator}]), 4},
+        4 => {Page.new(4, [{"g", locator}]), 0}
+      }
+
+      {:ok, database, _metadata} =
+        Database.advance_durable_version(
+          database,
+          durable_version,
+          root_version,
+          data_size_in_bytes(database),
+          [newer_pages]
+        )
+
+      Database.close(database)
+      {:ok, recovered_database} = Database.open(:newer_cached_pages_recovery, file_path)
+
+      assert {:ok, recovered_index_manager} = IndexManager.recover_from_database(recovered_database)
+      [{_version, {recovered_index, _modified_pages}} | _] = recovered_index_manager.versions
+
+      assert recovered_index.page_map |> Map.keys() |> Enum.sort() == [0, 3, 4, 5]
+      assert {:ok, pages} = Index.pages_for_range(recovered_index, "a", "h")
+      assert Enum.flat_map(pages, &Page.keys/1) == ["a", "d", "e", "g"]
+
+      Database.close(recovered_database)
+    end
+
+    test "ignores stale snapshot pages bypassed by a newer page chain", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "deleted_middle_pages.dets")
+      {:ok, database} = Database.open(:deleted_middle_pages, file_path)
+      snapshot_version = Version.from_integer(10_000_000)
+      durable_version = Version.from_integer(20_000_000)
+      locator = <<0::64>>
+
+      snapshot_pages = %{
+        0 => {Page.new(0, [{"a", locator}]), 1},
+        1 => {Page.new(1, [{"b", locator}]), 2},
+        2 => {Page.new(2, [{"c", locator}]), 3},
+        3 => {Page.new(3, [{"d", locator}]), 4},
+        4 => {Page.new(4, [{"e", locator}]), 0}
+      }
+
+      {:ok, database, _metadata} =
+        Database.advance_durable_version(
+          database,
+          snapshot_version,
+          snapshot_version,
+          data_size_in_bytes(database),
+          [snapshot_pages]
+        )
+
+      # A range clear deleted pages 1 and 2. The newer page-0 pointer is the
+      # authoritative live chain; the older snapshot copies remain on disk.
+      {:ok, database, _metadata} =
+        Database.advance_durable_version(
+          database,
+          durable_version,
+          snapshot_version,
+          data_size_in_bytes(database),
+          [%{0 => {Page.new(0, [{"a", locator}]), 3}}]
+        )
+
+      Database.close(database)
+      {:ok, recovered_database} = Database.open(:deleted_middle_pages_recovery, file_path)
+
+      assert {:ok, recovered_index_manager} = IndexManager.recover_from_database(recovered_database)
+      [{_version, {recovered_index, _modified_pages}} | _] = recovered_index_manager.versions
+
+      assert recovered_index.page_map |> Map.keys() |> Enum.sort() == [0, 3, 4]
+      assert {:ok, pages} = Index.pages_for_range(recovered_index, "a", "f")
+      assert Enum.flat_map(pages, &Page.keys/1) == ["a", "d", "e"]
+
+      Database.close(recovered_database)
+    end
+
+    test "follows a new sibling from a non-leftmost incremental page split", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "incremental_middle_split.dets")
+      {:ok, database} = Database.open(:incremental_middle_split, file_path)
+      snapshot_version = Version.from_integer(10_000_000)
+      durable_version = Version.from_integer(20_000_000)
+      locator = <<0::64>>
+
+      snapshot_pages = %{
+        0 => {Page.new(0, [{"a", locator}]), 1},
+        1 => {Page.new(1, [{"b", locator}]), 2},
+        2 => {Page.new(2, [{"c", locator}]), 3},
+        3 => {Page.new(3, [{"d", locator}]), 4},
+        4 => {Page.new(4, [{"g", locator}]), 0}
+      }
+
+      {:ok, database, _metadata} =
+        Database.advance_durable_version(
+          database,
+          snapshot_version,
+          snapshot_version,
+          data_size_in_bytes(database),
+          [snapshot_pages]
+        )
+
+      # Splitting page 3 creates page 5 between it and unchanged page 4.
+      split_pages = %{
+        3 => {Page.new(3, [{"d", locator}]), 5},
+        5 => {Page.new(5, [{"e", locator}]), 4}
+      }
+
+      {:ok, database, _metadata} =
+        Database.advance_durable_version(
+          database,
+          durable_version,
+          snapshot_version,
+          data_size_in_bytes(database),
+          [split_pages]
+        )
+
+      Database.close(database)
+      {:ok, recovered_database} = Database.open(:incremental_middle_split_recovery, file_path)
+
+      assert {:ok, recovered_index_manager} = IndexManager.recover_from_database(recovered_database)
+      [{_version, {recovered_index, _modified_pages}} | _] = recovered_index_manager.versions
+
+      assert recovered_index.page_map |> Map.keys() |> Enum.sort() == [0, 1, 2, 3, 4, 5]
+      assert {:ok, pages} = Index.pages_for_range(recovered_index, "a", "h")
+      assert Enum.flat_map(pages, &Page.keys/1) == ["a", "b", "c", "d", "e", "g"]
+
+      Database.close(recovered_database)
+    end
+
+    test "rejects cyclic incremental history without looping", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "cyclic_history.dets")
+      {:ok, database} = Database.open(:cyclic_history, file_path)
+      older_version = Version.from_integer(10_000_000)
+      durable_version = Version.from_integer(20_000_000)
+
+      {:ok, database, _metadata} =
+        Database.advance_durable_version(
+          database,
+          older_version,
+          durable_version,
+          data_size_in_bytes(database),
+          [%{}]
+        )
+
+      {:ok, database, _metadata} =
+        Database.advance_durable_version(
+          database,
+          durable_version,
+          older_version,
+          data_size_in_bytes(database),
+          [%{}]
+        )
+
+      Database.close(database)
+      {:ok, recovered_database} = Database.open(:cyclic_history_recovery, file_path)
+
+      assert {:error, {:corrupt_index, {:invalid_previous_version, ^older_version, ^durable_version}}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
+    end
+
+    test "rejects snapshots whose map key and embedded page ID disagree", %{tmp_dir: tmp_dir} do
+      file_path = Path.join(tmp_dir, "page_id_mismatch.dets")
+      {:ok, database} = Database.open(:page_id_mismatch, file_path)
+      version = Version.from_integer(10_000_000)
+      locator = <<0::64>>
+
+      persist_page_map(database, %{0 => {Page.new(7, [{"a", locator}]), 0}}, version)
+
+      {:ok, recovered_database} = Database.open(:page_id_mismatch_recovery, file_path)
+
+      assert {:error, {:corrupt_index, {:page_id_mismatch, 0, 7}}} =
+               IndexManager.recover_from_database(recovered_database)
+
+      Database.close(recovered_database)
     end
 
     test "recovers all pages in chain when durable version is empty", %{tmp_dir: tmp_dir} do

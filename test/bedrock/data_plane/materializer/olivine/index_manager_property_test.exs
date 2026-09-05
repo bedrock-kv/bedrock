@@ -225,8 +225,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerPropertyTest do
         found_page_id = Tree.page_for_key(tree, test_key)
         page_ids = Enum.map(pages, &Page.id/1)
 
-        assert is_integer(found_page_id) and found_page_id >= 0 and (found_page_id in page_ids or found_page_id == 0),
-               "page_for_key should return a valid page_id that exists in tree or 0 (rightmost page)"
+        assert is_integer(found_page_id) and found_page_id in page_ids,
+               "page_for_key should return a page_id that exists in the tree"
       end
     end
   end
@@ -329,8 +329,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerPropertyTest do
         assert find_rightmost_page(tree) == Page.id(page)
 
         found_page_id = Tree.page_for_key(tree, test_key)
-        # Key can map to the page itself or to page 0 (rightmost) if beyond page's range
-        assert found_page_id == Page.id(page) or found_page_id == 0
+        assert found_page_id == Page.id(page)
       end
     end
   end

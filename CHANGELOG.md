@@ -385,6 +385,13 @@ describes; the broadcast carries only this epoch's wiring.
   ingested while compaction ran are re-delivered instead of vanishing until
   the next recovery.
 
+- **Olivine keeps append-only workloads readable after page splits.** Keys
+  above every stored page boundary now extend the actual rightmost page
+  instead of returning to page 0 and overlapping later ranges. Recovery
+  validates complete snapshots and the recovered page chain, rejecting
+  damaged indexes explicitly instead of silently routing reads through an
+  ambiguous page map.
+
 - **Guides reflect the new data plane.** The durability-foundation, recovery,
   data-plane, and async-persistence guides describe the shipped design —
   KCV-gated cuts, Demux streaming, reconciliation, trimming — rather than its

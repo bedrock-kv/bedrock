@@ -23,8 +23,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index.TreeTest do
       # Key "j" should go to page 2 (contains "g" to "m")
       assert Tree.page_for_key(tree, "j") == 2
 
-      # Key "z" (beyond all pages) should go to rightmost page (always 0)
-      assert Tree.page_for_key(tree, "z") == 0
+      # Key "z" (beyond all pages) should extend the actual rightmost page.
+      assert Tree.page_for_key(tree, "z") == 2
     end
   end
 
@@ -43,8 +43,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index.TreeTest do
       # In gap-free design, all keys map to a page
       # "key0" would go in page 1
       assert Tree.page_for_key(tree, "key0") == 1
-      # "key4" beyond all pages goes to rightmost (0)
-      assert Tree.page_for_key(tree, "key4") == 0
+      # "key4" beyond all pages stays on the only (and therefore rightmost) page.
+      assert Tree.page_for_key(tree, "key4") == 1
     end
 
     test "adds page 0 with no keys to tree" do

@@ -48,8 +48,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index.Tree do
 
   Tree structure: key = last_key, value = page_id
 
-  When a key is beyond all pages in the tree, returns page 0 (which acts as
-  the catch-all page extending to infinity).
+  When a key is beyond all stored page boundaries, returns the rightmost
+  page. New maximum keys must extend that page; page 0 is only the rightmost
+  page before the first split.
   """
   @spec page_for_key(t(), Bedrock.key()) :: page_id()
   def page_for_key(tree, key) do
@@ -57,7 +58,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index.Tree do
 
     case :gb_trees.next(iter) do
       {_last_key, page_id, _next_iter} -> page_id
-      _none -> 0
+      _none -> rightmost_page_id(tree)
+    end
+  end
+
+  defp rightmost_page_id(tree) do
+    if :gb_trees.is_empty(tree) do
+      0
+    else
+      {_last_key, page_id} = :gb_trees.largest(tree)
+      page_id
     end
   end
 

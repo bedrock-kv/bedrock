@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-05T15:56:50Z",
+  "description": "During gh-141 dependency setup, mix deps.get reported EEF-CVE-2026-82728 / GHSA-g83f-2j6r-q6m4 (high) and EEF-CVE-2026-82729 / GHSA-7p8w-j234-7qc8 (medium) for unchanged locked mint 1.9.3. mix deps.audit nevertheless exited 0 with No vulnerabilities found. Verify advisories, update dependency if applicable, and investigate audit database discrepancy. No dependency changes made in gh-141.",
+  "id": "bedrock-783",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Investigate Mint 1.9.3 Hex advisories missing from mix deps.audit",
+  "type": "bug",
+  "updated_at": "2026-09-05T15:56:50Z"
+}

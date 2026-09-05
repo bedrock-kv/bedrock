@@ -6,9 +6,15 @@
   "description": "test/bedrock/control_plane/distributor/placeholder_test.exs:193 'at most one coverage demand per tag until covered'. Line 199 assert_receive {:\"$gen_cast\", {:coverage_demand, 1}} uses the default 100ms window, which must cover two async_get Task spawns plus the placeholder serving both gets and casting the demand. Under load it times out with an EMPTY mailbox — the demand hadn't arrived yet, not a dedupe failure. Two sightings: main CI OTP 27.3 on the 0.7.0 release merge (run 33218502281, 2026-08-28), and a local full-suite run 2026-09-03 (passed on immediate rerun). Fix: explicit generous timeout on the assert_receive (the subsequent refute_receive 50ms dedupe check is unaffected once the first demand has arrived). Sibling flakes for reference: bedrock-s9x, bedrock-uvk.",
   "id": "bedrock-n9w",
   "labels": [],
+  "comments": [
+    {
+      "text": "Diagnosis proven with a deterministic spike: suspending the placeholder via :sys.suspend and resuming 150ms later reproduces the exact CI failure ('no matching message after 100ms / The process mailbox is empty') — the demand cast is delivered, just late; product behavior is correct. The hazard class is every assert_receive whose message crosses a spawned relay (Task spawn → GenServer.call → cast, or telemetry handler → send, or spawned stub relay) with the default 100ms window. Census: placeholder_test.exs had 15 such sites (one previously hardened ad hoc to 1s at the coverage-failure test with a comment 'the default 100ms flakes under full-suite load' — the cautionary tale: one site got hardened, line 199 then bit main). server_test.exs had 18 more (assignment_verified/adopt_locked/placeholder_got/:probed relays). Remedy per repo idiom (inline numeric windows; no global assert_receive_timeout config, matching yp2/c4u precedent of fixing all sightings of a mechanism at once): ', 5_000' on all 33 sites. Deliberately untouched: assert_received sites (message already delivered synchronously), :DOWN monitor assertions (single-hop runtime delivery, no relay — yp2 handled those with reason guards instead), refute_receive absence windows (state-based dedupe checks; widening only slows the suite), and server_test's explicit 500ms recruitment window (a deliberate budget, no recorded flake). Validated: spike fails pre-fix / passes post-fix; both files repeated 30x green; full suite 2835 tests 0 failures; format+credo strict clean.",
+      "timestamp": "2026-09-05T13:42:43Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "[BUG] Flaky test: PlaceholderTest demand-dedupe misses coverage_demand in default 100ms assert_receive window",
   "type": "task",
-  "updated_at": "2026-09-05T13:35:55Z"
+  "updated_at": "2026-09-05T13:42:43Z"
 }

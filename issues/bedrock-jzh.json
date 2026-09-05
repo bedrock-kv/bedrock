@@ -6,9 +6,15 @@
   "description": "lib/bedrock/object_storage/local_filesystem.ex:16 lists ChunkWriter among the data-plane callers of put_if_not_exists/4. ChunkWriter was removed in #220 (bedrock-d3k). Drop the stale name so the caller list matches the code.",
   "id": "bedrock-jzh",
   "labels": [],
+  "comments": [
+    {
+      "text": "PR: pull request create failed: GraphQL: No commits between develop and bedrock-jzh/local-filesystem-moduledoc (createPullRequest)",
+      "timestamp": "2026-09-05T23:59:10Z"
+    }
+  ],
   "priority": 4,
   "status": "in_progress",
   "title": "LocalFilesystem moduledoc names deleted ChunkWriter as a put_if_not_exists caller",
   "type": "chore",
-  "updated_at": "2026-09-05T23:58:41Z"
+  "updated_at": "2026-09-05T23:59:10Z"
 }

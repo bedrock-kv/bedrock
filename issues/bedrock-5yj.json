@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T13:53:21Z",
+  "close_reason": "Cold review complete; three P1 blockers reported to implementation owner",
   "created": "2026-09-05T13:45:52Z",
   "description": "Independently review commit 79f0f781 for correctness, recovery safety, regression risk, and test adequacy against GitHub issue #158. Read-only review; report findings before PR push.",
   "id": "bedrock-5yj",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Cold review GitHub #158 Olivine fix",
   "type": "task",
-  "updated_at": "2026-09-05T13:53:20Z"
+  "updated_at": "2026-09-05T13:53:21Z"
 }

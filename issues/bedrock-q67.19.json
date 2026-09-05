@@ -11,11 +11,15 @@
     {
       "text": "Audit 2026-08-20: the two side notes at the end are resolved by the trim campaign - RoutingData.insert_log is now idempotent by id (dedupe concern gone), and RoutingData was rewritten as immutable gb_trees. The main olivine inclusive-end bug is untouched by the Phase B work and stands as written.",
       "timestamp": "2026-08-20T18:09:49Z"
+    },
+    {
+      "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/236. Published the 2026-09-05 implementation evaluation, pinned to 8f962e09, with evidence and acceptance criteria. Reproduced findings are distinguished from source-level risks. No implementation fix is included.",
+      "timestamp": "2026-09-05T23:58:14Z"
     }
   ],
   "priority": 2,
   "status": "open",
   "title": "Olivine clear_range uses inclusive end-key; everywhere else is exclusive",
   "type": "bug",
-  "updated_at": "2026-08-20T18:09:49Z"
+  "updated_at": "2026-09-05T23:58:14Z"
 }

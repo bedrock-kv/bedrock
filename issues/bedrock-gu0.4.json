@@ -2,14 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T23:46:40Z",
   "created": "2026-08-27T00:48:58Z",
   "description": "`Foreman.wait_for_healthy/2` has no callers. Verified across lib, test, guides, benchmarks, livebooks and the sibling bedrock_ex checkout: the only occurrences are its own definition, its own unit tests, and three lines of a guide that describes recovery as using it.\n\nIt is also the ONLY consumer of the foreman's health value. `State.health` is read in exactly two places — the `%{health: :ok}` head of `do_wait_for_healthy/2` and the guard on `notify_waiting_for_healthy/1` — and both exist to serve it.\n\nThat is why this whole family of bugs stayed invisible. bedrock-287 (order-dependent fold), bedrock-mxt (never recomputed at boot) and bedrock-n5h (recomputed without waking waiters) were all defects in a value whose only reader was an API nobody called.\n\n## Decision\n\nDelete it rather than fix around it. A blocking call with a default timeout of `:infinity`, no callers, and a documented contract the code does not honour is worse than nothing: it invites a future caller to depend on a guarantee that was never true.\n\n## Surface\n\n- `Foreman.wait_for_healthy/2` and its `handle_call(:wait_for_healthy, ...)`\n- `Impl.do_wait_for_healthy/2`, `notify_waiting_for_healthy/1`, `add_pid_to_waiting_for_healthy/2`\n- `State.waiting_for_healthy` and its `update_`/`put_` helpers\n- `settle_health/1` collapses back to `recompute_health/1` — the pairing bedrock-n5h introduced existed to wake waiters, and there are none left. Recomputing on every health change stays; only the notify half goes.\n- guides/deep-dives/architecture/infrastructure/foreman.md:111, 174, 229\n\nThis also closes bedrock-gu0.1 (the unpruned waiter list) by removing the list.\n\nObservability is NOT what is being removed here — the verdict is still computed on every change. Giving it an actual reader is bedrock-1a6, which becomes the epic's only remaining observability work.\n\n## Guide drift\n\nThe same guide references `Foreman.storage_workers/1` and a `:storage` worker kind, neither of which exists. That is broader pre-existing drift and belongs to bedrock-5tq; fix only the wait_for_healthy claims here and leave the rest to that epic rather than silently widening scope.\n\n## Test\n\nA removal, so there is no failing test to write first. The suite must stay green with the now-dead tests deleted, and `mix compile --warnings-as-errors` must be clean — an unused private helper left behind would surface there.",
   "id": "bedrock-gu0.4",
   "labels": [],
   "parent": "bedrock-gu0",
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Remove wait_for_healthy: an unused blocking API whose value nothing reads",
   "type": "task",
-  "updated_at": "2026-08-27T00:48:58Z"
+  "updated_at": "2026-09-05T23:46:40Z"
 }

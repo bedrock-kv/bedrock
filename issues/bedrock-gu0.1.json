@@ -2,14 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T23:46:40Z",
   "created": "2026-08-25T20:15:44Z",
   "description": "Found during the bedrock-n5h audit; pre-existing.\n\n`add_pid_to_waiting_for_healthy/2` (foreman/impl.ex) only ever prepends. The sole removal is the wholesale clear inside `notify_waiting_for_healthy/1` when health reaches `:ok`. There is no monitor on the waiting caller — `grep -rn 'monitor|:DOWN' lib/bedrock/service/foreman/` returns nothing.\n\n## Failure scenario\n\n`Foreman.wait_for_healthy/2` accepts a finite timeout (foreman.ex:52-54). A caller passes one, the foreman does not reach `:ok` in time, and `GenServer.call` flushes and raises in the caller. Its `from` stays in `waiting_for_healthy` forever.\n\nTwo consequences:\n\n- If health later reaches `:ok`, `GenServer.reply/2` sends `{stale_ref, :ok}` into a live process's mailbox where nothing matches it. Harmless in isolation, but it is an unmatched message that accumulates.\n- If `:ok` never arrives, the list grows without bound — one entry per timed-out or dead caller, retained for the life of the foreman.\n\nA caller that simply dies while parked has the same effect.\n\n## Why now\n\nbedrock-n5h routes every health change through `settle_health/1`, which means the reply now fires from four call sites rather than one. The leak is unchanged, but the stale-reply path is exercised more often.\n\n## Fix\n\nMonitor the caller when parking it, and drop its entry on `:DOWN`. That also bounds the list naturally. Alternatively record a deadline alongside each `from` and prune expired entries when settling — cheaper, but it duplicates the caller's own timeout and can still retain an entry for a caller that died early.\n\n## Test (write first, must fail)\n\nPark a caller with a short timeout, let it expire, drive health to `:ok`, and assert the list is empty and no message was sent. Separately: park a caller, kill it, assert its entry is dropped.",
   "id": "bedrock-gu0.1",
   "labels": [],
   "parent": "bedrock-gu0",
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "[BUG] waiting_for_healthy is never pruned: a timed-out caller leaks and gets a stale reply",
   "type": "bug",
-  "updated_at": "2026-08-25T20:15:44Z"
+  "updated_at": "2026-09-05T23:46:40Z"
 }

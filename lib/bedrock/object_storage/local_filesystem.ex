@@ -13,7 +13,7 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
 
   That matters most for `put_if_not_exists/4`, the writer for chunks,
   snapshots and the bootstrap record. Its callers in the data plane
-  (`Demux.ShardServer`, `ChunkWriter`, `Snapshot`) read `:already_exists`
+  (`Demux.ShardServer`, `Snapshot`) read `:already_exists`
   as success, so a key claimed by a short object would report success to
   everyone forever and could never be rewritten. The bootstrap callers
   (`ClusterBootstrap.Discovery`, recovery's `PersistencePhase`) instead

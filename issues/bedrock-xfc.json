@@ -6,9 +6,15 @@
   "description": "Reproduce develop CI run 33976924772 failure on OTP 27.3 / Elixir 1.17.3 using TDD in a worktree; investigate root cause, implement and validate a regression fix, obtain cold agent review before pushing a PR. Failure: DiskRaftLogProtocolTest.with_log/1 line 11 returns {:error, :incompatible_arguments}.",
   "id": "bedrock-xfc",
   "labels": [],
+  "comments": [
+    {
+      "text": "Baseline: 100 repeated protocol-suite runs on OTP 28 / Elixir 1.19 did not reproduce natural timing. Deterministic regression keeps first fixture open before opening second with a different tmp_dir: fails with exact CI {:error, :incompatible_arguments} at with_log/1. OTP dets add_user compares filename; DETS close from ExUnit on_exit is a non-owner call. Fix scopes fixture table name to module + test and relies on DETS owner-exit cleanup.",
+      "timestamp": "2026-09-05T18:43:57Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Fix DiskRaftLogProtocolTest incompatible_arguments CI failure",
   "type": "bug",
-  "updated_at": "2026-09-05T18:41:26Z"
+  "updated_at": "2026-09-05T18:43:57Z"
 }

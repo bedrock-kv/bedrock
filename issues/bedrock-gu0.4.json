@@ -8,6 +8,12 @@
   "id": "bedrock-gu0.4",
   "labels": [],
   "parent": "bedrock-gu0",
+  "comments": [
+    {
+      "text": "Closed retroactively: work merged to develop in df02343e, which carried a Closes line for this ticket but the tracker was never updated.",
+      "timestamp": "2026-09-05T23:46:40Z"
+    }
+  ],
   "priority": 3,
   "status": "closed",
   "title": "Remove wait_for_healthy: an unused blocking API whose value nothing reads",

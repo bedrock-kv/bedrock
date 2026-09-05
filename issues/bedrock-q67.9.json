@@ -14,6 +14,7 @@
     "bedrock-q67.10",
     "bedrock-q67.25"
   ],
+  "closed_at": "2026-09-05T23:54:38Z",
   "created": "2026-07-14T21:55:41Z",
   "description": "Phase B. 2026-01 audit: default metadata_merge_fn was a no-op discarding resolver updates. finalization.ex now has apply_metadata_updates — verify commit-proxy server wiring, system-key parse/merge, and add the integration test (director commits metadata key -\u003e resolver accumulates -\u003e proxy applies). Then move shard-map authority from TSL to system keys; Distributor rebuilds from it (FDB: DD rebuilds from keyServers/serverKeys).",
   "id": "bedrock-q67.9",
@@ -50,8 +51,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Phase B headline: shard map out of TSL into system keys; retire TSL-delta channel",
   "type": "task",
-  "updated_at": "2026-08-20T19:21:39Z"
+  "updated_at": "2026-09-05T23:54:38Z"
 }

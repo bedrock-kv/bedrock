@@ -67,9 +67,9 @@ The persistent transaction log interface that maintains the complete history of 
 - Per-shard slice distribution through its Demux, with object-storage chunk persistence and WAL trimming behind the confirmed durable floor
 - Segment rolling on cut boundaries, so the WAL's disk footprint tracks a few seconds of traffic rather than the cluster's lifetime
 
-### [Storage](../deep-dives/architecture/data-plane/storage.md)
+### [Materializer](../deep-dives/architecture/data-plane/materializer.md)
 
-The multi-version key-value storage interface that serves read operations across different transaction versions. Storage servers enable consistent snapshot reads while maintaining local state derived from transaction logs.
+The multi-version key-value storage interface that serves read operations across different transaction versions. Materializers enable consistent snapshot reads while maintaining local state derived from transaction logs.
 
 **Core Responsibilities:**
 
@@ -83,12 +83,12 @@ The Data Plane receives coordination from the Control Plane during recovery and 
 ## Transaction Flow Through Data Plane
 
 1. **Transaction Initiation**: Commit Proxy retrieves read version from Sequencer for snapshot isolation
-2. **Transaction Building**: Infrastructure layer accumulates reads and writes using Storage and Commit Proxy services
+2. **Transaction Building**: Infrastructure layer accumulates reads and writes using Materializer and Commit Proxy services
 3. **Transaction Submission**: Transaction Builder submits complete transaction to Commit Proxy
 4. **Conflict Detection**: Commit Proxy coordinates with Resolvers to detect version conflicts
 5. **Commit Coordination**: Commit Proxy orchestrates two-phase commit across required Log servers
 6. **Durability Confirmation**: Log servers acknowledge only after WAL append + fsync before commit confirmation
-7. **Storage Propagation**: Storage servers stream their shard's slices from each log's Demux to maintain local MVCC state
+7. **Materializer Propagation**: Materializers stream their shard's slices from each log's Demux to maintain local MVCC state
 
 ## Consistency Guarantees
 
@@ -109,7 +109,7 @@ Data Plane components balance consistency with performance:
 - **Version Assignment Bottleneck**: Single Sequencer trades availability for consistency, requiring careful placement and monitoring
 - **Batching Optimization**: Commit Proxy batching amortizes coordination costs while adding latency for transaction grouping
 - **Conflict Detection Scaling**: Multiple Resolvers handle different key ranges to distribute conflict detection workload
-- **Read Scaling**: Multiple Commit Proxy and Storage instances provide horizontal read capacity
+- **Read Scaling**: Multiple Commit Proxy and Materializer instances provide horizontal read capacity
 - **Write Durability Cost**: Universal WAL-fsync acknowledgment ensures durability but limits write throughput to slowest replica
 
 ## Design Principles

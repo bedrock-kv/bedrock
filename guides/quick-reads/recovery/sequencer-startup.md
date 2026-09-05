@@ -32,7 +32,7 @@ Once operational, the sequencer coordinates with other components through its th
 
 - [Commit proxies](../../deep-dives/architecture/data-plane/commit-proxy.md) request version assignments for transaction batches
 - [Links](../../deep-dives/architecture/infrastructure/link.md) obtain read versions for consistent snapshots
-- [Storage servers](../../deep-dives/architecture/data-plane/storage.md) organize MVCC data structures using the version timeline
+- [Materializers](../../deep-dives/architecture/data-plane/materializer.md) organize MVCC data structures using the version timeline
 
 This creates system-wide synchronization where all components operate from a shared understanding of transaction ordering.
 

@@ -1,6 +1,6 @@
 # Foreman
 
-The Foreman manages worker processes and service lifecycle operations across cluster nodes. It provides centralized control over the creation, monitoring, and removal of storage and log workers that implement Bedrock's data plane services.
+The Foreman manages worker processes and service lifecycle operations across cluster nodes. It provides centralized control over the creation, monitoring, and removal of materializer and log workers that implement Bedrock's data plane services.
 
 ## Core Responsibilities
 
@@ -33,9 +33,9 @@ The Foreman is a cornerstone of Bedrock's embedded distributed design, implement
 
 ### Local-First Process Management
 
-Unlike traditional distributed systems where data services run on dedicated infrastructure, the Foreman enables Bedrock to embed storage and log workers directly within application processes. This local-first approach means applications don't make network calls to remote databases—instead, they interact with co-located data services that the Foreman manages within the same compute environment.
+Unlike traditional distributed systems where data services run on dedicated infrastructure, the Foreman enables Bedrock to embed materializer and log workers directly within application processes. This local-first approach means applications don't make network calls to remote databases—instead, they interact with co-located data services that the Foreman manages within the same compute environment.
 
-The Foreman's worker management transforms how applications interact with persistent data. Rather than connecting to external database servers, applications work with local storage and log workers that provide the same transactional guarantees while eliminating network latency for many operations. This embedded approach enables new classes of applications that require both distributed consistency and local performance.
+The Foreman's worker management transforms how applications interact with persistent data. Rather than connecting to external database servers, applications work with local materializer and log workers that provide the same transactional guarantees while eliminating network latency for many operations. This embedded approach enables new classes of applications that require both distributed consistency and local performance.
 
 ### Unified Failure Domains
 
@@ -217,7 +217,7 @@ Foreman serves as the **service creation foundation** in Bedrock's service regis
 
 **Workflow Context**:
 
-1. **Worker Process Creation**: Creates and manages storage and log worker processes on cluster nodes
+1. **Worker Process Creation**: Creates and manages materializer and log worker processes on cluster nodes
 2. **Service Advertisement**: Provides service information to Link for cluster-wide registration
 3. **Health Monitoring**: Ensures worker processes remain operational and reports status
 4. **Resource Management**: Manages working directories, supervision trees, and process lifecycle
@@ -260,7 +260,7 @@ Foreman participates in the **infrastructure deployment** aspect of recovery:
 
 - **Recovery Resource Planning**: Director uses Foreman capabilities for optimal worker placement
 - **Fault Tolerance**: Process supervision ensures worker failures don't cascade to other components
-- **State Management**: Working directory management provides persistent state for storage and log workers
+- **State Management**: Working directory management provides persistent state for materializer and log workers
 - **Service Health**: Comprehensive health monitoring enables automated recovery decision-making
 
 ### Service Lifecycle Management Workflow
@@ -290,6 +290,6 @@ For detailed recovery process documentation, see **[Recovery Deep Dive](../../..
 - **[Director](../control-plane/director.md)**: Orchestrates worker creation through Foreman during recovery
 - **[Link](link.md)**: Receives service advertisements from Foreman for cluster registration
 - **[Coordinator](../control-plane/coordinator.md)**: Receives service information through Link from Foreman
-- **[Storage](../data-plane/storage.md)**: Storage workers created and managed by Foreman
+- **[Materializer](../data-plane/materializer.md)**: Materializer workers created and managed by Foreman
 - **[Log](../data-plane/log.md)**: Log workers created and managed by Foreman
 - **[Recovery](../../../deep-dives/recovery.md)**: Foreman role in cluster recovery infrastructure provisioning

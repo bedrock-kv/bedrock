@@ -14,7 +14,7 @@ The monitoring system supervises all critical transaction processing components 
 - **[Logs](../../deep-dives/architecture/data-plane/log.md)** - Transaction durability
 - **Director** - Recovery coordination and cluster health
 
-[Storage](../../deep-dives/architecture/data-plane/storage.md) servers are deliberately excluded because they have independent failure handling through replication and automatic recovery mechanisms.
+[Materializer](../../deep-dives/architecture/data-plane/materializer.md)s are deliberately excluded because they have independent failure handling through replication and automatic recovery mechanisms.
 
 ## Fail-Fast Philosophy
 

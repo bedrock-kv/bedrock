@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Olivine keeps append-only workloads readable after page splits.** Keys
+  above every stored page boundary now extend the actual rightmost page
+  instead of returning to page 0 and overlapping later ranges. Recovery
+  validates complete snapshots and the recovered page chain, rejecting
+  damaged indexes explicitly instead of silently routing reads through an
+  ambiguous page map.
+
 ## 0.7.0 — 2026-08-28
 
 This release moves cluster metadata out of the broadcast layout and into the

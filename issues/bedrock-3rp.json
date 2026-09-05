@@ -2,13 +2,14 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T16:08:24Z",
   "created": "2026-09-05T16:07:31Z",
   "description": "Ignore the root .claude directory and remove its existing tracked files while preserving local copies. Commit and push to develop as requested.",
   "id": "bedrock-3rp",
   "labels": [],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Exclude .claude from the project",
   "type": "task",
-  "updated_at": "2026-09-05T16:07:57Z"
+  "updated_at": "2026-09-05T16:08:24Z"
 }

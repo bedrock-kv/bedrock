@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-05T14:16:33Z",
+  "description": "Fresh read-only review of b62836b3 after missing/cyclic predecessor and page-ID validation fixes. Final gate before PR.",
+  "id": "bedrock-ecd",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Final cold review GH #158 recovery hardening",
+  "type": "task",
+  "updated_at": "2026-09-05T14:16:33Z"
+}

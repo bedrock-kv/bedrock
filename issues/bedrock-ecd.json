@@ -6,9 +6,15 @@
   "description": "Fresh read-only review of b62836b3 after missing/cyclic predecessor and page-ID validation fixes. Final gate before PR.",
   "id": "bedrock-ecd",
   "labels": [],
+  "comments": [
+    {
+      "text": "Cold review findings on b62836b3:\n\nHIGH / PR blocker — valid incremental recovery can be rejected after a range clear. Reproduction: persist a valid five-page snapshot (0-\u003e1-\u003e2-\u003e3-\u003e4), then persist a valid incremental clear_range that deletes pages 1 and 2 and leaves current chain 0-\u003e3-\u003e4. Index.load_from returns {:error, {:corrupt_index, {:unreachable_pages, 1}}}. At index.ex:277-288, find_additional_needed_pages scans every page in updated_all_pages, including unreachable stale snapshot page 1, and chases its stale 1-\u003e2 pointer merely because page 2 exists in the snapshot block. Page 2 is added to final_page_map even though the newest page 0 bypasses it; the new reachable-count check at 370-378 then rejects this valid database. Sources used to discover additional pages must be restricted to pages known reachable from the current reconstructed chain (or stale additions must be pruned without weakening complete-snapshot validation). Add this actual snapshot + multi-page deletion + incremental recovery regression.\n\nMEDIUM — missing predecessor validation is bypassed after early page resolution. A durable incremental block containing valid page 0 -\u003e 0 and pointing to a nonexistent predecessor returns {:ok, ...}; line 168 returns before loading the predecessor. This is not an unresolved-page/data-map safety failure—the complete current chain is already reconstructed—but it contradicts the new fail-closed missing-history contract and the added missing-predecessor test only covers an empty current block. Decide/document whether unneeded older history is intentionally ignored; if all declared history must be validated, traverse/validate predecessor metadata independently of page resolution and add the resolved-page case.\n\nOtherwise: right-edge routing is correct; nil/self-loop snapshots, Version.zero termination, strict descending checks, selected page ID validation, error propagation, analyzer handling, and recovered data offset restoration looked sound. Focused 37 tests and full Olivine suite (315 tests, 23 properties) passed.",
+      "timestamp": "2026-09-05T14:22:08Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Final cold review GH #158 recovery hardening",
   "type": "task",
-  "updated_at": "2026-09-05T14:16:49Z"
+  "updated_at": "2026-09-05T14:22:08Z"
 }

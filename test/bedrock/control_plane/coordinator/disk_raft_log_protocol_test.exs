@@ -6,13 +6,39 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLogProtocolTest do
 
   @moduletag :tmp_dir
 
-  def with_log(%{tmp_dir: tmp_dir} = context) do
-    log = DiskRaftLog.new(log_dir: tmp_dir, table_name: :protocol_test)
+  def with_log(%{tmp_dir: tmp_dir, test: test} = context) do
+    # DETS names are shared across the VM. A previous test's automatic close
+    # may still be pending, so each test needs its own name as well as its file.
+    table_name = :"#{__MODULE__}.#{test}"
+    log = DiskRaftLog.new(log_dir: tmp_dir, table_name: table_name)
     {:ok, log} = DiskRaftLog.open(log)
 
-    on_exit(fn -> DiskRaftLog.close(log) end)
-
+    # DETS closes the table when this test process exits. An on_exit callback
+    # runs in another process and cannot close this process's DETS handle.
     {:ok, Map.put(context, :log, log)}
+  end
+
+  test "fixtures keep separate logs when a previous table is still open", %{tmp_dir: tmp_dir} do
+    {:ok, %{log: first}} =
+      with_log(%{tmp_dir: Path.join(tmp_dir, "first"), test: :first_fixture})
+
+    try do
+      {:ok, _} = Log.append_transactions(first, {0, 0}, [{{1, 1}, {1, :first}}])
+
+      {:ok, %{log: second}} =
+        with_log(%{tmp_dir: Path.join(tmp_dir, "second"), test: :second_fixture})
+
+      try do
+        assert Log.newest_transaction_id(second) == {0, 0}
+        assert {:ok, _} = Log.append_transactions(second, {0, 0}, [{{2, 1}, {2, :second}}])
+        assert Log.transactions_to(first, :newest) == [{{1, 1}, {1, :first}}]
+        assert Log.transactions_to(second, :newest) == [{{2, 1}, {2, :second}}]
+      after
+        DiskRaftLog.close(second)
+      end
+    after
+      DiskRaftLog.close(first)
+    end
   end
 
   defp create_test_chain(log) do

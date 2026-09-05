@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Olivine keeps append-only workloads readable after page splits.** Keys
+  above every stored page boundary now extend the actual rightmost page
+  instead of returning to page 0 and overlapping later ranges. Recovery
+  validates complete snapshots and the recovered page chain, rejecting
+  damaged indexes explicitly instead of silently routing reads through an
+  ambiguous page map.
+
 ## 0.7.0 — 2026-08-28
 
 This release moves cluster metadata out of the broadcast layout and into the
@@ -384,13 +393,6 @@ describes; the broadcast carries only this epoch's wiring.
   restarts its stream from the compacted durable boundary, so transactions
   ingested while compaction ran are re-delivered instead of vanishing until
   the next recovery.
-
-- **Olivine keeps append-only workloads readable after page splits.** Keys
-  above every stored page boundary now extend the actual rightmost page
-  instead of returning to page 0 and overlapping later ranges. Recovery
-  validates complete snapshots and the recovered page chain, rejecting
-  damaged indexes explicitly instead of silently routing reads through an
-  ambiguous page map.
 
 - **Guides reflect the new data plane.** The durability-foundation, recovery,
   data-plane, and async-persistence guides describe the shipped design —

@@ -74,16 +74,6 @@ defmodule Bedrock.Service.Foreman.Server do
     do: t |> do_remove_workers(worker_ids) |> then(fn {t, results} -> reply(t, results) end)
 
   @impl true
-  def handle_call(:wait_for_healthy, from, t) do
-    t
-    |> do_wait_for_healthy(from)
-    |> case do
-      :ok -> reply(t, :ok)
-      t -> noreply(t)
-    end
-  end
-
-  @impl true
   def handle_call(_, _from, t), do: reply(t, {:error, :unknown_command})
 
   @impl true

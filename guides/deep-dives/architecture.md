@@ -23,7 +23,7 @@ These components handle transaction processing, conflict resolution, and persist
 - **[Commit Proxy](architecture/data-plane/commit-proxy.md)** - Orchestrates the two-phase commit protocol across log servers and provides horizontal scaling for transaction processing
 - **[Resolver](architecture/data-plane/resolver.md)** - Detects conflicts between concurrent transactions using version analysis
 - **[Log](architecture/data-plane/log.md)** - Persistent transaction log interface that maintains committed transaction history
-- **[Storage](architecture/data-plane/storage.md)** - Multi-version key-value storage interface that serves read operations
+- **[Materializer](architecture/data-plane/materializer.md)** - Multi-version key-value storage interface that serves read operations
 
 For a comprehensive overview, see [Data Plane Overview](../quick-reads/data-plane.md).
 

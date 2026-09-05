@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-05T13:45:52Z",
+  "description": "Independently review commit 79f0f781 for correctness, recovery safety, regression risk, and test adequacy against GitHub issue #158. Read-only review; report findings before PR push.",
+  "id": "bedrock-5yj",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Cold review GitHub #158 Olivine fix",
+  "type": "task",
+  "updated_at": "2026-09-05T13:45:52Z"
+}

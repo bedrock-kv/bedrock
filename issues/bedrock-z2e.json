@@ -2,13 +2,14 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T23:46:43Z",
   "created": "2026-08-25T19:58:21Z",
   "description": "Found during the bedrock-mxt audit.\n\n`try_to_start_worker/3` concludes `{:ok, pid}` as soon as `Process.whereis(op.otp_name)` finds the registered name (starting_workers.ex:179-184), which happens once `DynamicSupervisor.start_child/2` returns — i.e. once the worker's `init/1` has returned.\n\nFor Olivine that is not the same as being operational: `init/1` is `{:ok, args, {:continue, :finish_startup}}` (olivine/server.ex:76) and the real work happens in the continue, which can fail and `stop(:no_state, reason)` (olivine/server.ex:305-307).\n\n## Failure scenario\n\nA materializer whose `Logic.startup/5` will fail. If `whereis` wins the race against the continue, the foreman records `{:ok, pid}`, health computes to `:ok`, and any `wait_for_healthy/2` caller is told the node is ready. The worker then dies.\n\nThe foreman never learns. There is no `Process.monitor`, no `trap_exit`, and no `:DOWN` handling anywhere under lib/bedrock/service/foreman/ — grep confirms zero hits. So `state.workers` keeps `{:ok, pid}` for a dead pid indefinitely, and `do_relay_tsl/2` (impl.ex:63) goes on `send`ing layout pushes to it — a send to a dead pid succeeds silently, so displacement self-detection is also lost for that worker.\n\nIf the process loses the race and is already gone, `find_worker/1` yields `{:failed_to_start, :process_not_started}`. Same disk state, two different verdicts, decided by scheduling.\n\n## Why it matters more now\n\nbedrock-mxt makes spin-up compute a verdict from these values, so a stale `{:ok, dead_pid}` now becomes an observable `:ok`. Before, the value existed but nothing settled it at boot.\n\n## Fix\n\nMonitor each worker when it starts, and on `:DOWN` mark it `{:failed_to_start, reason}` (or a new `:died` state) and recompute health. That also gives `do_relay_tsl/2` an accurate recipient list. Consider whether `{:ok, pid}` should require the worker's own readiness report rather than mere name registration — Olivine already sends one; Shale would need to.\n\n## Test (write first, must fail)\n\nStart a worker through the foreman, kill it, assert the foreman's worker map no longer reports `{:ok, pid}` and that health reflects the loss.",
   "id": "bedrock-z2e",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "[BUG] The foreman never monitors its workers, so health can report :ok for a dead process",
   "type": "bug",
-  "updated_at": "2026-08-25T19:58:21Z"
+  "updated_at": "2026-09-05T23:46:43Z"
 }

@@ -11,6 +11,10 @@
     {
       "text": "PR #221: https://github.com/bedrock-kv/bedrock/pull/221",
       "timestamp": "2026-08-25T20:53:06Z"
+    },
+    {
+      "text": "Closed retroactively: work merged to develop in 9b4b2676, which carried a Closes line for this ticket but the tracker was never updated.",
+      "timestamp": "2026-09-05T23:46:38Z"
     }
   ],
   "priority": 3,

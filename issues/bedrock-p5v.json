@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-05T13:34:11Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-p5v",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Fix Olivine right-edge routing and reject corrupt recovered indexes",
   "type": "task",
-  "updated_at": "2026-09-05T13:34:11Z"
+  "updated_at": "2026-09-05T13:34:18Z"
 }

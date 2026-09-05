@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-05T13:45:52Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-5yj",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Cold review GitHub #158 Olivine fix",
   "type": "task",
-  "updated_at": "2026-09-05T13:45:52Z"
+  "updated_at": "2026-09-05T13:46:29Z"
 }

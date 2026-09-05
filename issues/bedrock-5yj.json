@@ -6,9 +6,15 @@
   "description": "Independently review commit 79f0f781 for correctness, recovery safety, regression risk, and test adequacy against GitHub issue #158. Read-only review; report findings before PR push.",
   "id": "bedrock-5yj",
   "labels": [],
+  "comments": [
+    {
+      "text": "Cold review of 79f0f781: BLOCKED. P1 index.ex:357-359,375 selects stale duplicate values after compaction (actual old-routing transaction history reproduced: newest on page 0, older on page 1, compaction then recovery returns older). P1 index.ex:294-295 unions stale entries and resurrects clears (300-key batch; append max; update key100; clear key100; before restart not_found, recovery returns initial). P1 index.ex:159-161,332-339 validates only loader-selected pages: complete snapshot with orphan page is reported clean and orphan lost; missing page 0 becomes clean empty index. Recommend fail-closed recovery unless semantics can be proven from authoritative history, and validate complete snapshot membership before filtering. Focused suite: 11 properties/11 tests passed; full Olivine suite: 23 properties/307 tests passed. Reproductions used in-memory old Tree fallback and temporary databases; no tracked files edited.",
+      "timestamp": "2026-09-05T13:53:20Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Cold review GitHub #158 Olivine fix",
   "type": "task",
-  "updated_at": "2026-09-05T13:46:29Z"
+  "updated_at": "2026-09-05T13:53:20Z"
 }

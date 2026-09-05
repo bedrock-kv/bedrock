@@ -26,11 +26,15 @@
     {
       "text": "Release cold review found two complementary historical topologies: stale pages deleted by a newer chain must not be chased, while newly split siblings cached in newer blocks must be followed once an older root reaches them. Added red regressions for deletion, non-leftmost split, and cached-live-chain closure. Recovery now resolves only needed IDs transitively against the accumulated newest-page view after each block. Final gates: Olivine 319 tests + 23 properties; full 2,848 tests + 158 properties + 17 doctests; format, Credo strict, Dialyzer green.",
       "timestamp": "2026-09-05T14:29:28Z"
+    },
+    {
+      "text": "Moved the unchanged Olivine changelog note from the historical 0.7.0 entry into a new top-level Unreleased section, preserving released history. Diff check and format check pass.",
+      "timestamp": "2026-09-05T15:36:21Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Fix Olivine right-edge routing and reject corrupt recovered indexes",
   "type": "task",
-  "updated_at": "2026-09-05T15:34:18Z"
+  "updated_at": "2026-09-05T15:36:21Z"
 }

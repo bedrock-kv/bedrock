@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-05T14:24:34Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-2p1",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Release cold review exact GH #158 commit",
   "type": "task",
-  "updated_at": "2026-09-05T14:24:34Z"
+  "updated_at": "2026-09-05T14:24:51Z"
 }

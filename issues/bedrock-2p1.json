@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-05T14:24:34Z",
+  "description": "Final read-only review of exact commit e2d29570 after reachable-only recovery traversal fix. Must be clean before branch push and PR.",
+  "id": "bedrock-2p1",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Release cold review exact GH #158 commit",
+  "type": "task",
+  "updated_at": "2026-09-05T14:24:34Z"
+}

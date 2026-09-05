@@ -10,11 +10,15 @@
     {
       "text": "Reproduced reported a22a1516 LayoutIndex via standalone ExUnit: OTP 29.0.5 raises :not_orddict; OTP 28.3 emits 3 entries with duplicate 0xFF end key. Current develop removed bulk build_index in 5d65c846 (#194) in favor of per-entry insert; OTP29 CI already present. Scope is actual-recovery-layout regression tests (both fetch orders, distinct refs, exact tree and boundary routing) and tested-toolchain docs; no obsolete builder patch or release backport.",
       "timestamp": "2026-09-05T15:53:59Z"
+    },
+    {
+      "text": "Validation on OTP29.0.5/Elixir1.20.3: targeted 7/7; full suite 3025 passed, 2 distributed excluded; format, test compile warnings-as-errors, strict Credo, Dialyzer (0 errors), mix deps.audit passed. Cold independent review bedrock-99z found no actionable issues. Mint Hex advisory/audit discrepancy separately tracked bedrock-783. Current PR adds tests/docs only; historical repro fails without patch exactly as issue reports.",
+      "timestamp": "2026-09-05T15:58:59Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "gh-141: Reproduce and fix duplicate layout boundaries",
   "type": "bug",
-  "updated_at": "2026-09-05T15:53:59Z"
+  "updated_at": "2026-09-05T15:58:59Z"
 }

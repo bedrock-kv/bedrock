@@ -15,6 +15,10 @@
     {
       "text": "Fix pushed as draft PR #228 (branch fix/bedrock-n9w-placeholder-flake, commit 464e8fd3). Cold-reviewed pre-push by a context-free agent: approve, with two findings folded in — the RuntimeError :DOWN at server_test.exs:923 is relay-class (monitored recruit task must be scheduled, run, and crash) and is now widened, as is the 500ms recruitment window at :782 (undercut by the bedrock-uvk 1.5s-missed datum). 36 sites total carry 5_000. Ticket stays in_progress until the PR lands.",
       "timestamp": "2026-09-05T13:49:52Z"
+    },
+    {
+      "text": "Closed retroactively: work merged to develop in e1838b70, which carried a Closes line for this ticket but the tracker was never updated.",
+      "timestamp": "2026-09-05T23:46:41Z"
     }
   ],
   "priority": 2,

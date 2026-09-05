@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T14:30:12Z",
   "created": "2026-09-05T14:24:34Z",
   "description": "Final read-only review of exact commit e2d29570 after reachable-only recovery traversal fix. Must be clean before branch push and PR.",
   "id": "bedrock-2p1",
@@ -13,7 +14,7 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Release cold review exact GH #158 commit",
   "type": "task",
   "updated_at": "2026-09-05T14:30:12Z"

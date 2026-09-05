@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-05T14:07:39Z",
+  "description": "Fresh read-only review of e34d5607 after empty-snapshot and constant-memory validation fixes. Verify correctness, tests, and regression risks before PR.",
+  "id": "bedrock-zaj",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Cold re-review amended GH #158 fix",
+  "type": "task",
+  "updated_at": "2026-09-05T14:07:39Z"
+}

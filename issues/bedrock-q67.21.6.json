@@ -13,6 +13,12 @@
   "id": "bedrock-q67.21.6",
   "labels": [],
   "parent": "bedrock-q67.21",
+  "comments": [
+    {
+      "text": "Closed retroactively: work merged to develop in b54976e9, which carried a Closes line for this ticket but the tracker was never updated.",
+      "timestamp": "2026-09-05T23:46:41Z"
+    }
+  ],
   "priority": 2,
   "status": "closed",
   "title": "In-band retirement: the victim learns from its own stream",

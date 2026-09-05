@@ -18,11 +18,15 @@
     {
       "text": "OTP27.3.3/Elixir1.17.3 full suite twice at seed346337: original protocol suite passes; only failure is existing bedrock-s9x TransactionBuilder 100ms DOWN timeout (2894 tests, 1 failure, 2 excluded). Disclosed in PR validation. Commit c31a3001 passed all hook checks; cold review clean.",
       "timestamp": "2026-09-05T18:48:24Z"
+    },
+    {
+      "text": "PR opened against develop after cold review: https://github.com/bedrock-kv/bedrock/pull/232 . Original scheduling race not naturally reproduced; deterministic overlap regression is red/green. Unrelated OTP27 full-suite flake disclosed; that test passes isolated.",
+      "timestamp": "2026-09-05T18:48:54Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Fix DiskRaftLogProtocolTest incompatible_arguments CI failure",
   "type": "bug",
-  "updated_at": "2026-09-05T18:48:24Z"
+  "updated_at": "2026-09-05T18:48:54Z"
 }

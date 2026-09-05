@@ -6,9 +6,15 @@
   "description": "Fresh read-only review of e34d5607 after empty-snapshot and constant-memory validation fixes. Verify correctness, tests, and regression risks before PR.",
   "id": "bedrock-zaj",
   "labels": [],
+  "comments": [
+    {
+      "text": "Cold review of e34d5607: BLOCKER remains. High — lib/bedrock/data_plane/materializer/olivine/index.ex:192-205 does not fail closed for invalid incremental version history. A durable empty block v20 whose nonzero predecessor v10 is absent hits load_page_block :not_found, is downgraded to Version.zero, synthesizes page 0, and recovers successfully as an empty index at v20. This can silently hide all prior data behind an empty eviction block. A two-record v10-\u003ev20, v20-\u003ev10 predecessor cycle also loops forever because traversal tracks neither visited versions nor monotonic descent. Valid fresh empty history v20-\u003ezero and snapshots terminating at nil do not require the fallback. Return a structured error for a missing nonzero target and reject repeated/non-descending predecessor versions; add regressions for valid empty-\u003ezero, missing nonzero predecessor, and a cycle. Medium — index.ex:286-315 validates chain membership by map keys but never checks each map key equals Page.id(page). A complete snapshot %{0 =\u003e {Page.new(1, [{\"a\", locator}]), 0}} passes recovery; Tree.from_page_map indexes page 1, then locator_for_key raises because page_map only has key 0. Validate embedded page identity before building the tree. Positive results: right-edge routing is correct; complete empty snapshots now reject; global order/adjacent duplicate/reachability validation is constant-key-memory and sound for the GH #158 corruption shape; error propagation, recovered data offset, and analyzer clauses look correct. Verification: full Olivine suite 312 tests + 23 properties passed; focused routing/recovery/snapshot suites passed; mix format --check-formatted, git diff --check, and mix credo --strict passed.",
+      "timestamp": "2026-09-05T14:13:05Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Cold re-review amended GH #158 fix",
   "type": "task",
-  "updated_at": "2026-09-05T14:08:06Z"
+  "updated_at": "2026-09-05T14:13:05Z"
 }

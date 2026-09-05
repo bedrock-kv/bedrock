@@ -6,9 +6,15 @@
   "description": "Observed 2026-08-20 on stack #166 CI (S3 MinIO job): test/bedrock/internal/transaction_builder_test.exs:319 'unknown info messages crash the process' - the crash happens (FunctionClauseError logged) but assert_receive {:DOWN,...} times out at the default 100ms on a loaded runner; rerun passed. File untouched by the stack. Likely fix: attach the monitor before provoking the crash (if not already) and/or raise the assert_receive timeout - the assertion is about the crash occurring, not about it occurring within 100ms.",
   "id": "bedrock-s9x",
   "labels": [],
+  "comments": [
+    {
+      "text": "Reproduced during bedrock-xfc validation on Elixir1.17.3 / OTP27.3.3, seed346337: TransactionBuilderTest line319 failed waiting 100ms for DOWN at line328; FunctionClauseError was logged as expected. No related source changes in xfc. Full-suite same-seed rerun underway.",
+      "timestamp": "2026-09-05T18:47:26Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "Flaky test: TransactionBuilderTest unknown-info crash misses 100ms DOWN window on loaded CI",
   "type": "task",
-  "updated_at": "2026-08-20T17:55:15Z"
+  "updated_at": "2026-09-05T18:47:26Z"
 }

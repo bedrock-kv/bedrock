@@ -10,11 +10,15 @@
     {
       "text": "Reproduced during bedrock-xfc validation on Elixir1.17.3 / OTP27.3.3, seed346337: TransactionBuilderTest line319 failed waiting 100ms for DOWN at line328; FunctionClauseError was logged as expected. No related source changes in xfc. Full-suite same-seed rerun underway.",
       "timestamp": "2026-09-05T18:47:26Z"
+    },
+    {
+      "text": "Same-seed full-suite rerun also failed the same 100ms DOWN assertion on OTP27.3.3/Elixir1.17.3. Both logs show expected FunctionClauseError, only delivery deadline fails.",
+      "timestamp": "2026-09-05T18:48:24Z"
     }
   ],
   "priority": 3,
   "status": "open",
   "title": "Flaky test: TransactionBuilderTest unknown-info crash misses 100ms DOWN window on loaded CI",
   "type": "task",
-  "updated_at": "2026-09-05T18:47:26Z"
+  "updated_at": "2026-09-05T18:48:24Z"
 }

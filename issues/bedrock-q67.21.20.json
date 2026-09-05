@@ -7,9 +7,15 @@
   "id": "bedrock-q67.21.20",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/237. Published the 2026-09-05 implementation evaluation, pinned to 8f962e09, with evidence and acceptance criteria. Reproduced findings are distinguished from source-level risks. No implementation fix is included.",
+      "timestamp": "2026-09-05T23:58:15Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Tag 0 has two membership owners: the distributor can retire the member the durable pointer names",
   "type": "task",
-  "updated_at": "2026-08-24T23:06:49Z"
+  "updated_at": "2026-09-05T23:58:15Z"
 }

@@ -68,13 +68,19 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
 
       task = async_get(placeholder, "apple", timeout: 5_000)
 
-      assert_receive {:"$gen_cast", {:coverage_demand, 1}}
-      assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :parked], %{count: 1}, %{tag: 1}}
+      # Receive windows in this file are generous (5s): every asserted
+      # message needs at least one other process — a Task, the
+      # placeholder, or a telemetry relay — scheduled before it can
+      # arrive, and the default 100ms window flakes under full-suite
+      # load (bedrock-n9w). assert_receive returns the moment the
+      # message arrives, so the width is free.
+      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 5_000
+      assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :parked], %{count: 1}, %{tag: 1}}, 5_000
 
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
       assert {:ok, "red"} = Task.await(task, 5_000)
-      assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :drained], %{count: 1}, %{tag: 1}}
+      assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :drained], %{count: 1}, %{tag: 1}}, 5_000
     end
 
     test "parked key-selector get is drained with the resolved key-value" do
@@ -84,7 +90,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       selector = KeySelector.first_greater_or_equal("apple")
       task = Task.async(fn -> Materializer.get(placeholder, selector, @version, timeout: 5_000) end)
 
-      assert_receive {:"$gen_cast", {:coverage_demand, 1}}
+      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 5_000
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
       assert {:ok, {"apple", "red"}} = Task.await(task, 5_000)
@@ -96,7 +102,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
 
       task = Task.async(fn -> Materializer.get_range(placeholder, "a", "c", @version, timeout: 5_000) end)
 
-      assert_receive {:"$gen_cast", {:coverage_demand, 1}}
+      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 5_000
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
       assert {:ok, {[{"apple", "red"}, {"banana", "yellow"}], false}} = Task.await(task, 5_000)
@@ -109,7 +115,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       task_a = async_get(placeholder, "apple", timeout: 5_000)
       task_b = async_get(placeholder, "cherry", timeout: 5_000)
 
-      assert_receive {:"$gen_cast", {:coverage_demand, 1}}
+      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 5_000
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
       assert {:ok, "red"} = Task.await(task_a, 1_000)
@@ -127,7 +133,8 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       assert {:error, :unavailable} = Task.await(task, 5_000)
 
       assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :shed], %{count: 1},
-                      %{reason: :deadline_expired}}
+                      %{reason: :deadline_expired}},
+                     5_000
     end
 
     test "caller-supplied timeout below hold_ms bounds the parking budget" do
@@ -171,7 +178,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
       assert {:ok, "red"} = Materializer.get(placeholder, "apple", @version, timeout: 5_000)
-      assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :forwarded], %{count: 1}, %{tag: 1}}
+      assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :forwarded], %{count: 1}, %{tag: 1}}, 5_000
       refute_receive {:"$gen_cast", {:coverage_demand, _tag}}, 50
     end
 
@@ -182,7 +189,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       :ok = Placeholder.notify_covered(placeholder, 1, stub)
 
       task = async_get(placeholder, "pear", timeout: 5_000)
-      assert_receive {:"$gen_cast", {:coverage_demand, 2}}
+      assert_receive {:"$gen_cast", {:coverage_demand, 2}}, 5_000
 
       :ok = Placeholder.notify_covered(placeholder, 2, start_stub(%{"pear" => "green"}))
       assert {:ok, "green"} = Task.await(task, 5_000)
@@ -196,7 +203,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       task_a = async_get(placeholder, "apple", timeout: 5_000)
       task_b = async_get(placeholder, "banana", timeout: 5_000)
 
-      assert_receive {:"$gen_cast", {:coverage_demand, 1}}
+      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 5_000
       refute_receive {:"$gen_cast", {:coverage_demand, 1}}, 50
 
       stub = start_stub(%{"apple" => "red", "banana" => "yellow"})
@@ -211,8 +218,8 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       task_a = async_get(placeholder, "apple", timeout: 5_000)
       task_b = async_get(placeholder, "pear", timeout: 5_000)
 
-      assert_receive {:"$gen_cast", {:coverage_demand, 1}}
-      assert_receive {:"$gen_cast", {:coverage_demand, 2}}
+      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 5_000
+      assert_receive {:"$gen_cast", {:coverage_demand, 2}}, 5_000
 
       assert {:error, :unavailable} = Task.await(task_a, 1_000)
       assert {:error, :unavailable} = Task.await(task_b, 1_000)
@@ -225,19 +232,19 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
       placeholder = start_placeholder()
 
       task = async_get(placeholder, "apple", timeout: 5_000)
-      # Generous budget: the default 100ms flakes under full-suite load.
-      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 1_000
+      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 5_000
 
       :ok = Placeholder.notify_coverage_failed(placeholder, 1, :no_capacity)
 
       assert {:error, :unavailable} = Task.await(task, 5_000)
 
       assert_receive {:telemetry, [:bedrock, :distributor, :placeholder, :shed], %{count: 1},
-                      %{tag: 1, reason: :no_capacity}}
+                      %{tag: 1, reason: :no_capacity}},
+                     5_000
 
       # Dedupe was cleared: a later request re-triggers the demand.
       retry_task = async_get(placeholder, "apple", timeout: 5_000)
-      assert_receive {:"$gen_cast", {:coverage_demand, 1}}
+      assert_receive {:"$gen_cast", {:coverage_demand, 1}}, 5_000
 
       stub = start_stub(%{"apple" => "red"})
       :ok = Placeholder.notify_covered(placeholder, 1, stub)

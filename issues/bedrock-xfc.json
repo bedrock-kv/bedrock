@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-05T18:41:18Z",
+  "description": "Reproduce develop CI run 33976924772 failure on OTP 27.3 / Elixir 1.17.3 using TDD in a worktree; investigate root cause, implement and validate a regression fix, obtain cold agent review before pushing a PR. Failure: DiskRaftLogProtocolTest.with_log/1 line 11 returns {:error, :incompatible_arguments}.",
+  "id": "bedrock-xfc",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Fix DiskRaftLogProtocolTest incompatible_arguments CI failure",
+  "type": "bug",
+  "updated_at": "2026-09-05T18:41:18Z"
+}

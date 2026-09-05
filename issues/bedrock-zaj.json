@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-05T14:07:39Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-zaj",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Cold re-review amended GH #158 fix",
   "type": "task",
-  "updated_at": "2026-09-05T14:07:39Z"
+  "updated_at": "2026-09-05T14:08:06Z"
 }

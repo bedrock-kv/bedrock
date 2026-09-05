@@ -32,11 +32,15 @@
     {
       "text": "Moved the unchanged Olivine changelog note from the historical 0.7.0 entry into a new top-level Unreleased section, preserving released history. Diff check and format check pass.",
       "timestamp": "2026-09-05T15:36:21Z"
+    },
+    {
+      "text": "Moved the unchanged Olivine changelog note from the historical 0.7.0 entry into a new top-level Unreleased section, preserving released history. Diff check, format check, Credo, and Dialyzer pass.",
+      "timestamp": "2026-09-05T15:36:55Z"
     }
   ],
   "priority": 2,
   "status": "closed",
   "title": "Fix Olivine right-edge routing and reject corrupt recovered indexes",
   "type": "task",
-  "updated_at": "2026-09-05T15:36:21Z"
+  "updated_at": "2026-09-05T15:36:55Z"
 }

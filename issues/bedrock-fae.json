@@ -6,9 +6,15 @@
   "description": "Use an isolated worktree and TDD to reproduce GitHub #141, investigate current LayoutIndex behavior, fix boundary construction, validate, and obtain a cold-agent review before pushing a pedagogical PR.",
   "id": "bedrock-fae",
   "labels": [],
+  "comments": [
+    {
+      "text": "Reproduced reported a22a1516 LayoutIndex via standalone ExUnit: OTP 29.0.5 raises :not_orddict; OTP 28.3 emits 3 entries with duplicate 0xFF end key. Current develop removed bulk build_index in 5d65c846 (#194) in favor of per-entry insert; OTP29 CI already present. Scope is actual-recovery-layout regression tests (both fetch orders, distinct refs, exact tree and boundary routing) and tested-toolchain docs; no obsolete builder patch or release backport.",
+      "timestamp": "2026-09-05T15:53:59Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "gh-141: Reproduce and fix duplicate layout boundaries",
   "type": "bug",
-  "updated_at": "2026-09-05T15:51:50Z"
+  "updated_at": "2026-09-05T15:53:59Z"
 }

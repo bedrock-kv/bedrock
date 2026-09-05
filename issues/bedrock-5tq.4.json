@@ -2,14 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T23:54:36Z",
   "created": "2026-08-15T17:18:36Z",
   "description": "The codebase renamed storage servers to materializers (lib/bedrock/data_plane/materializer*); the guides still say 'Storage' everywhere — file names (data-plane/storage.md), glossary anchors (#storage, transaction-builder.md links to a nonexistent #storage-server anchor), and prose. qzr.6 added a bridge ('called materializers in the codebase') in two places; decide the canonical term and apply it consistently: either rename the docs to materializer (with anchor redirects) or document 'Storage' as the concept name with one prominent note. Also foreman.md still shows :storage as a worker kind in one place; the code's worker_for_kind accepts :log | :materializer only.",
   "id": "bedrock-5tq.4",
   "labels": [],
   "parent": "bedrock-5tq",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Storage vs Materializer terminology pass across all guides",
   "type": "chore",
-  "updated_at": "2026-08-15T17:18:36Z"
+  "updated_at": "2026-09-05T23:54:36Z"
 }

@@ -6,9 +6,15 @@
   "description": "Fresh independent review of final commit 845026d5 after the first cold review rejected automatic repair. Verify fail-closed recovery validation, snapshot provenance handling, routing fix, tests, and API/error propagation before PR push.",
   "id": "bedrock-5co",
   "labels": [],
+  "comments": [
+    {
+      "text": "Cold review BLOCKER: an empty complete snapshot at nonzero durable version is accepted. validate_snapshot_page_map/2 delegates %{} to validate_page_map/1, whose empty-map clause returns :ok; selective loading then synthesizes page 0 (index.ex:177-178, 283-286) and recovery returns {:ok, IndexManager}, silently presenting a corrupt snapshot as an empty database. Reproduced with a self-loop version block containing %{}. Reject empty snapshots as missing_page_zero while retaining the legitimate empty-incremental-history behavior. No automatic key/locator repair otherwise remains; non-empty snapshots are validated before selection. Olivine suite: 23 properties + 311 tests, 0 failures. Secondary perf concern: global validation retains every key in a MapSet (index.ex:332-357), avoidable because sorted keys make duplicates adjacent.",
+      "timestamp": "2026-09-05T14:03:53Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Cold re-review final GitHub #158 fix",
   "type": "task",
-  "updated_at": "2026-09-05T13:59:24Z"
+  "updated_at": "2026-09-05T14:03:53Z"
 }

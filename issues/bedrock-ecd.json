@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T14:22:09Z",
   "created": "2026-09-05T14:16:33Z",
   "description": "Fresh read-only review of b62836b3 after missing/cyclic predecessor and page-ID validation fixes. Final gate before PR.",
   "id": "bedrock-ecd",
@@ -13,8 +14,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Final cold review GH #158 recovery hardening",
   "type": "task",
-  "updated_at": "2026-09-05T14:22:08Z"
+  "updated_at": "2026-09-05T14:22:09Z"
 }

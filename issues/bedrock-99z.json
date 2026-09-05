@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T15:55:53Z",
   "created": "2026-09-05T15:54:38Z",
   "description": "Independently review gh-141 changes against GitHub issue and current routing implementation, in isolated worktree. Read-only review; report correctness and coverage findings before PR push.",
   "id": "bedrock-99z",
@@ -13,7 +14,7 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Cold review gh-141 regression coverage",
   "type": "task",
   "updated_at": "2026-09-05T15:55:53Z"

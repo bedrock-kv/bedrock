@@ -10,11 +10,15 @@
     {
       "text": "TDD RED: index-tree right-edge assertions returned page 0; 600 increasing one-key transactions made committed keys unroutable after splits; synthetic recovered overlap/duplicate map omitted keys. GREEN: right-edge routing now selects the largest boundary; recovery validates chain reachability/order/uniqueness, canonically repairs damaged maps using newest append locator, queues repaired pages for persistence, and resumes data offset bookkeeping. Focused Olivine: 306 tests + 23 properties; full suite: 2,838 tests + 158 properties + 17 doctests; format and Credo strict clean; Dialyzer 0 errors.",
       "timestamp": "2026-09-05T13:44:58Z"
+    },
+    {
+      "text": "Cold review found automatic repair unsafe: compaction can reverse locator recency, and clears can leave a unique stale copy that union repair would resurrect; selective loading also hid orphan/missing-page-0 snapshot corruption. Reworked recovery to fail closed with structured corrupt_index reasons and validate self-contained snapshots before filtering. Final gates after rework: 311 Olivine tests + 23 properties; full suite 2,842 tests + 158 properties + 17 doctests; format, Credo strict, and Dialyzer all green.",
+      "timestamp": "2026-09-05T13:58:32Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Fix Olivine right-edge routing and reject corrupt recovered indexes",
   "type": "task",
-  "updated_at": "2026-09-05T13:44:58Z"
+  "updated_at": "2026-09-05T13:58:32Z"
 }

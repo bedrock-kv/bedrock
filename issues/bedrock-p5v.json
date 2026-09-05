@@ -14,11 +14,15 @@
     {
       "text": "Cold review found automatic repair unsafe: compaction can reverse locator recency, and clears can leave a unique stale copy that union repair would resurrect; selective loading also hid orphan/missing-page-0 snapshot corruption. Reworked recovery to fail closed with structured corrupt_index reasons and validate self-contained snapshots before filtering. Final gates after rework: 311 Olivine tests + 23 properties; full suite 2,842 tests + 158 properties + 17 doctests; format, Credo strict, and Dialyzer all green.",
       "timestamp": "2026-09-05T13:58:32Z"
+    },
+    {
+      "text": "Third cold review found fail-open recovery for missing/cyclic predecessor history plus embedded page-ID mismatch. Added red reproductions, then made history traversal reject absent, repeated, or non-descending versions and validate map IDs before reconstruction. Gates: Olivine 315 tests + 23 properties; full suite 2,846 tests + 158 properties + 17 doctests; format, strict Credo, and Dialyzer clean.",
+      "timestamp": "2026-09-05T14:16:09Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Fix Olivine right-edge routing and reject corrupt recovered indexes",
   "type": "task",
-  "updated_at": "2026-09-05T13:58:32Z"
+  "updated_at": "2026-09-05T14:16:09Z"
 }

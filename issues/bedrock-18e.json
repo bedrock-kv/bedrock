@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-05T23:46:38Z",
   "created": "2026-08-25T20:50:56Z",
   "description": "",
   "id": "bedrock-18e",
@@ -13,8 +14,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "hunt-dead-code: index defprotocol, config roots, framework conventions; fix --root",
   "type": "task",
-  "updated_at": "2026-08-25T20:53:06Z"
+  "updated_at": "2026-09-05T23:46:38Z"
 }

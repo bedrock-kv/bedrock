@@ -1,8 +1,7 @@
 {
-  "assignee": "Jason Allum",
+  "assignee": "",
   "blocked_by": [],
   "blocks": [],
-  "closed_at": "2026-09-05T23:59:10Z",
   "created": "2026-09-05T23:58:31Z",
   "description": "lib/bedrock/object_storage/local_filesystem.ex:16 lists ChunkWriter among the data-plane callers of put_if_not_exists/4. ChunkWriter was removed in #220 (bedrock-d3k). Drop the stale name so the caller list matches the code.",
   "id": "bedrock-jzh",
@@ -14,8 +13,8 @@
     }
   ],
   "priority": 4,
-  "status": "closed",
+  "status": "open",
   "title": "LocalFilesystem moduledoc names deleted ChunkWriter as a put_if_not_exists caller",
   "type": "chore",
-  "updated_at": "2026-09-05T23:59:10Z"
+  "updated_at": "2026-09-05T23:59:35Z"
 }

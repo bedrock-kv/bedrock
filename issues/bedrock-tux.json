@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T01:33:55Z",
+  "close_reason": "Delivered reviewed implementation and documented validation in draft PR267.",
   "created": "2026-09-05T23:58:17Z",
   "description": "The current tests exercise many local invariants but do not establish the complete transaction contract across batching, materialization, persistence and recovery.\n\nAt `8f962e09`, the default suite passed (17 doctests, 158 properties, 2,891 tests; two excluded), and the explicit MinIO durability suite passed (two tests), while targeted production-module reproductions demonstrated mutation-order, empty-range conflict, endpoint, and compaction-version defects.\n\n[test/bedrock/distributed/minio_durability_test.exs](https://github.com/bedrock-kv/bedrock/blob/8f962e09b24765265eeb6bd818f5b26da8d91b99/test/bedrock/distributed/minio_durability_test.exs#L109) exercises a Demux with three shards against MinIO and an injected transient object-write failure. It is useful persistence coverage, but it does not run a complete multi-node Repo transaction history through coordinator/director recovery. Existing GitHub #8 concerns coverage percentage; this issue concerns an independent semantic oracle and failure schedules.\n\n## Bounded initial scope\n\n- Run real Repo transactions through sequencer, proxies, resolvers, logs and materializers.\n- Use a small independent sequential KV/mutation interpreter and a history checker that respects real-time order and commit-result ambiguity.\n- Workloads: conditional inserts after empty range reads, conflicting point reads, same-key atomics in shared batches, mixed sets/clears/range clears, and multi-key invariants.\n- Scenarios: ordinary batching, compaction plus cold reload, crashes around WAL acknowledgment and snapshot publication, and an epoch transition with an in-flight tail.\n- Add a multi-node scenario separating node/process loss from network unreachability and checking acknowledged writes survive recovery.\n- Retain seeds, operation histories and fault schedules for replayable failures.\n\n## Acceptance criteria\n\n- Known counterexamples fail against the independent oracle on the affected revision and pass after their fixes.\n- No acknowledged commit is lost, no uncommitted tail becomes a durable baseline, and snapshots correspond to their advertised versions.\n- The harness does not replace core transaction components with mocks; focused unit tests remain complementary.\n- Document exactly which distributed failures the suite exercises. This issue does not require a complete BEAM deterministic simulator as its first deliverable.\n",
   "id": "bedrock-tux",
@@ -33,7 +35,7 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Add end-to-end transaction-history checks across batching and recovery",
   "type": "task",
   "updated_at": "2026-09-06T01:33:55Z"

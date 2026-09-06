@@ -7,9 +7,15 @@
   "id": "bedrock-q67.21.19",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/268 — unparseable keys under a shard's own prefix now raise UnparseableKeyError naming the key; objects nested below the prefix (and S3 folder markers) are classified foreign and skipped. Cold audit PASS-WITH-NOTES, all notes addressed.",
+      "timestamp": "2026-09-06T01:33:31Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "[BUG] Unparseable object keys are silently dropped, making shards look older or emptier",
   "type": "bug",
-  "updated_at": "2026-08-24T23:06:49Z"
+  "updated_at": "2026-09-06T01:33:31Z"
 }

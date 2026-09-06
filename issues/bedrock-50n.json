@@ -10,9 +10,15 @@
   "description": "Add an explicit generation and granted-owner token to lock, replay, unlock, live push, and delayed replies; reject same-generation foreign owners and old tasks before WAL mutation. Preserve task-based replay callers. Negative real-WAL histories cover stale replay, push, unlock, queued requests, duplicate owner, and delayed replies. No legacy unfenced fallback; compatible-binary-only upgrade. Dependency of bedrock-t0k.",
   "id": "bedrock-50n",
   "labels": [],
+  "comments": [
+    {
+      "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/297. Split from GH259; depends on bedrock-7i1 and remains blocked until its ownership token is defined.",
+      "timestamp": "2026-09-06T02:56:13Z"
+    }
+  ],
   "priority": 1,
   "status": "open",
   "title": "Fence Shale replay and live pushes with recovery ownership tokens",
   "type": "bug",
-  "updated_at": "2026-09-06T02:56:12Z"
+  "updated_at": "2026-09-06T02:56:13Z"
 }

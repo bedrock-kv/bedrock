@@ -1,6 +1,7 @@
 {
   "assignee": "Jason Allum",
   "blocked_by": [
+    "bedrock-162",
     "bedrock-ls9"
   ],
   "blocks": [
@@ -21,5 +22,5 @@
   "status": "in_progress",
   "title": "Allocate recovery generations through consensus and reserve bootstrap publication",
   "type": "task",
-  "updated_at": "2026-09-06T03:24:11Z"
+  "updated_at": "2026-09-06T03:26:44Z"
 }

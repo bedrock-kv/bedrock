@@ -1,7 +1,9 @@
 {
   "assignee": "",
   "blocked_by": [],
-  "blocks": [],
+  "blocks": [
+    "bedrock-7i1"
+  ],
   "created": "2026-09-06T03:26:33Z",
   "description": "LocalFilesystem put_if_version_matches performs a non-atomic read/compare followed by put, allowing multiple concurrent writers with one token to return :ok and overwrite each other. See linked GitHub issue for reproduction and success criteria.",
   "id": "bedrock-162",
@@ -10,5 +12,5 @@
   "status": "open",
   "title": "Make LocalFilesystem version-matched writes atomic",
   "type": "bug",
-  "updated_at": "2026-09-06T03:26:33Z"
+  "updated_at": "2026-09-06T03:26:44Z"
 }

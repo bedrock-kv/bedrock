@@ -30,11 +30,15 @@
     {
       "text": "Published commit 8b58ef08 on bedrock-wjt/compaction-version; draft PR created against develop. All criteria independently approved, full suite and quality checks green. Final PR URL recorded next.",
       "timestamp": "2026-09-06T00:19:09Z"
+    },
+    {
+      "text": "Draft PR https://github.com/bedrock-kv/bedrock/pull/241 verified isDraft=true, base=develop, head=bedrock-wjt/compaction-version, commit 8b58ef08. No merge performed.",
+      "timestamp": "2026-09-06T00:19:16Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Olivine compaction persists future state under an older durable version",
   "type": "bug",
-  "updated_at": "2026-09-06T00:19:09Z"
+  "updated_at": "2026-09-06T00:19:16Z"
 }

@@ -1,5 +1,5 @@
 {
-  "assignee": "21417+jallum@users.noreply.github.com",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-01-17T17:36:37.957248-05:00",
@@ -9,8 +9,8 @@
     "future"
   ],
   "priority": 4,
-  "status": "open",
+  "status": "in_progress",
   "title": "Snapshot retention and cleanup in ObjectStorage",
   "type": "task",
-  "updated_at": "2026-01-17T17:36:37.957248-05:00"
+  "updated_at": "2026-09-06T01:38:22Z"
 }

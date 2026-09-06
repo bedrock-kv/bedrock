@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T02:18:02Z",
+  "description": "Residual from bedrock-v65 (PR #282). Links started with no declared capabilities (:passive — pure-client nodes) never call register_node_resources/4, so the coordinator never adds them to tsl_subscribers, they never receive {:tsl_updated, _}, and their cached TSL stays nil. Every transaction on such a node therefore falls back to fetch_transaction_system_layout on each attempt. #282's leader revalidation only benefits :active Links for the same reason. bedrock-q67.9's design comment already noted 'pure-client nodes never register/subscribe (discovery.ex:177) — pre-existing'. Fix: subscribe a :passive Link to wiring pushes without advertising resources (a subscribe-only registration), FDB-style — every client gets ClientDBInfo regardless of role. Reproduce: start a Link with capabilities: [], run a recovery, assert the Link's cached TSL is populated without an explicit fetch.",
+  "id": "bedrock-ltc",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "A :passive Link never registers node resources, so it is never in tsl_subscribers and its TSL cache stays nil",
+  "type": "bug",
+  "updated_at": "2026-09-06T02:18:02Z"
+}

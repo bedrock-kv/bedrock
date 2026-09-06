@@ -112,7 +112,7 @@ defmodule Mix.Tasks.Bedrock.AnalyzeIndex do
 
     # Use Index.load_from to properly load the index from disk
     case Index.load_from(db_tuple) do
-      {:ok, index, _version, _new_pages, _loaded_pages} ->
+      {:ok, index, _id_allocator, _n_keys} ->
         analyze_index_structure(index, config)
 
       {:error, :missing_pages} ->

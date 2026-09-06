@@ -75,14 +75,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
     durable_version = Database.durable_version(database)
 
     case Index.load_from(database) do
-      {:ok, initial_index, max_id, free_ids, n_keys} ->
+      {:ok, initial_index, id_allocator, n_keys} ->
         {data_db, _index_db} = database
 
         index_manager = %__MODULE__{
           versions: [{durable_version, {initial_index, %{}}}],
           current_version: durable_version,
           window_size_in_microseconds: 5_000_000,
-          id_allocator: IdAllocator.new(max_id, free_ids),
+          id_allocator: id_allocator,
           last_version_ended_at_offset: data_db.file_offset,
           n_keys: n_keys
         }
@@ -518,6 +518,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
   `n_keys` rewinds with the index: the resumed stream re-delivers the
   discarded suffix, and a count carried across the rollback would tally
   those transactions twice.
+
+  So does the id allocator, and for a sharper reason: a clear in the
+  discarded suffix recycled the ids of the pages it emptied, and the
+  rollback brings those pages back to life. A carried-over allocator would
+  still list their ids as free and the next split would write over a live
+  page — so the allocator is re-derived from the index being installed
+  (`Index.id_allocator/1`).
   """
   @spec rollback_to(t(), Bedrock.version()) :: t()
   def rollback_to(%{current_version: current} = index_manager, version) when current <= version, do: index_manager
@@ -536,6 +543,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
       | versions: versions,
         current_version: new_current,
         output_queue: output_queue,
+        id_allocator: Index.id_allocator(new_index),
         n_keys: Index.key_count(new_index)
     }
   end

@@ -5,6 +5,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
 
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IdAllocator
+  alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Transaction
@@ -49,6 +50,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
 
     Transaction.encode(transaction_map)
   end
+
+  defp sets(prefix, range),
+    do: Enum.map(range, &{:set, prefix <> String.pad_leading(Integer.to_string(&1), 4, "0"), "v"})
+
+  defp live_page_ids(%{versions: [{_version, {index, _modified}} | _]}), do: index.page_map |> Map.keys() |> Enum.sort()
 
   describe "rollback_to/2" do
     test "discards in-memory versions above the target — a pointer operation" do
@@ -109,6 +115,43 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
 
       assert IndexManager.info(rolled, :n_keys) == 1
       assert IndexManager.info(rolled, :key_ranges) == [{"a", "a"}]
+    end
+
+    # A clear above the rollback point empties pages and recycles their ids.
+    # The rollback brings those pages back to life, so an allocator carried
+    # across would still list a live page's id as free — and the next split
+    # would take it and write a new page straight over the live one.
+    test "the id allocator rewinds with the index" do
+      db = create_test_database()
+      im = IndexManager.new()
+
+      v1 = Version.from_integer(1_000)
+      v2 = Version.from_integer(2_000)
+      v3 = Version.from_integer(3_000)
+
+      # 300 keys overflow the 256-key page, splitting page 0 and allocating
+      # a second page id.
+      {im, db} = IndexManager.apply_transactions(im, [test_transaction(sets("k", 1..300), v1)], db)
+      page_ids_at_v1 = live_page_ids(im)
+      assert page_ids_at_v1 == [0, 1]
+
+      # Empty page 1 above the rollback point: its id goes on the free list.
+      {im, db} = IndexManager.apply_transactions(im, [test_transaction([{:clear_range, "k0151", "l"}], v2)], db)
+      assert live_page_ids(im) == [0]
+      assert IndexManager.info(im, :free_ids) == [1]
+
+      rolled = IndexManager.rollback_to(im, v1)
+
+      assert live_page_ids(rolled) == page_ids_at_v1
+      assert IndexManager.info(rolled, :free_ids) == []
+
+      # 120 more keys below the page boundary overflow page 0 again, so the
+      # replayed suffix asks the allocator for another id.
+      {rolled, _db} = IndexManager.apply_transactions(rolled, [test_transaction(sets("j", 1..120), v3)], db)
+
+      [{^v3, {index, _}} | _] = rolled.versions
+      assert IndexManager.info(rolled, :n_keys) == Index.key_count(index)
+      assert IndexManager.info(rolled, :n_keys) == 420
     end
 
     test "a rollback at or above the current version is a no-op" do

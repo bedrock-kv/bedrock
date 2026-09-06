@@ -20,11 +20,15 @@
     {
       "text": "Blocked by bedrock-162 / GitHub #302: LocalFilesystem version-matched writes are not atomic across concurrent writers. Do not implement generation activation against this primitive until #302 establishes single-winner CAS semantics.",
       "timestamp": "2026-09-06T03:26:51Z"
+    },
+    {
+      "text": "Paused by root pending302/bedrock-162 atomic LocalFilesystem CAS prerequisite.296-red.log preserves4 intended REDs: ignored committed :behind, launch before quorum barrier, delayed epoch8 refresh overwrites actual epoch9 bootstrap, missing schema identity.296-plan.md is explicitly pre-plan checkpoint only. Include S3 coherent GET-body/token requirement on resume. No production edits or commits.",
+      "timestamp": "2026-09-06T03:28:16Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Allocate recovery generations through consensus and reserve bootstrap publication",
   "type": "task",
-  "updated_at": "2026-09-06T03:26:51Z"
+  "updated_at": "2026-09-06T03:28:16Z"
 }

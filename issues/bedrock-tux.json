@@ -14,11 +14,15 @@
     {
       "text": "Peer schedule RED: /tmp/issue239-peer-first.log boots three actual stdio-controlled VMs with coordination/log/materializer capabilities and commits acknowledged write, then log stop/restart fails strict newer-epoch readiness (2 tests/2 failures; first partition failure was fixture equal-cookie authentication corrected before next run). Artifacts retained under system tmp bedrock-history-artifacts peer-*.term; separate local WAL dirs preserved. No production edits.",
       "timestamp": "2026-09-06T01:02:44Z"
+    },
+    {
+      "text": "Snapshot history subtask ready for cold final review: owned snapshot_history_test.exs + snapshot_fixture.ex, no production edits. Real Repo same-batch prefix and acknowledged tail yield observed D\u003c=KCV\u003capplied, actual compaction/pub gates, abrupt materializer+unlinked uploader death, actual cold replacement before pull and public tail replay.2 tests green /tmp/bedrock-239-snapshot-final.log; original coupled Database+Logic from cfaab90a dynamically loaded in isolated VM causes2 map-equality failures (counter18/later/tail under olderD), /tmp/bedrock-239-snapshot-baseline-red.log. Handoff /tmp/bedrock-issue-team-20260905/239-snapshot-handoff.md. Foreman lifecycle race independently ticketed bedrock-gu0.5; fixture waits actual restart health before cold eviction per root approval.",
+      "timestamp": "2026-09-06T01:10:52Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Add end-to-end transaction-history checks across batching and recovery",
   "type": "task",
-  "updated_at": "2026-09-06T01:02:44Z"
+  "updated_at": "2026-09-06T01:10:52Z"
 }

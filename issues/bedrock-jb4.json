@@ -6,9 +6,15 @@
   "description": "During bedrock-eu4 work: IndexManager.info(:n_keys) stays 0 after applying transactions (IndexUpdate.track_statistics defaults false, and finish/1 discards counts), and :key_ranges reports sentinel {\u003c\u003c0xFF,0xFF\u003e\u003e, \"\"} even with data. Possibly a latent accounting bug around keys_added - keys_removed (index_manager.ex:197). Needs a targeted test + decision.",
   "id": "bedrock-jb4",
   "labels": [],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/253 — valid bug, fixed. n_keys was never incremented (track_statistics defaulted false and nothing set it) while range clears decremented unconditionally, so it only fell and went negative (-2 on a fresh index); key_ranges reported the empty sentinel because Index.min_key/max_key were cached at load and never maintained. Fixed by deriving an exact key_count_delta from the page counts the segment merge already returns, and computing key bounds on demand. Two further rewind points (compaction cutover, rollback_to/2) also needed the count rewound with the index. Cold audit PASS-WITH-NOTES; all four findings addressed.",
+      "timestamp": "2026-09-06T00:53:22Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Investigate IndexManager n_keys/key_ranges accounting staying at defaults",
   "type": "task",
-  "updated_at": "2026-09-06T00:17:18Z"
+  "updated_at": "2026-09-06T00:53:22Z"
 }

@@ -391,6 +391,8 @@ defmodule Bedrock.Internal.ClusterSupervisor do
 
   @spec apply_cluster_init(Keyword.t(), Cluster.t()) :: Keyword.t()
   defp apply_cluster_init(config, module) do
+    # Every caller reaches us through the cluster module itself, so it is
+    # always loaded here; unlike Ecto we don't need a Code.ensure_loaded?/1.
     if function_exported?(module, :init, 1) do
       {:ok, config} = module.init(config)
       config
@@ -441,20 +443,17 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   def path_to_descriptor(module, otp_app, static_config) do
     module
     |> node_config(otp_app, static_config)
-    |> Keyword.get(
-      :path_to_descriptor,
-      case otp_app do
-        nil ->
-          Cluster.default_descriptor_file_name()
+    |> Keyword.get_lazy(:path_to_descriptor, fn -> default_path_to_descriptor(otp_app) end)
+  end
 
-        app ->
-          Path.join(
-            Application.app_dir(app, "priv"),
-            Cluster.default_descriptor_file_name()
-          )
-      end
-    )
+  @spec default_path_to_descriptor(otp_app :: atom() | nil) :: Path.t()
+  defp default_path_to_descriptor(nil), do: Cluster.default_descriptor_file_name()
+
+  defp default_path_to_descriptor(otp_app) do
+    Path.join(Application.app_dir(otp_app, "priv"), Cluster.default_descriptor_file_name())
   rescue
-    _ -> Cluster.default_descriptor_file_name()
+    # app_dir/2 raises when the application isn't loaded, which is routine for
+    # the synthetic otp_apps used by tests, scripts and livebooks.
+    ArgumentError -> Cluster.default_descriptor_file_name()
   end
 end

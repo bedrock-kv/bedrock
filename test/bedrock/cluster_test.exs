@@ -151,6 +151,31 @@ defmodule Bedrock.ClusterTest do
       assert 1000 = TestClusterRuntimeEnv.coordinator_ping_timeout_in_ms()
     end
 
+    test "otp_app environment can inject a descriptor path for an otp_app that isn't loaded" do
+      defmodule TestClusterInjectedPath do
+        @moduledoc false
+        use Cluster,
+          name: "test_injected_path",
+          otp_app: :test_app,
+          config: [path_to_descriptor: "/static/bedrock.cluster"]
+      end
+
+      assert "/static/bedrock.cluster" = TestClusterInjectedPath.path_to_descriptor()
+
+      Application.put_env(:test_app, TestClusterInjectedPath, path_to_descriptor: "/per-run/bedrock.cluster")
+
+      assert "/per-run/bedrock.cluster" = TestClusterInjectedPath.path_to_descriptor()
+    end
+
+    test "falls back to the bare descriptor file name when the otp_app isn't loaded" do
+      defmodule TestClusterUnloadedApp do
+        @moduledoc false
+        use Cluster, name: "test_unloaded_app", otp_app: :test_app
+      end
+
+      assert "bedrock.cluster" = TestClusterUnloadedApp.path_to_descriptor()
+    end
+
     test "init/1 has the last word over both static config and the otp_app environment" do
       defmodule TestClusterInit do
         @moduledoc false

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **Application environment now overrides a cluster's static `use` config.**
+  Previously any `config:` given to `use Bedrock.Cluster` short-circuited the
+  `otp_app` application environment entirely, so a cluster that shipped inline
+  defaults could not be adjusted from `config/runtime.exs` or `put_env` without
+  recompiling. The two are now layered the way `Ecto.Repo` layers them: the
+  static config supplies compile-time defaults, the application environment
+  overrides it key by key, and an optional `init/1` callback on the cluster
+  module gets the last word. Clusters that declare both `otp_app:` and
+  `config:` and rely on the static values winning must move those values into
+  the application environment (or `init/1`). An explicitly configured
+  `:path_to_descriptor` is also no longer discarded when the `otp_app` isn't a
+  loaded application.
+
 - **Olivine keeps append-only workloads readable after page splits.** Keys
   above every stored page boundary now extend the actual rightmost page
   instead of returning to page 0 and overlapping later ranges. Recovery

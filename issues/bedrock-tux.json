@@ -10,11 +10,15 @@
     {
       "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/239. Published the 2026-09-05 implementation evaluation, pinned to 8f962e09, with evidence and acceptance criteria. Reproduced findings are distinguished from source-level risks. No implementation fix is included.",
       "timestamp": "2026-09-05T23:58:18Z"
+    },
+    {
+      "text": "Peer schedule RED: /tmp/issue239-peer-first.log boots three actual stdio-controlled VMs with coordination/log/materializer capabilities and commits acknowledged write, then log stop/restart fails strict newer-epoch readiness (2 tests/2 failures; first partition failure was fixture equal-cookie authentication corrected before next run). Artifacts retained under system tmp bedrock-history-artifacts peer-*.term; separate local WAL dirs preserved. No production edits.",
+      "timestamp": "2026-09-06T01:02:44Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Add end-to-end transaction-history checks across batching and recovery",
   "type": "task",
-  "updated_at": "2026-09-06T00:28:44Z"
+  "updated_at": "2026-09-06T01:02:44Z"
 }

@@ -18,11 +18,15 @@
     {
       "text": "Cold review approved with amendments recorded in /tmp/bedrock-issue-team-20260905/233-plan-review.md: exact durable lookup, capture immutable bytes before async post-cutover upload, close scratch writer on missing baseline, test real repeated window advancement. Core implementation green: 9 tests including live atomic replay; expanding error/retention and immutable-capture regressions before final audit.",
       "timestamp": "2026-09-06T00:13:10Z"
+    },
+    {
+      "text": "Final audit requested with criterion mapping at /tmp/bedrock-issue-team-20260905/233-final-audit.md. All validation passed: relevant Olivine/object-storage 23 properties/530 tests; full mix test 17 doctests/158 properties/2902 tests/0 failures (2 distributed excluded); strict credo no issues; Dialyzer 0 errors; format check passed. Deterministic FIFO test proven red by reverting only old uploader (premature return), green after immutable capture restored.",
+      "timestamp": "2026-09-06T00:17:10Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Olivine compaction persists future state under an older durable version",
   "type": "bug",
-  "updated_at": "2026-09-06T00:13:10Z"
+  "updated_at": "2026-09-06T00:17:10Z"
 }

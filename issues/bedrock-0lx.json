@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:30Z",
+  "close_reason": "Delivered in PR #289 (audited 2026-09-06: Index.id_allocator/1 derived at rollback, cutover and cold load; stacked on #276, no CI run)",
   "created": "2026-09-06T02:06:55Z",
   "description": "Both of Olivine's index rewind points carry the LIVE `IdAllocator` across while installing an OLDER page map, so `free_ids` can name pages that are alive again in the index being installed.\n\n- `IndexManager.rollback_to/2` (index_manager.ex:520-536) rewinds `versions` and re-derives `n_keys`, but leaves `id_allocator` untouched.\n- The compaction cutover (server.ex:493) carries `t.index_manager.id_allocator` forward onto the compacted index.\n\nA `clear_range` above the rewind point empties or merges pages and recycles their ids (`index_update.ex:227`, `index_update.ex:377` via `IdAllocator.recycle_id/recycle_ids`). Rewinding below that point brings those pages back to life while the allocator still lists their ids as free. The next split (`index.ex:556` `IdAllocator.allocate_ids`) can hand out a live page's id and `Map.put` straight over it — silent key loss. The replayed suffix also recycles the same ids a second time, so `free_ids` can carry duplicates.\n\nRevival is unaffected: `Index.load_from` recomputes `free_ids` from the loaded page map (index.ex:428, 448-454). That is the shape of the fix — derive the allocator from the index being installed rather than carrying the live one — and it applies at both sites.\n\n`rollback_to/2` is the live one (the recovery path). The cutover is not driven from `lib/` today. bedrock-3v1 newly exposed the cutover to this by compacting the durable page map instead of the live one; before that the cutover installed the live map and the allocator agreed with it.\n\nFound by the cold audit on bedrock-3v1 (note N2).",
   "id": "bedrock-0lx",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[BUG] Olivine index rewinds leave the id_allocator ahead of the page map",
   "type": "bug",
-  "updated_at": "2026-09-06T02:38:42Z"
+  "updated_at": "2026-09-06T14:05:30Z"
 }

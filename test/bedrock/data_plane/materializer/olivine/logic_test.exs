@@ -7,6 +7,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.ReadingTestHelpers
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
@@ -470,7 +471,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       state = create_test_state(test_dir, :snapshot_nil_test)
       assert state.snapshot == nil
 
-      assert :ok = Logic.maybe_upload_snapshot(state, ~c"unused", ~c"unused", Version.from_integer(1))
+      assert ^state = Logic.maybe_upload_snapshot(state, ~c"unused", ~c"unused", Version.from_integer(1))
 
       Logic.shutdown(state)
     end
@@ -490,7 +491,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       File.write!(data_path, "data contents")
       File.write!(idx_path, "idx contents")
 
-      assert :ok =
+      assert %State{} =
                Logic.maybe_upload_snapshot(
                  state,
                  String.to_charlist(data_path),
@@ -501,6 +502,83 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       # Upload happens in a fire-and-forget task; poll until it lands
       assert {:ok, 42, uploaded} = await_snapshot(snapshot, 100)
       assert IO.iodata_to_binary(uploaded) == "data contents" <> "idx contents"
+
+      Logic.shutdown(state)
+    end
+
+    test "with no policy configured every compaction uploads", %{test_dir: test_dir} do
+      object_storage_root = Path.join(test_dir, "object_storage")
+      File.mkdir_p!(object_storage_root)
+
+      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
+      snapshot = Snapshot.new(backend, "logic-default-shard")
+
+      state = create_test_state(Path.join(test_dir, "storage"), :snapshot_default_test)
+      state = %{state | snapshot: snapshot}
+
+      data_path = Path.join(test_dir, "default_data")
+      idx_path = Path.join(test_dir, "default_idx")
+      File.write!(data_path, "data contents")
+      File.write!(idx_path, "idx contents")
+
+      state =
+        Enum.reduce(1..3, state, fn version, state ->
+          Logic.maybe_upload_snapshot(
+            state,
+            String.to_charlist(data_path),
+            String.to_charlist(idx_path),
+            Version.from_integer(version)
+          )
+        end)
+
+      for version <- 1..3, do: assert({:ok, _} = await_snapshot_version(snapshot, version, 100))
+
+      Logic.shutdown(state)
+    end
+
+    test "a minimum interval suppresses a second upload inside the floor", %{test_dir: test_dir} do
+      object_storage_root = Path.join(test_dir, "object_storage")
+      File.mkdir_p!(object_storage_root)
+
+      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
+      snapshot = Snapshot.new(backend, "logic-policy-shard")
+
+      state = create_test_state(Path.join(test_dir, "storage"), :snapshot_policy_test)
+      state = %{state | snapshot: snapshot, snapshot_policy: %SnapshotPolicy{min_interval_ms: 60_000}}
+
+      data_path = Path.join(test_dir, "policy_data")
+      idx_path = Path.join(test_dir, "policy_idx")
+      File.write!(data_path, "data contents")
+      File.write!(idx_path, "idx contents")
+
+      upload = fn state, version ->
+        Logic.maybe_upload_snapshot(
+          state,
+          String.to_charlist(data_path),
+          String.to_charlist(idx_path),
+          Version.from_integer(version)
+        )
+      end
+
+      # Nothing has ever been uploaded, so there is no floor to clear.
+      state = upload.(state, 1)
+      assert {:ok, _} = await_snapshot_version(snapshot, 1, 100)
+
+      # A second compaction inside the floor is skipped: version 2 never
+      # lands, and the latest snapshot is still version 1.
+      state = upload.(state, 2)
+      Process.sleep(100)
+      assert {:error, :not_found} = Snapshot.read(snapshot, 2)
+      assert {:ok, 1} = Snapshot.latest_version(snapshot)
+
+      # Rewinding the policy's clock past the floor releases the next one.
+      state = %{
+        state
+        | snapshot_policy: %{state.snapshot_policy | last_upload_at: state.snapshot_policy.last_upload_at - 60_000}
+      }
+
+      _state = upload.(state, 3)
+      assert {:ok, _} = await_snapshot_version(snapshot, 3, 100)
 
       Logic.shutdown(state)
     end
@@ -516,6 +594,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       {:error, :not_found} ->
         Process.sleep(50)
         await_snapshot(snapshot, attempts_left - 1)
+    end
+  end
+
+  defp await_snapshot_version(_snapshot, _version, 0), do: {:error, :timed_out}
+
+  defp await_snapshot_version(snapshot, version, attempts_left) do
+    case Snapshot.read(snapshot, version) do
+      {:ok, data} ->
+        {:ok, data}
+
+      {:error, :not_found} ->
+        Process.sleep(50)
+        await_snapshot_version(snapshot, version, attempts_left - 1)
     end
   end
 

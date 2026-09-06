@@ -7,9 +7,15 @@
   "id": "bedrock-5tq.6",
   "labels": [],
   "parent": "bedrock-5tq",
+  "comments": [
+    {
+      "text": "Audit 2026-09-06: current-initiatives.md no longer exists and no 'Range Queries' claim remains, so that half is done. Remaining scope: ai-start-here.md still asserts the token budgets in its tier diagram (lines 12, 19, 25); enforce or soften.",
+      "timestamp": "2026-09-06T14:06:01Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Stale status docs: current-initiatives.md and README/ai-start-here claims",
   "type": "chore",
-  "updated_at": "2026-08-15T20:38:00Z"
+  "updated_at": "2026-09-06T14:06:01Z"
 }

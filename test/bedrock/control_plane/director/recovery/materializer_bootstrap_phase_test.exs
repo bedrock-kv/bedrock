@@ -41,7 +41,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           pid = if shard_tag == 0, do: system_materializer_pid, else: user_materializer_pid
           {:ok, pid}
         end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _authority, _version, _tsl -> :ok end)
 
       log =
         capture_log(fn ->
@@ -125,7 +125,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           pid = if shard_tag == 0, do: system_materializer_pid, else: user_materializer_pid
           {:ok, pid}
         end)
-        |> Map.put(:unlock_materializer_fn, fn pid, _version, pull_sources ->
+        |> Map.put(:unlock_materializer_fn, fn pid, _authority, _version, pull_sources ->
           :ets.insert(unlocks, {:unlock, pid, pull_sources})
           :ok
         end)
@@ -214,7 +214,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> create_test_context()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
-        |> Map.put(:unlock_materializer_fn, fn pid, version, _tsl ->
+        |> Map.put(:unlock_materializer_fn, fn pid, _authority, version, _tsl ->
           send(test_pid, {:unlocked, pid, version})
           :ok
         end)
@@ -279,7 +279,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> create_test_context()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _authority, _version, _tsl -> :ok end)
         |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
           {:ok, %{current_version: recovery_version}}
         end)
@@ -362,7 +362,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> create_test_context()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _authority, _version, _tsl -> :ok end)
         |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
           {:ok, %{current_version: materializer_version}}
         end)
@@ -408,7 +408,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> create_test_context()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl ->
+        |> Map.put(:unlock_materializer_fn, fn _pid, _authority, _version, _tsl ->
           {:error, :test_unlock_error}
         end)
 
@@ -482,7 +482,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> create_test_context()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
-        |> Map.put(:unlock_materializer_fn, fn pid, _version, pull_sources ->
+        |> Map.put(:unlock_materializer_fn, fn pid, _authority, _version, pull_sources ->
           :ets.insert(received_sources, {pid, pull_sources})
           :ok
         end)
@@ -544,7 +544,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> create_test_context()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _sources -> :ok end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _authority, _version, _sources -> :ok end)
         |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
           {:ok, %{current_version: recovery_version}}
         end)
@@ -697,7 +697,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         |> Map.put(:lock_materializer_fn, fn {:materializer, _ref, _shard_tag}, _epoch ->
           {:ok, spawn(fn -> Process.sleep(:infinity) end)}
         end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _sources -> :ok end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _authority, _version, _sources -> :ok end)
 
       ExUnit.CaptureLog.capture_log(fn ->
         assert {updated_attempt, CommitProxyStartupPhase} =
@@ -901,7 +901,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         # The legacy shape: the field is simply absent from the record.
         |> Map.put(:prior_core_state, %{logs: %{"log_1" => [0]}})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _v, _s -> :ok end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _authority, _v, _s -> :ok end)
         |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
           {:ok, %{current_version: recovery_version}}
         end)
@@ -1002,7 +1002,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           system_materializers: %{"mat_empty" => "n@host"}
         })
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _v, _s -> :ok end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _authority, _v, _s -> :ok end)
         |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
           {:ok, %{current_version: recovery_version}}
         end)

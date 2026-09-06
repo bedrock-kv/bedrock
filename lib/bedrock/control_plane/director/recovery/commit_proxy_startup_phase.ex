@@ -43,7 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
       self(),
       available_commit_proxy_nodes,
       start_supervised_fn,
-      context.lock_token,
+      Map.fetch!(context, :recovery_authority),
       context.cluster_config
     )
     |> case do
@@ -104,12 +104,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
           cluster :: Cluster.t(),
           epoch :: Bedrock.epoch(),
           director :: pid(),
-          lock_token :: Bedrock.lock_token(),
+          recovery_authority :: Bedrock.Service.RecoveryAuthority.input(),
           cluster_config :: map(),
           instance :: non_neg_integer()
         ) ::
           Supervisor.child_spec()
-  def child_spec(cluster, epoch, director, lock_token, cluster_config, instance) do
+  def child_spec(cluster, epoch, director, recovery_authority, cluster_config, instance) do
     empty_transaction_timeout_ms =
       Map.get(cluster_config.parameters, :empty_transaction_timeout_ms, 1_000)
 
@@ -117,7 +117,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
       cluster: cluster,
       epoch: epoch,
       director: director,
-      lock_token: lock_token,
+      recovery_authority: recovery_authority,
       instance: instance,
       empty_transaction_timeout_ms: empty_transaction_timeout_ms,
       max_latency_in_ms: 1,
@@ -135,11 +135,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
           (Supervisor.child_spec(), node() -> {:ok, pid()} | {:error, term()})
         ) ::
           {:ok, [pid()]} | {:error, {:failed_to_start, :commit_proxy, node(), term()}}
-  defp start_proxies(nodes_with_instances, cluster, epoch, director, lock_token, cluster_config, start_supervised) do
+  defp start_proxies(
+         nodes_with_instances,
+         cluster,
+         epoch,
+         director,
+         recovery_authority,
+         cluster_config,
+         start_supervised
+       ) do
     nodes_with_instances
     |> Task.async_stream(
       fn {node, instance} ->
-        child_spec = child_spec(cluster, epoch, director, lock_token, cluster_config, instance)
+        child_spec = child_spec(cluster, epoch, director, recovery_authority, cluster_config, instance)
 
         child_spec
         |> start_supervised.(node)

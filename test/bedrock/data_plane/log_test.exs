@@ -5,7 +5,10 @@ defmodule Bedrock.DataPlane.LogTest do
 
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Service.RecoveryAuthority
   alias Bedrock.Test.DataPlane.TransactionTestSupport
+
+  @authority %{generation: 42, recovery_id: "log-api-test"}
 
   describe "recovery_info/0" do
     test "returns list of fact names for recovery" do
@@ -27,7 +30,7 @@ defmodule Bedrock.DataPlane.LogTest do
     end
   end
 
-  describe "recover_from/4" do
+  describe "recover_from/5" do
     # Example of testing GenServer calls by receiving and asserting on format
     # Instead of: receive {:"$gen_call", from, {:some_call, _}} -> ...
     # Use: receive {:"$gen_call", from, call_message} ->
@@ -42,11 +45,11 @@ defmodule Bedrock.DataPlane.LogTest do
 
       # Spawn a process that will make the call and we'll capture the message
       spawn(fn ->
-        Log.recover_from(test_pid, source_log, replay_after, last_inclusive)
+        Log.recover_from(test_pid, @authority, source_log, replay_after, last_inclusive)
       end)
 
       # Log.recover_from normalizes single refs to lists
-      assert_call_received({:recover_from, [:source_log_ref], 100, 200})
+      assert_call_received({:recover_from, @authority, [:source_log_ref], 100, 200})
     end
 
     test "handles unavailable log (nil becomes empty list)" do
@@ -54,11 +57,11 @@ defmodule Bedrock.DataPlane.LogTest do
 
       # Spawn a process that will make the call and we'll capture the message
       spawn(fn ->
-        Log.recover_from(test_pid, nil, 0, 50)
+        Log.recover_from(test_pid, @authority, nil, 0, 50)
       end)
 
       # Log.recover_from normalizes nil to empty list
-      assert_call_received({:recover_from, [], 0, 50})
+      assert_call_received({:recover_from, @authority, [], 0, 50})
     end
 
     test "accepts list of source logs directly" do
@@ -68,26 +71,24 @@ defmodule Bedrock.DataPlane.LogTest do
       test_pid = self()
 
       spawn(fn ->
-        Log.recover_from(test_pid, source_logs, replay_after, last_inclusive)
+        Log.recover_from(test_pid, @authority, source_logs, replay_after, last_inclusive)
       end)
 
       # Lists are passed through unchanged
-      assert_call_received({:recover_from, [:log1, :log2], 100, 200})
+      assert_call_received({:recover_from, @authority, [:log1, :log2], 100, 200})
     end
   end
 
   describe "lock_for_recovery/2" do
     test "delegates to Worker with proper arguments" do
       test_pid = self()
-      epoch = 42
-
       # Spawn a process that will make the call and we'll capture the message
       spawn(fn ->
-        Log.lock_for_recovery(test_pid, epoch)
+        Log.lock_for_recovery(test_pid, @authority)
       end)
 
       # Use our helper macro to assert on the exact call message format
-      assert_call_received({:lock_for_recovery, 42})
+      assert_call_received({:lock_for_recovery, %RecoveryAuthority{generation: 42, recovery_id: "log-api-test"}})
     end
   end
 

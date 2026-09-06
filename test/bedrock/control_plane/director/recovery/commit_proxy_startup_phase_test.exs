@@ -24,7 +24,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
     context = %{
       cluster_config: %{parameters: %{desired_commit_proxies: desired_proxies}},
       node_capabilities: %{coordination: coordination_nodes},
-      lock_token: "test_token"
+      lock_token: "test_token",
+      recovery_authority: %{generation: 1, recovery_id: "test_token"}
     }
 
     if start_fn, do: Map.put(context, :start_supervised_fn, start_fn), else: context

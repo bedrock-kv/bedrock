@@ -17,7 +17,13 @@ defmodule Bedrock.ControlPlane.Director.State do
           distributor_monitor: reference() | nil,
           distributor_retry_ms: pos_integer(),
           distributor_start_fn: (keyword() -> {:ok, pid()} | {:error, term()}) | nil,
-          distributor_wiring: %{logs: map(), log_refs: map()} | nil,
+          distributor_wiring:
+            %{
+              logs: map(),
+              log_refs: map(),
+              recovery_authority: Bedrock.Service.RecoveryAuthority.input()
+            }
+            | nil,
           state: state(),
           epoch: Bedrock.epoch(),
           publication_sequence: non_neg_integer(),

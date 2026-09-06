@@ -29,6 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.DataPlane.Log
   alias Bedrock.Service.Foreman
+  alias Bedrock.Service.RecoveryAuthority
   alias Bedrock.Service.Worker
 
   require Logger
@@ -368,24 +369,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     end
   end
 
-  @spec lock_recruited_service({atom(), {atom(), node()}}, pos_integer(), map()) ::
-          {:ok, pid(), map()} | {:error, term()}
-  defp lock_recruited_service(service, epoch, context) do
-    lock_service_for_recovery(service, epoch, context)
+  @spec lock_recruited_service({atom(), term()}, pos_integer(), map()) ::
+          {:ok, pid(), map() | keyword()} | {:error, term()}
+  defp lock_recruited_service(service, _epoch, context) do
+    lock_service_for_recovery(service, Map.fetch!(context, :recovery_authority), context)
   end
 
   @spec lock_service_for_recovery(
-          {atom(), {atom(), node()}},
-          Bedrock.epoch(),
+          {atom(), term()},
+          RecoveryAuthority.input(),
           map()
         ) ::
-          {:ok, pid(), map()} | {:error, term()}
-  def lock_service_for_recovery(service, epoch, context \\ %{}) do
+          {:ok, pid(), map() | keyword()} | {:error, term()}
+  def lock_service_for_recovery(service, authority, context \\ %{}) do
     lock_fn = Map.get(context, :lock_service_fn, &lock_service_impl/2)
-    lock_fn.(service, epoch)
+    lock_fn.(service, authority)
   end
 
-  @spec lock_service_impl({atom(), {atom(), node()}}, Bedrock.epoch()) ::
-          {:ok, pid(), map()} | {:error, term()}
-  defp lock_service_impl({:log, name}, epoch), do: Log.lock_for_recovery(name, epoch)
+  @spec lock_service_impl({:log, Log.ref()}, RecoveryAuthority.input()) ::
+          {:ok, pid(), keyword()} | {:error, term()}
+  defp lock_service_impl({:log, name}, authority), do: Log.lock_for_recovery(name, authority)
 end

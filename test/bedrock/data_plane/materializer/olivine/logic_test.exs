@@ -3,6 +3,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
 
   import ExUnit.CaptureLog
 
+  alias Bedrock.DataPlane.Materializer.Olivine
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
@@ -14,6 +15,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
+  alias Bedrock.Service.RecoveryControl
+  alias Bedrock.Test.RecoveryAuthorityTestSupport, as: AuthoritySupport
 
   setup do
     test_dir = Path.join(System.tmp_dir!(), "olivine_logic_test_#{:rand.uniform(100_000)}")
@@ -35,10 +38,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
 
   # Helper function to create and start a test logic state
   defp create_test_state(test_dir, otp_name \\ :test_storage, id \\ "test") do
+    AuthoritySupport.prepare_worker!(test_dir, id, Olivine)
+    {:ok, control} = RecoveryControl.load(test_dir)
     # Suppress expected connection retry logs during logic startup
     {result, _logs} =
       with_log(fn ->
-        Logic.startup(otp_name, self(), id, test_dir, pool_size: 1)
+        Logic.startup(otp_name, self(), id, test_dir, pool_size: 1, recovery_control: control)
       end)
 
     {:ok, state} = result
@@ -103,34 +108,36 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
     test "locks successfully with valid epoch", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
       director = make_ref()
-      epoch = 5
+      authority = AuthoritySupport.authority(5)
 
       assert {:ok,
               %State{
                 mode: :locked,
-                director: ^director,
-                epoch: ^epoch
-              } = locked_state} = Logic.lock_for_recovery(state, director, epoch)
+                director: nil,
+                epoch: 5
+              } = locked_state} = Logic.lock_for_recovery(state, director, authority)
 
       Logic.shutdown(locked_state)
     end
 
     test "rejects older epoch", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
-      state = %{state | epoch: 10}
+      state = %{state | epoch: 10, recovery_authority: AuthoritySupport.authority(10)}
       director = make_ref()
       old_epoch = 5
 
-      assert {:error, :newer_epoch_exists} = Logic.lock_for_recovery(state, director, old_epoch)
+      assert {:error, :newer_epoch_exists} =
+               Logic.lock_for_recovery(state, director, AuthoritySupport.authority(old_epoch))
+
       Logic.shutdown(state)
     end
 
     test "handles locking without active puller", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
       director = make_ref()
-      epoch = 1
+      authority = AuthoritySupport.authority()
 
-      assert {:ok, %State{pull_task: nil} = locked_state} = Logic.lock_for_recovery(state, director, epoch)
+      assert {:ok, %State{pull_task: nil} = locked_state} = Logic.lock_for_recovery(state, director, authority)
       Logic.shutdown(locked_state)
     end
   end
@@ -521,11 +528,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
 
   describe "the :epoch info fact (assignment verification, bedrock-q67.21.5)" do
     test "a never-locked worker reports nil; a locked worker reports its epoch", %{test_dir: test_dir} do
-      {:ok, state} = Logic.startup(:epoch_fact_test, self(), "epoch_wkr", test_dir)
+      AuthoritySupport.prepare_worker!(test_dir, "epoch_wkr", Olivine)
+      {:ok, control} = RecoveryControl.load(test_dir)
+      {:ok, state} = Logic.startup(:epoch_fact_test, self(), "epoch_wkr", test_dir, recovery_control: control)
 
       assert {:ok, %{epoch: nil}} = Logic.info(state, [:epoch])
 
-      {:ok, locked} = Logic.lock_for_recovery(state, self(), 7)
+      {:ok, locked} = Logic.lock_for_recovery(state, self(), AuthoritySupport.authority(7))
       assert {:ok, %{epoch: 7}} = Logic.info(locked, [:epoch])
       assert :epoch in elem(Logic.info(locked, [:supported_info]), 1).supported_info
 

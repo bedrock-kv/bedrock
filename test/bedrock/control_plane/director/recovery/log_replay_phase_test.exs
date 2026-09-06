@@ -20,7 +20,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
 
   describe "execute/1" do
     test "advances to SequencerStartupPhase with empty logs configuration" do
-      assert {_result, SequencerStartupPhase} = LogReplayPhase.execute(empty_recovery_attempt(), %{node_tracking: nil})
+      assert {_result, SequencerStartupPhase} =
+               LogReplayPhase.execute(empty_recovery_attempt(), %{
+                 node_tracking: nil,
+                 recovery_authority: %{generation: 1, recovery_id: "replay-phase-test"}
+               })
     end
   end
 
@@ -38,6 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
     defp context_capturing_copy_range(test_pid) do
       %{
         node_tracking: nil,
+        recovery_authority: %{generation: 1, recovery_id: "replay-phase-test"},
         copy_log_data_fn: fn _new_id, _survivors, first, last, _pids ->
           send(test_pid, {:copy_range, first, last})
           {:ok, self()}
@@ -83,7 +88,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
           old_log_ids,
           new_log_ids,
           version_vector,
-          recovery_attempt
+          recovery_attempt,
+          %{recovery_authority: %{generation: 1, recovery_id: "replay-phase-test"}}
         )
 
       # With no new logs, should succeed immediately
@@ -238,7 +244,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
         }
       }
 
-      {_result, next_phase} = LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
+      {_result, next_phase} =
+        LogReplayPhase.execute(recovery_attempt, %{
+          node_tracking: nil,
+          recovery_authority: %{generation: 1, recovery_id: "replay-phase-test"}
+        })
 
       # With empty logs, should advance successfully
       assert next_phase == SequencerStartupPhase
@@ -294,7 +304,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
       }
 
       assert {%{extra_field: "preserved", another_field: 42}, SequencerStartupPhase} =
-               LogReplayPhase.execute(recovery_attempt, %{node_tracking: nil})
+               LogReplayPhase.execute(recovery_attempt, %{
+                 node_tracking: nil,
+                 recovery_authority: %{generation: 1, recovery_id: "replay-phase-test"}
+               })
     end
   end
 
@@ -355,8 +368,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhaseTest do
         try do
           LogReplayPhase.copy_log_data(
             new_log_id,
-            # This is the key - :none should trigger initialization
-            :none,
+            %{generation: 1, recovery_id: "brand-new-log-test"},
+            [],
             first_version,
             last_version,
             service_pids

@@ -131,7 +131,7 @@ record.
 
 What recovery asks of the role is narrow: on `lock_for_recovery/2` a
 materializer reports the version it holds, and on
-`unlock_after_recovery/4` it is told where to resume and given its pull
+`unlock_after_recovery/5` it is told where to resume and given its pull
 sources. The obligation behind that report is the important part — a
 materializer must never claim a version that a recovery could discard.
 
@@ -205,7 +205,7 @@ belongs here when it arrives.
 Everything above describes a **role**, and the role is the abstraction
 that matters. `Bedrock.DataPlane.Materializer` is its surface: `get/4` and
 `get_range/5` for versioned reads, `lock_for_recovery/2` and
-`unlock_after_recovery/4` for the recovery handshake — the latter carrying
+`unlock_after_recovery/5` for the recovery handshake — the latter carrying
 the pull sources a materializer streams from — and `info/3` for the facts
 recovery and operators ask of it.
 

@@ -18,6 +18,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamReadTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.Test.RecoveryAuthorityTestSupport
+
+  def name, do: "stream-read-test-cluster"
 
   # The log's only role in the materializer's data plane: introductions.
   defmodule StubLog do
@@ -70,13 +73,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamReadTest do
 
     worker_id = "latency-worker-#{System.unique_integer([:positive])}"
     otp_name = :"olivine_latency_#{System.unique_integer([:positive])}"
+    path = Path.join(tmp_dir, "olivine")
+    RecoveryAuthorityTestSupport.prepare_worker!(path, worker_id, Olivine, cluster: __MODULE__)
 
     child_spec =
       Olivine.child_spec(
         otp_name: otp_name,
         foreman: self(),
         id: worker_id,
-        path: Path.join(tmp_dir, "olivine"),
+        path: path,
         cluster: __MODULE__,
         params: %{"shard_id" => @shard}
       )
@@ -84,9 +89,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.StreamReadTest do
     {:ok, olivine} = start_supervised(child_spec)
     wait_for_health_report(worker_id, olivine)
 
-    {:ok, _pid, _info} = GenServer.call(olivine, {:lock_for_recovery, 1})
+    authority = RecoveryAuthorityTestSupport.authority()
+    {:ok, _pid, _info} = GenServer.call(olivine, {:lock_for_recovery, authority})
 
-    :ok = GenServer.call(olivine, {:unlock_after_recovery, Version.zero(), [{"log-a", log}]})
+    :ok = GenServer.call(olivine, {:unlock_after_recovery, authority, Version.zero(), [{"log-a", log}]})
 
     %{demux: demux, olivine: olivine}
   end

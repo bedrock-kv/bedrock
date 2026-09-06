@@ -4,12 +4,13 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     only: [put_health: 2, put_manifest: 2, put_otp_name: 2]
 
   import Bedrock.Service.Foreman.WorkingDirectory,
-    only: [initialize_working_directory: 2, read_and_validate_manifest: 3]
+    only: [initialize_working_directory: 3, read_and_validate_manifest: 3]
 
   alias Bedrock.Cluster
   alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Foreman.WorkingDirectory
   alias Bedrock.Service.Manifest
+  alias Bedrock.Service.RecoveryControl
   alias Bedrock.Service.Worker
 
   @spec worker_info_from_path(Path.t(), otp_namer :: (Worker.id() -> Worker.otp_name())) ::
@@ -95,8 +96,13 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   @spec try_to_start_workers([WorkerInfo.t()], cluster :: Cluster.t(), object_storage :: term()) ::
           [WorkerInfo.t()]
   def try_to_start_workers(worker_info, cluster, object_storage) do
+    try_to_start_workers(worker_info, cluster, object_storage, [])
+  end
+
+  @spec try_to_start_workers([WorkerInfo.t()], Cluster.t(), term(), keyword()) :: [WorkerInfo.t()]
+  def try_to_start_workers(worker_info, cluster, object_storage, opts) do
     worker_info
-    |> Task.async_stream(&try_to_start_worker(&1, cluster, object_storage))
+    |> Task.async_stream(&try_to_start_worker(&1, cluster, object_storage, opts))
     |> Enum.map(fn
       {:ok, worker_info} -> worker_info
       {:error, reason} -> put_health(worker_info, {:failed_to_start, reason})
@@ -107,13 +113,27 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   defmodule(StartWorkerOp) do
     @moduledoc false
 
-    @type t :: %__MODULE__{}
+    @type t :: %__MODULE__{
+            path: Path.t(),
+            id: Worker.id(),
+            otp_name: Worker.otp_name(),
+            cluster: Cluster.t(),
+            manifest: Manifest.t() | nil,
+            child_spec: Supervisor.child_spec() | nil,
+            pid: pid() | nil,
+            error: nil | {:error, term()},
+            object_storage: term()
+          }
     defstruct [:path, :id, :otp_name, :cluster, :manifest, :child_spec, :pid, :error, :object_storage]
   end
 
   @spec try_to_start_worker(WorkerInfo.t(), cluster :: Cluster.t(), object_storage :: term()) ::
           WorkerInfo.t()
-  def try_to_start_worker(worker_info, cluster, object_storage) do
+  def try_to_start_worker(worker_info, cluster, object_storage),
+    do: try_to_start_worker(worker_info, cluster, object_storage, [])
+
+  @spec try_to_start_worker(WorkerInfo.t(), Cluster.t(), term(), keyword()) :: WorkerInfo.t()
+  def try_to_start_worker(worker_info, cluster, object_storage, opts) do
     %StartWorkerOp{
       id: worker_info.id,
       path: worker_info.path,
@@ -121,7 +141,9 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
       cluster: cluster,
       object_storage: object_storage
     }
+    |> validate_worker_path()
     |> load_manifest()
+    |> prepare_recovery_authority(opts)
     |> build_child_spec()
     |> start_supervised_child()
     |> find_worker()
@@ -136,6 +158,80 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
         end
       )
     end)
+  end
+
+  defp validate_worker_path(%{error: nil} = op) do
+    case RecoveryControl.validate_artifacts(op.path) do
+      :ok -> op
+      {:error, reason} -> %{op | error: {:error, reason}}
+    end
+  end
+
+  defp prepare_recovery_authority(%{error: nil, manifest: manifest, path: path} = op, opts) do
+    marker = manifest.params["recovery_authority_protocol"]
+    result = recovery_authority_result(marker, RecoveryControl.load(path), migration_allowed?(opts), op)
+
+    case result do
+      :ok -> op
+      {:error, reason} -> %{op | error: {:error, reason}}
+    end
+  end
+
+  defp prepare_recovery_authority(op, _opts), do: op
+
+  defp recovery_authority_result(1, {:ok, record}, _migration?, op) do
+    manifest = op.manifest
+    RecoveryControl.validate_creation(record, manifest.cluster, manifest.id, manifest.worker)
+  end
+
+  defp recovery_authority_result(1, {:error, :missing}, _migration?, _op),
+    do: {:error, {:recovery_authority, :missing_after_migration}}
+
+  defp recovery_authority_result(1, {:error, reason}, _migration?, _op), do: {:error, {:recovery_authority, reason}}
+
+  defp recovery_authority_result(version, _record, _migration?, _op) when is_integer(version) and version > 1,
+    do: {:error, {:recovery_authority, :future_protocol}}
+
+  defp recovery_authority_result(nil, {:error, :missing}, true, op), do: migrate_legacy(op)
+
+  defp recovery_authority_result(nil, {:ok, %{phase: :no_grant} = record}, true, op) do
+    manifest = op.manifest
+
+    with :ok <- RecoveryControl.validate_creation(record, manifest.cluster, manifest.id, manifest.worker) do
+      mark_migrated_manifest(op)
+    end
+  end
+
+  defp recovery_authority_result(nil, {:ok, _record}, true, _op),
+    do: {:error, {:recovery_authority, :unsafe_legacy_state}}
+
+  defp recovery_authority_result(nil, {:error, reason}, _migration?, _op) when reason != :missing,
+    do: {:error, {:recovery_authority, reason}}
+
+  defp recovery_authority_result(nil, _record, _migration?, _op),
+    do: {:error, {:recovery_authority, :migration_required}}
+
+  defp recovery_authority_result(_marker, _record, _migration?, _op),
+    do: {:error, {:recovery_authority, :invalid_manifest_marker}}
+
+  defp migration_allowed?(opts),
+    do: opts[:recovery_authority_migration] == :allow_legacy or opts[:allow_recovery_authority_migration] == true
+
+  defp migrate_legacy(op) do
+    record = RecoveryControl.no_grant(op.manifest.cluster, op.manifest.id, op.manifest.worker)
+
+    with :ok <- RecoveryControl.write(op.path, record) do
+      mark_migrated_manifest(op)
+    end
+  end
+
+  defp mark_migrated_manifest(op) do
+    manifest = %{op.manifest | params: Map.put(op.manifest.params, "recovery_authority_protocol", 1)}
+
+    case Manifest.write_to_file(manifest, WorkingDirectory.manifest_path(op.path)) do
+      :ok -> :ok
+      {:error, _} = error -> error
+    end
   end
 
   @spec load_manifest(StartWorkerOp.t()) :: StartWorkerOp.t()
@@ -185,23 +281,25 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
 
   defp find_worker(op), do: op
 
-  @spec initialize_new_worker(
-          Worker.id(),
-          worker :: module(),
-          params :: map(),
-          Path.t(),
-          cluster :: Cluster.t()
-        ) :: WorkerInfo.t()
   @spec initialize_new_worker(Worker.id(), module(), map(), Path.t(), Cluster.t()) ::
           WorkerInfo.t()
-  def initialize_new_worker(id, worker, params, path, cluster) do
-    working_directory = Path.join(path, id)
-    worker_info = worker_info_for_id(id, working_directory, &cluster.otp_name_for_worker/1)
-    manifest = Manifest.new(cluster.name(), id, worker, params)
+  def initialize_new_worker(id, worker, params, path, cluster),
+    do: initialize_new_worker(id, worker, params, path, cluster, [])
 
-    case initialize_working_directory(working_directory, manifest) do
-      :ok -> worker_info
-      {:error, reason} -> put_health(worker_info, {:failed_to_start, reason})
+  @spec initialize_new_worker(Worker.id(), module(), map(), Path.t(), Cluster.t(), keyword()) :: WorkerInfo.t()
+  def initialize_new_worker(id, worker, params, path, cluster, opts) do
+    case WorkingDirectory.worker_path(path, id) do
+      {:ok, working_directory} ->
+        worker_info = worker_info_for_id(id, working_directory, &cluster.otp_name_for_worker/1)
+        manifest = Manifest.new(cluster.name(), id, worker, params)
+
+        case initialize_working_directory(working_directory, manifest, opts) do
+          :ok -> worker_info
+          {:error, reason} -> put_health(worker_info, {:failed_to_start, reason})
+        end
+
+      {:error, reason} ->
+        %WorkerInfo{id: id, path: path, otp_name: nil, health: {:failed_to_start, reason}}
     end
   end
 end

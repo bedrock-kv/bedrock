@@ -68,6 +68,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       },
       available_services: %{},
       lock_token: "test_token",
+      recovery_authority: %{generation: 1, recovery_id: "test_token"},
       coordinator: self()
     }
   end

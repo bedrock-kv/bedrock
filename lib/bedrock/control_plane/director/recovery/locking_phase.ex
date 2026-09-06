@@ -23,6 +23,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
   alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Materializer
+  alias Bedrock.Service.RecoveryAuthority
   alias Bedrock.Service.Worker
 
   @impl true
@@ -34,7 +35,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
       )
 
     old_system_services
-    |> lock_old_system_services(recovery_attempt.epoch, context)
+    |> lock_old_system_services(Map.fetch!(context, :recovery_authority), context)
     |> case do
       {:error, :newer_epoch_exists} = error ->
         {recovery_attempt, error}
@@ -61,7 +62,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
 
   @spec lock_old_system_services(
           %{Worker.id() => %{kind: atom(), last_seen: {atom(), node()}}},
-          Bedrock.epoch(),
+          RecoveryAuthority.input(),
           map()
         ) ::
           {:ok, locked_ids :: MapSet.t(Worker.id()), new_log_recovery_info_by_id :: %{Log.id() => Log.recovery_info()},
@@ -74,13 +75,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
              }
            }, service_pids :: %{Worker.id() => pid()}}
           | {:error, :newer_epoch_exists}
-  def lock_old_system_services(old_system_services, epoch, context \\ %{}) do
+  def lock_old_system_services(old_system_services, authority, context \\ %{}) do
     timeout_in_ms = lock_old_system_services_timeout()
 
     old_system_services
     |> Task.async_stream(
       fn {id, service} ->
-        {id, service, lock_service_for_recovery(service, epoch, context)}
+        {id, service, lock_service_for_recovery(service, authority, context)}
       end,
       timeout: timeout_in_ms,
       on_timeout: :kill_task,
@@ -125,20 +126,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhase do
 
   @spec lock_service_for_recovery(
           {atom(), {atom(), node()}},
-          Bedrock.epoch(),
+          RecoveryAuthority.input(),
           map()
         ) ::
           {:ok, pid(), map()} | {:error, term()}
-  def lock_service_for_recovery(service, epoch, context \\ %{}) do
+  def lock_service_for_recovery(service, authority, context \\ %{}) do
     lock_fn = Map.get(context, :lock_service_fn, &lock_service_impl/2)
-    lock_fn.(service, epoch)
+    lock_fn.(service, authority)
   end
 
   @spec lock_service_impl({atom(), {atom(), node()}}, Bedrock.epoch()) ::
           {:ok, pid(), map()} | {:error, term()}
-  defp lock_service_impl({:log, name}, epoch), do: Log.lock_for_recovery(name, epoch)
+  defp lock_service_impl({:log, name}, authority), do: Log.lock_for_recovery(name, authority)
 
-  defp lock_service_impl({:materializer, name}, epoch), do: Materializer.lock_for_recovery(name, epoch)
+  defp lock_service_impl({:materializer, name}, authority), do: Materializer.lock_for_recovery(name, authority)
 
   defp lock_service_impl(_, _), do: {:error, :unavailable}
 

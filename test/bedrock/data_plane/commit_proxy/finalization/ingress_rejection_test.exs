@@ -93,6 +93,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
       Keyword.merge(
         [
           epoch: 1,
+          recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
           sequencer: :test_sequencer,
           resolver_layout: %ResolverLayout.Single{resolver_ref: :test_resolver},
           metadata_apply_fn: Support.metadata_apply_fn(routing_data),

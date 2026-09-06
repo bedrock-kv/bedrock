@@ -15,7 +15,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
           node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
           lock_token: binary(),
           available_services: %{String.t() => {atom(), {atom(), node()}}},
-          coordinator: pid()
+          coordinator: pid(),
+          recovery_authority: Bedrock.Service.RecoveryAuthority.input()
         }
 
   @doc """

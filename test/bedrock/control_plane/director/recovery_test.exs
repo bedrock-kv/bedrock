@@ -20,6 +20,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     base_state = %State{
       cluster: __MODULE__.TestCluster,
       epoch: 1,
+      bootstrap_reservation: %{generation: 1, recovery_id: "recovery-test"},
       node_capabilities: node_capabilities,
       prior_core_state: %{
         logs: %{}
@@ -272,7 +273,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     def init(:ok), do: {:ok, :ok}
 
     @impl true
-    def handle_call({:lock_for_recovery, _epoch}, _from, s) do
+    def handle_call({:lock_for_recovery, %{generation: _generation, recovery_id: _recovery_id}}, _from, s) do
       info = %{
         kind: :materializer,
         durable_version: Version.zero(),
@@ -280,6 +281,26 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       }
 
       {:reply, {:ok, self(), info}, s}
+    end
+  end
+
+  describe "recovery reservation admission" do
+    for {label, reservation} <- [
+          {"missing", nil},
+          {"missing generation", %{recovery_id: "attempt-1"}},
+          {"missing recovery id", %{generation: 1}},
+          {"wrong generation", %{generation: 2, recovery_id: "attempt-2"}}
+        ] do
+      test "rejects a #{label} reservation before recovery service work" do
+        state =
+          %{bootstrap_reservation: unquote(Macro.escape(reservation))}
+          |> create_test_state()
+          |> Recovery.setup_for_initial_recovery()
+
+        assert_raise ArgumentError,
+                     "bootstrap reservation does not grant this recovery generation",
+                     fn -> Recovery.do_recovery(state) end
+      end
     end
   end
 
@@ -552,7 +573,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           &Map.put(&1, "metadata_materializer", {:materializer, {:materializer, :node1}})
         )
         |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _authority, _version, _tsl -> :ok end)
+        |> Map.put(:unlock_log_fn, fn _pid, _authority -> :ok end)
         |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
           {:ok, %{current_version: durable_version}}
         end)

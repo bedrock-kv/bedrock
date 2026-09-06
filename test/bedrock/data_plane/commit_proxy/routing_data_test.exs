@@ -18,6 +18,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         shard_layout: %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}},
         log_map: %{0 => "log-a", 1 => "log-b"},
         log_services: %{"log-a" => {:log_a, :node1}, "log-b" => {:log_b, :node2}},
+        recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
         replication_factor: 2
       }
 
@@ -53,6 +54,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
           shard_layout: %{"m" => {1, ""}},
           log_map: %{},
           log_services: %{},
+          recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
           replication_factor: 1
         })
 
@@ -68,6 +70,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         shard_layout: %{"m" => {1, ""}, <<0xFF, 0xFF>> => {0, "m"}},
         log_map: %{0 => "log-a"},
         log_services: %{"log-a" => {:log_a, :node1}},
+        recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
         materializers: %{0 => %{"wkr_sys" => "n1@host"}, 1 => %{"wkr_a" => "n1@host"}},
         replication_factor: 1
       })
@@ -93,6 +96,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
           shard_layout: %{"m" => {1, ""}},
           log_map: %{},
           log_services: %{},
+          recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
           materializers: %{},
           replication_factor: 1
         })
@@ -106,6 +110,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
           shard_layout: %{"m" => {1, ""}},
           log_map: %{},
           log_services: %{},
+          recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
           materializers: %{1 => %{}},
           replication_factor: 1
         })
@@ -120,6 +125,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
         shard_layout: %{"m" => {1, ""}},
         log_map: %{},
         log_services: %{},
+        recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
         materializers: %{1 => members},
         replication_factor: 1
       })
@@ -198,6 +204,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
           shard_layout: %{},
           log_map: %{0 => "log-1", 1 => "log-2", 2 => "log-3"},
           log_services: %{"log-1" => {:log_1, :n1@host}, "log-2" => {:log_2, :n2@host}, "log-3" => {:log_3, :n3@host}},
+          recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
           replication_factor: 3
         }
         |> RoutingData.from_snapshot()
@@ -226,6 +233,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       shard_layout: %{},
       log_map: %{0 => "log-a", 1 => "log-b"},
       log_services: %{"log-a" => {:log_a, :n1@host}, "log-b" => {:log_b, :n2@host}},
+      recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
       replication_factor: 2
     })
   end

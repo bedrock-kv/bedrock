@@ -13,6 +13,7 @@ defmodule Bedrock.Service.Foreman.State do
           otp_name: atom(),
           path: Path.t(),
           object_storage: term(),
+          recovery_authority_migration: :disabled | :allow_legacy,
           workers: %{Worker.id() => WorkerInfo.t()}
         }
   defstruct [
@@ -23,24 +24,20 @@ defmodule Bedrock.Service.Foreman.State do
     :otp_name,
     :path,
     :object_storage,
+    :recovery_authority_migration,
     :workers
   ]
 
   @spec new_state(map()) :: {:ok, State.t()} | {:error, :missing_required_params}
-  def new_state(%{
-        cluster: cluster,
-        capabilities: capabilities,
-        path: path,
-        otp_name: otp_name,
-        object_storage: object_storage
-      }) do
+  def new_state(%{cluster: c, capabilities: caps, path: path, otp_name: name, object_storage: storage} = args) do
     {:ok,
      %__MODULE__{
-       cluster: cluster,
-       capabilities: capabilities,
+       cluster: c,
+       capabilities: caps,
        path: path,
-       otp_name: otp_name,
-       object_storage: object_storage,
+       otp_name: name,
+       object_storage: storage,
+       recovery_authority_migration: Map.get(args, :recovery_authority_migration, :disabled),
        #
        health: :starting,
        workers: %{}

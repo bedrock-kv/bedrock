@@ -11,6 +11,8 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
 
+  @authority %{generation: 1, recovery_id: "transition-test"}
+
   @moduletag :tmp_dir
 
   # Helper functions for common test patterns
@@ -21,6 +23,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       start_supervised({SegmentRecycler, path: tmp_dir, min_available: 1, max_available: 2, segment_size: 1024 * 1024})
 
     state = %State{
+      recovery_authority: @authority,
       mode: :locked,
       path: tmp_dir,
       segment_recycler: recycler,
@@ -55,7 +58,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
 
       assert {:ok,
               %{
-                mode: :running,
+                mode: :locked,
                 available_after: ^expected_version,
                 oldest_version: ^expected_version,
                 last_version: ^expected_version
@@ -72,7 +75,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       source_log = setup_mock_log([])
       expected_version = version(1)
 
-      assert {:ok, %{mode: :running, available_after: ^expected_version, last_version: ^expected_version}} =
+      assert {:ok, %{mode: :locked, available_after: ^expected_version, last_version: ^expected_version}} =
                Recovery.recover_from(
                  state,
                  [source_log],
@@ -88,7 +91,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
 
       assert {:ok,
               %{
-                mode: :running,
+                mode: :locked,
                 available_after: ^v,
                 oldest_version: ^v,
                 last_version: ^v,
@@ -121,7 +124,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
 
       assert {:ok,
               %{
-                mode: :running,
+                mode: :locked,
                 available_after: ^replay_after,
                 last_version: ^last_version,
                 active_segment: active_segment
@@ -190,7 +193,7 @@ defmodule Bedrock.DataPlane.Log.Shale.RecoveryTest do
       first_version = version(1)
 
       # First source fails, second succeeds
-      assert {:ok, %{mode: :running}} =
+      assert {:ok, %{mode: :locked}} =
                Recovery.recover_from(
                  state,
                  [unavailable_source, available_source],

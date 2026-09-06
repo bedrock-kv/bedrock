@@ -29,6 +29,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Service.RecoveryAuthority
 
   @type append_event :: {Bedrock.version(), Transaction.encoded()}
   @type reply_token :: term()
@@ -57,14 +58,36 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
   (locked, oversized, stale, backpressured), ordered multi-entry drains of
   the pending queue, and partial-drain failure — all in the same shape.
   """
-  @spec push(State.t(), expected_version :: Bedrock.version(), Transaction.encoded(), reply_token()) ::
-          transition()
-  def push(%{mode: :locked} = t, _, _, token), do: rejection(t, token, :not_ready)
+  @spec push(State.t(), Bedrock.version(), Transaction.encoded(), reply_token()) :: transition()
+  def push(%{recovery_authority: nil} = t, _expected_version, _encoded_transaction, token),
+    do: rejection(t, token, :invalid_recovery_authority)
 
-  def push(t, _, encoded_transaction, token) when byte_size(encoded_transaction) > 10_000_000,
+  def push(t, expected_version, encoded_transaction, token),
+    do: push(t, t.recovery_authority, expected_version, encoded_transaction, token)
+
+  @spec push(
+          State.t(),
+          RecoveryAuthority.input(),
+          expected_version :: Bedrock.version(),
+          Transaction.encoded(),
+          reply_token()
+        ) ::
+          transition()
+  def push(t, authority, expected_version, encoded_transaction, token) do
+    with {:ok, authority} <- RecoveryAuthority.new(authority),
+         :ok <- owns?(t, authority) do
+      do_push(t, RecoveryAuthority.external(authority), expected_version, encoded_transaction, token)
+    else
+      {:error, reason} -> rejection(t, token, reason)
+    end
+  end
+
+  defp do_push(%{mode: :locked} = t, _, _, _, token), do: rejection(t, token, :not_ready)
+
+  defp do_push(t, _, _, encoded_transaction, token) when byte_size(encoded_transaction) > 10_000_000,
     do: rejection(t, token, :tx_too_large)
 
-  def push(t, expected_version, encoded_transaction, token) when expected_version == t.last_version do
+  defp do_push(t, _authority, expected_version, encoded_transaction, token) when expected_version == t.last_version do
     case append_transaction(t, encoded_transaction) do
       {:ok, t, event} ->
         trace_push_transaction(encoded_transaction)
@@ -83,25 +106,85 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
     end
   end
 
-  def push(t, expected_version, encoded_transaction, token) when expected_version > t.last_version do
+  defp do_push(t, authority, expected_version, encoded_transaction, token) when expected_version > t.last_version do
     case admit(t, commit_version_or_nil(encoded_transaction)) do
       :ok ->
-        parked =
-          Map.update!(t, :pending_pushes, &Map.put(&1, expected_version, {encoded_transaction, token}))
-
-        %{state: parked, appended: [], replies: [], parked?: true}
+        park(t, authority, expected_version, encoded_transaction, token)
 
       {:error, reason} ->
         rejection(t, token, reason)
     end
   end
 
-  def push(t, expected_version, _, token) do
+  defp do_push(t, _authority, expected_version, encoded_transaction, token) when expected_version < t.last_version do
+    if exact_tail_retry?(t, expected_version, encoded_transaction) do
+      rejection_result(t, token, :ok)
+    else
+      reason =
+        if commit_version_or_nil(encoded_transaction) == t.last_version,
+          do: :conflicting_durable_tail,
+          else: :tx_out_of_order
+
+      rejection(t, token, reason)
+    end
+  end
+
+  defp do_push(t, _authority, expected_version, _, token) do
     trace_push_out_of_order(expected_version, t.last_version)
     rejection(t, token, :tx_out_of_order)
   end
 
+  defp owns?(%{recovery_authority: nil}, _), do: {:error, :not_lock_owner}
+
+  defp owns?(%{recovery_authority: current}, incoming) do
+    if RecoveryAuthority.compare(incoming, current) == :same, do: :ok, else: {:error, :not_lock_owner}
+  end
+
+  defp park(t, authority, expected_version, transaction, token) do
+    case Map.get(t.pending_pushes, expected_version) do
+      nil ->
+        entry = %{authority: authority, transaction: transaction, waiters: [token]}
+
+        %{
+          state: %{t | pending_pushes: Map.put(t.pending_pushes, expected_version, entry)},
+          appended: [],
+          replies: [],
+          parked?: true
+        }
+
+      %{authority: ^authority, transaction: ^transaction, waiters: waiters} = entry ->
+        entry = %{entry | waiters: waiters ++ [token]}
+
+        %{
+          state: %{t | pending_pushes: Map.put(t.pending_pushes, expected_version, entry)},
+          appended: [],
+          replies: [],
+          parked?: true
+        }
+
+      _ ->
+        rejection(t, token, :conflicting_pending_push)
+    end
+  end
+
   defp rejection(t, token, reason), do: %{state: t, appended: [], replies: [{token, {:error, reason}}], parked?: false}
+  defp rejection_result(t, token, result), do: %{state: t, appended: [], replies: [{token, result}], parked?: false}
+
+  defp exact_tail_retry?(
+         %{active_segment: %{transactions: [tail | rest], previous_version: segment_previous}},
+         expected,
+         bytes
+       ) do
+    predecessor =
+      case rest do
+        [previous | _] -> Transaction.commit_version!(previous)
+        [] -> segment_previous
+      end
+
+    tail == bytes and predecessor == expected
+  end
+
+  defp exact_tail_retry?(_, _, _), do: false
 
   # Drains the pending queue along the predecessor chain. A drained entry
   # that fails to append gets its error reply; on backpressure the rest of
@@ -113,41 +196,58 @@ defmodule Bedrock.DataPlane.Log.Shale.Pushing do
       {nil, _} ->
         %{state: t, appended: Enum.reverse(appended), replies: Enum.reverse(replies), parked?: false}
 
-      {{encoded_transaction, token}, pending_pushes} ->
+      {%{authority: authority, transaction: encoded_transaction, waiters: waiters}, pending_pushes} ->
         t = %{t | pending_pushes: pending_pushes}
 
-        case append_transaction(t, encoded_transaction) do
-          {:ok, t, event} ->
-            trace_push_transaction(encoded_transaction)
-            drain(t, [event | appended], [{token, :ok} | replies])
-
-          {:error, {:recovery_required, {:wal_limit_exceeded, _}} = reason, t} ->
-            # The admitted prefix remains the durable tip. The failed link
-            # makes every queued successor unusable in this epoch, so wake
-            # all of their callers and let coordinated recovery decide the
-            # committed prefix.
+        case owns?(t, authority) do
+          {:error, reason} ->
             {t, flushed} = reject_all_pending(t, reason)
 
             %{
               state: t,
               appended: Enum.reverse(appended),
-              replies: Enum.reverse([{token, {:error, reason}} | replies], flushed),
+              replies: Enum.reverse(Enum.map(waiters, &{&1, {:error, reason}}) ++ replies, flushed),
               parked?: false
             }
 
-          {:error, reason, t} ->
-            %{
-              state: t,
-              appended: Enum.reverse(appended),
-              replies: Enum.reverse([{token, {:error, reason}} | replies]),
-              parked?: false
-            }
+          :ok ->
+            case append_transaction(t, encoded_transaction) do
+              {:ok, t, event} ->
+                trace_push_transaction(encoded_transaction)
+                drain(t, [event | appended], Enum.map(waiters, &{&1, :ok}) ++ replies)
+
+              {:error, {:recovery_required, {:wal_limit_exceeded, _}} = reason, t} ->
+                # The admitted prefix remains the durable tip. The failed link
+                # makes every queued successor unusable in this epoch, so wake
+                # all of their callers and let coordinated recovery decide the
+                # committed prefix.
+                {t, flushed} = reject_all_pending(t, reason)
+
+                %{
+                  state: t,
+                  appended: Enum.reverse(appended),
+                  replies: Enum.reverse(Enum.map(waiters, &{&1, {:error, reason}}) ++ replies, flushed),
+                  parked?: false
+                }
+
+              {:error, reason, t} ->
+                %{
+                  state: t,
+                  appended: Enum.reverse(appended),
+                  replies: Enum.reverse(Enum.map(waiters, &{&1, {:error, reason}}) ++ replies),
+                  parked?: false
+                }
+            end
         end
     end
   end
 
   defp reject_all_pending(t, reason) do
-    flushed = Enum.map(t.pending_pushes, fn {_expected, {_transaction, token}} -> {token, {:error, reason}} end)
+    flushed =
+      Enum.flat_map(t.pending_pushes, fn {_expected, %{waiters: waiters}} ->
+        Enum.map(waiters, &{&1, {:error, reason}})
+      end)
+
     {%{t | pending_pushes: %{}}, flushed}
   end
 

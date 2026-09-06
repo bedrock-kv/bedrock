@@ -29,6 +29,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FetchRoutingCadenceTest do
       shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
       log_map: %{},
       log_services: %{},
+      recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
       materializers: %{0 => %{"wkr_sys" => "n1@host"}},
       replication_factor: 1
     })

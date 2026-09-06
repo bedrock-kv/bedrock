@@ -11,6 +11,12 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
 
   defmock(Bedrock.MockCluster, for: Bedrock.Cluster)
 
+  defmodule ConfigCluster do
+    @moduledoc false
+    def name, do: "config-cluster"
+    def otp_name(component), do: :"config_cluster_#{component}"
+  end
+
   # Test helpers
   defp expect_cluster_name(cluster, name) do
     expect(cluster, :name, fn -> name end)
@@ -68,6 +74,44 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       # the capabilities are recognized by checking no "Unknown capability" error
       # This would need integration testing to fully verify
       assert [:coordination, :log, :materializer] == capabilities
+    end
+  end
+
+  describe "Foreman recovery authority migration configuration" do
+    test "defaults the production Foreman path to disabled" do
+      config = [
+        capabilities: [:log, :materializer],
+        worker: [path: "/tmp/bedrock-config-test"],
+        durability_mode: :relaxed
+      ]
+
+      assert {:ok, {_flags, children}} =
+               ClusterSupervisor.init(
+                 {:test_node, ConfigCluster, nil, config, "bedrock.cluster",
+                  %Descriptor{cluster_name: "config-cluster", coordinator_nodes: [:test_node]}}
+               )
+
+      foreman = Enum.find(children, &(&1.id == Bedrock.Service.Foreman.Supervisor))
+      assert inspect(foreman) =~ "recovery_authority_migration: :disabled"
+    end
+
+    test "rejects conflicting migration policy across real Foreman capabilities" do
+      config = [
+        capabilities: [:log, :materializer],
+        worker: [path: "/tmp/bedrock-config-test"],
+        log: [recovery_authority_migration: :allow_legacy],
+        materializer: [recovery_authority_migration: :disabled],
+        durability_mode: :relaxed
+      ]
+
+      assert_raise ArgumentError,
+                   "conflicting recovery_authority_migration settings for Foreman capabilities",
+                   fn ->
+                     ClusterSupervisor.init(
+                       {:test_node, ConfigCluster, nil, config, "bedrock.cluster",
+                        %Descriptor{cluster_name: "config-cluster", coordinator_nodes: [:test_node]}}
+                     )
+                   end
     end
   end
 

@@ -11,6 +11,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
+  @authority %{generation: 1, recovery_id: "transition-test"}
+
   # Every push returns the same transition shape; these tests assert the
   # effects as data (replies, append events, parking) rather than
   # observing callbacks — Pushing performs no effects itself.
@@ -34,7 +36,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
   describe "push/4 rejections" do
     test "rejects while locked" do
-      state = %State{mode: :locked, last_version: Version.zero()}
+      state = %State{mode: :locked, last_version: Version.zero(), recovery_authority: @authority}
 
       assert %{state: ^state, appended: [], replies: [{:tok, {:error, :not_ready}}], parked?: false} =
                Pushing.push(state, Version.zero(), <<1, 2, 3>>, :tok)
@@ -42,6 +44,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
     test "rejects transaction that is too large" do
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         last_version: Version.from_integer(0)
       }
@@ -55,6 +58,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
     test "rejects out of order transaction with version less than last_version" do
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         last_version: Version.from_integer(5),
         pending_pushes: %{}
@@ -69,6 +73,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
     test "parks a future transaction version with its token, unreplied" do
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         last_version: Version.from_integer(5),
         pending_pushes: %{}
@@ -79,7 +84,8 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       assert %{state: parked_state, appended: [], replies: [], parked?: true} =
                Pushing.push(state, Version.from_integer(10), transaction, :tok)
 
-      assert {^transaction, :tok} = Map.fetch!(parked_state.pending_pushes, Version.from_integer(10))
+      assert %{transaction: ^transaction, waiters: [:tok]} =
+               Map.fetch!(parked_state.pending_pushes, Version.from_integer(10))
     end
 
     test "a sync failure is an error reply with the caller's state intact" do
@@ -93,6 +99,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: fn _fd -> {:error, :eio} end)
 
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         last_version: Version.from_integer(0),
         pending_pushes: %{},
@@ -114,6 +121,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
     test "a drain returns every append event and reply in predecessor-chain order", %{dir: dir, recycler: recycler} do
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         path: dir,
         segment_recycler: recycler,
@@ -162,6 +170,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: sync_fun)
 
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         last_version: Version.zero(),
         pending_pushes: %{},
@@ -193,6 +202,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
     defp bounded_state(dir, recycler, limit, floor_int) do
       %State{
+        recovery_authority: @authority,
         mode: :running,
         path: dir,
         segment_recycler: recycler,
@@ -353,6 +363,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       interval = Demux.Server.default_cut_interval_us()
 
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         path: dir,
         segment_recycler: recycler,
@@ -393,6 +404,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
     # for any log whose Demux was configured otherwise.
     defp state_with_cut_interval(dir, recycler, cut_interval_us) do
       %State{
+        recovery_authority: @authority,
         mode: :running,
         path: dir,
         segment_recycler: recycler,
@@ -456,6 +468,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
 
     defp state_with(dir, recycler, writer_opts) do
       %State{
+        recovery_authority: @authority,
         mode: :running,
         path: dir,
         segment_recycler: recycler,
@@ -603,6 +616,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       assert {:ok, writer} = Writer.open(path, Version.zero())
 
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         last_version: Version.from_integer(1_000),
         available_after: Version.zero(),
@@ -631,6 +645,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
       floor = Version.from_integer(5_000)
 
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         path: dir,
         segment_recycler: recycler,
@@ -658,6 +673,7 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
   describe "append_transaction/2 error handling" do
     test "an unversionable transaction is an error with the caller's state" do
       state = %State{
+        recovery_authority: @authority,
         mode: :running,
         last_version: Version.from_integer(0),
         writer: nil,

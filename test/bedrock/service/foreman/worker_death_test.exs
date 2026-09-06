@@ -96,6 +96,7 @@ defmodule Bedrock.Service.Foreman.WorkerDeathTest do
                cluster: DeathTestCluster,
                path: dir,
                capabilities: [:log],
+               recovery_authority_migration: :allow_legacy,
                otp_name: DeathTestCluster.otp_name(:foreman),
                object_storage: ObjectStorage.backend(LocalFilesystem, root: Path.join(dir, "object_storage"))
              },

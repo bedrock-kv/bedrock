@@ -3,6 +3,7 @@ defmodule Bedrock.Service.Foreman.WorkingDirectory do
   import Bedrock.Service.Manifest, only: [load_from_file: 1]
 
   alias Bedrock.Service.Manifest
+  alias Bedrock.Service.RecoveryControl
   alias Bedrock.Service.Worker
 
   @manifest_file_name "manifest.json"
@@ -18,14 +19,88 @@ defmodule Bedrock.Service.Foreman.WorkingDirectory do
   @spec manifest_path(Path.t()) :: Path.t()
   def manifest_path(working_directory), do: Path.join(working_directory, @manifest_file_name)
 
-  @spec initialize_working_directory(Path.t(), Manifest.t()) ::
+  @spec initialize_working_directory(Path.t(), Manifest.t(), keyword()) ::
           :ok | {:error, File.posix()}
-  def initialize_working_directory(working_directory, manifest) do
-    path_to_manifest = manifest_path(working_directory)
+  def initialize_working_directory(working_directory, manifest, opts \\ []) do
+    with :ok <- reject_symlink(working_directory, :worker_directory_is_symlink),
+         :ok <- reject_symlink(manifest_path(working_directory), :manifest_is_symlink),
+         :ok <- reject_symlink(RecoveryControl.path(working_directory), :control_record_is_symlink) do
+      do_initialize_working_directory(working_directory, manifest, opts)
+    end
+  end
 
-    with :ok <- File.mkdir_p(working_directory),
-         :ok <- manifest.worker.one_time_initialization(working_directory) do
-      Manifest.write_to_file(manifest, path_to_manifest)
+  defp do_initialize_working_directory(working_directory, manifest, opts) do
+    case Manifest.load_from_file(manifest_path(working_directory)) do
+      {:ok, existing} ->
+        validate_existing_creation(existing, manifest)
+
+      {:error, :manifest_does_not_exist} ->
+        initialize_or_resume(working_directory, mark_protocol(manifest), opts)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @spec worker_path(Path.t(), Worker.id()) :: {:ok, Path.t()} | {:error, {:recovery_authority, :unsafe_worker_id}}
+  def worker_path(root, id) when is_binary(id) do
+    if id != "" and id not in [".", ".."] and Path.basename(id) == id and not String.contains?(id, ["/", "\\", <<0>>]) do
+      {:ok, Path.join(root, id)}
+    else
+      {:error, {:recovery_authority, :unsafe_worker_id}}
+    end
+  end
+
+  def worker_path(_, _), do: {:error, {:recovery_authority, :unsafe_worker_id}}
+
+  defp initialize_or_resume(path, manifest, opts) do
+    with :ok <- File.mkdir_p(path) do
+      case RecoveryControl.load(path) do
+        {:ok, record} ->
+          if opts[:resume_incomplete_creation] == manifest.id do
+            with :ok <- validate_control_creation(record, manifest),
+                 true <- record.phase == :no_grant || {:error, {:recovery_authority, :unsafe_incomplete_creation}} do
+              Manifest.write_to_file(manifest, manifest_path(path))
+            end
+          else
+            {:error, {:recovery_authority, :incomplete_creation_requires_explicit_resume}}
+          end
+
+        {:error, :missing} ->
+          with :ok <- manifest.worker.one_time_initialization(path),
+               :ok <-
+                 RecoveryControl.write(path, RecoveryControl.no_grant(manifest.cluster, manifest.id, manifest.worker)) do
+            Manifest.write_to_file(manifest, manifest_path(path))
+          end
+
+        {:error, reason} ->
+          {:error, {:recovery_authority, reason}}
+      end
+    end
+  end
+
+  defp validate_control_creation(record, manifest) do
+    case RecoveryControl.validate_creation(record, manifest.cluster, manifest.id, manifest.worker) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:recovery_authority, reason}}
+    end
+  end
+
+  defp validate_existing_creation(existing, requested) do
+    if {existing.cluster, existing.id, existing.worker} == {requested.cluster, requested.id, requested.worker},
+      do: :ok,
+      else: {:error, {:recovery_authority, :creation_identity_mismatch}}
+  end
+
+  defp mark_protocol(%Manifest{} = manifest),
+    do: %{manifest | params: Map.put(manifest.params || %{}, "recovery_authority_protocol", 1)}
+
+  defp reject_symlink(path, reason) do
+    case File.lstat(path) do
+      {:ok, %{type: :symlink}} -> {:error, {:recovery_authority, reason}}
+      {:ok, _} -> :ok
+      {:error, :enoent} -> :ok
+      {:error, file_reason} -> {:error, {:recovery_authority, {:unable_to_inspect_path, file_reason}}}
     end
   end
 

@@ -19,6 +19,9 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Test.DataPlane.TransactionTestSupport
+  alias Bedrock.Test.RecoveryAuthorityTestSupport, as: AuthoritySupport
+
+  @authority %{generation: 1, recovery_id: "wal-test-support"}
 
   @doc """
   Creates a test WAL file with multiple transactions at specified versions.
@@ -239,10 +242,12 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
     # Register cleanup for this specific directory
     on_exit(fn -> File.rm_rf(test_dir) end)
 
-    cluster = Bedrock.Cluster
+    cluster = AuthoritySupport.TestCluster
     otp_name = :"test_log_#{System.unique_integer([:positive])}"
     id = "test_log_#{System.unique_integer([:positive])}"
     object_storage = ObjectStorage.backend(LocalFilesystem, root: Path.join(test_dir, "object_storage"))
+
+    AuthoritySupport.prepare_worker!(test_dir, id, Bedrock.DataPlane.Log.Shale, cluster: cluster)
 
     log_opts = [
       cluster: cluster,
@@ -250,12 +255,14 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
       id: id,
       foreman: self(),
       path: test_dir,
-      object_storage: object_storage,
-      # Start in :running mode
-      start_unlocked: true
+      object_storage: object_storage
     ]
 
     pid = start_supervised!(ShaleServer.child_spec(log_opts))
+    {:ok, ^pid, _} = Log.lock_for_recovery(pid, @authority)
+    zero = Version.zero()
+    {:ok, ^pid} = Log.recover_from(pid, @authority, [], zero, zero)
+    :ok = Log.unlock_after_recovery(pid, @authority)
     {:ok, pid}
   end
 
@@ -281,7 +288,7 @@ defmodule Bedrock.Test.DataPlane.WALTestSupport do
 
     transactions
     |> Enum.reduce_while(last_version, fn tx, prev_version ->
-      case Log.push(log_pid, tx, prev_version) do
+      case Log.push(log_pid, @authority, tx, prev_version, []) do
         :ok ->
           {:ok, version} = Transaction.commit_version(tx)
           {:cont, version}

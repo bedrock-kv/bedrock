@@ -1,7 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias Bedrock.Cluster
   alias Bedrock.DataPlane.Demux.Server, as: Demux
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.Segment
@@ -9,9 +8,17 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.Service.RecoveryControl
   alias Bedrock.Test.DataPlane.TransactionTestSupport
+  alias Bedrock.Test.RecoveryAuthorityTestSupport
 
   @moduletag :tmp_dir
+  @authority %{generation: 1, recovery_id: "replay-cursor-test"}
+
+  defmodule TestCluster do
+    @moduledoc false
+    def name, do: "replay-cursor-test-cluster"
+  end
 
   test "a legacy BED0 source rolls forward to BED1 and replays its first retained transaction", %{tmp_dir: tmp_dir} do
     backend = object_storage(tmp_dir)
@@ -26,7 +33,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
 
     write_legacy_wal(source_path, [{first_version, first}, {legacy_last_version, legacy_last}])
     {source, source_id} = start_restartable_log("legacy-source", source_path, backend, true)
-    assert :ok = Log.push(source, current, legacy_last_version)
+    assert :ok = Log.push(source, @authority, current, legacy_last_version, [])
     assert :ok = stop_supervised({Shale, source_id})
 
     {source, ^source_id} =
@@ -43,7 +50,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
             }} = Log.info(source, [:available_after, :oldest_version, :last_version])
 
     assert {:ok, ^destination} =
-             Log.recover_from(destination, [source], expected_cursor, last_inclusive)
+             recover(destination, [source], expected_cursor, last_inclusive)
 
     assert {:ok, [^first, ^legacy_last, ^current]} =
              Log.pull(destination, expected_cursor, last_version: last_inclusive)
@@ -59,13 +66,13 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
     first = transaction(first_version, "first")
     last = transaction(last_inclusive, "last")
 
-    assert :ok = Log.push(source, first, Version.zero())
-    assert :ok = Log.push(source, last, first_version)
+    assert :ok = Log.push(source, @authority, first, Version.zero(), [])
+    assert :ok = Log.push(source, @authority, last, first_version, [])
     lock(source)
 
     assert {:ok, %{available_after: replay_after}} = Log.info(source, [:available_after])
     assert replay_after == Version.zero()
-    assert {:ok, ^destination} = Log.recover_from(destination, [source], replay_after, last_inclusive)
+    assert {:ok, ^destination} = recover(destination, [source], replay_after, last_inclusive)
     assert {:ok, [^first, ^last]} = Log.pull(destination, replay_after, last_version: last_inclusive)
   end
 
@@ -77,11 +84,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
     last_inclusive = Version.from_integer(700)
     only_transaction = transaction(last_inclusive, "only")
 
-    assert :ok = Log.push(source, only_transaction, Version.zero())
+    assert :ok = Log.push(source, @authority, only_transaction, Version.zero(), [])
     lock(source)
 
     assert {:ok, ^destination} =
-             Log.recover_from(destination, [source], Version.zero(), last_inclusive)
+             recover(destination, [source], Version.zero(), last_inclusive)
 
     assert {:ok, [^only_transaction]} =
              Log.pull(destination, Version.zero(), last_version: last_inclusive)
@@ -100,8 +107,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
     first = transaction(first_version, "trimmed-away")
     retained = transaction(last_inclusive, "retained")
 
-    assert :ok = Log.push(source, first, Version.zero(), known_committed_version: first_version)
-    assert :ok = Log.push(source, retained, first_version, known_committed_version: last_inclusive)
+    assert :ok = Log.push(source, @authority, first, Version.zero(), known_committed_version: first_version)
+    assert :ok = Log.push(source, @authority, retained, first_version, known_committed_version: last_inclusive)
 
     eventually(fn ->
       assert %{min_durable_version: ^cut_version, segments: [], available_after: ^first_version} =
@@ -121,7 +128,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
             }} = Log.info(restarted_source, [:available_after, :oldest_version, :last_version])
 
     assert {:ok, ^destination} =
-             Log.recover_from(destination, [restarted_source], first_version, last_inclusive)
+             recover(destination, [restarted_source], first_version, last_inclusive)
 
     assert {:ok, [^retained]} =
              Log.pull(destination, first_version, last_version: last_inclusive)
@@ -133,7 +140,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
     {log, log_id} = start_restartable_log("empty-baseline", wal_path, backend, false)
     replay_after = Version.from_integer(500)
 
-    assert {:ok, ^log} = Log.recover_from(log, [], replay_after, replay_after)
+    assert {:ok, ^log} = Log.recover_from(log, @authority, [], replay_after, replay_after)
     assert :ok = stop_supervised({Shale, log_id})
 
     {restarted, ^log_id} = start_restartable_log("empty-baseline-restart", wal_path, backend, true, log_id)
@@ -143,7 +150,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
 
     next_version = Version.from_integer(900)
     next_transaction = transaction(next_version, "next")
-    assert :ok = Log.push(restarted, next_transaction, replay_after)
+    assert :ok = Log.push(restarted, @authority, next_transaction, replay_after, [])
     assert {:ok, [^next_transaction]} = Log.pull(restarted, replay_after, last_version: next_version)
     assert %{active_segment: %{previous_version: ^replay_after}} = :sys.get_state(restarted)
   end
@@ -182,15 +189,18 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
     suffix = :erlang.unique_integer([:positive])
     id = id || "replay-cursor-#{label}-#{suffix}"
 
+    if !File.exists?(Path.join(wal_path, "manifest.json")) do
+      RecoveryAuthorityTestSupport.prepare_worker!(wal_path, id, Bedrock.DataPlane.Log.Shale, cluster: TestCluster)
+    end
+
     spec =
       [
-        cluster: Cluster,
+        cluster: TestCluster,
         otp_name: String.to_atom("replay_cursor_#{label}_#{suffix}"),
         id: id,
         foreman: self(),
         path: wal_path,
-        object_storage: object_storage,
-        start_unlocked: start_unlocked
+        object_storage: object_storage
       ]
       |> Shale.child_spec()
       |> Supervisor.child_spec(restart: :temporary)
@@ -203,10 +213,46 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplayCursorIntegrationTest do
       assert is_pid(recycler)
     end)
 
+    lock(pid)
+    if start_unlocked, do: activate_log(pid, wal_path)
+
     {pid, id}
   end
 
-  defp lock(log), do: :sys.replace_state(log, &%{&1 | mode: :locked})
+  defp lock(log) do
+    assert {:ok, ^log, _} = Log.lock_for_recovery(log, @authority)
+  end
+
+  defp recover(destination, sources, replay_after, last_inclusive) do
+    assert {:ok, ^destination} =
+             Log.recover_from(destination, @authority, sources, replay_after, last_inclusive)
+
+    assert :ok = Log.unlock_after_recovery(destination, @authority)
+    {:ok, destination}
+  end
+
+  defp activate_log(log, path) do
+    state = :sys.get_state(log)
+
+    if state.last_version == Version.zero() do
+      assert {:ok, ^log} = Log.recover_from(log, @authority, [], Version.zero(), Version.zero())
+    else
+      started =
+        RecoveryControl.replay_started(
+          state.recovery_control,
+          @authority,
+          state.available_after,
+          state.last_version
+        )
+
+      {:ok, identity} = RecoveryControl.wal_identity(path, state.last_version)
+      complete = RecoveryControl.replay_complete(started, identity)
+      :ok = RecoveryControl.write(path, complete)
+      :sys.replace_state(log, &%{&1 | recovery_control: complete})
+    end
+
+    assert :ok = Log.unlock_after_recovery(log, @authority)
+  end
 
   defp eventually(assertion, timeout \\ 2_000) do
     deadline = System.monotonic_time(:millisecond) + timeout

@@ -24,6 +24,11 @@ defmodule Bedrock.ControlPlane.Director.DistributorRecruitmentTest do
           resolvers: [],
           logs: %{}
         },
+        distributor_wiring: %{
+          recovery_authority: %{generation: 5, recovery_id: "distributor-test"},
+          logs: %{},
+          log_refs: %{}
+        },
         distributor_retry_ms: 10
       },
       overrides

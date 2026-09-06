@@ -61,6 +61,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.ShardRouter
+  alias Bedrock.Service.RecoveryAuthority
   alias Bedrock.Service.Worker
 
   @doc """
@@ -99,7 +100,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
            unlock_services(
              recovery_attempt,
              transaction_system_layout,
-             context.lock_token,
+             Map.fetch!(context, :recovery_authority),
              context
            ) do
       # Validate the constructed TSL for type safety
@@ -139,25 +140,48 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   @spec unlock_services(
           RecoveryAttempt.t(),
           TransactionSystemLayout.t(),
-          Bedrock.lock_token(),
+          RecoveryAuthority.input(),
           map()
         ) ::
           :ok | {:error, {:unlock_failed, :timeout | :unavailable}}
-  defp unlock_services(recovery_attempt, transaction_system_layout, lock_token, context) when is_binary(lock_token) do
-    case unlock_commit_proxies(
-           recovery_attempt,
-           transaction_system_layout,
-           lock_token,
-           context
-         ) do
-      :ok -> :ok
+  defp unlock_services(recovery_attempt, transaction_system_layout, authority, context) do
+    with :ok <- unlock_logs(recovery_attempt, authority, context),
+         :ok <-
+           unlock_commit_proxies(
+             recovery_attempt,
+             transaction_system_layout,
+             authority,
+             context
+           ) do
+      :ok
+    else
       {:error, reason} -> {:error, {:unlock_failed, reason}}
     end
   end
 
-  @spec unlock_commit_proxies(RecoveryAttempt.t(), TransactionSystemLayout.t(), Bedrock.lock_token(), map()) ::
+  defp unlock_logs(recovery_attempt, authority, context) do
+    unlock_fn = Map.get(context, :unlock_log_fn, &Log.unlock_after_recovery/2)
+
+    recovery_attempt.logs
+    |> Map.keys()
+    |> Enum.reduce_while(:ok, fn id, :ok ->
+      %{status: {:up, log_ref}} = Map.fetch!(recovery_attempt.transaction_services, id)
+
+      case unlock_fn.(log_ref, authority) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:log_unlock_failed, id, reason}}}
+      end
+    end)
+  end
+
+  @spec unlock_commit_proxies(
+          RecoveryAttempt.t(),
+          TransactionSystemLayout.t(),
+          RecoveryAuthority.input(),
+          map()
+        ) ::
           :ok | {:error, :timeout | :unavailable}
-  defp unlock_commit_proxies(recovery_attempt, transaction_system_layout, lock_token, context) do
+  defp unlock_commit_proxies(recovery_attempt, transaction_system_layout, authority, context) do
     proxies = recovery_attempt.proxies
     unlock_fn = Map.get(context, :unlock_commit_proxy_fn, &CommitProxy.recover_from/5)
 
@@ -168,7 +192,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
 
     proxies
     |> Task.async_stream(
-      &unlock_fn.(&1, lock_token, sequencer, resolver_layout, routing_snapshot),
+      &unlock_fn.(&1, authority, sequencer, resolver_layout, routing_snapshot),
       ordered: false
     )
     |> Enum.reduce_while(:ok, fn

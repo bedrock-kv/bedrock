@@ -4,7 +4,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
   import Bedrock.DataPlane.Log.Shale.ColdStarting, only: [reload_segments_at_path: 1]
   import Bedrock.DataPlane.Log.Shale.Facts, only: [info: 2]
-  import Bedrock.DataPlane.Log.Shale.Locking, only: [lock_for_recovery: 3]
+  import Bedrock.DataPlane.Log.Shale.Locking, only: [lock_for_recovery: 2]
 
   import Bedrock.DataPlane.Log.Shale.LongPulls,
     only: [
@@ -15,8 +15,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     ]
 
   import Bedrock.DataPlane.Log.Shale.Pulling, only: [pull: 3]
-  import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 4]
-  import Bedrock.DataPlane.Log.Shale.Recovery, only: [recover_from: 4]
+  import Bedrock.DataPlane.Log.Shale.Pushing, only: [push: 5]
+
+  import Bedrock.DataPlane.Log.Shale.Recovery,
+    only: [apply_replay_page: 3, prepare_replay_state: 2, recover_from: 5, stream_transactions_from_sources: 6]
+
   import Bedrock.DataPlane.Log.Telemetry
   import Bedrock.Internal.GenServer.Replies
 
@@ -24,12 +27,16 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Log.Shale.DemuxControl
+  alias Bedrock.DataPlane.Log.Shale.Locking
+  alias Bedrock.DataPlane.Log.Shale.Recovery
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.Service.Foreman
+  alias Bedrock.Service.RecoveryAuthority
+  alias Bedrock.Service.RecoveryControl
 
   require Logger
 
@@ -47,18 +54,19 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
             foreman: pid(),
             path: Path.t(),
             object_storage: module(),
-            start_unlocked: boolean(),
             reject_pushes_above_lag_us: non_neg_integer()
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do
+    if Keyword.has_key?(opts, :start_unlocked),
+      do: raise(ArgumentError, "start_unlocked bypasses recovery authority")
+
     cluster = opts[:cluster] || raise "Missing :cluster option"
     otp_name = opts[:otp_name] || raise "Missing :otp_name option"
     id = Keyword.fetch!(opts, :id) || raise "Missing :id option"
     foreman = Keyword.fetch!(opts, :foreman)
     path = Keyword.fetch!(opts, :path)
     object_storage = Keyword.fetch!(opts, :object_storage)
-    start_unlocked = Keyword.get(opts, :start_unlocked, false)
     reject_pushes_above_lag_us = Keyword.get(opts, :reject_pushes_above_lag_us)
     cut_interval_us = opts |> Keyword.get(:params, %{}) |> cut_interval_us_from_params()
 
@@ -75,7 +83,6 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
              foreman,
              path,
              object_storage,
-             start_unlocked,
              reject_pushes_above_lag_us,
              cut_interval_us
            },
@@ -96,34 +103,62 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   defp cut_interval_us_from_params(_params), do: nil
 
   @impl true
-  @spec init(
-          {module(), atom(), Log.id(), pid(), Path.t(), module(), boolean(), non_neg_integer() | nil,
-           pos_integer() | nil}
-        ) ::
-          {:ok, State.t(), {:continue, :initialization}}
-  def init(
-        {cluster, otp_name, id, foreman, path, object_storage, start_unlocked, reject_pushes_above_lag_us,
-         cut_interval_us}
-      ) do
-    initial_mode = if start_unlocked, do: :running, else: :locked
+  @spec init({module(), atom(), Log.id(), pid(), Path.t(), module(), non_neg_integer() | nil, pos_integer() | nil}) ::
+          {:ok, State.t(), {:continue, :initialization}} | {:stop, term()}
+  def init({cluster, otp_name, id, foreman, path, object_storage, reject_pushes_above_lag_us, cut_interval_us}) do
+    case validate_startup_control(path, cluster, id) do
+      {:ok, control} ->
+        initial_mode = if control.phase == :running, do: :running, else: :locked
 
-    {:ok,
-     %State{
-       path: path,
-       cluster: cluster,
-       mode: initial_mode,
-       init_state: {:retrying, 1},
-       id: id,
-       otp_name: otp_name,
-       foreman: foreman,
-       object_storage: object_storage,
-       reject_pushes_above_lag_us: reject_pushes_above_lag_us,
-       cut_interval_us: cut_interval_us,
-       available_after: Version.zero(),
-       oldest_version: Version.zero(),
-       last_version: Version.zero()
-     }, {:continue, :initialization}}
+        {:ok,
+         %State{
+           path: path,
+           cluster: cluster,
+           mode: initial_mode,
+           init_state: {:retrying, 1},
+           id: id,
+           otp_name: otp_name,
+           foreman: foreman,
+           object_storage: object_storage,
+           reject_pushes_above_lag_us: reject_pushes_above_lag_us,
+           cut_interval_us: cut_interval_us,
+           recovery_control: control,
+           recovery_authority: control.authority,
+           available_after: Version.zero(),
+           oldest_version: Version.zero(),
+           last_version: Version.zero()
+         }, {:continue, :initialization}}
+
+      {:error, reason} ->
+        {:stop, reason}
+    end
   end
+
+  @impl true
+  def terminate(_reason, %State{} = t) do
+    Locking.cancel_replay(t.replay_operation, :not_lock_owner)
+    :ok
+  end
+
+  defp validate_startup_control(path, cluster, id) do
+    with {:ok, control} <- RecoveryControl.validate_prepared(path, cluster, id, Bedrock.DataPlane.Log.Shale),
+         :ok <- validate_running_wal(path, control) do
+      {:ok, control}
+    end
+  end
+
+  defp validate_running_wal(path, %{phase: phase, last_inclusive: last, wal_identity: expected})
+       when phase in [:replay_complete, :running] do
+    allow_suffix? = phase == :running
+
+    case RecoveryControl.wal_identity(path, last, allow_suffix: allow_suffix?) do
+      {:ok, ^expected} -> :ok
+      {:ok, _} -> {:error, {:recovery_authority, :wal_identity_mismatch}}
+      {:error, reason} -> {:error, {:recovery_authority, {:wal_identity_unavailable, reason}}}
+    end
+  end
+
+  defp validate_running_wal(_path, _control), do: :ok
 
   @impl true
   @spec handle_continue(
@@ -187,6 +222,69 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   @spec handle_info(:timeout | :retry_initialization | {:min_durable_version, pid(), Bedrock.version()}, State.t()) ::
           {:noreply, State.t()} | {:noreply, State.t(), {:continue, :check_for_expired_pullers}}
   def handle_info(:timeout, t), do: noreply(t, continue: :check_for_expired_pullers)
+
+  def handle_info({:replay_fetched, operation_id, result}, %{replay_operation: %{id: operation_id} = op} = t) do
+    Process.demonitor(op.monitor, [:flush])
+    Process.demonitor(op.guardian_monitor, [:flush])
+    Process.demonitor(op.owner_monitor, [:flush])
+    t = %{t | replay_operation: nil}
+
+    with :ok <- validate_owner(t, op.authority),
+         {:ok, t} <- finish_streamed_replay(t, result, op.last_inclusive),
+         {:ok, t} <- complete_replay(t) do
+      Enum.each(op.waiters, &GenServer.reply(&1, {:ok, self()}))
+      noreply(t)
+    else
+      {:error, reason, failed_t} ->
+        Enum.each(op.waiters, &GenServer.reply(&1, {:error, {:failed_to_recover, reason}}))
+        noreply(%{failed_t | mode: :locked})
+
+      {:error, reason} ->
+        Enum.each(op.waiters, &GenServer.reply(&1, {:error, reason}))
+        noreply(t)
+    end
+  end
+
+  def handle_info({:replay_fetched, _operation_id, _result}, t), do: noreply(t)
+
+  def handle_info(
+        {:replay_page, operation_id, authority, transactions, task_pid},
+        %{replay_operation: %{id: operation_id, pid: task_pid} = op} = t
+      ) do
+    with :ok <- validate_owner(t, authority),
+         true <- RecoveryAuthority.compare(authority, op.authority) == :same || {:error, :not_lock_owner},
+         t = if(op.started?, do: t, else: prepare_replay_state(t, op.replay_after)),
+         {:ok, t} <- apply_replay_page(t, transactions, op.last_inclusive),
+         :ok <- validate_owner(t, authority) do
+      send(task_pid, {:replay_page_ack, operation_id, :ok})
+      noreply(%{t | replay_operation: %{op | started?: true}})
+    else
+      {:error, reason, failed_t} ->
+        send(task_pid, {:replay_page_ack, operation_id, {:error, reason}})
+        noreply(%{failed_t | replay_operation: op})
+
+      {:error, reason} ->
+        send(task_pid, {:replay_page_ack, operation_id, {:error, reason}})
+        noreply(t)
+    end
+  end
+
+  def handle_info({:replay_page, operation_id, _authority, _transactions, task_pid}, t) do
+    send(task_pid, {:replay_page_ack, operation_id, {:error, :not_lock_owner}})
+    noreply(t)
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{replay_operation: %{monitor: ref} = op} = t) do
+    Process.demonitor(op.owner_monitor, [:flush])
+    Process.demonitor(op.guardian_monitor, [:flush])
+    Enum.each(op.waiters, &GenServer.reply(&1, {:error, {:failed_to_recover, {:replay_task_exit, reason}}}))
+    noreply(%{t | replay_operation: nil, mode: :locked})
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{replay_operation: %{owner_monitor: ref} = op} = t) do
+    Locking.cancel_replay(op, :not_lock_owner)
+    noreply(%{t | replay_operation: nil, mode: :locked})
+  end
 
   def handle_info(:retry_initialization, t) do
     case do_initialization(t) do
@@ -265,38 +363,71 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:info, fact_names}, _, t), do: t |> info(fact_names) |> then(&reply(t, &1))
 
   @impl true
-  def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
-    trace_lock_for_recovery(epoch)
-
-    with {:ok, t} <- lock_for_recovery(t, epoch, director),
+  def handle_call({:lock_for_recovery, authority}, _from, t) do
+    with {:ok, authority} <- RecoveryAuthority.new(authority),
+         {:ok, t} <- lock_for_recovery(t, authority),
          {:ok, info} <- info(t, Log.recovery_info()) do
+      trace_lock_for_recovery(authority.generation)
       reply(t, {:ok, self(), info})
     else
       error -> reply(t, error)
     end
   end
 
-  @impl true
-  def handle_call({:recover_from, source_logs, replay_after, last_inclusive}, {_director, _}, t) do
-    trace_recover_from(source_logs, replay_after, last_inclusive)
-
-    case recover_from(t, source_logs, replay_after, last_inclusive) do
-      {:ok, t} -> reply(t, {:ok, self()})
-      {:error, reason, t} -> reply(t, {:error, {:failed_to_recover, reason}})
-    end
-  end
-
-  @impl true
-  def handle_call({:push, transaction_bytes, expected_version, known_committed_version}, from, %State{} = t) do
-    with {:ok, transaction} <- Transaction.validate(transaction_bytes),
+  def handle_call({:push, authority, transaction_bytes, expected_version, known_committed_version}, from, %State{} = t) do
+    with {:ok, authority} <- RecoveryAuthority.new(authority),
+         :ok <- validate_owner(t, authority),
+         {:ok, transaction} <- Transaction.validate(transaction_bytes),
          :ok <- validate_has_shard_index(transaction) do
       t
-      |> push(expected_version, transaction, from)
+      |> push(RecoveryAuthority.external(authority), expected_version, transaction, from)
       |> apply_push_transition(known_committed_version)
     else
       {:error, _reason} = error -> reply(t, error, continue: :check_for_expired_pullers)
     end
   end
+
+  @impl true
+  def handle_call({:recover_from, authority, source_logs, replay_after, last_inclusive}, from, t) do
+    trace_recover_from(source_logs, replay_after, last_inclusive)
+
+    with {:ok, authority} <- RecoveryAuthority.new(authority),
+         :ok <- validate_owner(t, authority) do
+      case existing_replay(t, authority, replay_after, last_inclusive, from) do
+        {:joined, t} ->
+          noreply(t)
+
+        :none ->
+          case begin_replay(t, authority, replay_after, last_inclusive) do
+            {:continue, t} -> start_replay(t, authority, source_logs, replay_after, last_inclusive, from)
+            {:already_complete, t} -> reply(t, {:ok, self()})
+            {:error, reason} -> reply(t, {:error, reason})
+          end
+
+        {:error, reason} ->
+          reply(t, {:error, reason})
+      end
+    else
+      {:error, reason} -> reply(t, {:error, reason})
+    end
+  end
+
+  def handle_call({:recover_from, _sources, _after, _last}, _from, t),
+    do: reply(t, {:error, :invalid_recovery_authority})
+
+  def handle_call({:unlock_after_recovery, authority}, _from, t) do
+    with {:ok, authority} <- RecoveryAuthority.new(authority),
+         :ok <- validate_owner(t, authority),
+         {:ok, t} <- unlock_replay(t) do
+      reply(t, :ok)
+    else
+      {:error, reason} -> reply(t, {:error, reason})
+    end
+  end
+
+  @impl true
+  def handle_call({:push, _transaction_bytes, _expected_version, _known_committed_version}, _from, t),
+    do: reply(t, {:error, :invalid_recovery_authority})
 
   # Pushes without a known-committed watermark (older callers, tests): the
   # WAL still appends, but cuts stay gated until a watermark arrives.
@@ -308,6 +439,22 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
   def handle_call({:pull, from_version, opts}, from, t) do
     trace_pull_transactions(from_version, opts)
 
+    case validate_recovery_pull(t, opts) do
+      :ok -> do_pull(t, from_version, opts, from)
+      {:error, reason} -> reply(t, {:error, reason})
+    end
+  end
+
+  @impl true
+  def handle_call(:ping, _from, t), do: reply(t, :pong)
+
+  @impl true
+  def handle_call({:get_shard_server, shard_id}, _from, t) do
+    result = Demux.Server.get_shard_server(t.demux, shard_id)
+    reply(t, result)
+  end
+
+  defp do_pull(t, from_version, opts, from) do
     case pull(t, from_version, opts) do
       {:ok, t, transactions} ->
         reply(t, {:ok, transactions})
@@ -335,13 +482,174 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
-  @impl true
-  def handle_call(:ping, _from, t), do: reply(t, :pong)
+  defp validate_recovery_pull(t, opts) do
+    if opts[:recovery] do
+      with {:ok, authority} <- RecoveryAuthority.new(opts[:recovery_authority]) do
+        validate_owner(t, authority)
+      end
+    else
+      :ok
+    end
+  end
 
-  @impl true
-  def handle_call({:get_shard_server, shard_id}, _from, t) do
-    result = Demux.Server.get_shard_server(t.demux, shard_id)
-    reply(t, result)
+  defp validate_owner(%{recovery_authority: nil}, _authority), do: {:error, :not_lock_owner}
+
+  defp validate_owner(%{recovery_authority: current}, authority) do
+    if RecoveryAuthority.compare(authority, current) == :same, do: :ok, else: {:error, :not_lock_owner}
+  end
+
+  defp begin_replay(_t, _authority, replay_after, last_inclusive) when replay_after > last_inclusive,
+    do: {:error, :invalid_version_range}
+
+  defp begin_replay(%{recovery_control: control} = t, authority, replay_after, last_inclusive) do
+    same_range = control.replay_after == replay_after and control.last_inclusive == last_inclusive
+
+    begin_replay_phase(control.phase, same_range, t, authority, replay_after, last_inclusive)
+  end
+
+  defp begin_replay_phase(phase, true, t, _authority, _replay_after, _last_inclusive)
+       when phase in [:replay_complete, :running] do
+    case validate_running_wal(t.path, t.recovery_control) do
+      :ok -> {:already_complete, t}
+      {:error, {:recovery_authority, reason}} -> {:error, reason}
+    end
+  end
+
+  defp begin_replay_phase(:replay_started, false, _t, _authority, _replay_after, _last_inclusive),
+    do: {:error, :replay_range_mismatch}
+
+  defp begin_replay_phase(:replay_started, true, t, authority, replay_after, last_inclusive) do
+    if Recovery.replay_complete_on_disk?(t.path, replay_after, last_inclusive) do
+      case complete_replay(t) do
+        {:ok, t} -> {:already_complete, t}
+        {:error, reason, _t} -> {:error, reason}
+      end
+    else
+      persist_replay_started(t, authority, replay_after, last_inclusive)
+    end
+  end
+
+  defp begin_replay_phase(:locked, _same_range, t, authority, replay_after, last_inclusive),
+    do: persist_replay_started(t, authority, replay_after, last_inclusive)
+
+  defp begin_replay_phase(_phase, _same_range, _t, _authority, _replay_after, _last_inclusive),
+    do: {:error, :lock_required}
+
+  defp persist_replay_started(t, authority, replay_after, last_inclusive) do
+    record = RecoveryControl.replay_started(t.recovery_control, authority, replay_after, last_inclusive)
+
+    case write_control(t.path, record) do
+      :ok -> {:continue, %{t | recovery_control: record}}
+      {:error, reason} -> {:error, {:unable_to_persist_recovery_state, reason}}
+    end
+  end
+
+  defp complete_replay(t) do
+    with {:ok, wal_identity} <- RecoveryControl.wal_identity(t.path, t.last_version, allow_suffix: false),
+         record = RecoveryControl.replay_complete(t.recovery_control, wal_identity),
+         :ok <- write_control(t.path, record) do
+      {:ok, %{t | recovery_control: record, mode: :locked}}
+    else
+      {:error, reason} -> {:error, {:unable_to_persist_replay_complete, reason}, t}
+    end
+  end
+
+  defp existing_replay(%{replay_operation: nil}, _authority, _after, _last, _from), do: :none
+
+  defp existing_replay(%{replay_operation: op} = t, authority, replay_after, last_inclusive, from) do
+    if RecoveryAuthority.compare(authority, op.authority) == :same and op.replay_after == replay_after and
+         op.last_inclusive == last_inclusive do
+      {:joined, %{t | replay_operation: %{op | waiters: op.waiters ++ [from]}}}
+    else
+      {:error, :replay_in_progress}
+    end
+  end
+
+  defp start_replay(t, authority, sources, replay_after, last_inclusive, _from) when replay_after == last_inclusive do
+    case recover_from(t, authority, sources, replay_after, last_inclusive) do
+      {:ok, t} ->
+        case complete_replay(t) do
+          {:ok, t} -> reply(t, {:ok, self()})
+          {:error, reason, t} -> reply(t, {:error, {:failed_to_recover, reason}})
+        end
+
+      {:error, reason, t} ->
+        reply(t, {:error, {:failed_to_recover, reason}})
+    end
+  end
+
+  defp start_replay(t, authority, sources, replay_after, last_inclusive, from) do
+    operation_id = make_ref()
+    server = self()
+
+    {pid, monitor} =
+      spawn_monitor(fn ->
+        result =
+          stream_transactions_from_sources(server, operation_id, authority, sources, replay_after, last_inclusive)
+
+        send(server, {:replay_fetched, operation_id, result})
+      end)
+
+    {guardian, guardian_monitor} = spawn_monitor(fn -> guard_replay_lifetime(server, pid) end)
+
+    {owner, _tag} = from
+    owner_monitor = Process.monitor(owner)
+
+    operation = %{
+      id: operation_id,
+      authority: RecoveryAuthority.external(authority),
+      replay_after: replay_after,
+      last_inclusive: last_inclusive,
+      waiters: [from],
+      pid: pid,
+      monitor: monitor,
+      guardian: guardian,
+      guardian_monitor: guardian_monitor,
+      owner_monitor: owner_monitor,
+      started?: false
+    }
+
+    noreply(%{t | replay_operation: operation})
+  end
+
+  defp guard_replay_lifetime(server, replay_pid) do
+    server_ref = Process.monitor(server)
+    replay_ref = Process.monitor(replay_pid)
+
+    receive do
+      {:DOWN, ^server_ref, :process, ^server, _reason} ->
+        if Process.alive?(replay_pid), do: Process.exit(replay_pid, :kill)
+
+      {:DOWN, ^replay_ref, :process, ^replay_pid, _reason} ->
+        :ok
+    end
+  end
+
+  defp finish_streamed_replay(%{last_version: last} = t, :ok, last), do: {:ok, %{t | mode: :locked}}
+  defp finish_streamed_replay(t, :ok, last), do: {:error, {:incomplete_replay, t.last_version, last}, t}
+  defp finish_streamed_replay(t, {:error, reason}, _last), do: {:error, reason, t}
+
+  defp unlock_replay(%{recovery_control: %{phase: :running}} = t), do: {:ok, %{t | mode: :running}}
+
+  defp unlock_replay(%{recovery_control: %{phase: :replay_complete} = control} = t) do
+    record = RecoveryControl.running(control)
+
+    with :ok <- validate_running_wal(t.path, control),
+         :ok <- write_control(t.path, record) do
+      {:ok, %{t | recovery_control: record, mode: :running}}
+    else
+      {:error, {:recovery_authority, reason}} -> {:error, reason}
+      {:error, reason} -> {:error, {:unable_to_persist_recovery_state, reason}}
+    end
+  end
+
+  defp unlock_replay(_t), do: {:error, :replay_not_complete}
+
+  defp write_control(path, record) do
+    case RecoveryControl.write(path, record) do
+      {:error, {:post_publish_sync_failed, reason}} -> exit({:recovery_authority_durability_uncertain, reason})
+      result -> result
+    end
   end
 
   defp validate_has_shard_index(transaction) do
@@ -501,6 +809,10 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
     end
   end
 
+  # The optional WAL backpressure hard limit is enforced in Pushing,
+  # against each transaction's own prospective commit version — including
+  # entries drained from the pending queue.
+
   defp start_demux(t), do: DemuxControl.start(t)
 
   defp advance_min_durable_version(t, incoming_version) do
@@ -555,18 +867,31 @@ defmodule Bedrock.DataPlane.Log.Shale.Server do
 
     available_after = determine_available_after(t.active_segment, remaining_segments)
 
-    t
-    |> Map.put(:segments, remaining_segments)
-    |> Map.put(:available_after, available_after)
-    |> Map.put(
-      :oldest_version,
-      determine_oldest_transaction_version([t.active_segment | remaining_segments], available_after)
-    )
+    updated =
+      t
+      |> Map.put(:segments, remaining_segments)
+      |> Map.put(:available_after, available_after)
+      |> Map.put(
+        :oldest_version,
+        determine_oldest_transaction_version([t.active_segment | remaining_segments], available_after)
+      )
+
+    if segments_to_trim_oldest_first == [], do: updated, else: refresh_running_control(updated)
   end
 
-  # The optional WAL backpressure hard limit is enforced in Pushing,
-  # against each transaction's own prospective commit version — including
-  # entries drained from the pending queue.
+  defp refresh_running_control(%{recovery_control: %{phase: :running}, recovery_authority: authority} = t) do
+    started = RecoveryControl.replay_started(t.recovery_control, authority, t.available_after, t.last_version)
+    {:ok, identity} = RecoveryControl.wal_identity(t.path, t.last_version)
+    record = started |> RecoveryControl.replay_complete(identity) |> RecoveryControl.running()
+
+    case RecoveryControl.write(t.path, record) do
+      :ok -> %{t | recovery_control: record}
+      {:error, {:post_publish_sync_failed, reason}} -> exit({:recovery_authority_durability_uncertain, reason})
+      {:error, reason} -> exit({:recovery_authority_checkpoint_failed, reason})
+    end
+  end
+
+  defp refresh_running_control(t), do: t
 
   defp segment_fully_durable?(segment, min_durable_version) do
     loaded_segment = Segment.ensure_transactions_are_loaded(segment)

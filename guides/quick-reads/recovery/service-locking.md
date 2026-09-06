@@ -6,9 +6,9 @@ When multiple directors detect the same cluster failure simultaneously, they cou
 
 ## How It Works
 
-The locking phase secures control over services from the previous [transaction system layout](../../quick-reads/transaction-system-layout.md) using [epoch](../../glossary.md#epoch)-based precedence:
+The locking phase secures control over services from the previous [transaction system layout](../../quick-reads/transaction-system-layout.md) using a coordinator-issued recovery grant:
 
-**Epoch Ordering**: Each recovery attempt carries a unique epoch identifier. Services accept locks only from the director with the highest epoch number, rejecting others with `:newer_epoch_exists` responses.
+**Exact Authority**: Each recovery attempt carries `{generation, recovery_id}` from its durable bootstrap reservation. A higher generation supersedes an older owner. Repeating the same pair is idempotent across processes, while a different recovery id at the same generation is rejected. Services persist this owner before replay and validate it again before every replay, push, pull, and unlock effect.
 
 **Selective Targeting**: Only services containing persistent data require locking—specifically [log](../../deep-dives/architecture/data-plane/log.md) and [materializer](../../deep-dives/architecture/data-plane/materializer.md) components that must be protected during reconstruction.
 
@@ -44,7 +44,7 @@ This guarantees the system never mistakes an existing deployment for a new one, 
 ## Error Handling
 
 - **Recoverable**: Network timeouts and unreachable services don't halt recovery—the algorithm proceeds with available services
-- **Fatal**: Any service reporting a newer epoch lock immediately terminates the current recovery attempt
+- **Fatal**: Any service reporting a newer or equal-generation foreign owner immediately terminates the current recovery attempt
 
 ---
 

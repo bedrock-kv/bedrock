@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
   alias Bedrock.DataPlane.Materializer.Olivine
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.RecoveryAuthorityTestSupport, as: AuthoritySupport
 
   defp wait_for_health_report(worker_id, pid, timeout \\ 5_000) do
     receive do
@@ -16,13 +17,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
   defp start_worker(tmp_dir) do
     worker_id = "ingest-worker-#{System.unique_integer([:positive])}"
     otp_name = :"olivine_ingest_#{System.unique_integer([:positive])}"
+    cluster = AuthoritySupport.prepare_worker!(tmp_dir, worker_id, Olivine)
 
     child_spec =
       Olivine.child_spec(
         otp_name: otp_name,
         foreman: self(),
         id: worker_id,
-        path: tmp_dir
+        path: tmp_dir,
+        cluster: cluster
       )
 
     {:ok, pid} = start_supervised(child_spec)
@@ -38,10 +41,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
   end
 
   defp unlock(pid) do
-    epoch = 1
-    {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, epoch})
+    authority = AuthoritySupport.authority()
+    {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, authority})
 
-    :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), []})
+    :ok = GenServer.call(pid, {:unlock_after_recovery, authority, Version.zero(), []})
   end
 
   setup do
@@ -96,8 +99,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
       assert {:ok, "c"} = GenServer.call(pid, {:get, "key", v3, []})
 
       # Recovery rolls the cluster back to v2: the v3 suffix must vanish.
-      {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, 2})
-      :ok = GenServer.call(pid, {:unlock_after_recovery, v2, []})
+      authority = AuthoritySupport.authority(2, "rollback")
+      {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, authority})
+      :ok = GenServer.call(pid, {:unlock_after_recovery, authority, v2, []})
 
       assert {:ok, "b"} = GenServer.call(pid, {:get, "key", v2, []})
 
@@ -110,13 +114,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
       pid = start_worker(tmp_dir)
 
       # Locked (never unlocked after startup lock)
-      {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, 1})
+      authority = AuthoritySupport.authority()
+      {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, authority})
 
       assert :ok = GenServer.call(pid, {:ingest, [make_transaction(5_000)], Version.from_integer(5_000)})
 
       # Nothing was applied: after unlock, the key does not exist at the
       # current (zero) version.
-      :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), []})
+      :ok = GenServer.call(pid, {:unlock_after_recovery, authority, Version.zero(), []})
       assert {:error, :not_found} = GenServer.call(pid, {:get, "key", Version.zero(), []})
     end
   end

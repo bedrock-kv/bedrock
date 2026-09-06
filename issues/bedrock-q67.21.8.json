@@ -7,9 +7,15 @@
   "id": "bedrock-q67.21.8",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/280 — idle_timeout now travels cluster config -\u003e recruitment_ctx worker_params -\u003e foreman manifest -\u003e worker; default 15m ON, zero disables; tag 0 exempted explicitly in Recruitment.worker_params/2 (cold audit found the distributor heals/recruits tag 0). Stacked on #263.",
+      "timestamp": "2026-09-06T02:14:34Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Production wiring for materializer idle_timeout",
   "type": "task",
-  "updated_at": "2026-09-06T01:25:28Z"
+  "updated_at": "2026-09-06T02:14:34Z"
 }

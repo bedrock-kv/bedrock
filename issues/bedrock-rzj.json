@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T02:31:13Z",
+  "description": "Found by the round-2 audit of bedrock-q67.26 (PR #285). FDB's ReadYourWrites drops empty/degenerate conflict ranges before they reach the resolver (RYW ~1975 and ~2490). Bedrock does not: the audit showed a {\"m\",\"m\"} write-conflict range committed into history, after which a transaction that read {\"a\",\"z\"} at an older version was aborted, though no key was written. Fix at the same place #285 validates conflict sections at commit ingress (Finalization): drop ranges where start \u003e= end (exclusive end) from both sections before they are recorded or checked; pin with a test that a degenerate write range aborts nobody. Pre-existing and unrelated to the keyspace boundary.",
+  "id": "bedrock-rzj",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Resolver does not drop empty conflict ranges: a degenerate {k, k} write conflict in history aborts every reader whose range covers k",
+  "type": "bug",
+  "updated_at": "2026-09-06T02:31:13Z"
+}

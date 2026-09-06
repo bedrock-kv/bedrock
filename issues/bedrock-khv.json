@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T00:46:27Z",
+  "description": "Found while fixing bedrock-b28 (PR #248). The resolver's conflict_resolution property uses Conflicts.check_conflicts/3 as its own oracle, so it cannot catch bugs inside Conflicts — proven by hard-wiring check_conflicts to always :ok or always :abort and watching the property stay green. test/bedrock/data_plane/resolver/conflicts_test.exs is 57 lines and covers only the oldest_version floor. Add direct tests for the range-overlap logic (point vs range, adjacent ranges, exclusive end keys, version window edges) with hand-computed expected verdicts so a broken Conflicts fails loudly.",
+  "id": "bedrock-khv",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Conflicts.check_conflicts/3 overlap logic is thinly covered: conflicts_test.exs only exercises the oldest_version floor",
+  "type": "task",
+  "updated_at": "2026-09-06T00:46:27Z"
+}

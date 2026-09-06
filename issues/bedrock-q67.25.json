@@ -17,11 +17,15 @@
     {
       "text": "Additional scope from the 2026-08-20 census: (1) replication_factor is re-derived as max(1, map_size(logs)) in two sites (topology snapshot, streaming) while cluster config carries desired_replication_factor unread - config authority should make the keyspace copy the single source. (2) The object-storage bootstrap dual-writes log ids (persistence_phase writes; coordinator cold-boot reads for quorum planning) - the same fact as layout/logs/. The bootstrap stays the cold-boot anchor (coordinated-state analogue), but decide the anchor's MINIMUM contents here. (3) Boundary statement to document: the coordinator raft service directory is pre-recovery discovery input ONLY (FDB CC-registration analogue, also not keyspace); nothing steady-state may read it.",
       "timestamp": "2026-08-20T22:39:32Z"
+    },
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/266 — desired_commit_proxies moved to \\xff/system/config/ with its reader (materializer bootstrap reads the family at the recovery version; commit-proxy startup consumes it; persistence seeds it once). Coordinator bootstrap keeps it as the anchor only. Remaining parameters/policies + census items filed as bedrock-q67.50; the missing operator-facing config writer as bedrock-q67.51. Stacked on #251.",
+      "timestamp": "2026-09-06T01:33:02Z"
     }
   ],
   "priority": 3,
   "status": "in_progress",
   "title": "Cluster config authority: keyspace owns parameters/policies; coordinator keeps only the bootstrap anchor",
   "type": "task",
-  "updated_at": "2026-09-06T00:55:18Z"
+  "updated_at": "2026-09-06T01:33:02Z"
 }

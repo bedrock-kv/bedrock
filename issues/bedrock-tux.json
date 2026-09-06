@@ -22,11 +22,15 @@
     {
       "text": "Peer GREEN: /tmp/issue239-peer-settle.log, 2 real three-VM tests/0 failures (7.0s). Both require newer epoch and acknowledged-state independent oracle. Explicit coupled coordinator/log-loss and partition+coordinator-restart schedules per approved amendment; original autonomous recovery red preserved (bedrock-t0k), optional BEDROCK_HISTORY_SINGLE_LOG_REPRO=1 retains strict failure. Final criterion map /tmp/bedrock-issue-team-20260905/239-peer-final-audit.md. Strict Credo two owned files clean; root to obtain cold final audit and integrated checks.",
       "timestamp": "2026-09-06T01:11:51Z"
+    },
+    {
+      "text": "Peer review amendment: independent issue233 diagnosed stale Distributor capability snapshot and showed failed cases injected fault while ONLY shard0 existed. Fixture now requires actual shard_num[0,1], both Olivine workers running at published epoch before/after fault. No synthetic state or protocol edits. Renewed GREEN /tmp/issue239-peer-validated.log:2tests0fail13.3s, preceded by shardcoverage run2tests0fail44s; strictCredo clean. Separate production capability finding not claimed fixed by retries. Audit map updated.",
+      "timestamp": "2026-09-06T01:18:02Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Add end-to-end transaction-history checks across batching and recovery",
   "type": "task",
-  "updated_at": "2026-09-06T01:11:51Z"
+  "updated_at": "2026-09-06T01:18:02Z"
 }

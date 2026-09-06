@@ -15,6 +15,7 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   delta-rejection as the orphan-cleanup trigger.
   """
 
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.ShardRouter
@@ -23,6 +24,8 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   alias Bedrock.Service.Worker
 
   require Logger
+
+  @system_shard_tag RecoveryAttempt.system_shard_id()
 
   @typedoc """
   The recruitment context. `logs` and `log_refs` are the epoch's log
@@ -135,13 +138,33 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
     foreman_ref = {context.cluster.otp_name(:foreman), node}
     worker_id = Worker.random_id()
     create_worker_fn = Map.get(context, :create_worker_fn, &Foreman.new_worker/4)
-    worker_params = context |> Map.get(:worker_params, %{}) |> Map.put("shard_id", tag)
 
-    case create_worker_fn.(foreman_ref, worker_id, :materializer, timeout: 30_000, params: worker_params) do
+    case create_worker_fn.(foreman_ref, worker_id, :materializer,
+           timeout: 30_000,
+           params: worker_params(tag, context)
+         ) do
       {:ok, worker_ref} -> {:ok, worker_ref, worker_id}
       {:error, reason} -> {:error, {:worker_creation_failed, reason, tag, node}}
     end
   end
+
+  # The system shard takes the shard assignment and nothing else.
+  # Recovery already seats tag 0 that way, but recovery is not the only
+  # thing that creates a tag-0 materializer: the tag is in the shard
+  # layout and in the `materializers/` family like any other, so it is
+  # monitored, verified, and healed here (`Distributor.Server`'s
+  # heal_member/3, and the startup sweep's uncovered set). A system
+  # materializer created with the cluster's idle timeout would, after
+  # its window of no CLIENT reads, upload a snapshot, delete its own
+  # foreman entry and working directory, and exit — and the next
+  # recovery stalls on a named system member it cannot reach
+  # (MaterializerBootstrapPhase's resolve_system_materializer/2, whose
+  # policy is deliberately stall-not-fallback). Tag 0 genuinely reaches
+  # this site, so the exemption is stated here rather than assumed.
+  @spec worker_params(Bedrock.range_tag(), context()) :: %{String.t() => term()}
+  defp worker_params(tag, _context) when tag == @system_shard_tag, do: %{"shard_id" => tag}
+
+  defp worker_params(tag, context), do: context |> Map.get(:worker_params, %{}) |> Map.put("shard_id", tag)
 
   defp lock_materializer(worker, node, context) do
     lock_fn = Map.get(context, :lock_materializer_fn, &default_lock_materializer/2)

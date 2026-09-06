@@ -74,6 +74,46 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
     assert version == Version.from_integer(0)
   end
 
+  test "the epoch's policy params ride the creation, alongside the shard assignment" do
+    test_pid = self()
+
+    ctx =
+      ctx(%{
+        worker_params: %{"idle_timeout" => 900_000},
+        create_worker_fn: fn _foreman, _id, :materializer, opts ->
+          send(test_pid, {:created, opts[:params]})
+          {:ok, :worker_ref}
+        end
+      })
+
+    assert {:ok, _pid, :node_a@host, _worker_id} = Recruitment.recruit(7, ctx)
+    assert_received {:created, params}
+    assert params == %{"idle_timeout" => 900_000, "shard_id" => 7}
+  end
+
+  # bedrock-q67.21.8: tag 0 reaches this site for real — it is in the
+  # shard layout and in the committed family, so the distributor
+  # monitors, verifies and heals it like any other tag. A system
+  # materializer carrying the cluster's idle timeout would eventually
+  # delete its own foreman entry and working directory, and the next
+  # recovery stalls on a named system member it cannot reach.
+  test "the system shard is created with the shard assignment alone, whatever policy the epoch carries" do
+    test_pid = self()
+
+    ctx =
+      ctx(%{
+        worker_params: %{"idle_timeout" => 900_000},
+        create_worker_fn: fn _foreman, _id, :materializer, opts ->
+          send(test_pid, {:created, opts[:params]})
+          {:ok, :worker_ref}
+        end
+      })
+
+    assert {:ok, _pid, :node_a@host, _worker_id} = Recruitment.recruit(0, ctx)
+    assert_received {:created, params}
+    assert params == %{"shard_id" => 0}
+  end
+
   test "a lock failure removes the orphan before the error returns" do
     test_pid = self()
 

@@ -6,9 +6,15 @@
   "description": "Olivine.Logic.info/2 (logic.ex:168) returns {:ok, {:error, :unsupported_info}} for unknown single facts; the @spec's top-level {:error, :unsupported_info} is unreachable for the single-atom path. Unwrap or fix spec; check callers in server.ex. Found during bedrock-eu4 audit (PR #80).",
   "id": "bedrock-w0c",
   "labels": [],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/275 — fix landed, full suite green (2904 tests), cold-audit PASS. Stacked on #274.",
+      "timestamp": "2026-09-06T02:06:10Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "info/2 double-wraps unsupported-fact errors; @spec unreachable",
   "type": "task",
-  "updated_at": "2026-09-06T01:57:44Z"
+  "updated_at": "2026-09-06T02:06:10Z"
 }

@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:48:27Z",
+  "description": "Found by the cold audit of bedrock-ljh (PR #272). In test/bedrock/data_plane/materializer/olivine/persistence_integration_test.exs, the eviction test drives current_version to ~1000 while get_window_edge/1 subtracts the 5s window lag; Version.add/2 raises on the underflow so advance_window/2 always returns {:no_eviction, _}, the {:evict, ...} branch never runs, and the two closing assertions are trivially true. Rewrite the test so versions start above the window lag (e.g. from Version.from_integer(10_000_000)) and assert on the actual evicted set; confirm by breaking eviction and watching the test fail.",
+  "id": "bedrock-v4e",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "persistence_integration_test 'window eviction with page data persistence' never evicts: get_window_edge underflows so the evict branch is dead",
+  "type": "task",
+  "updated_at": "2026-09-06T01:48:27Z"
+}

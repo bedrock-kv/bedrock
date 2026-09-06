@@ -12,6 +12,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   correctly. A phase with keyspace writes to make adds them to the Tx; it
   never leaves provenance behind for this phase to rebuild them from.
 
+  ## What recovery commits
+
+  Every key in the transaction has a named purpose: `shard_keys/` feeds
+  both RoutingData and the next recovery's materializer bootstrap, and
+  `materializers/` refs feed the client-facing routing projection (FDB's
+  serverList analogue — runtime hints, never recovery input) and worker
+  rejoin validation. Both families are contributed by the phase that
+  decides them, the materializer bootstrap. Nothing else is written:
+  config and policy travel via the object-storage cluster bootstrap, which
+  the coordinator actually reads, and services are rebuilt each recovery
+  from foreman discovery. Families return to the keyspace when their
+  readers do (bedrock-q67.9, q67.25) — and only then, by the phase that
+  owns them adding to this same Tx.
+
+  FDB does keep a keyspace copy of its log set (`\\xff/logs`,
+  `SystemData.cpp:1171`, written by the recovery transaction at
+  `ClusterRecovery.actor.cpp:1728`), so the deleted layout/logs family was
+  its analogue — but FDB's copy has three readers we have no equivalent
+  of: recovery's stale-master fence
+  (`ClusterRecovery.actor.cpp:770-801`), exclusion safety
+  (`ManagementAPI.actor.cpp:2394`), and the in-progress-exclusion
+  special-key module (`SpecialKeySpace.actor.cpp:1294`). Ours had none,
+  and the tag mapping it held survives in the cluster bootstrap the
+  coordinator actually loads. The family comes back when one of those
+  readers does (bedrock-q67.21.10).
+
   If the system transaction fails, the director exits immediately rather than
   retrying. System transaction failure indicates fundamental problems that require
   coordinator restart with a new epoch.
@@ -39,28 +65,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     transaction_system_layout = recovery_attempt.transaction_system_layout
 
-    # Every key in here has a named purpose: shard_keys/ feeds both
-    # RoutingData and the next recovery's materializer bootstrap, and
-    # materializers/ refs feed the client-facing routing projection (FDB's
-    # serverList analogue - runtime hints, never recovery input) and worker
-    # rejoin validation. Both families are contributed by the phase that
-    # decides them (the materializer bootstrap). Nothing else is written
-    # (config and policy travel via the object-storage cluster bootstrap,
-    # which the coordinator actually reads; services are rebuilt each
-    # recovery from foreman discovery). Families return to the keyspace
-    # when their readers do (bedrock-q67.9, q67.25) - and only then, by
-    # the phase that owns them adding to this same Tx. FDB does keep a
-    # keyspace copy of its log set (`\xff/logs`, SystemData.cpp:1171,
-    # written by the recovery transaction at
-    # ClusterRecovery.actor.cpp:1728), so the deleted layout/logs family
-    # was its analogue - but FDB's copy has three readers we have no
-    # equivalent of: recovery's stale-master fence
-    # (ClusterRecovery.actor.cpp:770-801), exclusion safety
-    # (ManagementAPI.actor.cpp:2394), and the in-progress-exclusion
-    # special-key module (SpecialKeySpace.actor.cpp:1294). Ours had none,
-    # and the tag mapping it held survives in the cluster bootstrap the
-    # coordinator actually loads. The family comes back when one of those
-    # readers does (bedrock-q67.21.10).
     system_transaction = Tx.commit(recovery_attempt.pending_tx, nil)
 
     case submit_system_transaction(system_transaction, recovery_attempt.proxies, recovery_attempt.epoch, context) do

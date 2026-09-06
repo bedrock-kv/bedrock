@@ -9,6 +9,11 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   them — instead of stashing provenance for a later phase to reconstruct
   them from. Keyspace is the channel, and the phase holding the data is the
   one that knows what belongs on it.
+
+  It is a WRITE-ONLY transaction: it commits at a nil read version, and
+  `Tx.commit/2` raises for a transaction carrying read conflicts. A phase
+  that needs to read the keyspace reads it through the materializer it
+  already holds, as the bootstrap phase does, and contributes only writes.
   """
 
   alias Bedrock.ControlPlane.Config.LogDescriptor

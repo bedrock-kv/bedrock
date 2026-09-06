@@ -736,14 +736,46 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
         assert updated_attempt.prior_materializer_refs == %{}
 
-        # The layout was INVENTED here, so this is the one path that seeds
-        # the durable shard_keys family.
-        shard_sets =
-          for {:set, key, _} <- contributed_mutations(recovery_attempt, updated_attempt),
-              String.starts_with?(key, SystemKeys.shard_keys_prefix()),
-              do: key
+        # The whole contribution, in order: the layout was INVENTED here,
+        # so this is the one path that seeds shard_keys, and the seat it
+        # just created is new against the empty prior. Asserted as an
+        # exact ordered list because the commit emits mutations in
+        # insertion order — dropping either family, or swapping them,
+        # changes the bytes recovery commits.
+        assert [worker_id] = Map.keys(updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()])
 
-        assert length(shard_sets) == 2
+        assert contributed_mutations(recovery_attempt, updated_attempt) == [
+                 {:set, SystemKeys.shard_key(<<0xFF>>), Values.encode_shard_key_entry(1, <<>>)},
+                 {:set, SystemKeys.shard_key(Bedrock.end_of_keyspace()), Values.encode_shard_key_entry(0, <<0xFF>>)},
+                 {:set, SystemKeys.materializer_key(RecoveryAttempt.system_shard_id(), worker_id),
+                  Values.encode_materializer_node(this_node())}
+               ]
+      end)
+    end
+
+    test "a seat the committed family names on another node is rewritten to where recovery put it" do
+      # The other half of the existing path's diff: the member is named,
+      # but on a node it is no longer serving from, so the phase writes
+      # the entry — and writes nothing else, the layout having been read.
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      named_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      committed = %{0 => %{"mat_sys" => "departed@host"}}
+
+      context = existing_context(recovery_version, %{read_prior_refs_fn: fn _pid, _version -> {:ok, committed} end})
+
+      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+
+      capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        assert contributed_mutations(recovery_attempt, updated_attempt) == [
+                 {:set, SystemKeys.materializer_key(RecoveryAttempt.system_shard_id(), "mat_sys"),
+                  Values.encode_materializer_node(this_node())}
+               ]
       end)
     end
   end
@@ -762,6 +794,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
   defp mutations_of(tx), do: tx |> Tx.commit(nil) |> Transaction.mutations!() |> Enum.to_list()
 
+  defp this_node, do: Atom.to_string(node())
+
   # Apply set/clear/clear_range mutations, in order, to a flat key -> value map
   # (a stand-in for the materializer's durable key space).
   defp apply_to_store(store, mutations) do
@@ -778,13 +812,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   end
 
   describe "the keyspace families this phase contributes to the system transaction" do
-    defp node_string, do: Atom.to_string(node())
-
     defp seeded_tx do
       Tx.new()
       |> MaterializerBootstrapPhase.put_shard_keys(%{<<0xFF>> => {1, <<>>}, <<0xFF, 0xFF>> => {0, <<0xFF>>}})
       |> MaterializerBootstrapPhase.put_materializer_members(
-        %{0 => %{"wkr_sys" => node_string()}, 1 => %{"wkr_user" => node_string()}},
+        %{0 => %{"wkr_sys" => this_node()}, 1 => %{"wkr_user" => this_node()}},
         %{}
       )
     end
@@ -811,8 +843,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
       # Membership: the worker id is in the KEY and the value carries the
       # node (FDB serverKeys analogue), projected from the seated refs.
-      assert decoded[{:materializer_key, 0, "wkr_sys"}] == node_string()
-      assert decoded[{:materializer_key, 1, "wkr_user"}] == node_string()
+      assert decoded[{:materializer_key, 0, "wkr_sys"}] == this_node()
+      assert decoded[{:materializer_key, 1, "wkr_user"}] == this_node()
     end
 
     test "recovery clears nothing: every family it writes is read-and-healed" do
@@ -842,12 +874,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       # an assignment can no longer be silently dropped for want of a
       # matching service record.
       prior = %{
-        0 => %{"wkr_sys" => node_string()},
-        1 => %{"wkr_departed" => node_string()},
-        9 => %{"wkr_stray" => node_string()}
+        0 => %{"wkr_sys" => this_node()},
+        1 => %{"wkr_departed" => this_node()},
+        9 => %{"wkr_stray" => this_node()}
       }
 
-      refs = %{0 => %{"wkr_sys" => node_string()}, 1 => %{"wkr_user" => node_string()}}
+      refs = %{0 => %{"wkr_sys" => this_node()}, 1 => %{"wkr_user" => this_node()}}
 
       stale_store =
         Map.new(prior, fn {tag, members} ->
@@ -863,7 +895,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       # decided and never removes members it did not place (a set may
       # legitimately hold replicas recovery knows nothing about).
       assert mutations == [
-               {:set, SystemKeys.materializer_key(1, "wkr_user"), Values.encode_materializer_node(node_string())}
+               {:set, SystemKeys.materializer_key(1, "wkr_user"), Values.encode_materializer_node(this_node())}
              ]
 
       assert {:ok, _node} =

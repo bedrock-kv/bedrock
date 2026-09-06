@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T00:30:51Z",
   "created": "2026-09-05T23:58:09Z",
   "description": "Olivine stages page mutations but some operations read only the pre-batch index. Consequently later mutations do not consistently observe earlier mutations in the same ordered stream. Commit proxies combine successful client transactions into a per-log mutation stream, so the defect also affects different transactions placed in one batch.\n\nConfirmed at `8f962e09` using `Transaction.encode/1` -\u003e `IndexManager.apply_transaction/3` -\u003e index/value lookup.\n\n## Minimal reproduction\n\nRun as an `.exs` file with `MIX_ENV=test mix run --no-start /tmp/repro.exs`:\n\n```elixir\nalias Bedrock.DataPlane.{Transaction, Version}\nalias Bedrock.DataPlane.Materializer.Olivine.{Database, IndexManager, Index}\npath = Path.join(System.tmp_dir!(), \"mutation-order-#{System.unique_integer([:positive])}\")\nFile.mkdir_p!(path)\n{:ok, db} = Database.open(:mutation_order_repro, Path.join(path, \"db\"))\nencoded = Transaction.encode(%{\n  commit_version: Version.from_integer(100),\n  mutations: [\n    {:atomic, :add, \"counter\", \u003c\u003c1\u003e\u003e},\n    {:atomic, :add, \"counter\", \u003c\u003c1\u003e\u003e},\n    {:set, \"newkey\", \"value\"},\n    {:clear_range, \"new\", \"newz\"}\n  ]\n})\n{im, db} = IndexManager.apply_transaction(IndexManager.new(), encoded, db)\n[{_, {index, _}} | _] = im.versions\n{:ok, _, loc} = Index.locator_for_key(index, \"counter\")\nIO.inspect(Database.load_value(db, loc)) # actual {:ok, \u003c\u003c1\u003e\u003e}; expected \u003c\u003c2\u003e\u003e\nIO.inspect(Index.locator_for_key(index, \"newkey\")) # actual :ok; expected :not_found\nDatabase.close(db)\nFile.rm_rf!(path)\n```\n\n## Cause\n\n[lib/bedrock/data_plane/materializer/olivine/index_update.ex](https://github.com/bedrock-kv/bedrock/blob/8f962e09b24765265eeb6bd818f5b26da8d91b99/lib/bedrock/data_plane/materializer/olivine/index_update.ex#L251) computes atomics through `get_current_value_for_atomic_op/3`, which looks at `index_update.index` rather than pending writes. Each result then overwrites the same pending entry. Range clears similarly enumerate the pre-batch pages and miss keys newly staged by earlier sets.\n\nThis is distinct from the inclusive-end clear bug: `newkey` is strictly inside `[new,newz)`.\n\n## Acceptance criteria\n\n- Compare ordered mutation sequences against an independent sequential reference interpreter.\n- Cover add+add, set+atomic, clear+atomic, set+clear_range, clear_range+set, and operations crossing page splits.\n- Include a real commit-proxy batch containing separate client transactions targeting the same key.\n- Verify equivalent values after persistence and replay.\n",
   "id": "bedrock-8cx",
@@ -37,8 +38,8 @@
     }
   ],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Olivine batch application loses ordered atomic and range-clear mutations",
   "type": "bug",
-  "updated_at": "2026-09-06T00:29:55Z"
+  "updated_at": "2026-09-06T00:30:51Z"
 }

@@ -15,11 +15,15 @@
     {
       "text": "Audit note: Mike's branch heavily refactored recovery phases — removed obsolete phases, reworked TopologyPhase/LockingPhase, moved durable_version calc to LogRecoveryPlanningPhase. PersistencePhase still exists but the indirection described here may be partially resolved. Needs review before starting work.",
       "timestamp": "2026-03-04T13:45:28Z"
+    },
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/299 — one Tx accumulated across phases, committed once by PersistencePhase; bytes pinned identical to the pre-refactor build; stacked on #290.",
+      "timestamp": "2026-09-06T03:08:56Z"
     }
   ],
   "priority": 3,
   "status": "in_progress",
   "title": "Refactor: Thread Tx through recovery phases instead of building in PersistencePhase",
   "type": "task",
-  "updated_at": "2026-09-06T02:40:39Z"
+  "updated_at": "2026-09-06T03:08:56Z"
 }

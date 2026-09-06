@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-06T02:06:55Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-0lx",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "[BUG] Olivine index rewinds leave the id_allocator ahead of the page map",
   "type": "bug",
-  "updated_at": "2026-09-06T02:06:55Z"
+  "updated_at": "2026-09-06T02:09:18Z"
 }

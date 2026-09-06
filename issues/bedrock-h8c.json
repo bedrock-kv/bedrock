@@ -6,9 +6,15 @@
   "description": "Narrow StorageRacing's blanket rescue: storage_racing.ex:54-55 rescues RuntimeError and labels it {:failure, %{layout_lookup_failed: []}}, which also swallows operation_fn RuntimeErrors raised on the in-process cached-fastest path (line 65) and mislabels them as layout failures. Rescue only the specific raise from LayoutIndex lookup (or convert that lookup to a tagged return) so operation errors propagate honestly.\n\nScoped down 2026-08-15: the original ticket bundled placeholder/distributor hardening items (restart intensity limit, healthy-TSL invariant, lookup_key! doc nit, hold_ms threading) from the q67.1/q67.3 audits. Those target code that exists only on feature/q67-phase-a, and the doc nit is moot in current LayoutIndex (empty-pid segments filtered at build; storage_racing raises on []). If phase-a merges, re-raise those items under the q67 epic.",
   "id": "bedrock-h8c",
   "labels": [],
+  "comments": [
+    {
+      "text": "INVALID — premise is stale. Verified on stack base bedrock-q67.44/no-evict-on-slow (built on origin/develop @ commit 0691d7d9): 'grep -n rescue\\|catch\\|try storage_racing.ex layout_index.ex' returns zero matches. The blanket 'rescue RuntimeError -\u003e {state, {:failure, %{layout_lookup_failed: []}}}' the ticket cites at storage_racing.ex:54-55, and the raising LayoutIndex.lookup_key!/2 it wrapped, were both removed together in commit 5d65c846 ('Apply the PR #193 audit: the spin-down snapshot must actually restore (#194)', merged 2026-08-24 — already an ancestor of develop). That commit replaced lookup_key!/2 with the tagged-return lookup_key/2 (:ok/:not_cached) still in place today, and split the routing_fn resolve-through into explicit {:ok,...}/{:error, reason} clauses with no try/rescue anywhere in the racing path. The ticket was scoped down 2026-08-15, nine days before PR #194 landed and (incidentally, not in response to this ticket) removed the exact code it targets. No operation_fn exception can be relabeled as :layout_lookup_failed or any other routing-shaped reason today — there is no rescue/catch left to do the relabeling. Nothing to narrow; closing.",
+      "timestamp": "2026-09-06T00:50:47Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "Narrow StorageRacing blanket rescue: operation_fn RuntimeErrors mislabeled as layout_lookup_failed",
   "type": "task",
-  "updated_at": "2026-08-15T20:46:37Z"
+  "updated_at": "2026-09-06T00:50:47Z"
 }

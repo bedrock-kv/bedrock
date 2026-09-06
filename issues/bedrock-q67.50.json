@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:28:32Z",
+  "description": "Follow-up to bedrock-q67.25, which proved the pattern with ONE parameter: desired_commit_proxies now lives at \\xff/system/config/desired_commit_proxies, seeded once by recovery and read back by the commit-proxy startup phase (FDB's \\xff/conf/commit_proxies, SystemData.cpp:1005 / ClusterRecovery.actor.cpp:1191).\n\nThe rest stay in the object-storage cluster bootstrap because they have no keyspace-side reader yet, and writing them ahead of one is the inventory q67.31 deleted:\n- desired_logs is consumed by initialization_phase.ex:35 and log_recovery_planning_phase.ex:57, BOTH of which run before the metadata shard is readable. Moving it needs the consumer to move, not just the value.\n- desired_coordinators, desired_read_version_proxies, ping_rate_in_hz, retransmission_rate_in_hz, transaction_window_in_ms: no live consumer at all today.\n- empty_transaction_timeout_ms is written to the bootstrap by persistence_phase but NOT read back by coordinator/server.ex build_parameters, so it always resolves to the 1_000 default - an existing divergence worth fixing when it moves.\n- policies.allow_volunteer_nodes_to_join: Config.allow_volunteer_nodes_to_join?/1 has no callers.\n\nAlso carried over from q67.25's 2026-08-20T22:39 census comment:\n(1) replication_factor is re-derived as max(1, map_size(logs)) at topology_phase.ex:214 and in the streaming path while desired_replication_factor goes unread - config authority should make the keyspace copy the single source.\n(2) Decide the cold-boot anchor's MINIMUM contents once the migration is complete.\n(3) Document the boundary: the coordinator raft service directory is pre-recovery discovery input ONLY (FDB CC-registration analogue, also not keyspace); nothing steady-state may read it.\n\nTwo mechanics to revisit when the family gains its second member:\n- SystemKeys.Values pins config values to pos_integer (encode_config_integer/decode_config_integer) and Values.decode_for/2 dispatches on the family, not the name. A boolean or string parameter needs per-name dispatch.\n- SystemKeys.Reader.decode_config_parameters/1 fails the WHOLE read on any undecodable value, so a parameter an older node cannot interpret stalls its recovery with no operator remedy. FDB tolerates: DatabaseConfiguration::fromKeyValues discards setInternal's return value, so an unrecognized \\xff/conf key is skipped. Revisit the policy when the family is heterogeneous or version-skewed.",
+  "id": "bedrock-q67.50",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Cluster config: migrate the remaining parameters/policies to \\xFF/system/config as their readers land",
+  "type": "task",
+  "updated_at": "2026-09-06T01:28:32Z"
+}

@@ -105,14 +105,24 @@ from where they stopped; only a genuinely lost shard rebuilds from chunks. A
 typical restart converges in under a second regardless of how old the cluster
 is.
 
-**Pure BEAM.** No ports, no NIFs to a storage engine, no sidecar processes.
+**BEAM-native architecture.** Transaction processing, supervision and recovery
+run on the BEAM without an embedded native storage engine or sidecar processes.
+The LocalFilesystem backend uses a small POSIX NIF for atomic filesystem mutation
+across independent VMs.
 Distribution rides on Erlang distribution; supervision, recovery, and
 backpressure are OTP all the way down. Bedrock also leans on a quiet BEAM
 superpower: large binaries are shared between processes by reference, never
 copied. Keys, values, and whole encoded transactions stay binaries as they
 flow from commit proxy to log to shard streams, so the hot path hands around
 pointers rather than payloads — a design that is naturally multi-core and
-cache friendly. If you can run an Elixir node, you can run Bedrock.
+cache friendly.
+
+Building Bedrock from source requires Linux or macOS, a C compiler, make and OTP
+development headers, including for S3-only applications. On Linux install your
+distribution's build-essential and Erlang development packages; on macOS install
+Xcode Command Line Tools. Windows is not supported by this native build.
+See [LocalFilesystem requirements](guides/local-filesystem.md) for filesystem,
+upgrade and cross-compilation constraints.
 
 ## How a write becomes durable
 

@@ -27,6 +27,26 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
   point removes the scratch file and leaves the key untouched, so a
   retry can still take it.
 
+  ## Conditional writes and deployment
+
+  Every mutation publishes or deletes inside a native OS lock operation. A
+  permanent `.bedrock-lock` file serializes mutations in each parent directory,
+  including from independent BEAMs and through directory/case aliases. These
+  files are hidden metadata, never stale owners, and must not be removed while
+  writers are running. Mutation keys addressing this reserved prefix, traversal,
+  absolute paths and object symlinks are rejected.
+
+  All writers sharing a root must be quiesced and upgraded together. This
+  requires a local Linux/macOS filesystem with coherent `flock` and atomic
+  same-directory publication; NFS/SMB/FUSE and external directory/lock replacement
+  are not covered. See `guides/local-filesystem.md` for build requirements.
+
+  Tokens retain content identity: identical bytes have the same token, including
+  no-op and A-to-B-to-A updates. Killing a caller does not cancel an executing
+  dirty NIF: it can still publish. The outcome is unknown until observed after
+  synchronization; whole-VM death releases the OS lock. Blocking local I/O can
+  occupy dirty-I/O schedulers, so no bounded wait is promised.
+
   ## Scratch files left by a killed writer
 
   In-process failures clean up after themselves. A process killed
@@ -41,9 +61,8 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
   ## Durability boundary
 
   Object content is fsynced before publication, but the parent
-  DIRECTORY is not: Erlang's `:file.open/2` refuses a directory with
-  `:eisdir`, so the directory entry cannot be synced from the BEAM
-  without a NIF. On power loss a just-published object may therefore be
+  DIRECTORY is not. The native mutation shim deliberately does not add
+  directory fsync; this synchronization repair preserves that durability boundary. On power loss a just-published object may therefore be
   absent rather than short. Absent is a state the writers already handle;
   short under a permanently-claimed key is the one that could not be
   recovered from.
@@ -62,6 +81,7 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
   @behaviour Bedrock.ObjectStorage
 
   alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.LocalFilesystem.Native
 
   # Scratch files live in the target's own directory, so publishing is a
   # rename or link within one filesystem — the only way it is atomic. The
@@ -81,14 +101,9 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
     root = Keyword.fetch!(config, :root)
     path = build_path(root, key)
 
-    with :ok <- ensure_parent_dir(path),
-         {:ok, scratch} <- write_scratch(path, data) do
-      # rename consumes the scratch name on success, so there is nothing
-      # to clean up there; on failure it is still ours to remove.
-      case :file.rename(scratch, path) do
-        :ok -> :ok
-        {:error, reason} -> discard_scratch(scratch, reason)
-      end
+    with :ok <- validate_mutation(key, path),
+         :ok <- ensure_parent_dir(path) do
+      publish(path, data, :put)
     end
   end
 
@@ -97,10 +112,14 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
     root = Keyword.fetch!(config, :root)
     path = build_path(root, key)
 
-    case File.read(path) do
-      {:ok, data} -> {:ok, data}
-      {:error, :enoent} -> {:error, :not_found}
-      {:error, reason} -> {:error, reason}
+    if Enum.any?(Path.split(key), &metadata_name?/1) do
+      {:error, :not_found}
+    else
+      case File.read(path) do
+        {:ok, data} -> {:ok, data}
+        {:error, :enoent} -> {:error, :not_found}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -109,10 +128,11 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
     root = Keyword.fetch!(config, :root)
     path = build_path(root, key)
 
-    case File.rm(path) do
-      :ok -> :ok
-      {:error, :enoent} -> :ok
-      {:error, reason} -> {:error, reason}
+    with :ok <- validate_mutation(key, path) do
+      case Native.mutate(:delete, Path.dirname(path), Path.basename(path), "", "") do
+        {:error, reason} when reason in [:enoent, :enotdir] -> :ok
+        result -> result
+      end
     end
   end
 
@@ -134,37 +154,12 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
     root = Keyword.fetch!(config, :root)
     path = build_path(root, key)
 
-    # Advisory short-circuit; `link` in claim_key/2 is still what decides.
-    # This only avoids writing and fsyncing an entire payload to discover
-    # the key was already taken — not a rare path, since re-putting an
-    # existing chunk or snapshot is the ordinary idempotent outcome.
-    if File.exists?(path) do
-      {:error, :already_exists}
-    else
-      claim_key(path, data)
-    end
-  end
-
-  # Link, not rename: rename would clobber an existing object, so it
-  # cannot express create-only. `link` fails with :eexist exactly when the
-  # key is taken, and when it succeeds it publishes an object that is
-  # already whole and synced — the same all-or-nothing claim S3 gives with
-  # `if_none_match: "*"`.
-  @spec claim_key(Path.t(), iodata()) :: :ok | {:error, :already_exists | File.posix()}
-  defp claim_key(path, data) do
-    with :ok <- ensure_parent_dir(path),
-         {:ok, scratch} <- write_scratch(path, data) do
-      result =
-        case :file.make_link(scratch, path) do
-          :ok -> :ok
-          {:error, :eexist} -> {:error, :already_exists}
-          {:error, reason} -> {:error, reason}
-        end
-
-      # link leaves the scratch name in place whether or not it
-      # succeeded, so it is always ours to remove.
-      _ = File.rm(scratch)
-      result
+    with :ok <- validate_mutation(key, path) do
+      if File.exists?(path) do
+        {:error, :already_exists}
+      else
+        with :ok <- ensure_parent_dir(path), do: publish(path, data, :create)
+      end
     end
   end
 
@@ -181,23 +176,46 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
   end
 
   @impl true
-  def put_if_version_matches(config, key, version_token, data, opts \\ []) do
-    case get(config, key) do
-      {:ok, current_data} ->
-        current_hash = :sha256 |> :crypto.hash(current_data) |> Base.encode16(case: :lower)
-        "sha256:" <> expected_hash = version_token
+  def put_if_version_matches(config, key, version_token, data, _opts \\ []) do
+    path = build_path(Keyword.fetch!(config, :root), key)
 
-        if current_hash == expected_hash do
-          put(config, key, data, opts)
-        else
-          {:error, :version_mismatch}
+    with :ok <- validate_mutation(key, path),
+         {:ok, current_data, current_token} <- get_with_version(config, key) do
+      if version_token == current_token do
+        publish(path, data, :cas, current_data)
+      else
+        {:error, :version_mismatch}
+      end
+    end
+  end
+
+  defp validate_mutation(key, path) do
+    if Path.type(key) != :relative or
+         Enum.any?(Path.split(key), &(&1 in [".", ".."] or metadata_name?(&1))) do
+      {:error, :invalid_key}
+    else
+      case File.lstat(path) do
+        {:ok, %File.Stat{type: :symlink}} -> {:error, :eloop}
+        _ -> :ok
+      end
+    end
+  end
+
+  defp metadata_name?(name),
+    do: name |> String.normalize(:nfc) |> String.downcase() |> String.starts_with?(".bedrock-lock")
+
+  defp publish(path, data, operation, expected \\ "") do
+    with {:ok, scratch} <- write_scratch(path, data) do
+      try do
+        case Native.mutate(operation, Path.dirname(path), Path.basename(path), Path.basename(scratch), expected) do
+          {:error, :eexist} when operation == :create -> {:error, :already_exists}
+          {:error, :enoent} when operation == :cas -> {:error, :not_found}
+          result -> result
         end
-
-      {:error, :not_found} ->
-        {:error, :not_found}
-
-      error ->
-        error
+      after
+        # rename consumes the scratch; link and failures leave it ours to remove.
+        File.rm(scratch)
+      end
     end
   end
 
@@ -266,13 +284,10 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
     {:error, reason}
   end
 
-  @spec discard_scratch(Path.t(), term()) :: {:error, term()}
-  defp discard_scratch(scratch, reason) do
-    _ = File.rm(scratch)
-    {:error, reason}
+  defp scratch_file?(path) do
+    name = Path.basename(path)
+    String.starts_with?(name, @scratch_prefix) or metadata_name?(name)
   end
-
-  defp scratch_file?(path), do: path |> Path.basename() |> String.starts_with?(@scratch_prefix)
 
   # List state: {root, dirs_to_visit, files_collected, prefix, remaining_limit}
   defp init_list_state(root, prefix_path, prefix, limit) do

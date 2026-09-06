@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:35:30Z",
+  "description": "handle_call(:compact, ...) (server.ex:213-223) is the only entry to Logic.start_compaction/1, and NOTHING in lib/ or test/ ever sends it. So the compaction cutover — and with it the snapshot upload at handle_info({:compaction_ready, ...}) — never runs in production. The only snapshot a materializer actually writes is upload_snapshot_before_spindown/1 at idle spin-down.\n\nThat makes 'snapshot on a schedule' impossible today, which is the half of bedrock-zi44 that shipped as a throttle (snapshot_min_interval_ms) rather than a scheduler. bedrock-zi44 deliberately did NOT solve it by putting the cutover on a timer: a scheduled cutover multiplies two pre-existing defects by the configured cadence (see the atomic double-apply bug and the locked-worker puller bug filed alongside), and it produces nothing for an idle shard anyway — the snapshot key is the durable version and Snapshot.write is put-if-not-exists, so an idle shard re-PUTs the identical bundle to the identical key. Probed: eleven uploads in 500ms, one object.\n\nWhat is actually needed is either (a) a compaction policy — something that decides when a shard should compact, at which point bedrock-zi44's policy already gates the resulting upload — or (b) a way to produce the bundle without a full cutover, the way upload_snapshot_before_spindown/1 does with scratch files, run off the GenServer so it does not stall the applier.\n\nWhichever it is, bedrock-zi44's SnapshotPolicy is the seam: decide/2 already answers 'is this opportunity worth an upload'.",
+  "id": "bedrock-947",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Nothing drives Olivine compaction: a running materializer never snapshots",
+  "type": "task",
+  "updated_at": "2026-09-06T01:35:30Z"
+}

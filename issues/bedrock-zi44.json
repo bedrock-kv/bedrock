@@ -1,5 +1,5 @@
 {
-  "assignee": "21417+jallum@users.noreply.github.com",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-01-17T17:36:37.849729-05:00",
@@ -9,8 +9,8 @@
     "future"
   ],
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "Snapshot upload policy (scheduled/threshold)",
   "type": "task",
-  "updated_at": "2026-08-15T20:46:23Z"
+  "updated_at": "2026-09-06T00:51:52Z"
 }

@@ -10,6 +10,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Materializer.Olivine.Streaming
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
@@ -32,6 +33,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     cluster = Keyword.get(opts, :cluster)
     {shard_tag, shard_num} = normalize_shard(Keyword.get(opts, :shard_id))
     idle_timeout = Keyword.get(opts, :idle_timeout, :infinity)
+    snapshot_policy = Keyword.get(opts, :snapshot_policy, %SnapshotPolicy{})
     snapshot = build_snapshot_handle(cluster, shard_tag)
 
     with :ok <- ensure_directory_exists(path),
@@ -49,6 +51,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
          database: database,
          index_manager: index_manager,
          snapshot: snapshot,
+         snapshot_policy: snapshot_policy,
          idle_timeout: idle_timeout,
          last_read_at: System.monotonic_time(:millisecond)
        }}
@@ -420,7 +423,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     Telemetry.trace_transaction_processing_complete(batch_size, duration, batch_size_bytes)
 
     # Update state with both updated index manager and database
-    updated_state = %{t | index_manager: updated_index_manager, database: updated_database}
+    updated_state = %{
+      t
+      | index_manager: updated_index_manager,
+        database: updated_database,
+        snapshot_policy: SnapshotPolicy.observe(t.snapshot_policy, batch_size, batch_size_bytes)
+    }
+
     {:ok, updated_state, version}
   end
 
@@ -552,6 +561,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   index files and upload them directly as a bundle (iodata).
 
   The task logs success or failure but does not affect the caller.
+
+  Compaction only makes the upload CHEAP — the bundle-shaped files are
+  already on disk at that instant — it is not itself a reason to pay for
+  one. `SnapshotPolicy` is what decides, from the interval and the work
+  applied since the last upload; unconfigured, it says yes every time.
+  The spin-down upload is deliberately NOT policed: it is the only
+  durable artifact bridging spin-down to revival, so it is unconditional.
   """
   @spec maybe_upload_snapshot(
           State.t(),
@@ -559,26 +575,32 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
           idx_path :: charlist(),
           durable_version :: Bedrock.version()
         ) ::
-          :ok
-  def maybe_upload_snapshot(%State{snapshot: nil}, _data_path, _idx_path, _durable_version) do
-    :ok
-  end
+          State.t()
+  def maybe_upload_snapshot(%State{snapshot: nil} = t, _data_path, _idx_path, _durable_version), do: t
 
-  def maybe_upload_snapshot(%State{snapshot: snapshot}, data_path, idx_path, durable_version) do
-    version_int = Version.to_integer(durable_version)
+  def maybe_upload_snapshot(%State{snapshot: snapshot} = t, data_path, idx_path, durable_version) do
+    now_in_ms = System.monotonic_time(:millisecond)
 
-    Task.start(fn ->
-      # Read files and upload as iodata (no intermediate bundle file)
-      with {:ok, data} <- File.read(to_string(data_path)),
-           {:ok, idx} <- File.read(to_string(idx_path)),
-           :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
-        Logger.info("Snapshot uploaded to ObjectStorage", version: version_int)
-      else
-        {:error, reason} ->
-          Logger.warning("Snapshot upload failed", version: version_int, reason: inspect(reason))
-      end
-    end)
+    case SnapshotPolicy.decide(t.snapshot_policy, now_in_ms) do
+      :wait ->
+        t
 
-    :ok
+      :upload ->
+        version_int = Version.to_integer(durable_version)
+
+        Task.start(fn ->
+          # Read files and upload as iodata (no intermediate bundle file)
+          with {:ok, data} <- File.read(to_string(data_path)),
+               {:ok, idx} <- File.read(to_string(idx_path)),
+               :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
+            Logger.info("Snapshot uploaded to ObjectStorage", version: version_int)
+          else
+            {:error, reason} ->
+              Logger.warning("Snapshot upload failed", version: version_int, reason: inspect(reason))
+          end
+        end)
+
+        %{t | snapshot_policy: SnapshotPolicy.uploaded(t.snapshot_policy, now_in_ms)}
+    end
   end
 end

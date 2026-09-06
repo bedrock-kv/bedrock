@@ -7,6 +7,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Materializer.Olivine.Reading
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy
   alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
@@ -29,6 +30,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
           compaction_task: Task.t() | nil,
           allow_window_advancement: boolean(),
           snapshot: Snapshot.t() | nil,
+          snapshot_policy: SnapshotPolicy.t(),
           pull_sources: [{Log.id(), Log.ref()}] | nil,
           shard_num: non_neg_integer() | nil,
           idle_timeout: pos_integer() | :infinity,
@@ -53,6 +55,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
             compaction_task: nil,
             allow_window_advancement: true,
             snapshot: nil,
+            snapshot_policy: %SnapshotPolicy{},
             pull_sources: nil,
             shard_num: nil,
             idle_timeout: :infinity,

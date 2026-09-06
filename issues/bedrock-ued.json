@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T02:18:01Z",
+  "description": "Residual from bedrock-v65 (PR #282). #282 fences {:tsl_updated, layout} on a wiring_epoch high-water mark, but a nil clear (sent when an abandoned leader's Director fails) carries no epoch, so it is applied and blanks the Link's cached TSL until the CURRENT leader's next recovery broadcast. Fix requires broadcast_tsl_update/2 to carry the clearing coordinator's epoch so the Link can drop a clear from a superseded epoch — which changes the {:tsl_updated, _} shape for every subscriber (foreman, Shale, Olivine), so land it as one change with all consumers. Reproduce with #282's leader_revalidation_test harness: leader A (epoch 5) abandoned, Link on B (epoch 7), A broadcasts nil → assert the Link's cached epoch-7 layout survives.",
+  "id": "bedrock-ued",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Link: a stale nil tsl_updated from an abandoned leader can still blank the cached layout until the current leader's next broadcast",
+  "type": "bug",
+  "updated_at": "2026-09-06T02:18:01Z"
+}

@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-24T22:27:16Z",
@@ -14,8 +14,8 @@
     }
   ],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Tag 0 has two membership owners: the distributor can retire the member the durable pointer names",
   "type": "task",
-  "updated_at": "2026-09-05T23:58:15Z"
+  "updated_at": "2026-09-06T00:20:04Z"
 }

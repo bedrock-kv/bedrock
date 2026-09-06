@@ -8,6 +8,7 @@
     "bedrock-50n",
     "bedrock-t0k"
   ],
+  "closed_at": "2026-09-06T05:56:36Z",
   "created": "2026-09-06T02:55:29Z",
   "description": "Replace Raft-term reuse with consensus-committed recovery generations plus same-bootstrap reservation and a retained final CAS token as one protocol. Define committed cursor :behind/:latest idempotence, restart/replay floor and barrier, no-quorum non-launch, publication identity/readback after unknown CAS or lost notification, and no token refresh. Test actual Raft persistence and object CAS/crash cuts. Use an explicit coordinated quiescent migration and fail closed on unsupported formats. Dependency of bedrock-t0k.",
   "id": "bedrock-7i1",
@@ -51,8 +52,8 @@
     }
   ],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Allocate recovery generations through consensus and reserve bootstrap publication",
   "type": "task",
-  "updated_at": "2026-09-06T05:56:35Z"
+  "updated_at": "2026-09-06T05:56:36Z"
 }

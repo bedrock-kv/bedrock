@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T03:08:01Z",
+  "description": "Follow-up from bedrock-wxf.7 (PR #298). guides/object-storage-s3.md documents the :s3 shorthand; the new backend: {:disk_cache, root: ..., inner: :s3} choice is documented only in Bedrock.ObjectStorage.DiskCache's moduledoc. Add a short section to the object-storage guide: what it caches (immutable chunk/snapshot keys only), what it never caches (bootstrap record, listings, put_if_not_exists), the :max_bytes bound and the evicted telemetry event, and that nothing selects it by default.",
+  "id": "bedrock-5tq.7",
+  "labels": [],
+  "parent": "bedrock-5tq",
+  "priority": 4,
+  "status": "open",
+  "title": "Document the :disk_cache object-storage backend choice in the guides",
+  "type": "chore",
+  "updated_at": "2026-09-06T03:08:01Z"
+}

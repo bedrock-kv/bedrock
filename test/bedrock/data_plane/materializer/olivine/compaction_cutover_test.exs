@@ -8,9 +8,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
   bookkeeping, but the same way recovery restores a suffix: the stream
   puller is stopped and restarted from the durable boundary, and the
   stream re-delivers everything after it.
+
+  It also guards the cutover's precondition (bedrock-ngl): the durable
+  version the compaction captured must still be in `versions` when the
+  cutover arrives, so no window advance may run while a compaction is open.
   """
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.Materializer.Olivine.Database
+  alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.Server
   alias Bedrock.DataPlane.Transaction
@@ -204,6 +210,89 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
     :ok = ReplayShardServer.append(shard_server, v2000, slice(v2000, "b"))
     await_value(pid, v2000, "b")
   end
+
+  describe "window advancement while a compaction is open" do
+    # start_compaction/1 labels its output with the durable version at the
+    # moment it starts, and the cutover looks exactly that version up in
+    # `versions` to recover the index's paging parameters (server.ex:479).
+    # A window advance evicts every entry below the new eviction point and
+    # carries index_db.durable_version up with it, so an advance while a
+    # compaction is open takes the cutover's anchor away.
+    #
+    # handle_continue(:advance_window, ...) has always deferred on
+    # allow_window_advancement; the :timeout path applies a batch and then
+    # advances, and must defer for the same reason.
+    test "the :timeout path defers the advance, leaving the compaction's durable version in place",
+         %{tmp_dir: tmp_dir} do
+      state = flushed_state(tmp_dir, "ngl_deferred")
+
+      # What start_compaction/1 captured when the operator asked to compact.
+      compaction_version = Database.durable_version(state.database)
+      assert Version.to_integer(compaction_version) > 0
+
+      {:noreply, after_timeout, _continue} =
+        Server.handle_info(:timeout, queue_third_transaction(%{state | allow_window_advancement: false}))
+
+      assert version_present?(after_timeout, compaction_version)
+      assert Database.durable_version(after_timeout.database) == compaction_version
+
+      # The batch still landed — compaction pauses the window, not ingest.
+      assert after_timeout.index_manager.current_version == Version.from_integer(30_000_000)
+
+      Logic.shutdown(after_timeout)
+    end
+
+    test "with no compaction open the :timeout path still advances the window", %{tmp_dir: tmp_dir} do
+      state = flushed_state(tmp_dir, "ngl_allowed")
+      durable_before = Database.durable_version(state.database)
+
+      {:noreply, after_timeout, _continue} = Server.handle_info(:timeout, queue_third_transaction(state))
+
+      assert Database.durable_version(after_timeout.database) == Version.from_integer(20_000_000)
+      refute version_present?(after_timeout, durable_before)
+
+      Logic.shutdown(after_timeout)
+    end
+  end
+
+  # Two applies five seconds (in version-time) apart: the second's window
+  # advance evicts the first, so the durable version is v10_000_000 and is
+  # the oldest entry still in `versions`.
+  defp flushed_state(tmp_dir, name) do
+    dir = Path.join(tmp_dir, name)
+    File.mkdir_p!(dir)
+
+    {:ok, state} = Logic.startup(:"olivine_#{name}_#{System.unique_integer([:positive])}", self(), name, dir, [])
+
+    state
+    |> apply_and_flush("k1", "v1", 10_000_000)
+    |> apply_and_flush("k2", "v2", 20_000_000)
+  end
+
+  defp apply_and_flush(state, key, value, version_int) do
+    {:ok, state, _version} = Logic.apply_transactions(state, [commit(key, value, version_int)])
+    {:ok, state} = Logic.advance_window(%{state | known_committed_version: Version.from_integer(version_int)})
+    state
+  end
+
+  # A third transaction, far enough above the second to make the window
+  # advanceable again, left in the intake queue so handle_info(:timeout, ...)
+  # takes the apply-then-advance branch rather than the empty-queue one.
+  defp queue_third_transaction(state) do
+    %{
+      state
+      | intake_queue: IntakeQueue.add_transactions(state.intake_queue, [commit("k3", "v3", 30_000_000)]),
+        known_committed_version: Version.from_integer(30_000_000)
+    }
+  end
+
+  defp commit(key, value, version_int) do
+    encoded = Transaction.encode(%{mutations: [{:set, key, value}], read_conflicts: {nil, []}, write_conflicts: []})
+    {:ok, with_version} = Transaction.add_commit_version(encoded, Version.from_integer(version_int))
+    with_version
+  end
+
+  defp version_present?(state, version), do: Enum.any?(state.index_manager.versions, fn {v, _} -> v == version end)
 
   defp flush_pulls do
     receive do

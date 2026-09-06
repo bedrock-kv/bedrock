@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:05:34Z",
+  "description": "Reproduced during GH239 real-cluster snapshot fault fixture: Process.exit(materializer, :kill) triggers automatic restart; immediate Foreman.remove_worker(id) removes worker map entry, then the restarted worker sends worker_health {:ok,pid}. Foreman.Impl.do_worker_health/3 calls State.put_health_for_worker/3 -\u003e Map.update! on missing id and crashes Foreman with KeyError. Evidence /tmp/bedrock-239-snapshot-foreman-race.log, stack impl.ex:351/state.ex:56/server.ex:80. Related gu0.2 concerns missed slow restart state, jq8 concerns start-task exit; neither covers a late health cast after legitimate removal. Investigate incarnation-aware or absent-worker handling; add deterministic regression for removal before queued restart health plus stale old-incarnation health. GH239 fixture waits for actual restart health before eviction to isolate snapshot boundary; no production fix in239.",
+  "id": "bedrock-gu0.5",
+  "labels": [],
+  "parent": "bedrock-gu0",
+  "priority": 2,
+  "status": "open",
+  "title": "Late restarted worker health crashes Foreman after explicit worker removal",
+  "type": "bug",
+  "updated_at": "2026-09-06T01:05:34Z"
+}

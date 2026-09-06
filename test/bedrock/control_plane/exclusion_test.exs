@@ -6,11 +6,11 @@ defmodule Bedrock.ControlPlane.ExclusionTest do
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
 
-  describe "check/2" do
+  describe "check_logs/2" do
     test "refuses a node holding a log of the CURRENT generation" do
       keyspace = keyspace(current: %{"log_a" => "node_a@host"})
 
-      assert {:unsafe, [{:current, "log_a", "node_a@host"}]} = Exclusion.check(read_fn(keyspace), ["node_a@host"])
+      assert {:unsafe, [{:current, "log_a", "node_a@host"}]} = Exclusion.check_logs(read_fn(keyspace), ["node_a@host"])
     end
 
     test "refuses a node holding only a log of an OLD generation" do
@@ -20,7 +20,7 @@ defmodule Bedrock.ControlPlane.ExclusionTest do
       # copying from it, so taking the machine away loses the window.
       keyspace = keyspace(current: %{"log_b" => "node_b@host"}, old: %{"log_a" => "node_a@host"})
 
-      assert {:unsafe, [{:old, "log_a", "node_a@host"}]} = Exclusion.check(read_fn(keyspace), ["node_a@host"])
+      assert {:unsafe, [{:old, "log_a", "node_a@host"}]} = Exclusion.check_logs(read_fn(keyspace), ["node_a@host"])
     end
 
     test "names every log standing in the way, across both generations" do
@@ -31,38 +31,48 @@ defmodule Bedrock.ControlPlane.ExclusionTest do
         )
 
       assert {:unsafe, [{:current, "log_b", "node_a@host"}, {:old, "log_a", "node_a@host"}]} =
-               Exclusion.check(read_fn(keyspace), ["node_a@host"])
+               Exclusion.check_logs(read_fn(keyspace), ["node_a@host"])
     end
 
-    test "a node the record never names is safe" do
+    test "a node the record never names has no log blockers" do
       keyspace = keyspace(current: %{"log_a" => "node_a@host"}, old: %{"log_b" => "node_b@host"})
 
-      assert :safe = Exclusion.check(read_fn(keyspace), ["node_c@host"])
+      assert :no_log_blockers = Exclusion.check_logs(read_fn(keyspace), ["node_c@host"])
     end
 
-    test "a record naming no logs at all is safe" do
-      assert :safe = Exclusion.check(read_fn(%{}), ["node_a@host"])
+    test "a record naming no logs at all has no log blockers" do
+      assert :no_log_blockers = Exclusion.check_logs(read_fn(%{}), ["node_a@host"])
     end
 
     test "a failed read is an error, never a verdict" do
       # "The record could not be read" and "the record names nobody here"
       # must not look alike to an operator about to power a machine down.
       assert {:error, {:log_locations_query_failed, :timeout}} =
-               Exclusion.check(fn _start -> {:error, :timeout} end, ["node_a@host"])
+               Exclusion.check_logs(fn _start -> {:error, :timeout} end, ["node_a@host"])
     end
 
     test "an entry that will not decode fails the check rather than reading as empty" do
       key = SystemKeys.log_key(:current, "log_a")
       keyspace = %{key => "not tuple-encoded at all"}
 
-      assert {:error, {:invalid_log_entry, ^key}} = Exclusion.check(read_fn(keyspace), ["node_a@host"])
+      assert {:error, {:invalid_log_entry, ^key}} = Exclusion.check_logs(read_fn(keyspace), ["node_a@host"])
+    end
+
+    test "an atom node raises rather than matching nothing and reading as clear" do
+      # `node()` is the natural Elixir shape and the one the recovery
+      # phases carry until they stringify. Matched against a family of
+      # strings it would match nothing, and the miss would surface as the
+      # DANGEROUS answer.
+      keyspace = keyspace(current: %{"log_a" => "node_a@host"})
+
+      assert_raise ArgumentError, fn -> Exclusion.check_logs(read_fn(keyspace), [:node_a@host]) end
     end
 
     test "a foreign key inside the family's range fails the check" do
       key = SystemKeys.logs_prefix() <> "not-a-generation"
       keyspace = %{key => Values.encode_log_node("node_a@host")}
 
-      assert {:error, {:invalid_log_entry, ^key}} = Exclusion.check(read_fn(keyspace), ["node_a@host"])
+      assert {:error, {:invalid_log_entry, ^key}} = Exclusion.check_logs(read_fn(keyspace), ["node_a@host"])
     end
   end
 

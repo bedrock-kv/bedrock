@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:38Z",
+  "close_reason": "Delivered in PR #262 (audited 2026-09-06: extract_keys_in_range exclusive, clamps removed, half-open oracle; stacked on #253, no CI run). PR #247 on the #242 stack is a duplicate of the same fix with a larger test suite and the pending-overlay site; merge exactly one, chosen by which stack lands first, and port #247's exclusive_clear_test.exs either way.",
   "created": "2026-07-17T02:02:14Z",
   "description": "From PR #110 gating audit (pre-existing): IndexUpdate.extract_keys_in_range uses key \u003c= end_key (inclusive) and page_entirely_after_range? has the matching \u003e vs \u003e=, though clear_range is exclusive-end in Tx, Metadata, and RoutingData. A key exactly at end_key is wrongly cleared. No system key sits at a strinc boundary today, but user-data clear_ranges hit this. Align olivine to exclusive-end with boundary tests. Also (same audit, minor): bootstrap read range end uses prefix\u003c\u003e0xFFFFFFFF instead of strinc (over-wide, safe); RoutingData insert_log lacks dedupe on repeated sets (theoretical).",
   "id": "bedrock-q67.19",
@@ -34,8 +36,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Olivine clear_range uses inclusive end-key; everywhere else is exclusive",
   "type": "bug",
-  "updated_at": "2026-09-06T01:23:29Z"
+  "updated_at": "2026-09-06T14:05:38Z"
 }

@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-25T19:53:47Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-sfu",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "[BUG] Calls.call/3 does not normalize posix exit reasons, so a crashed worker raises instead of returning :unavailable",
   "type": "bug",
-  "updated_at": "2026-08-25T19:53:47Z"
+  "updated_at": "2026-09-06T01:00:58Z"
 }

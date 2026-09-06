@@ -12,11 +12,15 @@
     {
       "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/302. Blocks bedrock-7i1 / #296 because recovery generation reservation requires a true single-winner CAS primitive. Independent reproduction: eight same-token writers produced six :ok results.",
       "timestamp": "2026-09-06T03:26:51Z"
+    },
+    {
+      "text": "RED: unmodified public ObjectStorage API, eight barrier-started distinct 4 MiB CAS writes sharing one token; all eight return :ok in each of five runs. Logs /tmp/bedrock-followups-20260905.zKTZxP/302-red-1.log through 302-red-5.log. Plan ready /tmp/bedrock-followups-20260905.zKTZxP/302-plan.md; no production edits. Cold review requested for scoped native POSIX compare+rename and deployment/build constraints. flock_ex rejected after source audit. Awaiting plan approval.",
+      "timestamp": "2026-09-06T03:35:18Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Make LocalFilesystem version-matched writes atomic",
   "type": "bug",
-  "updated_at": "2026-09-06T03:27:24Z"
+  "updated_at": "2026-09-06T03:35:18Z"
 }

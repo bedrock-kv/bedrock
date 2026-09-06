@@ -10,11 +10,15 @@
     {
       "text": "GitHub followup published: https://github.com/bedrock-kv/bedrock/issues/259. Cold reviewer verified same-epoch restart and approved explicitly coupled crash schedules for bounded GH239 while preserving single-log reproduction. No production fix included.",
       "timestamp": "2026-09-06T01:06:56Z"
+    },
+    {
+      "text": "Starting isolated implementation investigation in /tmp/bedrock-followups-20260905.zKTZxP/259; same cold-plan/TDD/final-audit workflow as campaign.",
+      "timestamp": "2026-09-06T02:39:45Z"
     }
   ],
   "priority": 1,
   "status": "open",
   "title": "Director failure restarts recovery with the same epoch and a single-log crash stalls service",
   "type": "bug",
-  "updated_at": "2026-09-06T01:06:56Z"
+  "updated_at": "2026-09-06T02:39:45Z"
 }

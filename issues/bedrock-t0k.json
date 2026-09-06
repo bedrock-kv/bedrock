@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-06T01:03:25Z",
@@ -17,8 +17,8 @@
     }
   ],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "Director failure restarts recovery with the same epoch and a single-log crash stalls service",
   "type": "bug",
-  "updated_at": "2026-09-06T02:39:45Z"
+  "updated_at": "2026-09-06T02:40:11Z"
 }

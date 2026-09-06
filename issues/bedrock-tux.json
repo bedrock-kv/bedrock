@@ -18,11 +18,15 @@
     {
       "text": "Snapshot history subtask ready for cold final review: owned snapshot_history_test.exs + snapshot_fixture.ex, no production edits. Real Repo same-batch prefix and acknowledged tail yield observed D\u003c=KCV\u003capplied, actual compaction/pub gates, abrupt materializer+unlinked uploader death, actual cold replacement before pull and public tail replay.2 tests green /tmp/bedrock-239-snapshot-final.log; original coupled Database+Logic from cfaab90a dynamically loaded in isolated VM causes2 map-equality failures (counter18/later/tail under olderD), /tmp/bedrock-239-snapshot-baseline-red.log. Handoff /tmp/bedrock-issue-team-20260905/239-snapshot-handoff.md. Foreman lifecycle race independently ticketed bedrock-gu0.5; fixture waits actual restart health before cold eviction per root approval.",
       "timestamp": "2026-09-06T01:10:52Z"
+    },
+    {
+      "text": "Peer GREEN: /tmp/issue239-peer-settle.log, 2 real three-VM tests/0 failures (7.0s). Both require newer epoch and acknowledged-state independent oracle. Explicit coupled coordinator/log-loss and partition+coordinator-restart schedules per approved amendment; original autonomous recovery red preserved (bedrock-t0k), optional BEDROCK_HISTORY_SINGLE_LOG_REPRO=1 retains strict failure. Final criterion map /tmp/bedrock-issue-team-20260905/239-peer-final-audit.md. Strict Credo two owned files clean; root to obtain cold final audit and integrated checks.",
+      "timestamp": "2026-09-06T01:11:51Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Add end-to-end transaction-history checks across batching and recovery",
   "type": "task",
-  "updated_at": "2026-09-06T01:10:52Z"
+  "updated_at": "2026-09-06T01:11:51Z"
 }

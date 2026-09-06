@@ -17,11 +17,15 @@
     {
       "text": "295 narrowed real-cluster RED restores retired routing after Director replacement; focused functional and new protocol-contract REDs added. Plan /tmp/bedrock-followups-20260905.zKTZxP/295-plan.md proposes PID/epoch/sequence attribution, separate config/layout high-water marks, retirement unavailability, no generation/schema edits. Awaiting cold approval.",
       "timestamp": "2026-09-06T03:00:49Z"
+    },
+    {
+      "text": "Cold authority blocker amended: real Raft term1 -\u003e follower2 and re-elected leader3 with cached old Director/term retained; baseline sends unauthorized pongs in both windows. 18 expected reds in authority log. Plan now binds Director to separate authoritative raft_term and checks actual leadership tuple for notification/ping/startup; stale callback ignored. Nil Raft fails closed. Awaiting renewed review; no production edits.",
+      "timestamp": "2026-09-06T03:12:27Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Attribute Director layout and config notifications to the current instance",
   "type": "bug",
-  "updated_at": "2026-09-06T03:00:49Z"
+  "updated_at": "2026-09-06T03:12:27Z"
 }

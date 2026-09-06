@@ -2,6 +2,7 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
 
@@ -162,15 +163,18 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
 
       :ok = ObjectStorage.put(backend, @unreadable_key, "written by a build we do not know")
 
+      assert {:error, {:unparseable_key, @unreadable_key}} = Snapshot.latest_version(snapshot)
       assert_raise ObjectStorage.UnparseableKeyError, fn -> Snapshot.exists?(snapshot) end
-      assert_raise ObjectStorage.UnparseableKeyError, fn -> Snapshot.latest_version(snapshot) end
     end
 
     test "an object nested below the prefix is not this shard's snapshot", %{backend: backend} do
       snapshot = Snapshot.new(backend, "shard")
 
       :ok = Snapshot.write(snapshot, 300, "state at 300")
-      :ok = ObjectStorage.put(backend, "s/shard/vendor/manifest.json", "not ours")
+      # Somebody else's object, co-located in the bucket. Its last path
+      # segment reads as a perfectly good version, which is exactly why
+      # the last path segment cannot be what decides.
+      :ok = ObjectStorage.put(backend, "s/shard/archive/" <> Keys.version_to_key(9999), "not ours")
 
       assert [{300, _key}] = snapshot |> Snapshot.list() |> Enum.to_list()
       assert {:ok, 300} = Snapshot.latest_version(snapshot)

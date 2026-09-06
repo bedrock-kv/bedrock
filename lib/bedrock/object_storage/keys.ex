@@ -284,6 +284,9 @@ defmodule Bedrock.ObjectStorage.Keys do
       iex> Keys.extract_version("c/a/backup/3w5e11264sg0n", "c/a/")
       :foreign
 
+      iex> Keys.extract_version("c/a/", "c/a/")
+      :foreign
+
       iex> Keys.extract_version("c/a/manifest.json", "c/a/")
       {:error, :invalid_format}
   """
@@ -292,7 +295,15 @@ defmodule Bedrock.ObjectStorage.Keys do
   def extract_version(key, prefix) when is_binary(key) and is_binary(prefix) do
     case String.replace_prefix(key, prefix, "") do
       ^key -> :foreign
-      name -> if String.contains?(name, "/"), do: :foreign, else: key_to_version(name)
+      name -> classify_name(name)
     end
   end
+
+  # An empty name is the prefix itself: the zero-byte folder marker a
+  # console or sync tool leaves behind. It has no name to misread and
+  # Bedrock never writes one, so it is foreign like any other object that
+  # is not ours — not a chunk we failed to understand.
+  @spec classify_name(String.t()) :: {:ok, non_neg_integer()} | :foreign | {:error, :invalid_format}
+  defp classify_name(""), do: :foreign
+  defp classify_name(name), do: if(String.contains?(name, "/"), do: :foreign, else: key_to_version(name))
 end

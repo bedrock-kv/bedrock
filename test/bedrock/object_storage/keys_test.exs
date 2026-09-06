@@ -193,5 +193,12 @@ defmodule Bedrock.ObjectStorage.KeysTest do
     test "reports a key outside the prefix as foreign" do
       assert :foreign = Keys.extract_version("c/b/" <> Keys.version_to_key(1000), "c/a/")
     end
+
+    test "reports the prefix's own folder marker as foreign" do
+      # S3 consoles and sync tools leave a zero-byte object whose key IS
+      # the prefix. Bedrock never writes one, and there is no name in it
+      # to misread, so it is not a chunk we failed to understand.
+      assert :foreign = Keys.extract_version("c/a/", "c/a/")
+    end
   end
 end

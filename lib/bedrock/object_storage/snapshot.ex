@@ -98,7 +98,7 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   """
   @spec read_latest(t()) :: {:ok, version(), snapshot_data()} | {:error, :not_found | term()}
   def read_latest(%__MODULE__{} = snapshot) do
-    with [{version, key}] <- snapshot |> list() |> Enum.take(1),
+    with [{version, key}] <- snapshot |> list(limit: 1) |> Enum.take(1),
          {:ok, data} <- ObjectStorage.get(snapshot.backend, key) do
       {:ok, version, data}
     else
@@ -148,15 +148,23 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   def list(%__MODULE__{} = snapshot, opts \\ []) do
     prefix = Keys.snapshots_prefix(snapshot.shard_tag)
 
-    snapshot.backend
-    |> ObjectStorage.list(prefix, opts)
-    |> Stream.flat_map(fn key ->
-      case Keys.extract_version(key, prefix) do
-        {:ok, version} -> [{version, key}]
-        :foreign -> []
-        {:error, _reason} -> raise ObjectStorage.UnparseableKeyError, key: key, prefix: prefix
-      end
-    end)
+    # `:limit` is counted after classification, so objects that merely
+    # share the prefix cannot spend it and hand back a shorter history.
+    stream =
+      snapshot.backend
+      |> ObjectStorage.list(prefix, Keyword.delete(opts, :limit))
+      |> Stream.flat_map(fn key ->
+        case Keys.extract_version(key, prefix) do
+          {:ok, version} -> [{version, key}]
+          :foreign -> []
+          {:error, _reason} -> raise ObjectStorage.UnparseableKeyError, key: key, prefix: prefix
+        end
+      end)
+
+    case Keyword.get(opts, :limit) do
+      nil -> stream
+      limit -> Stream.take(stream, limit)
+    end
   end
 
   @doc """
@@ -169,19 +177,23 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   - `{:error, {:list_failed, reason}}` - The listing could not be
     completed, so whether snapshots exist is UNKNOWN. Distinct from
     `:not_found`, which is a fact.
-
-  RAISES `ObjectStorage.UnparseableKeyError` if a snapshot is there under
-  a name this build cannot read. As with `exists?/1`, there is no honest
-  answer to give: it is neither a version nor absence.
+  - `{:error, {:unparseable_key, key}}` - A snapshot is there under a name
+    this build cannot read, so its version is UNKNOWN. Also distinct from
+    `:not_found`.
   """
-  @spec latest_version(t()) :: {:ok, version()} | {:error, :not_found} | {:error, {:list_failed, term()}}
+  @spec latest_version(t()) ::
+          {:ok, version()}
+          | {:error, :not_found}
+          | {:error, {:list_failed, term()}}
+          | {:error, {:unparseable_key, String.t()}}
   def latest_version(%__MODULE__{} = snapshot) do
-    case snapshot |> list() |> Enum.take(1) do
+    case snapshot |> list(limit: 1) |> Enum.take(1) do
       [{version, _key}] -> {:ok, version}
       [] -> {:error, :not_found}
     end
   rescue
     e in ObjectStorage.ListError -> {:error, {:list_failed, e.reason}}
+    e in ObjectStorage.UnparseableKeyError -> {:error, {:unparseable_key, e.key}}
   end
 
   @doc """
@@ -243,9 +255,17 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   @spec exists?(t()) :: boolean()
   def exists?(%__MODULE__{} = snapshot) do
     case latest_version(snapshot) do
-      {:ok, _} -> true
-      {:error, :not_found} -> false
-      {:error, {:list_failed, reason}} -> raise ObjectStorage.ListError, reason: reason, prefix: snapshot.shard_tag
+      {:ok, _} ->
+        true
+
+      {:error, :not_found} ->
+        false
+
+      {:error, {:list_failed, reason}} ->
+        raise ObjectStorage.ListError, reason: reason, prefix: snapshot.shard_tag
+
+      {:error, {:unparseable_key, key}} ->
+        raise ObjectStorage.UnparseableKeyError, key: key, prefix: Keys.snapshots_prefix(snapshot.shard_tag)
     end
   end
 

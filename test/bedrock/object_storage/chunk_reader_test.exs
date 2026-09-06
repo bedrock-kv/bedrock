@@ -465,12 +465,15 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
       assert 500 == ChunkReader.latest_version(reader)
     end
 
-    test "a foreign object sorting first does not consume the listing", %{backend: backend, root: root} do
-      write_chunk(backend, "shard", [{500, "a"}])
+    test "a foreign object sorting first does not consume the limit", %{backend: backend, root: root} do
+      key = write_chunk(backend, "shard", [{500, "a"}])
 
       sharing = ObjectStorage.backend(ForeignFirstBackend, root: root, foreign: "c/shard/00-vendor/index")
       reader = ChunkReader.new(sharing, "shard")
 
+      # The backend would spend a limit of one on the co-located object,
+      # leaving nothing — so the limit is counted after classification.
+      assert [key] == reader |> ChunkReader.list_chunks(limit: 1) |> Enum.to_list()
       assert 500 == ChunkReader.latest_version(reader)
     end
   end

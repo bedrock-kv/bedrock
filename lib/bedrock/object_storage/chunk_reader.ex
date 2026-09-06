@@ -88,9 +88,20 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
     # a silent replay gap, which is the very thing this module raises to
     # prevent when a header will not decode. A caller cannot tell a short
     # listing from an empty shard, so it must not be handed one.
-    reader.backend
-    |> ObjectStorage.list(prefix, opts)
-    |> Stream.filter(&chunk_key?(&1, prefix))
+    #
+    # `:limit` is counted AFTER classification for the same reason: the
+    # backend would spend it on objects that merely share the prefix, and
+    # a caller asking for the newest N chunks would quietly get fewer.
+    # The stream stays lazy, so nothing beyond the first page is read.
+    stream =
+      reader.backend
+      |> ObjectStorage.list(prefix, Keyword.delete(opts, :limit))
+      |> Stream.filter(&chunk_key?(&1, prefix))
+
+    case Keyword.get(opts, :limit) do
+      nil -> stream
+      limit -> Stream.take(stream, limit)
+    end
   end
 
   # Which of the listed objects are this shard's chunks. A key that names
@@ -274,17 +285,13 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
   @doc """
   Gets the latest (highest) version in the shard.
 
-  Returns `nil` if no chunks exist — which now means only that, since a
-  key this build cannot read raises rather than counting as absence.
+  Returns `nil` only if no chunks exist: a key this build cannot read
+  raises rather than counting as absence.
   """
   @spec latest_version(t()) :: version() | nil
   def latest_version(%__MODULE__{} = reader) do
-    # No `:limit` on the listing: the backend applies it before foreign
-    # objects are passed over, so a single co-located object would be the
-    # whole page and the shard would read as empty. The stream is lazy, so
-    # taking one still costs one page.
     reader
-    |> list_chunks()
+    |> list_chunks(limit: 1)
     |> Enum.take(1)
     |> case do
       [key] -> max_version_from_key(key)

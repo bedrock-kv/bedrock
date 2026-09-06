@@ -2,13 +2,15 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T22:51:28Z",
+  "close_reason": "Subsumed by the resolver oracle in PR #255 (bedrock-b28). #255 deletes the self-oracle property this ticket was filed against and replaces it with an independent versioned-interval history in which no production conflict, tree or encoding code participates, plus range_point_conflicts_test.exs, which calls Conflicts.check_conflicts/3 directly over a point x read-version table covering point-vs-range, exclusive end keys and version-window edges, and tree_extent_test.exs for range extents. That is this ticket's asked-for coverage. CONDITION: #255 competes with #248 for the same ticket and only one will land. #248 keeps the self-oracle and does NOT supply this coverage, so if #248 lands instead of #255, reopen this ticket.",
   "created": "2026-09-06T00:46:27Z",
   "description": "Found while fixing bedrock-b28 (PR #248). The resolver's conflict_resolution property uses Conflicts.check_conflicts/3 as its own oracle, so it cannot catch bugs inside Conflicts — proven by hard-wiring check_conflicts to always :ok or always :abort and watching the property stay green. test/bedrock/data_plane/resolver/conflicts_test.exs is 57 lines and covers only the oldest_version floor. Add direct tests for the range-overlap logic (point vs range, adjacent ranges, exclusive end keys, version window edges) with hand-computed expected verdicts so a broken Conflicts fails loudly.",
   "id": "bedrock-khv",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Conflicts.check_conflicts/3 overlap logic is thinly covered: conflicts_test.exs only exercises the oldest_version floor",
   "type": "task",
-  "updated_at": "2026-09-06T00:46:27Z"
+  "updated_at": "2026-09-06T22:51:28Z"
 }

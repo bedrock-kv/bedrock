@@ -7,9 +7,15 @@
   "id": "bedrock-q67.34",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/261 — retirement of a stalled attempt's sequencer/proxies/resolvers moved into do_recovery's stalled branch; stacked on #249. Cold audit PASS-WITH-NOTES, both substantive notes addressed.",
+      "timestamp": "2026-09-06T01:22:59Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "Recovery lifecycle: stalled-attempt retry leaves the abandoned attempt's unlocked proxies running in the same epoch",
   "type": "task",
-  "updated_at": "2026-09-06T00:47:05Z"
+  "updated_at": "2026-09-06T01:22:59Z"
 }

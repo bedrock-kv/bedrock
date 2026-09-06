@@ -1,9 +1,7 @@
 defmodule Bedrock.DataPlane.CommitProxy.Batching do
   @moduledoc false
 
-  import Bedrock.DataPlane.CommitProxy.Batch,
-    only: [new_batch: 4, add_transaction: 4, set_finalized_at: 2]
-
+  import Bedrock.DataPlane.CommitProxy.Batch, only: [new_batch: 4, add_transaction: 4]
   import Bedrock.DataPlane.Sequencer, only: [next_commit_version: 2]
 
   alias Bedrock.DataPlane.CommitProxy.Batch
@@ -30,8 +28,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
         {:ok,
          timestamp()
          |> new_batch(last_commit_version, commit_version, known_committed_version)
-         |> add_transaction(transaction, reply_fn, :user)
-         |> set_finalized_at(timestamp())}
+         |> add_transaction(transaction, reply_fn, :user)}
 
       {:error, reason} ->
         {:error, {:sequencer_unavailable, reason}}
@@ -95,7 +92,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Batching do
 
     if max_latency?(t.batch, now, t.max_latency_in_ms) or
          max_transactions?(t.batch, t.max_per_batch) do
-      {%{t | batch: nil}, set_finalized_at(t.batch, now)}
+      {%{t | batch: nil}, t.batch}
     else
       {t, nil}
     end

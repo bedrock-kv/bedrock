@@ -9,6 +9,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   alias Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase
   alias Bedrock.DataPlane.Version
 
+  defp with_named_membership(context) do
+    members =
+      context.prior_core_state
+      |> Map.get(:system_materializers, %{})
+      |> Map.new(fn {id, _node} -> {id, Atom.to_string(node())} end)
+
+    Map.put(context, :read_prior_refs_fn, fn _pid, _version -> {:ok, %{0 => members}} end)
+  end
+
   describe "execute/2" do
     test "for fresh cluster, creates default shard layout and materializers" do
       system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -32,6 +41,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
           {:ok, :new_materializer_ref}
         end)
@@ -118,6 +128,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
           {:ok, :new_materializer_ref}
         end)
@@ -155,10 +166,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     end
 
     test "a FRESH cluster stalls when no materializer capable nodes exist" do
-      # Creation is legitimate here and nowhere else: a fresh cluster has
-      # no prior data, so seeding the system shard invents nothing. (An
-      # EXISTING cluster stalls on :no_system_materializers instead — it
-      # must never manufacture the store its metadata lives in.)
+      # Fresh recovery requires capacity to seed a new layout. Existing
+      # recovery also needs capacity when its cached read coverage is lost.
       recovery_attempt = Map.put(recovery_attempt(), :shard_layout, nil)
 
       context =
@@ -171,6 +180,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:available_services, %{})
 
       capture_log(fn ->
@@ -212,6 +222,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
         |> Map.put(:unlock_materializer_fn, fn pid, version, _tsl ->
@@ -277,6 +288,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
         |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
@@ -297,40 +309,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       end)
     end
 
-    test "an existing cluster does NOT create a system materializer, even with capacity to spare" do
-      # Available capacity is not a licence to invent. Recovery
-      # manufacturing the store its own metadata lives in would come up
-      # "successfully" on an empty shard layout and orphan the cluster's
-      # data. FDB is unambiguous here: it locks exactly the servers its
-      # coordinated state names and waits for a quorum of THOSE
-      # (TagPartitionedLogSystem.actor.cpp:2549-2585), never substituting
-      # another and never fabricating one.
-      recovery_attempt =
-        recovery_attempt()
-        |> Map.put(:shard_layout, nil)
-        |> Map.put(:logs, %{"log_1" => [0, 1]})
-        |> Map.put(:durable_version, Version.from_integer(100))
-
+    test "an existing cluster reports reconstruction capacity failure" do
       context =
-        [
-          prior_core_state: %{
-            logs: %{"log_1" => [0, 1]},
-            system_materializers: %{"mat_sys" => "node@host"}
-          },
-          node_capabilities: %{
-            log: [Node.self()],
-            materializer: [Node.self()]
-          }
-        ]
-        |> create_test_context()
-        # The named member is not among the services this epoch locked.
-        |> Map.put(:available_services, %{})
-        |> Map.put(:create_worker_fn, fn _f, _i, :materializer, _o ->
-          flunk("recovery invented a system materializer instead of stalling")
-        end)
+        recovery_context(%{
+          prior_core_state: %{logs: %{"old_log" => []}, system_materializers: %{"gone" => "dead@host"}},
+          node_capabilities: %{materializer: [node()]},
+          create_worker_fn: fn _foreman, _id, :materializer, _opts -> {:error, :foreman_unavailable} end
+        })
 
-      assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"mat_sys" => "node@host"}}}} =
-               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+      assert {_, {:stalled, {:failed_to_create_materializer, :foreman_unavailable, 0}}} =
+               MaterializerBootstrapPhase.execute(recovery_attempt(), context)
     end
 
     test "stalls on catchup timeout" do
@@ -360,6 +348,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
         |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl -> :ok end)
@@ -406,6 +395,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn _service, _epoch -> {:ok, materializer_pid} end)
         |> Map.put(:unlock_materializer_fn, fn _pid, _version, _tsl ->
@@ -418,8 +408,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     end
 
     test "a FRESH cluster stalls on worker creation failure" do
-      # Seeding tag 0 is the one creation recovery still performs, so it
-      # is the only place a creation failure can stall it.
+      # Fresh-cluster creation reports its existing stage-specific error.
       recovery_attempt = Map.put(recovery_attempt(), :shard_layout, nil)
 
       context =
@@ -431,6 +420,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:available_services, %{})
         |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
           {:error, :foreman_unavailable}
@@ -480,6 +470,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
         |> Map.put(:unlock_materializer_fn, fn pid, _version, pull_sources ->
@@ -542,6 +533,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           }
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:available_services, %{})
         |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
         |> Map.put(:unlock_materializer_fn, fn _pid, _version, _sources -> :ok end)
@@ -584,7 +576,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         existing_context(recovery_version, %{
           read_prior_refs_fn: fn _pid, _version ->
-            {:ok, %{1 => %{"mat_named" => Atom.to_string(node())}}}
+            {:ok, %{0 => %{"mat_sys" => Atom.to_string(node())}, 1 => %{"mat_named" => Atom.to_string(node())}}}
           end
         })
 
@@ -595,7 +587,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
         assert %{"mat_named" => _node} = updated_attempt.shard_materializers[1]
-        assert updated_attempt.prior_materializer_refs == %{1 => %{"mat_named" => Atom.to_string(node())}}
+
+        assert updated_attempt.prior_materializer_refs == %{
+                 0 => %{"mat_sys" => Atom.to_string(node())},
+                 1 => %{"mat_named" => Atom.to_string(node())}
+               }
+
         refute updated_attempt.seeded_layout?
       end)
     end
@@ -635,7 +632,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       context =
         existing_context(recovery_version, %{
           read_prior_refs_fn: fn _pid, _version ->
-            {:ok, %{1 => %{"mat_gone" => Atom.to_string(node())}}}
+            {:ok, %{0 => %{"mat_sys" => Atom.to_string(node())}, 1 => %{"mat_gone" => Atom.to_string(node())}}}
           end
         })
 
@@ -691,6 +688,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
           node_capabilities: %{log: [Node.self()], materializer: [Node.self()]}
         ]
         |> create_test_context()
+        |> with_named_membership()
         |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, _opts ->
           {:ok, :new_materializer_ref}
         end)
@@ -851,124 +849,170 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
     end
   end
 
-  describe "the system shard is looked up; discovery is the legacy migration only" do
-    test "an existing cluster whose core state names no system materializer, and has none to adopt, STALLS" do
-      # Recovery must never manufacture the store its own metadata lives
-      # in. FDB refuses the same way: it builds its log system from
-      # exactly the servers the coordinated state names
-      # (TagPartitionedLogSystem.actor.cpp:2549-2585) and waits for a
-      # quorum of THOSE rather than substituting others.
-      recovery_attempt = recovery_attempt()
+  describe "failed unpublished reconstruction is cleaned up" do
+    for stage <- [:lock, :unlock, :catchup, :timeout, :layout, :empty_layout, :membership] do
+      test "#{stage} failure removes only this phase's newly created worker" do
+        parent = self()
+        rv = Version.from_integer(500)
 
-      context =
-        recovery_context()
-        |> Map.put(:prior_core_state, %{logs: %{"log_1" => [0]}, system_materializers: %{}})
-        |> Map.put(:create_worker_fn, fn _f, _i, _k, _o ->
-          flunk("recovery invented a system materializer instead of stalling")
-        end)
+        context =
+          recovery_context(%{
+            prior_core_state: %{logs: %{"prior" => []}, system_materializers: %{"gone" => "dead@host"}},
+            node_capabilities: %{materializer: [node()]},
+            create_worker_fn: fn _foreman, id, :materializer, _opts ->
+              send(parent, {:created, id})
+              {:ok, :created_ref}
+            end,
+            lock_materializer_fn: fn _, _ -> {:ok, parent} end,
+            unlock_materializer_fn: fn _, ^rv, _ -> :ok end,
+            materializer_info_fn: fn _, [:current_version] -> {:ok, %{current_version: rv}} end,
+            get_shard_layout_fn: fn _, ^rv -> {:ok, %{Bedrock.end_of_keyspace() => {0, <<0xFF>>}}} end,
+            read_prior_refs_fn: fn _, ^rv -> {:ok, %{}} end,
+            remove_worker_fn: fn _foreman, id, _opts ->
+              send(parent, {:removed, id})
+              :ok
+            end,
+            catchup_timeout_ms: 1,
+            catchup_poll_interval_ms: 1
+          })
 
-      assert {_attempt, {:stalled, :no_system_materializer_found}} =
-               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+        {key, function, expected} =
+          case unquote(stage) do
+            :lock ->
+              {:lock_materializer_fn, fn _, _ -> {:error, :lock_failed} end, :lock_failed}
+
+            :unlock ->
+              {:unlock_materializer_fn, fn _, _, _ -> {:error, :unlock_failed} end, {:unlock_failed, :unlock_failed}}
+
+            :catchup ->
+              {:materializer_info_fn, fn _, _ -> {:error, :unavailable} end, {:catchup_info_failed, :unavailable}}
+
+            :timeout ->
+              {:materializer_info_fn, fn _, _ -> {:ok, %{current_version: Version.zero()}} end, :catchup_timeout}
+
+            :layout ->
+              {:get_shard_layout_fn, fn _, _ -> {:error, :layout_unavailable} end, :layout_unavailable}
+
+            :empty_layout ->
+              {:get_shard_layout_fn, fn _, _ -> {:ok, %{}} end, :recovered_shard_layout_is_empty}
+
+            :membership ->
+              {:read_prior_refs_fn, fn _, _ -> {:error, :membership_unavailable} end, :membership_unavailable}
+          end
+
+        attempt = recovery_attempt(%{version_vector: {Version.zero(), rv}})
+        assert {_, {:stalled, ^expected}} = MaterializerBootstrapPhase.execute(attempt, Map.put(context, key, function))
+        assert_receive {:created, id}
+        assert_receive {:removed, ^id}
+        refute_receive {:removed, "gone"}
+      end
     end
+  end
 
-    test "a legacy record naming NO members adopts a locked tag-0 survivor instead of stalling forever" do
-      # The upgrade path. A bootstrap written before system_materializers
-      # existed names nobody, and treating that as unrecoverable bricks
-      # every cluster created before the field: recovery stalls, the
-      # director retries the stall, and every client read hangs.
-      #
-      # The information is not actually lost. The locking phase has
-      # already locked every advertised materializer and each reports its
-      # own shard_id, so tag 0 can be READ from evidence rather than
-      # invented. Recovery then records what it adopted, and the next
-      # recovery takes the named path — a one-time, self-healing
-      # migration.
-      system_pid = spawn(fn -> Process.sleep(:infinity) end)
-      recovery_version = Version.from_integer(500)
+  for warm? <- [false, true], stage <- [:lock, :unlock] do
+    test "data #{stage} failure cleans only new bootstrap cache (warm=#{warm?})" do
+      parent = self()
+      rv = Version.from_integer(500)
+      data = spawn(fn -> Process.sleep(:infinity) end)
+      on_exit(fn -> Process.exit(data, :kill) end)
+      warm? = unquote(warm?)
+      stage = unquote(stage)
+      services = %{"data" => %{kind: :materializer, status: {:up, data}}}
+      info = %{"data" => %{shard_id: 1}}
+      services = if warm?, do: Map.put(services, "warm", %{kind: :materializer, status: {:up, parent}}), else: services
+      info = if warm?, do: Map.put(info, "warm", %{shard_id: 0}), else: info
 
-      recovery_attempt =
-        recovery_attempt()
-        |> Map.put(:shard_layout, nil)
-        |> Map.put(:logs, %{"log_1" => [0]})
-        |> Map.put(:version_vector, {Version.from_integer(0), recovery_version})
-        |> Map.put(:materializer_recovery_info_by_id, %{
-          "mat_legacy" => %{kind: :materializer, shard_id: 0, durable_version: recovery_version}
+      attempt =
+        recovery_attempt(%{
+          version_vector: {Version.zero(), rv},
+          transaction_services: services,
+          materializer_recovery_info_by_id: info
         })
-        |> Map.put(:transaction_services, %{"mat_legacy" => %{kind: :materializer, status: {:up, system_pid}}})
 
       context =
-        recovery_context()
-        # The legacy shape: the field is simply absent from the record.
-        |> Map.put(:prior_core_state, %{logs: %{"log_1" => [0]}})
-        |> Map.put(:lock_materializer_fn, fn {:materializer, ref}, _epoch -> {:ok, ref} end)
-        |> Map.put(:unlock_materializer_fn, fn _pid, _v, _s -> :ok end)
-        |> Map.put(:materializer_info_fn, fn _pid, [:current_version] ->
-          {:ok, %{current_version: recovery_version}}
-        end)
-        |> Map.put(:get_shard_layout_fn, fn _pid, _v ->
-          {:ok, %{Bedrock.end_of_keyspace() => {0, <<0xFF>>}}}
-        end)
-        |> Map.put(:create_worker_fn, fn _f, _i, _k, _o ->
-          flunk("the migration invented a materializer instead of adopting the survivor")
-        end)
-
-      capture_log(fn ->
-        assert {updated_attempt, CommitProxyStartupPhase} =
-                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
-
-        # Recorded, so the persistence phase writes the field and the NEXT
-        # recovery resolves by name. That is what makes it one-time.
-        assert %{"mat_legacy" => _node} =
-                 updated_attempt.shard_materializers[RecoveryAttempt.system_shard_id()]
-      end)
-    end
-
-    test "a named system materializer that is not available STALLS rather than falling back" do
-      recovery_attempt = recovery_attempt()
-
-      context =
-        recovery_context()
-        |> Map.put(:prior_core_state, %{
-          logs: %{"log_1" => [0]},
-          system_materializers: %{"wkr_gone" => "dead@host"}
+        recovery_context(%{
+          prior_core_state: %{logs: %{"prior" => []}, system_materializers: %{"warm" => Atom.to_string(node())}},
+          node_capabilities: %{materializer: [node()]},
+          create_worker_fn: fn _, id, :materializer, _ ->
+            send(parent, {:created, id})
+            {:ok, :created_ref}
+          end,
+          lock_materializer_fn: fn
+            {:materializer, ^data}, _ -> if stage == :lock, do: {:error, :data_lock_failed}, else: {:ok, data}
+            _, _ -> {:ok, parent}
+          end,
+          unlock_materializer_fn: fn pid, ^rv, _ -> if pid == data, do: {:error, :data_unlock_failed}, else: :ok end,
+          materializer_info_fn: fn _, _ -> {:ok, %{current_version: rv}} end,
+          get_shard_layout_fn: fn _, ^rv ->
+            {:ok, %{<<0xFF>> => {1, ""}, Bedrock.end_of_keyspace() => {0, <<0xFF>>}}}
+          end,
+          read_prior_refs_fn: fn _, ^rv ->
+            {:ok, %{0 => %{"warm" => Atom.to_string(node())}, 1 => %{"data" => Atom.to_string(node())}}}
+          end,
+          remove_worker_fn: fn _, id, _ ->
+            send(parent, {:removed, id})
+            :ok
+          end
         })
-        |> Map.put(:create_worker_fn, fn _f, _i, _k, _o ->
-          flunk("recovery invented a replacement for an unavailable named member")
-        end)
 
-      # The reason carries the members and the nodes they were last seen
-      # on: this one is retryable, and that is where to go looking.
-      assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"wkr_gone" => "dead@host"}}}} =
-               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+      expected = if stage == :lock, do: :data_lock_failed, else: {:unlock_failed, :data_unlock_failed}
+      assert {^attempt, {:stalled, {1, ^expected}}} = MaterializerBootstrapPhase.execute(attempt, context)
+
+      if warm? do
+        refute_receive {:created, _}
+      else
+        assert_receive {:created, id}
+        assert_receive {:removed, ^id}
+      end
+
+      refute_receive {:removed, _}
     end
+  end
 
-    test "legacy discovery STALLS when more than one worker claims tag 0" do
-      # The migration runs only on pre-q67.21.12 records — precisely the
-      # clusters whose recovery could invent a replacement when a tag-0
-      # node missed the 2s roll call. So empty strays claiming shard 0
-      # are exactly the population here, and picking by lowest RANDOM
-      # worker id would be a coin toss whose result is then written to
-      # the durable record and resolved by name forever.
-      #
-      # Ambiguity is not a decision recovery gets to make silently.
+  describe "bootstrap cache hints do not replace durable history" do
+    test "legacy ambiguity cannot turn an arbitrary claimant into bootstrap authority" do
       a = spawn(fn -> Process.sleep(:infinity) end)
       b = spawn(fn -> Process.sleep(:infinity) end)
 
-      recovery_attempt =
-        recovery_attempt()
-        |> Map.put(:materializer_recovery_info_by_id, %{
-          "mat_a" => %{kind: :materializer, shard_id: 0, durable_version: Version.from_integer(500)},
-          "mat_b" => %{kind: :materializer, shard_id: 0, durable_version: Version.from_integer(500)}
-        })
-        |> Map.put(:transaction_services, %{
-          "mat_a" => %{kind: :materializer, status: {:up, a}},
-          "mat_b" => %{kind: :materializer, status: {:up, b}}
+      on_exit(fn ->
+        Process.exit(a, :kill)
+        Process.exit(b, :kill)
+      end)
+
+      attempt =
+        recovery_attempt(%{
+          materializer_recovery_info_by_id: %{"a" => %{shard_id: 0}, "b" => %{shard_id: 0}},
+          transaction_services: %{
+            "a" => %{kind: :materializer, status: {:up, a}},
+            "b" => %{kind: :materializer, status: {:up, b}}
+          }
         })
 
-      context = Map.put(recovery_context(), :prior_core_state, %{logs: %{"log_1" => [0]}})
+      context =
+        recovery_context(%{
+          prior_core_state: %{logs: %{"old_log" => []}},
+          node_capabilities: %{},
+          lock_materializer_fn: fn _, _ -> flunk("selected an untrusted claimant") end
+        })
 
-      assert {_attempt, {:stalled, {:ambiguous_system_materializer, ["mat_a", "mat_b"]}}} =
-               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+      assert {_, {:stalled, :no_materializer_capable_nodes}} = MaterializerBootstrapPhase.execute(attempt, context)
+    end
+
+    test "a newer epoch on a named worker cannot be bypassed by reconstruction" do
+      attempt =
+        recovery_attempt(%{
+          materializer_recovery_info_by_id: %{"named" => %{shard_id: 0}},
+          transaction_services: %{"named" => %{kind: :materializer, status: {:up, self()}}}
+        })
+
+      context =
+        recovery_context(%{
+          prior_core_state: %{logs: %{"old_log" => []}, system_materializers: %{"named" => Atom.to_string(node())}},
+          lock_materializer_fn: fn _, _ -> {:error, :newer_epoch_exists} end,
+          create_worker_fn: fn _, _, _, _ -> flunk("bypassed the epoch fence") end
+        })
+
+      assert {_, {:stalled, :newer_epoch_exists}} = MaterializerBootstrapPhase.execute(attempt, context)
     end
 
     test "a recovered shard layout that reads EMPTY stalls instead of completing" do
@@ -1012,32 +1056,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         assert {_attempt, {:stalled, :recovered_shard_layout_is_empty}} =
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
       end)
-    end
-
-    test "a NAMED-but-unavailable record never falls back to a healthy stranger" do
-      # The invariant the legacy migration must not weaken. Discovery is
-      # for a record that names NOBODY; a record that names someone is
-      # authoritative, and substituting a different worker is exactly the
-      # fabrication FDB refuses. Here a perfectly healthy tag-0
-      # materializer is locked and available — and recovery must still
-      # stall, because the record does not name it.
-      stranger_pid = spawn(fn -> Process.sleep(:infinity) end)
-
-      recovery_attempt =
-        recovery_attempt()
-        |> Map.put(:materializer_recovery_info_by_id, %{
-          "mat_stranger" => %{kind: :materializer, shard_id: 0, durable_version: Version.from_integer(500)}
-        })
-        |> Map.put(:transaction_services, %{"mat_stranger" => %{kind: :materializer, status: {:up, stranger_pid}}})
-
-      context =
-        Map.put(recovery_context(), :prior_core_state, %{
-          logs: %{"log_1" => [0]},
-          system_materializers: %{"wkr_gone" => "dead@host"}
-        })
-
-      assert {_attempt, {:stalled, {:system_materializers_unavailable, %{"wkr_gone" => "dead@host"}}}} =
-               MaterializerBootstrapPhase.execute(recovery_attempt, context)
     end
   end
 end

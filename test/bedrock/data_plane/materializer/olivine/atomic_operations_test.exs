@@ -16,21 +16,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.AtomicOperationsTest do
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.Materializer.Olivine.IndexTestHelpers
 
   describe "Olivine IndexManager atomic operations" do
     setup do
-      # Create temporary directory for test database
-      temp_dir = System.tmp_dir!() <> "/test_olivine_#{System.unique_integer()}"
-      File.mkdir_p!(temp_dir)
-
-      db_file_path = Path.join(temp_dir, "olivine_test.dets")
-      {:ok, database} = OlivineDatabase.open(:"test_db_#{System.unique_integer()}", db_file_path)
+      database = IndexTestHelpers.open_test_database("olivine_test")
       index_manager = IndexManager.new()
-
-      on_exit(fn ->
-        :ok = OlivineDatabase.close(database)
-        File.rm_rf!(temp_dir)
-      end)
 
       {:ok, database: database, index_manager: index_manager}
     end

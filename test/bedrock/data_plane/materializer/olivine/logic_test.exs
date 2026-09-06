@@ -287,7 +287,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
     test "returns error tuple for an unsupported fact", %{test_dir: test_dir} do
       state = create_test_state(test_dir, :info_unsupported_test)
 
-      assert {:ok, {:error, :unsupported_info}} = Logic.info(state, :not_a_real_fact)
+      assert {:error, :unsupported_info} = Logic.info(state, :not_a_real_fact)
 
       Logic.shutdown(state)
     end

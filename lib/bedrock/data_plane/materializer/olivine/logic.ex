@@ -274,7 +274,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
   @spec info(State.t(), Materializer.fact_name() | [Materializer.fact_name()]) ::
           {:ok, term() | %{Materializer.fact_name() => term()}} | {:error, :unsupported_info}
-  def info(%State{} = t, fact_name) when is_atom(fact_name), do: {:ok, gather_info(fact_name, t)}
+  def info(%State{} = t, fact_name) when is_atom(fact_name) do
+    case gather_info(fact_name, t) do
+      {:error, :unsupported_info} = error -> error
+      value -> {:ok, value}
+    end
+  end
 
   def info(%State{} = t, fact_names) when is_list(fact_names) do
     {:ok,

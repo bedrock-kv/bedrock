@@ -276,7 +276,7 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemTest do
       # Keys should be sorted, and due to version inversion, highest versions come first
       extracted_versions =
         Enum.map(keys, fn key ->
-          {:ok, v} = Keys.extract_version(key)
+          {:ok, v} = Keys.extract_version(key, prefix)
           v
         end)
 

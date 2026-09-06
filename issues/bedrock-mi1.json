@@ -6,9 +6,15 @@
   "description": "Flagged by fresh-agent audit of bedrock-v2c: index_manager.ex calculate_target_position_found/not_found (lines ~342-360) look inconsistent with KeySelector constructor encodings — e.g. last_less_or_equal(k) resolves to k's predecessor when k exists (pos + (-1) with or_equal: true), and first_greater_than(k) when k is absent computes insertion_pos + 1, skipping one key. Also LayoutIndex.get_next_segment/get_previous_segment cross-shard continuation appears to be dead code (no callers). Needs falsifiable spike per spike-before-fixing before any fix.",
   "id": "bedrock-mi1",
   "labels": [],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/258 — KeySelector re-encoded to FDB's KeySelectorRef (fgoe -\u003e {false,+1}, lloe -\u003e {true,0}) and Olivine's resolver rewritten to anchor+offset; cross-page continuation now carries a signed residual, which also made backward continuation reachable for the first time. The ticket's LayoutIndex.get_next_segment/get_previous_segment observation is already moot: both were removed in 1b9921b8. Cold audit PASS-WITH-NOTES (differential model over 10,200 cases: 0 mismatches here, 1,991 on develop).",
+      "timestamp": "2026-09-06T00:59:42Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Olivine selector position arithmetic inconsistent with KeySelector constructor encodings",
   "type": "bug",
-  "updated_at": "2026-09-06T00:22:52Z"
+  "updated_at": "2026-09-06T00:59:42Z"
 }

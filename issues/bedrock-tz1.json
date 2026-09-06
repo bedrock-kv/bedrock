@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:36Z",
+  "close_reason": "Delivered in PR #256 (audited 2026-09-06: new_log_transaction_from_mutations/2 in TransactionTestSupport, 7 copies removed; stacked on #248, no CI run). Nit: @spec cites Transaction.mutation() which does not exist; test/support is not dialyzed.",
   "created": "2026-07-14T18:57:46Z",
   "description": "create_transaction/2 is duplicated in 7 olivine test files (persistence_integration, page_chain_loading, page_chain_recovery_bug, incremental_loading, atomic_operations, empty_block_squashing, logic_test) because TransactionTestSupport.new_log_transaction/3 is map-based and can't express ordered/duplicate-key mutation lists. Add a list variant and migrate. Related: bedrock-aa5 (shared index fixtures).",
   "id": "bedrock-tz1",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Add mutation-list transaction helper; dedupe create_transaction/2 (7 copies)",
   "type": "task",
-  "updated_at": "2026-09-06T00:57:18Z"
+  "updated_at": "2026-09-06T14:05:36Z"
 }

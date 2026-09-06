@@ -64,7 +64,9 @@ defmodule Bedrock.ObjectStorage.DiskCache do
 
   An object larger than the whole cap is never written: it could only
   make room for itself by evicting everything, and would then be evicted
-  in turn on the very next populate.
+  in turn on the very next populate. Below that size an entry always
+  survives the sweep its own populate triggers — a read that fetched an
+  object never throws it away again before returning it.
 
   ## Configuration
 
@@ -94,11 +96,16 @@ defmodule Bedrock.ObjectStorage.DiskCache do
   @sweep_slack 0.1
 
   # Exactly what `Keys.chunk_path/2` and `Keys.snapshot_path/2` build:
-  # a namespace, a base36 shard tag, and a 13-character base36 inverted
-  # version. Nothing else in the store is write-once. (The pattern lives
-  # here rather than in `Keys` because it is this module's question —
-  # "may I keep a copy of this forever?" — not a key-formatting one.)
-  @immutable_key ~r"^[cs]/[0-9a-z]+/[0-9a-z]{13}$"
+  # a namespace, a shard tag, and a 13-character base36 inverted version.
+  # Nothing else in the store is write-once. The version segment carries
+  # the discrimination — `Keys.format_inverted_version/1` always emits 13
+  # lowercase base36 characters — while the tag stays permissive, because
+  # `Olivine.Logic.normalize_shard/1` passes a configured tag through
+  # verbatim rather than round-tripping it through `Keys.shard_tag/1`.
+  # (The pattern lives here rather than in `Keys` because it answers this
+  # module's question — "may I keep a copy of this forever?" — not a
+  # key-formatting one.)
+  @immutable_key ~r"^[cs]/[0-9A-Za-z]+/[0-9a-z]{13}\z"
 
   @impl true
   def get(config, key) do
@@ -218,7 +225,7 @@ defmodule Bedrock.ObjectStorage.DiskCache do
       # directory, fsyncs it and renames, so an entry is whole or absent.
       # A short entry would be served as if it were the object.
       case LocalFilesystem.put([root: root(config)], key, data) do
-        :ok -> maybe_sweep(config, bytes, max_bytes)
+        :ok -> maybe_sweep(config, entry_path(config, key), bytes, max_bytes)
         {:error, _reason} -> :ok
       end
     else
@@ -232,12 +239,12 @@ defmodule Bedrock.ObjectStorage.DiskCache do
   # the key: a workload that cycles a handful of keys must still
   # accumulate its way to a sweep rather than deterministically never
   # reaching one.
-  @spec maybe_sweep(keyword(), pos_integer(), pos_integer()) :: :ok
-  defp maybe_sweep(config, bytes, max_bytes) do
+  @spec maybe_sweep(keyword(), Path.t(), non_neg_integer(), pos_integer()) :: :ok
+  defp maybe_sweep(config, admitted, bytes, max_bytes) do
     interval = max(1, div(trunc(@sweep_slack * max_bytes), max(1, bytes)))
 
     if :rand.uniform(interval) == 1 do
-      evict_to_fit(config, max_bytes)
+      evict_to_fit(config, admitted, max_bytes)
     else
       :ok
     end
@@ -252,23 +259,31 @@ defmodule Bedrock.ObjectStorage.DiskCache do
     :ok
   end
 
-  @spec evict_to_fit(keyword(), pos_integer()) :: :ok
-  defp evict_to_fit(config, max_bytes) do
+  @spec evict_to_fit(keyword(), Path.t(), pos_integer()) :: :ok
+  defp evict_to_fit(config, admitted, max_bytes) do
     root = root(config)
     entries = entries(root)
     total = Enum.reduce(entries, 0, fn {_path, size, _mtime}, sum -> sum + size end)
 
     if total > max_bytes do
-      evict(root, entries, total, max_bytes)
+      evict(root, entries, admitted, total, max_bytes)
     else
       :ok
     end
   end
 
-  @spec evict(Path.t(), [{Path.t(), non_neg_integer(), integer()}], non_neg_integer(), pos_integer()) :: :ok
-  defp evict(root, entries, total, max_bytes) do
+  @spec evict(Path.t(), [{Path.t(), non_neg_integer(), integer()}], Path.t(), non_neg_integer(), pos_integer()) :: :ok
+  defp evict(root, entries, admitted, total, max_bytes) do
     {victims, _condemned} =
       entries
+      # The entry whose populate triggered this sweep is spared. Its size
+      # still counts against the total, so the rest yield until the cap
+      # is met — which they always can, since nothing larger than the cap
+      # is admitted. Recency alone would not spare it: mtime is whole
+      # seconds, so a snapshot written in the same tick as a run of
+      # chunks ties with them, and the tie-break below would take the
+      # `s/` key first.
+      |> Enum.reject(fn {path, _size, _mtime} -> path == admitted end)
       |> Enum.sort(&least_recently_used?/2)
       |> Enum.reduce_while({[], 0}, fn {path, size, _mtime}, {victims, condemned} ->
         if total - condemned > max_bytes do

@@ -385,6 +385,25 @@ defmodule Bedrock.ObjectStorage.DiskCacheTest do
       assert File.exists?(entry_path(cache_root, newer))
     end
 
+    test "a read never evicts the object it just fetched", %{inner: inner, cache_root: cache_root} do
+      cached = ObjectStorage.backend(DiskCache, inner: inner, root: cache_root, max_bytes: 150)
+      warm = Keys.chunk_path("a", 100)
+      fetched = Keys.snapshot_path("a", 100)
+
+      :ok = ObjectStorage.put(inner, warm, String.duplicate("x", 100))
+      {:ok, _data} = ObjectStorage.get(cached, warm)
+      # Recency alone would spend the fetched object to keep this one:
+      # mtime is whole seconds, so entries routinely tie, and here the
+      # scales are tipped the whole way.
+      File.touch!(entry_path(cache_root, warm), System.os_time(:second) + 10_000)
+
+      :ok = ObjectStorage.put(inner, fetched, String.duplicate("x", 100))
+      {:ok, _data} = ObjectStorage.get(cached, fetched)
+
+      assert File.exists?(entry_path(cache_root, fetched))
+      refute File.exists?(entry_path(cache_root, warm))
+    end
+
     test "an object bigger than the cap is never written, and does not take the cache with it", %{
       inner: inner,
       cache_root: cache_root

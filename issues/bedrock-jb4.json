@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:36Z",
+  "close_reason": "Delivered in PR #253 (audited 2026-09-06: real bug; key_count_delta replaces stat tracking, key_bounds/1 on demand, n_keys rewinds; 10 tests; CI green). Unmarked-modified pages tracked in bedrock-5yg.",
   "created": "2026-07-14T18:57:46Z",
   "description": "During bedrock-eu4 work: IndexManager.info(:n_keys) stays 0 after applying transactions (IndexUpdate.track_statistics defaults false, and finish/1 discards counts), and :key_ranges reports sentinel {\u003c\u003c0xFF,0xFF\u003e\u003e, \"\"} even with data. Possibly a latent accounting bug around keys_added - keys_removed (index_manager.ex:197). Needs a targeted test + decision.",
   "id": "bedrock-jb4",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Investigate IndexManager n_keys/key_ranges accounting staying at defaults",
   "type": "task",
-  "updated_at": "2026-09-06T00:53:22Z"
+  "updated_at": "2026-09-06T14:05:36Z"
 }

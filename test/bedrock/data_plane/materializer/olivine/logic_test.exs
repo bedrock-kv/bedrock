@@ -8,12 +8,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.ReadingTestHelpers
   alias Bedrock.DataPlane.Materializer.Olivine.State
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.KeySelector
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   setup do
     test_dir = Path.join(System.tmp_dir!(), "olivine_logic_test_#{:rand.uniform(100_000)}")
@@ -43,20 +43,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
 
     {:ok, state} = result
     state
-  end
-
-  # Builds an encoded transaction with a commit version, matching how the
-  # pulling pipeline delivers transactions to apply_transactions/2.
-  defp create_transaction(mutations, version_int) do
-    transaction_map = %{
-      mutations: mutations,
-      read_conflicts: {nil, []},
-      write_conflicts: []
-    }
-
-    encoded = Transaction.encode(transaction_map)
-    {:ok, with_version} = Transaction.add_commit_version(encoded, Version.from_integer(version_int))
-    with_version
   end
 
   describe "startup/4" do
@@ -312,7 +298,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
     test "applies a single transaction and makes its writes readable", %{test_dir: test_dir} do
       state = create_test_state(test_dir, :apply_single_test)
 
-      txn = create_transaction([{:set, "hello", "world"}], 1)
+      txn = TransactionTestSupport.new_log_transaction_from_mutations([{:set, "hello", "world"}], 1)
 
       assert {:ok, %State{} = updated_state, version} = Logic.apply_transactions(state, [txn])
       assert version == Version.from_integer(1)
@@ -327,9 +313,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       state = create_test_state(test_dir, :apply_batch_test)
 
       transactions = [
-        create_transaction([{:set, "key_a", "value_a"}], 1),
-        create_transaction([{:set, "key_b", "value_b"}], 2),
-        create_transaction([{:set, "key_c", "value_c"}, {:set, "key_a", "value_a2"}], 3)
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "key_a", "value_a"}], 1),
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "key_b", "value_b"}], 2),
+        TransactionTestSupport.new_log_transaction_from_mutations(
+          [{:set, "key_c", "value_c"}, {:set, "key_a", "value_a2"}],
+          3
+        )
       ]
 
       assert {:ok, %State{} = updated_state, version} = Logic.apply_transactions(state, transactions)
@@ -366,8 +355,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       # Both versions are less than window_lag_time_μs apart from the newest,
       # so nothing falls behind the window edge.
       txns = [
-        create_transaction([{:set, "a", "1"}], 1),
-        create_transaction([{:set, "b", "2"}], 2)
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "a", "1"}], 1),
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "b", "2"}], 2)
       ]
 
       {:ok, state, _version} = Logic.apply_transactions(state, txns)
@@ -384,8 +373,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       # window_lag_time_μs defaults to 5_000_000. With the newest version at
       # 12_000_000, the window edge is 7_000_000: version 6_000_000 is evicted,
       # version 12_000_000 stays in the window.
-      old_txn = create_transaction([{:set, "old_key", "old_value"}], 6_000_000)
-      new_txn = create_transaction([{:set, "new_key", "new_value"}], 12_000_000)
+      old_txn = TransactionTestSupport.new_log_transaction_from_mutations([{:set, "old_key", "old_value"}], 6_000_000)
+      new_txn = TransactionTestSupport.new_log_transaction_from_mutations([{:set, "new_key", "new_value"}], 12_000_000)
 
       {:ok, state, _} = Logic.apply_transactions(state, [old_txn])
       {:ok, state, _} = Logic.apply_transactions(state, [new_txn])
@@ -408,8 +397,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       # Eviction version 1 is smaller than window_lag_time_μs (5_000_000), so
       # computing the telemetry window edge underflows and must clamp to zero
       # rather than raising.
-      tiny_txn = create_transaction([{:set, "tiny", "value"}], 1)
-      newer_txn = create_transaction([{:set, "newer", "value"}], 10_000_000)
+      tiny_txn = TransactionTestSupport.new_log_transaction_from_mutations([{:set, "tiny", "value"}], 1)
+      newer_txn = TransactionTestSupport.new_log_transaction_from_mutations([{:set, "newer", "value"}], 10_000_000)
 
       {:ok, state, _} = Logic.apply_transactions(state, [tiny_txn])
       {:ok, state, _} = Logic.apply_transactions(state, [newer_txn])
@@ -426,8 +415,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       state = create_test_state(test_dir, :compaction_test)
 
       txns = [
-        create_transaction([{:set, "compact_a", "value_a"}], 1),
-        create_transaction([{:set, "compact_b", "value_b"}], 2)
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "compact_a", "value_a"}], 1),
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "compact_b", "value_b"}], 2)
       ]
 
       {:ok, state, _version} = Logic.apply_transactions(state, txns)

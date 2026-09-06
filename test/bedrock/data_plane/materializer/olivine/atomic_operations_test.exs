@@ -15,7 +15,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.AtomicOperationsTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   describe "Olivine IndexManager atomic operations" do
     setup do
@@ -86,24 +86,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.AtomicOperationsTest do
   end
 
   defp create_atomic_transaction(mutations, version_int \\ 1) do
-    create_transaction(mutations, version_int)
+    TransactionTestSupport.new_log_transaction_from_mutations(mutations, version_int)
   end
 
   defp create_set_transaction(key, value, version_int) do
-    create_transaction([{:set, key, value}], version_int)
-  end
-
-  defp create_transaction(mutations, version_int) do
-    transaction_map = %{
-      mutations: mutations,
-      read_conflicts: {nil, []},
-      write_conflicts: []
-    }
-
-    encoded = Transaction.encode(transaction_map)
-    version = Version.from_integer(version_int)
-
-    {:ok, with_version} = Transaction.add_commit_version(encoded, version)
-    with_version
+    TransactionTestSupport.new_log_transaction_from_mutations([{:set, key, value}], version_int)
   end
 end

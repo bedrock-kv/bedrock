@@ -4,8 +4,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageChainLoadingTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
-  alias Bedrock.DataPlane.Transaction
-  alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   defp setup_tmp_dir(context, base_name) do
     tmp_dir =
@@ -19,20 +18,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageChainLoadingTest do
     end)
 
     {:ok, tmp_dir: tmp_dir}
-  end
-
-  defp create_transaction(mutations, version_int) do
-    transaction_map = %{
-      mutations: mutations,
-      read_conflicts: {nil, []},
-      write_conflicts: []
-    }
-
-    encoded = Transaction.encode(transaction_map)
-    version = Version.from_integer(version_int)
-
-    {:ok, with_version} = Transaction.add_commit_version(encoded, version)
-    with_version
   end
 
   defp data_size_in_bytes({data_db, _index_db}), do: data_db.file_offset
@@ -81,7 +66,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageChainLoadingTest do
         end
 
       all_keys_v1 = keys_v1 ++ additional_keys
-      transaction_v1 = create_transaction(all_keys_v1, 1_000_000)
+      transaction_v1 = TransactionTestSupport.new_log_transaction_from_mutations(all_keys_v1, 1_000_000)
 
       # Apply version 1
       index_manager = IndexManager.new()
@@ -98,7 +83,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageChainLoadingTest do
         {:set, "fff", "new_value_6"}
       ]
 
-      transaction_v2 = create_transaction(keys_v2, 2_000_000)
+      transaction_v2 = TransactionTestSupport.new_log_transaction_from_mutations(keys_v2, 2_000_000)
 
       {index_manager_v2, _database_v2} =
         IndexManager.apply_transactions(index_manager_v1, [transaction_v2], database_v1)
@@ -177,7 +162,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageChainLoadingTest do
         {:set, "initial_key", "initial_value"}
       ]
 
-      transaction_v1 = create_transaction(keys_v1, 1_000_000)
+      transaction_v1 = TransactionTestSupport.new_log_transaction_from_mutations(keys_v1, 1_000_000)
 
       index_manager = IndexManager.new()
       {index_manager_v1, database_v1} = IndexManager.apply_transactions(index_manager, [transaction_v1], database)
@@ -201,7 +186,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageChainLoadingTest do
         {:set, "zzz_end_key", "end_value"}
       ]
 
-      transaction_v2 = create_transaction(keys_v2, 2_000_000)
+      transaction_v2 = TransactionTestSupport.new_log_transaction_from_mutations(keys_v2, 2_000_000)
 
       {index_manager_v2, database_v2} =
         IndexManager.apply_transactions(index_manager_v1, [transaction_v2], database_after_v1)
@@ -243,7 +228,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageChainLoadingTest do
 
       # Create a simple transaction
       keys = [{:set, "test_key", "test_value"}]
-      transaction = create_transaction(keys, 1_000_000)
+      transaction = TransactionTestSupport.new_log_transaction_from_mutations(keys, 1_000_000)
 
       index_manager = IndexManager.new()
       {index_manager, database} = IndexManager.apply_transactions(index_manager, [transaction], database)

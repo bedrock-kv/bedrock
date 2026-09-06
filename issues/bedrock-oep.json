@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-05T23:58:11Z",
@@ -13,8 +13,8 @@
     }
   ],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "Empty range reads omit pending writes and read-conflict ranges",
   "type": "bug",
-  "updated_at": "2026-09-05T23:58:12Z"
+  "updated_at": "2026-09-06T00:04:33Z"
 }

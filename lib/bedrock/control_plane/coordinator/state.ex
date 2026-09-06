@@ -18,6 +18,9 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           leader_node: node() | :undecided,
           my_node: node(),
           epoch: Bedrock.epoch(),
+          raft_term: Raft.election_term() | nil,
+          director_raft_term: Raft.election_term() | nil,
+          publication_sequences: %{config: non_neg_integer(), layout: non_neg_integer()},
           director: Director.ref() | :unavailable,
           otp_name: atom(),
           raft: Raft.t() | nil,
@@ -37,6 +40,9 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
             leader_node: :undecided,
             my_node: nil,
             epoch: nil,
+            raft_term: nil,
+            director_raft_term: nil,
+            publication_sequences: %{config: 0, layout: 0},
             director: :unavailable,
             otp_name: nil,
             raft: nil,
@@ -62,7 +68,16 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
     @spec put_director(t :: State.t(), new_director :: Director.ref() | :unavailable) ::
             State.t()
-    def put_director(t, new_director), do: %{t | director: new_director}
+    def put_director(%{director: director} = t, director), do: t
+
+    def put_director(t, new_director) do
+      %{
+        t
+        | director: new_director,
+          director_raft_term: if(is_pid(new_director), do: t.raft_term),
+          publication_sequences: %{config: 0, layout: 0}
+      }
+    end
 
     @spec put_leader_node(t :: State.t(), leader_node :: node() | :undecided) :: State.t()
     def put_leader_node(t, leader_node), do: %{t | leader_node: leader_node}
@@ -109,6 +124,8 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     end
 
     @spec clear_transaction_system_layout(t :: State.t()) :: State.t()
+    def clear_transaction_system_layout(%{transaction_system_layout: nil} = t), do: t
+
     def clear_transaction_system_layout(t) do
       updated_state = %{t | transaction_system_layout: nil}
       broadcast_tsl_update(updated_state, nil)

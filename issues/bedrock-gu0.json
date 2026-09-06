@@ -6,9 +6,15 @@
   "description": "The foreman computes a health verdict that, until recently, was both wrong and unobservable. Three defects were found in sequence, each hidden by the next:\n\n- bedrock-287: the fold was order-dependent, so a failed worker could report :starting depending on how worker ids sorted. (PR #214)\n- bedrock-mxt: the verdict was never recomputed at spin-up, so a log-only node could never reach :ok at all. (stacked on PR #213)\n- and the reason both survived: nothing reads the value. It is never returned from a handle_call, never logged, never emitted as telemetry. Only :ok is matched, in two places.\n\nThis epic closes the remaining two: every path that changes health must also wake the callers waiting on it, and the verdict must be visible to an operator without attaching a debugger.\n\n## Exit criterion\n\nNo code path can change health without both waking waiters and saying so; a wedged worker is observable in the log.\n\n## Decisions taken\n\nLog transitions rather than adding telemetry. The service layer has no telemetry/tracing modules — the data plane's telemetry.ex/tracing.ex pairs are a data-plane convention — and introducing one for a single value is more scaffolding than the problem warrants. A log line at the transition is what an operator actually needs, and matches how abandoned worker directories are surfaced (bedrock-61c.2).\n\nKeep wait_for_healthy/2. It has no production callers today, but the guides document recovery as using it and the verdict becomes meaningful once bedrock-mxt settles it. Deleting a documented API is a larger call than this epic should make on its own.\n\n## Stacking\n\nBoth children touch foreman/impl.ex alongside PR #213 (bedrock-61c.2) and bedrock-mxt, which already edit the same functions. They stack rather than conflict.",
   "id": "bedrock-gu0",
   "labels": [],
+  "comments": [
+    {
+      "text": "Duplicate review 2026-09-06: considered folding this epic into bedrock-1a6 and rejected it. Half of the exit criterion is void, not duplicated: the 'wake waiters' clause died with bedrock-gu0.4, and wait_for_healthy/waiting_for_healthy no longer appear anywhere in lib/ or test/, which also falsifies the recorded decision to keep wait_for_healthy/2. What remains of the criterion is 1a6 (make the verdict readable) plus three correctness children that are not about the verdict at all: gu0.2, gu0.3 and gu0.6. Those need this epic as their home, so it stays open. Rescope the exit criterion to: the verdict is trustworthy (gu0.2, gu0.3, gu0.6) and visible (1a6).",
+      "timestamp": "2026-09-06T22:51:43Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "[EPIC] Make the foreman's health verdict trustworthy and visible",
   "type": "epic",
-  "updated_at": "2026-08-25T19:47:49Z"
+  "updated_at": "2026-09-06T22:51:43Z"
 }

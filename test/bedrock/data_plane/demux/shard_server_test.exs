@@ -521,6 +521,8 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           persistence_retry_tick_ms: 1
         )
 
+      %{persistence_worker: worker} = :sys.get_state(server)
+
       slice = make_slice([{:set, "key", "value"}])
       v1000 = Version.from_integer(1000)
       v1200 = Version.from_integer(1200)
@@ -539,6 +541,16 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       assert retry_meas.attempt == 1
       assert retry_meas.delay_ms >= 1
       assert retry_meta.reason == {:write_failed, :transient_write_failure}
+
+      # The worker already re-drains itself after scheduling a retry, but
+      # under full-suite scheduler load that only races the same
+      # Process.send_after backoff timer we're trying not to depend on
+      # (bedrock-uvk). Drive the retry directly instead: PersistenceQueue
+      # only promotes a scheduled entry once real time has passed its
+      # due_at_ms, which the relay above already satisfies, so this either
+      # fires the retry immediately or is a harmless no-op that falls back
+      # to the worker's own timer.
+      send(worker, :drain)
 
       assert_receive {:telemetry, [:bedrock, :demux, :persistence, :write, :ok], _ok_meas, ok_meta}, 1_500
       assert ok_meta.shard_id == shard_id

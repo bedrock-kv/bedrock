@@ -200,7 +200,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     answered_ids = completed_attempt.materializer_recovery_info_by_id |> Map.keys() |> MapSet.new()
 
     seated_ids =
-      for {_tag, members} <- completed_attempt.shard_materializers,
+      for {_tag, members} <- completed_attempt.seated_materializer_members,
           {worker_id, _node} <- members,
           into: MapSet.new(),
           do: worker_id
@@ -360,13 +360,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   # call and then guess which candidate is authoritative.
   @spec system_materializers(RecoveryAttempt.t()) :: %{Worker.id() => String.t()}
   defp system_materializers(completed),
-    do: Map.get(completed.shard_materializers, RecoveryAttempt.system_shard_id(), %{})
+    do: Map.get(completed.seated_materializer_members, RecoveryAttempt.system_shard_id(), %{})
 
   @spec run_recovery_attempt(RecoveryAttempt.t(), recovery_context(), module()) ::
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
           | {{:error, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
-  def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.TSLValidationPhase) do
+  def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.CoreStateValidationPhase) do
     case next_phase_module.execute(t, context) do
       {completed_attempt, :completed} ->
         {:ok, completed_attempt}

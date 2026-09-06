@@ -38,7 +38,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert routing_data.replication_factor == 1
     end
 
-    test "carries materializer refs when present; defaults to empty when absent" do
+    test "carries materializer members when present; defaults to empty when absent" do
       base = %{shard_layout: %{}, log_map: %{}, log_services: %{}, replication_factor: 1}
 
       assert RoutingData.from_snapshot(base).materializers == %{}
@@ -281,7 +281,7 @@ defmodule Bedrock.DataPlane.CommitProxy.RoutingDataTest do
       assert updated.log_services == seeded.log_services
     end
 
-    test "handles materializer_key set mutation - decoded refs stay strings" do
+    test "handles materializer_key set mutation - decoded member nodes stay strings" do
       updates = [
         {v(100), [{:set, SystemKeys.materializer_key(7, "wkr_a"), Values.encode_materializer_node("n1@host")}]}
       ]

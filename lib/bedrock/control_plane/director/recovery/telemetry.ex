@@ -1,6 +1,6 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
   @moduledoc false
-  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.Internal.Time.Interval
   alias Bedrock.Telemetry
 
@@ -213,18 +213,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
-  @spec trace_recovery_tsl_validation_success() :: :ok
-  def trace_recovery_tsl_validation_success do
-    Telemetry.execute([:bedrock, :recovery, :tsl_validation_success], %{}, %{})
+  @spec trace_recovery_core_state_validation_success() :: :ok
+  def trace_recovery_core_state_validation_success do
+    Telemetry.execute([:bedrock, :recovery, :core_state_validation_success], %{}, %{})
   end
 
-  @spec trace_recovery_tsl_validation_failed(
-          TransactionSystemLayout.t(),
+  @spec trace_recovery_core_state_validation_failed(
+          CoreState.t(),
           validation_error :: term()
         ) :: :ok
-  def trace_recovery_tsl_validation_failed(transaction_system_layout, validation_error) do
-    Telemetry.execute([:bedrock, :recovery, :tsl_validation_failed], %{}, %{
-      transaction_system_layout: transaction_system_layout,
+  def trace_recovery_core_state_validation_failed(core_state, validation_error) do
+    Telemetry.execute([:bedrock, :recovery, :core_state_validation_failed], %{}, %{
+      core_state: core_state,
       validation_error: validation_error
     })
   end

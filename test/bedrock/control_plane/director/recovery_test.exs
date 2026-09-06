@@ -181,7 +181,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       completed = %{
         logs: %{"live_log" => []},
-        shard_materializers: %{0 => %{"live_mat" => Atom.to_string(node())}},
+        seated_materializer_members: %{0 => %{"live_mat" => Atom.to_string(node())}},
         materializer_recovery_info_by_id: %{"live_mat" => %{kind: :materializer, shard_id: 0}}
       }
 
@@ -197,7 +197,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       completed = %{
         logs: %{"old_log" => [], "brand_new_log" => []},
-        shard_materializers: %{},
+        seated_materializer_members: %{},
         materializer_recovery_info_by_id: %{}
       }
 
@@ -205,14 +205,14 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     end
 
     test "an assigned materializer with no services record is still referenced — never pruned" do
-      # Worker ids ride the assignment refs, so the reference set does
+      # Worker ids ride the seated members, so the reference set does
       # not depend on the services map at all; a missing record cannot
       # deregister the worker the epoch assigned.
       services = %{"assigned_mat" => {:materializer, {:a, :node1}}}
 
       completed = %{
         logs: %{},
-        shard_materializers: %{0 => %{"assigned_mat" => Atom.to_string(node())}},
+        seated_materializer_members: %{0 => %{"assigned_mat" => Atom.to_string(node())}},
         materializer_recovery_info_by_id: %{}
       }
 
@@ -227,7 +227,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       #
       # Recovery seats only tag 0 now (bedrock-q67.21.13), so "not seated"
       # describes EVERY data-tag materializer in a healthy cluster.
-      # Reading absence from shard_materializers as death would deregister
+      # Reading absence from seated_materializer_members as death would deregister
       # the entire data plane on every recovery.
       services = %{
         "sys_mat" => {:materializer, {:a, :node1}},
@@ -236,7 +236,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       completed = %{
         logs: %{},
-        shard_materializers: %{0 => %{"sys_mat" => Atom.to_string(node())}},
+        seated_materializer_members: %{0 => %{"sys_mat" => Atom.to_string(node())}},
         materializer_recovery_info_by_id: %{
           "sys_mat" => %{kind: :materializer, shard_id: 0},
           "data_mat" => %{kind: :materializer, shard_id: 1}
@@ -254,7 +254,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       completed = %{
         logs: %{},
-        shard_materializers: %{0 => %{"sys_mat" => Atom.to_string(node())}},
+        seated_materializer_members: %{0 => %{"sys_mat" => Atom.to_string(node())}},
         materializer_recovery_info_by_id: %{"sys_mat" => %{kind: :materializer, shard_id: 0}}
       }
 
@@ -571,7 +571,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_log_recovery_info(%{})
         |> with_storage_recovery_info(%{})
 
-      # Include materializer so MaterializerBootstrapPhase passes
+      # Include materializer so SystemShardBootstrapPhase passes
       materializer_pid = spawn(fn -> Process.sleep(5000) end)
 
       # Two candidate logs so generational recruitment can fill its
@@ -613,7 +613,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           assert Map.has_key?(completed_attempt.transaction_services, "existing_log_1")
         end)
 
-      # Materializer bootstrap phase should log catchup completion
+      # System shard bootstrap phase should log catchup completion
       assert log =~ "Materializer caught up to version"
     end
 
@@ -912,11 +912,11 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           epoch: 3,
           attempt: 1,
           started_at: DateTime.utc_now(),
-          shard_materializers: %{}
+          seated_materializer_members: %{}
         }
       }
 
-      completed = %{state.recovery_attempt | shard_materializers: %{0 => adopted}}
+      completed = %{state.recovery_attempt | seated_materializer_members: %{0 => adopted}}
 
       Recovery.persist_new_transaction_system_layout(state, completed)
 

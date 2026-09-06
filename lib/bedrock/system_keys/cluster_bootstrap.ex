@@ -47,6 +47,24 @@ defmodule Bedrock.SystemKeys.ClusterBootstrap do
   bootstrap using conditional PUT. The winner becomes the sole coordinator.
 
   See `Bedrock.ClusterBootstrap.Discovery` for the discovery logic.
+
+  ## Relationship to `CoreState`
+
+  This is the WIRE format — the bytes on object storage — and it keeps that
+  name because it is read by two callers for two purposes. The boot sequence
+  above reads it to answer "what is my role in this cluster", which has
+  nothing to do with recovery; recovery reads it through
+  `Bedrock.ControlPlane.Config.CoreState.from_bootstrap/1`, which projects
+  the subset a recovery consumes as its prior state (`logs` and
+  `system_materializers`, FDB's `DBCoreState`). The record is strictly
+  larger than that projection: `cluster_id`, `coordinators`, `parameters`
+  and `policies` are read by the coordinator directly and never reach
+  `CoreState`.
+
+  So the two names name two things, and the relationship is one-way:
+  `CoreState` is the in-memory projection of this record, and every change
+  to the schema below that recovery must see needs a matching change in
+  `from_bootstrap/1`.
   """
 
   # Flatbuffer 0.6 declares the .fbs file as an @external_resource itself,

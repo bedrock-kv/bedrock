@@ -68,8 +68,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :service_pids,
     :transaction_system_layout,
     :shard_layout,
-    shard_materializers: %{},
-    prior_materializer_refs: nil,
+    seated_materializer_members: %{},
+    prior_materializer_members: nil,
     lock_failed_service_ids: MapSet.new(),
     pending_tx: Tx.new()
   ]
@@ -95,8 +95,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           transaction_services: %{Worker.id() => ServiceDescriptor.t()},
           service_pids: %{Worker.id() => pid()},
           transaction_system_layout: TransactionSystemLayout.t() | nil,
-          shard_materializers: %{Bedrock.range_tag() => %{Worker.id() => node_name :: String.t()}},
-          prior_materializer_refs: %{Bedrock.range_tag() => %{Worker.id() => String.t()}} | nil,
+          seated_materializer_members: %{Bedrock.range_tag() => %{Worker.id() => node_name :: String.t()}},
+          prior_materializer_members: %{Bedrock.range_tag() => %{Worker.id() => String.t()}} | nil,
           lock_failed_service_ids: MapSet.t(Worker.id()),
           shard_layout: shard_layout() | nil,
           pending_tx: Tx.t()
@@ -136,8 +136,8 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       service_pids: %{},
       transaction_system_layout: nil,
       shard_layout: nil,
-      shard_materializers: %{},
-      prior_materializer_refs: nil,
+      seated_materializer_members: %{},
+      prior_materializer_members: nil,
       lock_failed_service_ids: MapSet.new(),
       pending_tx: Tx.new()
     }

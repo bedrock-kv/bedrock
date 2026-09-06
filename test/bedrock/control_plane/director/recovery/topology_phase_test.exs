@@ -88,7 +88,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
       refute snapshot |> Map.values() |> Enum.any?(&is_reference/1)
     end
 
-    test "routing snapshot carries string-encoded materializer refs (the q67.23 seed)" do
+    test "routing snapshot carries string-encoded materializer members (the q67.23 seed)" do
       test_pid = self()
       mat_sys = spawn(fn -> Process.sleep(:infinity) end)
 
@@ -99,7 +99,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
           "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
           "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}}
         })
-        |> Map.put(:shard_materializers, %{0 => %{"wkr_sys" => Atom.to_string(node())}})
+        |> Map.put(:seated_materializer_members, %{0 => %{"wkr_sys" => Atom.to_string(node())}})
 
       context =
         recovery_context()
@@ -156,8 +156,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
           "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
           "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}}
         })
-        |> Map.put(:shard_materializers, %{0 => %{"wkr_sys" => node_string}})
-        |> Map.put(:prior_materializer_refs, %{
+        |> Map.put(:seated_materializer_members, %{0 => %{"wkr_sys" => node_string}})
+        |> Map.put(:prior_materializer_members, %{
           0 => %{"aaa_wkr_gone" => "dead@nowhere"},
           1 => %{"wkr_data" => node_string}
         })

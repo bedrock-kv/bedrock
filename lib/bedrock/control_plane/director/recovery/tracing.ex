@@ -32,8 +32,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
         [:bedrock, :recovery, :attempt_persist_failed],
         [:bedrock, :recovery, :layout_persisted],
         [:bedrock, :recovery, :layout_persist_failed],
-        [:bedrock, :recovery, :tsl_validation_success],
-        [:bedrock, :recovery, :tsl_validation_failed],
+        [:bedrock, :recovery, :core_state_validation_success],
+        [:bedrock, :recovery, :core_state_validation_failed],
         [:bedrock, :recovery, :unexpected_state]
       ],
       &__MODULE__.handler/4,
@@ -149,20 +149,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
   def trace(:layout_persist_failed, _, %{reason: reason}),
     do: error("Failed to persist new transaction system layout: #{inspect(reason)}")
 
-  def trace(:tsl_validation_success, _, _), do: info("TSL type safety validation passed")
+  def trace(:core_state_validation_success, _, _), do: info("Core state type safety validation passed")
 
-  def trace(:tsl_validation_failed, _, %{transaction_system_layout: tsl, validation_error: validation_error}) do
+  def trace(:core_state_validation_failed, _, %{core_state: core_state, validation_error: validation_error}) do
     error("""
-    TSL type safety validation failed during recovery - this indicates data corruption.
+    Core state type safety validation failed during recovery - this indicates data corruption.
 
     Validation Error: #{inspect(validation_error, limit: :infinity)}
 
-    TSL Components being validated:
-      - Logs: #{inspect(Map.get(tsl, :logs), limit: 10)}
-      - Resolvers: #{inspect(Map.get(tsl, :resolvers), limit: 5)}
+    Core state components being validated:
+      - Logs: #{inspect(Map.get(core_state, :logs), limit: 10)}
 
-    This indicates the TSL data was corrupted, likely due to improper integer-to-binary
-    version conversion. Manual intervention may be required to fix the underlying data.
+    This indicates the durable core state was corrupted, likely due to improper
+    integer-to-binary version conversion. Manual intervention may be required to fix
+    the underlying data.
     """)
   end
 

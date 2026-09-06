@@ -46,7 +46,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   - Construction failures: `{:stalled, {:recovery_system_failed, reason}}`
   - Unlock failures: `{:stalled, {:recovery_system_failed, {:unlock_failed, reason}}}`
 
-  Transitions to `PersistencePhase` to commit layout through system transaction.
+  Transitions to `MonitoringPhase`; the accumulated system transaction is
+  committed later, by `PersistencePhase`.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -57,7 +58,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Config.ServiceDescriptor
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
-  alias Bedrock.ControlPlane.Config.TSLTypeValidator
+  alias Bedrock.ControlPlane.Config.TypeSafetyValidator
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.ShardRouter
@@ -79,7 +80,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
 
   ## Returns
 
-  - `{updated_recovery_attempt, PersistencePhase}` - Success with TSL added to recovery attempt
+  - `{updated_recovery_attempt, MonitoringPhase}` - Success with TSL added to recovery attempt
   - `{recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}` - Failure with specific error
 
   ## Process Flow
@@ -103,7 +104,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
              context
            ) do
       # Validate the constructed TSL for type safety
-      TSLTypeValidator.assert_type_safety!(transaction_system_layout)
+      TypeSafetyValidator.assert_type_safety!(transaction_system_layout)
 
       updated_recovery_attempt =
         %{recovery_attempt | transaction_system_layout: transaction_system_layout}
@@ -240,8 +241,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
   @spec seeded_materializers(RecoveryAttempt.t()) ::
           %{Bedrock.range_tag() => %{Worker.id() => String.t()}}
   defp seeded_materializers(recovery_attempt) do
-    committed = Map.get(recovery_attempt, :prior_materializer_refs) || %{}
-    seated = Map.get(recovery_attempt, :shard_materializers) || %{}
+    committed = Map.get(recovery_attempt, :prior_materializer_members) || %{}
+    seated = Map.get(recovery_attempt, :seated_materializer_members) || %{}
 
     Map.merge(committed, seated)
   end

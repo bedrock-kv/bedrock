@@ -62,7 +62,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   # explicit positive idle_timeout the worker never spins down. That is
   # what the system shard's exemption is built on — neither of the two
   # things that create a tag-0 materializer sends the param
-  # (MaterializerBootstrapPhase, and Recruitment.worker_params/2).
+  # (SystemShardBootstrapPhase, and Recruitment.worker_params/2).
   @spec startup_opts(cluster :: module() | nil, params :: map()) :: keyword()
   defp startup_opts(cluster, params) do
     base = [cluster: cluster, shard_id: params["shard_id"]]

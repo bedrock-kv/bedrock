@@ -8,6 +8,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
   alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Materializer.Olivine.Reading
   alias Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotRetention
   alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
@@ -31,6 +32,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
           allow_window_advancement: boolean(),
           snapshot: Snapshot.t() | nil,
           snapshot_policy: SnapshotPolicy.t(),
+          snapshot_retention: SnapshotRetention.t(),
           pull_sources: [{Log.id(), Log.ref()}] | nil,
           shard_num: non_neg_integer() | nil,
           idle_timeout: pos_integer() | :infinity,
@@ -56,6 +58,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
             allow_window_advancement: true,
             snapshot: nil,
             snapshot_policy: %SnapshotPolicy{},
+            snapshot_retention: %SnapshotRetention{},
             pull_sources: nil,
             shard_num: nil,
             idle_timeout: :infinity,

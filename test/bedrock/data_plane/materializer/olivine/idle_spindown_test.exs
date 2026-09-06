@@ -18,6 +18,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotRetention
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
@@ -328,6 +329,45 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
                  shard_id: 42
                )
 
+      Logic.shutdown(restored)
+    end
+
+    # Spin-down is the only path that writes a snapshot in production
+    # (bedrock-zi44, bedrock-947), so it is where retention has to run
+    # or a shard accumulates one object per spin-down forever.
+    test "retention prunes the shard's older snapshots behind the one just written",
+         %{tmp_dir: tmp_dir, test_id: test_id} do
+      {_root, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
+
+      {:ok, state} =
+        Logic.startup(:"idle_ret_a_#{test_id}", self(), "ret_wkr_a", dir_a,
+          cluster: TestCluster,
+          shard_id: 42,
+          snapshot_retention: %SnapshotRetention{keep_last: 1}
+        )
+
+      # Seeded after startup: these stand in for earlier spin-downs, and
+      # this worker must not try to restore from one.
+      snapshot = snapshot_handle_for(42)
+      for version <- [1, 2], do: assert(:ok = Snapshot.write(snapshot, version, "stale bundle #{version}"))
+
+      state = apply_and_flush(state, "k1", "v1", 10_000_000)
+      state = apply_and_flush(state, "k2", "v2", 20_000_000)
+      durable = Version.to_integer(Database.durable_version(state.database))
+      assert durable > 2
+
+      assert :ok = Logic.upload_snapshot_before_spindown(state)
+      Logic.shutdown(state)
+
+      # The prune runs in the caller on this path, so by the time the
+      # upload returns the stale objects are gone.
+      assert [^durable] = snapshot |> Snapshot.list() |> Enum.map(fn {version, _key} -> version end)
+
+      # And the survivor is still the baseline a cold start revives from.
+      {:ok, restored} =
+        Logic.startup(:"idle_ret_b_#{test_id}", self(), "ret_wkr_b", dir_b, cluster: TestCluster, shard_id: 42)
+
+      assert Database.durable_version(restored.database) == Version.from_integer(durable)
       Logic.shutdown(restored)
     end
   end

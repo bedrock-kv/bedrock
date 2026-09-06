@@ -8,6 +8,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.ReadingTestHelpers
   alias Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotRetention
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
@@ -15,6 +16,36 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
+
+  # Writes land, but the listing raises the way a real backend does when
+  # it cannot complete one (bedrock-q67.21.17). Lazy on purpose: the
+  # raise has to happen where the stream is CONSUMED.
+  defmodule UnlistableBackend do
+    @moduledoc false
+    @behaviour ObjectStorage
+
+    @impl true
+    def list(_config, prefix, _opts \\ []) do
+      Stream.resource(
+        fn -> :start end,
+        fn :start -> raise(ObjectStorage.ListError, reason: :econnrefused, prefix: prefix) end,
+        fn _ -> :ok end
+      )
+    end
+
+    @impl true
+    def get(_config, _key), do: {:error, :not_found}
+    @impl true
+    def put(_config, _key, _data, _opts \\ []), do: :ok
+    @impl true
+    def delete(_config, _key), do: :ok
+    @impl true
+    def put_if_not_exists(_config, _key, _data, _opts \\ []), do: :ok
+    @impl true
+    def get_with_version(_config, _key), do: {:error, :not_found}
+    @impl true
+    def put_if_version_matches(_config, _key, _data, _version, _opts \\ []), do: :ok
+  end
 
   setup do
     test_dir = Path.join(System.tmp_dir!(), "olivine_logic_test_#{:rand.uniform(100_000)}")
@@ -581,6 +612,114 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       assert {:ok, _} = await_snapshot_version(snapshot, 3, 100)
 
       Logic.shutdown(state)
+    end
+  end
+
+  describe "snapshot retention" do
+    test "with no retention configured every uploaded snapshot is kept", %{test_dir: test_dir} do
+      {state, snapshot, upload} = retention_fixture(test_dir, "logic-no-retention-shard", %SnapshotRetention{})
+
+      state = Enum.reduce(1..4, state, &upload.(&2, &1))
+      for version <- 1..4, do: assert({:ok, _} = await_snapshot_version(snapshot, version, 100))
+
+      assert [4, 3, 2, 1] = snapshot_versions(snapshot)
+
+      Logic.shutdown(state)
+    end
+
+    test "keep_last prunes everything past the newest K after an upload", %{test_dir: test_dir} do
+      {state, snapshot, upload} =
+        retention_fixture(test_dir, "logic-retention-shard", %SnapshotRetention{keep_last: 2})
+
+      state =
+        Enum.reduce(1..4, state, fn version, state ->
+          state = upload.(state, version)
+          assert {:ok, _} = await_snapshot_version(snapshot, version, 100)
+          state
+        end)
+
+      # The prune rides the same fire-and-forget task as the upload, so
+      # the deletions land just behind the write that triggered them.
+      assert [4, 3] = await_snapshot_versions(snapshot, [4, 3], 100)
+
+      Logic.shutdown(state)
+    end
+
+    test "a listing it could not complete is reported, not read as nothing to delete", %{test_dir: test_dir} do
+      snapshot = Snapshot.new({UnlistableBackend, []}, "logic-unlistable-shard")
+
+      state = create_test_state(Path.join(test_dir, "storage"), :snapshot_retention_unlistable)
+      state = %{state | snapshot: snapshot, snapshot_retention: %SnapshotRetention{keep_last: 1}}
+
+      # The snapshot itself is written, so the spin-down still succeeds:
+      # retention is cleanup, never a reason to keep the worker up. But
+      # the prune says out loud that it could not see what is there —
+      # silence would be indistinguishable from a shard with nothing to
+      # prune, which is how a prefix grows without bound unnoticed.
+      log = capture_log(fn -> assert :ok = Logic.upload_snapshot_before_spindown(state) end)
+      assert log =~ "Snapshot retention pruning failed"
+
+      Logic.shutdown(state)
+    end
+
+    test "keep_last: 1 still never deletes the newest snapshot", %{test_dir: test_dir} do
+      {state, snapshot, upload} =
+        retention_fixture(test_dir, "logic-retention-one-shard", %SnapshotRetention{keep_last: 1})
+
+      state = upload.(state, 700)
+      assert {:ok, _} = await_snapshot_version(snapshot, 700, 100)
+      assert [700] = await_snapshot_versions(snapshot, [700], 100)
+
+      state = upload.(state, 900)
+      assert {:ok, _} = await_snapshot_version(snapshot, 900, 100)
+      assert [900] = await_snapshot_versions(snapshot, [900], 100)
+
+      Logic.shutdown(state)
+    end
+  end
+
+  # A state wired to a real LocalFilesystem-backed snapshot handle, plus
+  # the upload closure the retention tests drive it with. The default
+  # upload policy uploads at every opportunity, so each call writes.
+  defp retention_fixture(test_dir, shard_tag, retention) do
+    object_storage_root = Path.join(test_dir, "object_storage")
+    File.mkdir_p!(object_storage_root)
+
+    backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
+    snapshot = Snapshot.new(backend, shard_tag)
+
+    state = create_test_state(Path.join(test_dir, "storage"), :"snapshot_retention_#{shard_tag}")
+    state = %{state | snapshot: snapshot, snapshot_retention: retention}
+
+    data_path = Path.join(test_dir, "retention_data")
+    idx_path = Path.join(test_dir, "retention_idx")
+    File.write!(data_path, "data contents")
+    File.write!(idx_path, "idx contents")
+
+    upload = fn state, version ->
+      Logic.maybe_upload_snapshot(
+        state,
+        String.to_charlist(data_path),
+        String.to_charlist(idx_path),
+        Version.from_integer(version)
+      )
+    end
+
+    {state, snapshot, upload}
+  end
+
+  defp snapshot_versions(snapshot), do: snapshot |> Snapshot.list() |> Enum.map(fn {version, _key} -> version end)
+
+  defp await_snapshot_versions(snapshot, _expected, 0), do: snapshot_versions(snapshot)
+
+  defp await_snapshot_versions(snapshot, expected, attempts_left) do
+    case snapshot_versions(snapshot) do
+      ^expected ->
+        expected
+
+      _other ->
+        Process.sleep(50)
+        await_snapshot_versions(snapshot, expected, attempts_left - 1)
     end
   end
 

@@ -48,6 +48,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhaseTest do
       for _ <- 1..4, do: assert_received({:monitored, _})
     end
 
+    test "records the refs on the attempt so an abandoned attempt can release them" do
+      monitor_fn = fn _pid -> make_ref() end
+
+      assert {result, PersistencePhase} = MonitoringPhase.execute(attempt_with(), %{monitor_fn: monitor_fn})
+
+      # Sequencer, one proxy, one resolver, one log.
+      assert length(result.component_monitors) == 4
+      assert Enum.all?(result.component_monitors, &is_reference/1)
+    end
+
     test "uses default Process.monitor when no monitor_fn provided" do
       execute_and_verify(attempt_with(), %{})
     end

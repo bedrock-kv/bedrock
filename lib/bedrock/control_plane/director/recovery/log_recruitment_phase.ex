@@ -20,6 +20,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   epoch (this director has been superseded). Transitions to log replay with complete
   log service assignments.
 
+  ## What it writes
+
+  The generation record, `logs/<generation>/<log_id>` -> node, into the
+  attempt's `pending_tx`: this epoch's logs as `current`, and the
+  survivors recovery is copying from as `old`. This is where the
+  generation is decided, so this is where it is written (bedrock-qb0g).
+
+  Both halves are what makes the record answerable. Exclusion safety asks
+  whether a machine still holds a log recovery needs, and the answer is
+  yes for a survivor even after replay has copied its window forward,
+  because this recovery is not durably complete until the persistence
+  phase commits and rewrites the bootstrap — until then the next recovery
+  still recovers from the survivors, not from these logs. FDB records
+  both vectors in `logsKey` for exactly that reader
+  (`ManagementAPI.actor.cpp:2393-2408` walks current AND old).
+
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -28,8 +44,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
 
   alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.DataPlane.Log
+  alias Bedrock.Internal.TransactionBuilder.Tx
+  alias Bedrock.KeyRange
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
+  alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   require Logger
 
@@ -99,6 +119,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
         |> Map.update(:transaction_services, %{}, &Map.merge(&1, all_log_services))
         |> Map.update(:service_pids, %{}, &Map.merge(&1, all_log_pids))
         |> Map.update(:lock_failed_service_ids, lock_failed, &MapSet.union(&1, lock_failed))
+        # The generation record, contributed where the generation is
+        # decided. Survivors come off the attempt: the planning phase
+        # chose them and the locking phase recorded where they sit.
+        |> Map.put(
+          :pending_tx,
+          put_log_locations(
+            recovery_attempt.pending_tx,
+            nodes_by_log_id(all_log_services, Map.keys(logs)),
+            nodes_by_log_id(recovery_attempt.transaction_services, recovery_attempt.old_log_ids_to_copy)
+          )
+        )
 
       {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LogReplayPhase}
     else
@@ -119,6 +150,42 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   end
 
   defp get_available_log_nodes(%{node_capabilities: node_capabilities}), do: Map.get(node_capabilities, :log, [])
+
+  # Clear-then-write, because the family describes ONE generation pair and
+  # a leftover entry from two recoveries ago would answer the exclusion
+  # question with a machine nobody needs any more. FDB gets that atomicity
+  # from a single key (`logsKey`, overwritten by the recovery transaction
+  # at `ClusterRecovery.actor.cpp:1728`); a per-entry family gets it from a
+  # clear the same transaction carries, exactly as FDB rewrites
+  # `tLogDatacentersKeys` at `:1734-1741`. This is not the read-and-heal
+  # families' situation (bedrock-q67.21.2): those are durable ACROSS
+  # epochs and healed by the distributor, while a log generation belongs
+  # to the recovery that recruited it.
+  @doc false
+  @spec put_log_locations(Tx.t(), %{Log.id() => String.t()}, %{Log.id() => String.t()}) :: Tx.t()
+  def put_log_locations(tx, current, old) do
+    {range_start, range_end} = KeyRange.from_prefix(SystemKeys.logs_prefix())
+
+    for {generation, locations} <- [current: current, old: old],
+        {log_id, node} <- locations,
+        reduce: Tx.clear_range(tx, range_start, range_end) do
+      tx -> Tx.set(tx, SystemKeys.log_key(generation, log_id), Values.encode_log_node(node))
+    end
+  end
+
+  # The node each named log sits on, in the family's value shape (a
+  # string, never an atom). A named log with no service record is not a
+  # shape this phase can be handed — every current log was just locked
+  # into `all_log_services`, every survivor into the attempt's
+  # `transaction_services` — so a miss is a broken invariant, not a log
+  # to skip.
+  @spec nodes_by_log_id(%{Worker.id() => %{last_seen: {atom(), node()}}}, [Log.id()]) :: %{Log.id() => String.t()}
+  defp nodes_by_log_id(services, log_ids) do
+    Map.new(log_ids, fn log_id ->
+      %{last_seen: {_otp_name, node}} = Map.fetch!(services, log_id)
+      {log_id, Atom.to_string(node)}
+    end)
+  end
 
   @spec fill_log_vacancies(
           logs :: %{Log.id() => any()},

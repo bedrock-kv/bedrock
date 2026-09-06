@@ -6,6 +6,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
+  alias Bedrock.ControlPlane.Exclusion
+  alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Internal.TransactionBuilder.Tx
+  alias Bedrock.KeyRange
+  alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -54,6 +60,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       recovery_attempt = %{
         cluster: TestCluster,
         epoch: 1,
+        old_log_ids_to_copy: [],
+        pending_tx: Tx.new(),
+        transaction_services: %{},
         logs: %{
           {:vacancy, 1} => %{},
           {:vacancy, 2} => %{}
@@ -61,8 +70,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       }
 
       available_services = %{
-        {:log, 2} => {:log, {:log_2, :node1}},
-        {:log, 3} => {:log, {:log_3, :node1}}
+        "log_2" => {:log, {:log_2, :node1}},
+        "log_3" => {:log, {:log_3, :node1}}
       }
 
       lock_service_fn = fn _service, _epoch ->
@@ -70,12 +79,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         {:ok, pid, %{kind: :log, oldest_version: 0, last_version: 1}}
       end
 
-      context = create_recovery_context(%{{:log, 1} => %{}}, available_services, lock_service_fn: lock_service_fn)
+      context = create_recovery_context(%{"log_1" => %{}}, available_services, lock_service_fn: lock_service_fn)
 
       assert {%{logs: logs}, LogReplayPhase} =
                LogRecruitmentPhase.execute(recovery_attempt, context)
 
-      assert %{{:log, 2} => _, {:log, 3} => _} = logs
+      assert %{"log_2" => _, "log_3" => _} = logs
     end
 
     test "a candidate that fails to lock (ghost registration) is replaced, not a stall" do
@@ -91,7 +100,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         epoch: 3,
         logs: %{{:vacancy, 1} => %{}, {:vacancy, 2} => %{}},
         transaction_services: %{},
-        service_pids: %{}
+        service_pids: %{},
+        old_log_ids_to_copy: [],
+        pending_tx: Tx.new()
       }
 
       context =
@@ -146,6 +157,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         logs: %{{:vacancy, 1} => %{}, {:vacancy, 2} => %{}},
         transaction_services: %{},
         service_pids: %{},
+        old_log_ids_to_copy: [],
+        pending_tx: Tx.new(),
         lock_failed_service_ids: MapSet.new(["earlier_ghost"])
       }
 
@@ -192,7 +205,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         epoch: 3,
         logs: %{{:vacancy, 1} => %{}},
         transaction_services: %{},
-        service_pids: %{}
+        service_pids: %{},
+        old_log_ids_to_copy: [],
+        pending_tx: Tx.new()
       }
 
       context =
@@ -218,7 +233,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
         epoch: 1,
         logs: %{{:vacancy, 1} => %{}},
         transaction_services: %{},
-        service_pids: %{}
+        service_pids: %{},
+        old_log_ids_to_copy: [],
+        pending_tx: Tx.new()
       }
 
       worker_pid = spawn(fn -> Process.sleep(:infinity) end)
@@ -245,6 +262,54 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       assert map_size(logs) == 1
       [new_id] = Map.keys(logs)
       assert %{^new_id => %{status: {:up, ^worker_pid}}} = services
+    end
+  end
+
+  describe "the log generation record" do
+    test "names both generations, each with the node its log sits on" do
+      survivor_pid = spawn(fn -> Process.sleep(:infinity) end)
+      recruit_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt = generational_attempt(survivor_pid)
+      context = generational_context(recruit_pid)
+
+      assert {updated, LogReplayPhase} = LogRecruitmentPhase.execute(recovery_attempt, context)
+
+      {range_start, range_end} = KeyRange.from_prefix(SystemKeys.logs_prefix())
+
+      # The clear comes first: the family describes ONE generation pair,
+      # and an entry from two recoveries ago would name a machine nobody
+      # needs any more.
+      assert contributed_mutations(recovery_attempt, updated) == [
+               {:clear_range, range_start, range_end},
+               {:set, SystemKeys.log_key(:current, "new_log"), Values.encode_log_node("node_b@host")},
+               {:set, SystemKeys.log_key(:old, "old_log"), Values.encode_log_node("node_a@host")}
+             ]
+    end
+
+    test "an address hosting only an old-generation log is refused by the exclusion check" do
+      # node_a runs no log in this epoch — it serves no shard, and a record
+      # of which tags a log carries would show it idle. It still holds the
+      # survivor this recovery copied from, and recovery is not durably
+      # finished with it until the persistence phase commits, so excluding
+      # it must be refused.
+      survivor_pid = spawn(fn -> Process.sleep(:infinity) end)
+      recruit_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt = generational_attempt(survivor_pid)
+      context = generational_context(recruit_pid)
+
+      assert {updated, LogReplayPhase} = LogRecruitmentPhase.execute(recovery_attempt, context)
+
+      keyspace = apply_to_store(%{}, mutations_of(updated.pending_tx))
+
+      assert {:unsafe, [{:old, "old_log", "node_a@host"}]} =
+               Exclusion.check(logs_range_read_fn(keyspace), ["node_a@host"])
+
+      assert {:unsafe, [{:current, "new_log", "node_b@host"}]} =
+               Exclusion.check(logs_range_read_fn(keyspace), ["node_b@host"])
+
+      assert :safe = Exclusion.check(logs_range_read_fn(keyspace), ["node_c@host"])
     end
   end
 
@@ -377,6 +442,70 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
                LogRecruitmentPhase.replace_vacancies_with_log_ids(logs, log_id_for_vacancy)
 
       assert %{{:vacancy, 1} => _, {:log, 2} => _} = updated_logs
+    end
+  end
+
+  # One vacancy to fill on node_b, one survivor already locked on node_a:
+  # the two generations the record has to keep apart.
+  defp generational_attempt(survivor_pid) do
+    %{
+      cluster: TestCluster,
+      epoch: 7,
+      logs: %{{:vacancy, 1} => %{}},
+      old_log_ids_to_copy: ["old_log"],
+      service_pids: %{"old_log" => survivor_pid},
+      transaction_services: %{
+        "old_log" => %{status: {:up, survivor_pid}, kind: :log, last_seen: {:old_log_otp, :node_a@host}}
+      },
+      pending_tx: Tx.new()
+    }
+  end
+
+  defp generational_context(recruit_pid) do
+    create_recovery_context(
+      %{"old_log" => %{}},
+      %{
+        "old_log" => {:log, {:old_log_otp, :node_a@host}},
+        "new_log" => {:log, {:new_log_otp, :node_b@host}}
+      },
+      node_capabilities: %{log: [:node_b@host]},
+      lock_service_fn: fn _service, _epoch ->
+        {:ok, recruit_pid, %{kind: :log, oldest_version: 0, last_version: 1}}
+      end
+    )
+  end
+
+  defp contributed_mutations(before_attempt, after_attempt) do
+    prior = mutations_of(before_attempt.pending_tx)
+    all = mutations_of(after_attempt.pending_tx)
+
+    assert Enum.take(all, length(prior)) == prior, "the phase disturbed mutations an earlier phase contributed"
+
+    Enum.drop(all, length(prior))
+  end
+
+  defp mutations_of(tx), do: tx |> Tx.commit(nil) |> Transaction.mutations!() |> Enum.to_list()
+
+  # Apply set/clear/clear_range mutations, in order, to a flat key -> value
+  # map (a stand-in for the materializer's durable key space).
+  defp apply_to_store(store, mutations) do
+    Enum.reduce(mutations, store, fn
+      {:set, key, value}, store -> Map.put(store, key, value)
+      {:clear, key}, store -> Map.delete(store, key)
+      {:clear_range, s, e}, store -> Map.reject(store, fn {key, _} -> key >= s and key < e end)
+    end)
+  end
+
+  defp logs_range_read_fn(store) do
+    {_range_start, range_end} = KeyRange.from_prefix(SystemKeys.logs_prefix())
+
+    fn start_key ->
+      entries =
+        store
+        |> Enum.filter(fn {key, _value} -> key >= start_key and key < range_end end)
+        |> Enum.sort()
+
+      {:ok, {entries, false}}
     end
   end
 end

@@ -42,7 +42,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @type recovery_context :: %{
           cluster_config: Config.t(),
           prior_core_state: CoreState.t() | nil,
-          node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
+          node_capabilities: %{(Bedrock.Cluster.capability() | :resolution) => [node()]},
           lock_token: binary(),
           available_services: %{Worker.id() => {atom(), {atom(), node()}}},
           coordinator: pid()

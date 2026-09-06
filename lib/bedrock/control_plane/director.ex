@@ -132,7 +132,7 @@ defmodule Bedrock.ControlPlane.Director do
   """
   @spec notify_capabilities_updated(
           director :: ref(),
-          node_capabilities :: %{Bedrock.Cluster.capability() => [node()]}
+          node_capabilities :: %{(Bedrock.Cluster.capability() | :resolution) => [node()]}
         ) :: :ok
   def notify_capabilities_updated(director, node_capabilities),
     do: cast(director, {:capabilities_updated, node_capabilities})

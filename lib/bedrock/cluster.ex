@@ -20,7 +20,14 @@ defmodule Bedrock.Cluster do
   @type transaction :: Transaction.encoded()
   @type materializer :: Materializer.ref()
   @type log :: Log.ref()
-  @type capability :: :coordination | :log | :materializer | :resolution
+  @typedoc """
+  A capability a node may advertise in its `:capabilities` configuration.
+
+  Resolvers are not in this set: the coordinator places them on coordination
+  nodes (see `Bedrock.ControlPlane.Coordinator.State.convert_to_capability_map/1`),
+  a node never advertises `:resolution` itself.
+  """
+  @type capability :: :coordination | :log | :materializer
 
   @callback node_capabilities() :: [Bedrock.Cluster.capability()]
   @callback coordinator!() :: Coordinator.ref()

@@ -252,6 +252,13 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   defp module_for_capability(:materializer), do: Foreman
   defp module_for_capability(:log), do: Foreman
 
+  defp module_for_capability(:resolution),
+    do:
+      raise(
+        "Invalid capability :resolution — resolvers are placed by the coordinator on " <>
+          "coordination nodes, a node never advertises them. Remove :resolution from :capabilities."
+      )
+
   defp module_for_capability(capability), do: raise("Unknown capability: #{inspect(capability)}")
 
   defp start_tracing(module) do

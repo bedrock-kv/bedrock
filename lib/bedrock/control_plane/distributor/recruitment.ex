@@ -33,7 +33,7 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   @type context :: %{
           required(:cluster) => module(),
           required(:epoch) => Bedrock.epoch(),
-          required(:node_capabilities) => %{Bedrock.Cluster.capability() => [node()]},
+          required(:node_capabilities) => %{(Bedrock.Cluster.capability() | :resolution) => [node()]},
           required(:logs) => %{Log.id() => [Bedrock.range_tag()]},
           required(:log_refs) => %{Log.id() => Log.ref()},
           optional(:worker_params) => %{String.t() => term()},

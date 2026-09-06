@@ -26,11 +26,15 @@
     {
       "text": "Cold review rejected one broad PR. Plan amended with three exact dependency tickets: current-instance notification attribution; consensus generation plus same-bootstrap reservation; Shale ownership-token replay/live-push fencing; then parent integration. Contracts cover committed-prefix idempotence, CAS success/notification loss, equal-generation foreign owners, and quiescent compatible-binary migration. No production edits. Root has proposed issue text and owns creation.",
       "timestamp": "2026-09-06T02:55:21Z"
+    },
+    {
+      "text": "Cold review rejected one-PR implementation and required dependency decomposition. GH295/bedrock-ls9 notification attribution -\u003e GH296/bedrock-7i1 consensus generation+bootstrap reservation -\u003e GH297/bedrock-50n Shale ownership fencing -\u003e GH259 final full-core integration. Current develop restores public reads; corrected proven defects are same-generation reuse and stale old layout reinstallation.",
+      "timestamp": "2026-09-06T02:56:13Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Director failure restarts recovery with the same epoch and a single-log crash stalls service",
   "type": "bug",
-  "updated_at": "2026-09-06T02:56:12Z"
+  "updated_at": "2026-09-06T02:56:13Z"
 }

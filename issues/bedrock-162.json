@@ -20,11 +20,15 @@
     {
       "text": "Amended plan for second cold review: fixed permanent per-directory lock; all put/link/CAS/delete publication stays inside native ownership; enforced reserved namespace and aliases; explicit caller-death unknown outcome; native build/package/load/CI and honest README architecture change. No production edits. Plan /tmp/bedrock-followups-20260905.zKTZxP/302-plan.md.",
       "timestamp": "2026-09-06T03:41:29Z"
+    },
+    {
+      "text": "Implementation/local audit ready: 17 doctests,158 properties,2892 ordinary tests pass (17 S3/distributed excluded); native Linux arm64 UBSan focused65/0; Darwin/Linux extracted package peer and Darwin release smoke pass; Credo/Dialyzer clean. Audit /tmp/bedrock-followups-20260905.zKTZxP/302-author-audit.md. Native x86_64 QEMU failed compiling dependency before product; root will obtain actual GitHub CI and final independent review. No author commit/push.",
+      "timestamp": "2026-09-06T04:17:11Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Make LocalFilesystem version-matched writes atomic",
   "type": "bug",
-  "updated_at": "2026-09-06T03:41:29Z"
+  "updated_at": "2026-09-06T04:17:11Z"
 }

@@ -44,11 +44,15 @@
     {
       "text": "Cold final oracle amendment complete: concurrent lower reservation accepts precise superseded OR reservation_unverified/publication_mismatch outcomes; all G9 metadata/token assertions retained. Only publication_state_test changed. Sequential stress30 BEAM seeds0-29 =360 tests0fail; named focused85tests0fail6.4s. Formatter/diff-check clean; author audit/manifest updated; no commit.",
       "timestamp": "2026-09-06T05:54:12Z"
+    },
+    {
+      "text": "Implemented and cold-audited in commit f73e8916. Draft PR: https://github.com/bedrock-kv/bedrock/pull/306 (base bedrock-7i1/generation-base). Final inclusive suite: 2994 tests, 158 properties, 17 doctests, 0 failures/exclusions; mix quality clean. Cold audit: /tmp/bedrock-followups-20260905.zKTZxP/296-final-audit.md.",
+      "timestamp": "2026-09-06T05:56:35Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Allocate recovery generations through consensus and reserve bootstrap publication",
   "type": "task",
-  "updated_at": "2026-09-06T05:54:12Z"
+  "updated_at": "2026-09-06T05:56:35Z"
 }

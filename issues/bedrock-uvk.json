@@ -10,11 +10,15 @@
     {
       "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/277 — fix lands, injects the retry :drain tick from the test instead of waiting on the worker's real backoff timer; full suite green, cold audit PASS-WITH-NOTES.",
       "timestamp": "2026-09-06T02:11:16Z"
+    },
+    {
+      "text": "Audit 2026-09-06 of PR #277: PARTIAL. The injected :drain only helps if real time has already passed due_at_ms (PersistenceQueue.dequeue promotes on monotonic_time), so the test still leans on the same backoff clock; the ticket's 20+ full-suite verification was not run (~9 runs reported). Either inject the clock or scale the budget with load, then verify. Its one red CI job is the unrelated repo_transact_test.exs:605 name-registration flake.",
+      "timestamp": "2026-09-06T14:06:00Z"
     }
   ],
   "priority": 3,
   "status": "in_progress",
   "title": "[BUG] Flaky: ShardServer retry-telemetry test misses its 1.5s assert_receive under full-suite load",
   "type": "bug",
-  "updated_at": "2026-09-06T02:11:16Z"
+  "updated_at": "2026-09-06T14:06:00Z"
 }

@@ -277,34 +277,26 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
 
   @spec resolve_key_selector_in_index(Index.t(), KeySelector.t()) ::
           {:ok, resolved_key :: binary(), Page.t()}
-          | {:partial, keys_available :: non_neg_integer()}
           | {:error, :not_found}
-  defp resolve_key_selector_in_index(
-         index,
-         %KeySelector{key: ref_key, or_equal: or_equal, offset: offset} = key_selector
-       ) do
+  defp resolve_key_selector_in_index(index, %KeySelector{key: ref_key, or_equal: or_equal, offset: offset}) do
     page = Index.page_for_key(index, ref_key)
 
     case resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
       {:ok, resolved_key, page} ->
         {:ok, resolved_key, page}
 
-      {:partial, keys_available} ->
-        handle_cross_page_continuation(index, page, key_selector, keys_available)
+      {:partial, residual} ->
+        handle_cross_page_continuation(index, page, residual)
     end
   end
 
-  defp handle_cross_page_continuation(index, page, key_selector, keys_available) do
-    if keys_available == 0 and key_selector.offset < 0 do
-      {:error, :not_found}
-    else
-      case calculate_cross_page_continuation(index, page, key_selector, keys_available) do
-        {:ok, continuation_selector} ->
-          resolve_key_selector_in_index(index, continuation_selector)
+  defp handle_cross_page_continuation(index, page, residual) do
+    case calculate_cross_page_continuation(index, page, residual) do
+      {:ok, continuation_selector} ->
+        resolve_key_selector_in_index(index, continuation_selector)
 
-        {:error, reason} ->
-          {:error, reason}
-      end
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -325,7 +317,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
 
   @spec resolve_key_selector_in_page(Page.t(), binary(), boolean(), integer()) ::
           {:ok, resolved_key :: binary(), Page.t()}
-          | {:partial, keys_available :: non_neg_integer()}
+          | {:partial, residual :: integer()}
           | {:error, :not_found}
   defp resolve_key_selector_in_page(page, ref_key, or_equal, offset) do
     <<_id::unsigned-big-32, key_count::unsigned-big-16, _offset::unsigned-big-32, _reserved::unsigned-big-48,
@@ -333,58 +325,45 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
 
     case Page.search_entries_with_position(entries, key_count, ref_key) do
       {:found, pos} ->
-        target_pos = calculate_target_position_found(pos, or_equal, offset)
-        resolve_at_position_optimized(entries, target_pos, key_count, page)
+        resolve_at_position_optimized(entries, anchor_position(pos, or_equal) + offset, key_count, page)
 
       {:not_found, insertion_pos} ->
-        target_pos = calculate_target_position_not_found(insertion_pos, or_equal, offset)
-        resolve_at_position_optimized(entries, target_pos, key_count, page)
+        # ref_key is absent, so "last key <= ref_key" and "last key < ref_key"
+        # are the same position and or_equal makes no difference.
+        resolve_at_position_optimized(entries, insertion_pos - 1 + offset, key_count, page)
     end
   end
 
-  defp calculate_target_position_found(pos, or_equal, offset) do
-    if or_equal do
-      pos + offset
-    else
-      pos + 1 + offset
-    end
-  end
-
-  defp calculate_target_position_not_found(insertion_pos, or_equal, offset) do
-    if offset >= 0 do
-      insertion_pos + offset
-    else
-      if or_equal do
-        insertion_pos - 1 + offset
-      else
-        insertion_pos - 1 + offset
-      end
-    end
-  end
+  # FoundationDB's KeySelectorRef anchors on the last key less than ref_key —
+  # or less than or equal to it, when or_equal is set — and then moves offset
+  # keys from there.
+  defp anchor_position(pos, true), do: pos
+  defp anchor_position(pos, false), do: pos - 1
 
   defp resolve_at_position_optimized(entries, pos, key_count, page) when pos >= 0 and pos < key_count do
-    case Page.decode_entry_at_position(entries, pos, key_count) do
-      {:ok, {key, _version}} -> {:ok, key, page}
-      :out_of_bounds -> {:partial, key_count}
-    end
+    {:ok, {key, _version}} = Page.decode_entry_at_position(entries, pos, key_count)
+    {:ok, key, page}
   end
 
-  defp resolve_at_position_optimized(_entries, pos, _key_count, _page) when pos < 0, do: {:partial, 0}
-  defp resolve_at_position_optimized(_entries, _pos, key_count, _page), do: {:partial, key_count}
+  # A target outside the page carries a residual: how many keys past the page's
+  # last key (>= 0) or before its first key (< 0) the target lies. The
+  # neighbouring page continues from there.
+  defp resolve_at_position_optimized(_entries, pos, _key_count, _page) when pos < 0, do: {:partial, pos}
+  defp resolve_at_position_optimized(_entries, pos, key_count, _page), do: {:partial, pos - key_count}
 
-  @spec calculate_cross_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
+  @spec calculate_cross_page_continuation(Index.t(), Page.t(), integer()) ::
           {:ok, KeySelector.t()} | {:error, :not_found}
-  defp calculate_cross_page_continuation(index, current_page, key_selector, keys_available) do
-    if key_selector.offset >= 0 do
-      calculate_forward_page_continuation(index, current_page, key_selector, keys_available)
+  defp calculate_cross_page_continuation(index, current_page, residual) do
+    if residual >= 0 do
+      calculate_forward_page_continuation(index, current_page, residual)
     else
-      calculate_backward_page_continuation(index, current_page, key_selector, keys_available)
+      calculate_backward_page_continuation(index, current_page, residual)
     end
   end
 
-  @spec calculate_forward_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
+  @spec calculate_forward_page_continuation(Index.t(), Page.t(), non_neg_integer()) ::
           {:ok, KeySelector.t()} | {:error, :not_found}
-  defp calculate_forward_page_continuation(index, current_page, key_selector, keys_available) do
+  defp calculate_forward_page_continuation(index, current_page, residual) do
     {_page, next_id} = Index.get_page_with_next_id!(index, Page.id(current_page))
 
     case next_id do
@@ -393,23 +372,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
 
       next_page_id ->
         next_page = Index.get_page!(index, next_page_id)
-        remaining_offset = key_selector.offset - keys_available
 
         case Page.left_key(next_page) do
+          # Only page 0 survives becoming empty, and page 0 is never a next page.
           nil ->
-            continuation_selector = %KeySelector{
-              key: "",
-              or_equal: true,
-              offset: remaining_offset
-            }
-
-            {:ok, continuation_selector}
+            {:error, :not_found}
 
           first_key_of_next_page ->
+            # The next page's first key is the residual's origin: anchoring on
+            # it with or_equal leaves the residual as the offset from there.
             continuation_selector = %KeySelector{
               key: first_key_of_next_page,
               or_equal: true,
-              offset: remaining_offset
+              offset: residual
             }
 
             {:ok, continuation_selector}
@@ -417,9 +392,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
     end
   end
 
-  @spec calculate_backward_page_continuation(Index.t(), Page.t(), KeySelector.t(), non_neg_integer()) ::
+  @spec calculate_backward_page_continuation(Index.t(), Page.t(), neg_integer()) ::
           {:ok, KeySelector.t()} | {:error, :not_found}
-  defp calculate_backward_page_continuation(index, current_page, key_selector, keys_available) do
+  defp calculate_backward_page_continuation(index, current_page, residual) do
     case find_previous_page(index, Page.id(current_page)) do
       {:ok, previous_page} ->
         case Page.right_key(previous_page) do
@@ -427,12 +402,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
             {:error, :not_found}
 
           last_key_of_prev_page ->
-            remaining_offset = key_selector.offset + keys_available
-
+            # A residual of -1 is the previous page's last key itself, so the
+            # offset from that anchor is one step shorter than the residual.
             continuation_selector = %KeySelector{
               key: last_key_of_prev_page,
               or_equal: true,
-              offset: remaining_offset
+              offset: residual + 1
             }
 
             {:ok, continuation_selector}
@@ -444,6 +419,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
   end
 
   @spec find_previous_page(Index.t(), Page.id()) :: {:ok, Page.t()} | {:error, :not_found}
+  # Page 0 is always the leftmost page, and 0 doubles as the end-of-chain
+  # sentinel — searching for a page pointing at it would find the last page.
+  defp find_previous_page(_index, 0), do: {:error, :not_found}
+
   defp find_previous_page(%Index{page_map: page_map}, target_page_id) do
     page_map
     |> Enum.find_value(fn {_page_id, {page, next_id}} ->

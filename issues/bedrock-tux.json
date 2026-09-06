@@ -26,11 +26,15 @@
     {
       "text": "Peer review amendment: independent issue233 diagnosed stale Distributor capability snapshot and showed failed cases injected fault while ONLY shard0 existed. Fixture now requires actual shard_num[0,1], both Olivine workers running at published epoch before/after fault. No synthetic state or protocol edits. Renewed GREEN /tmp/issue239-peer-validated.log:2tests0fail13.3s, preceded by shardcoverage run2tests0fail44s; strictCredo clean. Separate production capability finding not claimed fixed by retries. Audit map updated.",
       "timestamp": "2026-09-06T01:18:02Z"
+    },
+    {
+      "text": "Completed after cold plan and final audit approval. Draft PR https://github.com/bedrock-kv/bedrock/pull/267 based on bedrock-g2e/history-base integrating six prerequisite fixes. Final all-history run27tests0fail; ordinary17doctests159properties2984tests0fail17distributed exclusions; format/Credo/Dialyzer pass. Baseline four counterexamples all fail semantically; original snapshot implementation fails both durable-prefix checks. Audit /tmp/bedrock-issue-team-20260905/239-final-audit.md; logs /tmp/bedrock-239-release.log, /tmp/bedrock-239-full-final.log, /tmp/bedrock-239-quality.log. Coupled coordinator faults explicit; autonomous recovery issue259/bedrock-t0k and Foreman eviction race bedrock-gu0.5 remain open.",
+      "timestamp": "2026-09-06T01:33:55Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Add end-to-end transaction-history checks across batching and recovery",
   "type": "task",
-  "updated_at": "2026-09-06T01:18:02Z"
+  "updated_at": "2026-09-06T01:33:55Z"
 }

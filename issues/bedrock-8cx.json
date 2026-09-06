@@ -10,11 +10,15 @@
     {
       "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/234. Published the 2026-09-05 implementation evaluation, pinned to 8f962e09, with evidence and acceptance criteria. Reproduced findings are distinguished from source-level risks. No implementation fix is included.",
       "timestamp": "2026-09-05T23:58:10Z"
+    },
+    {
+      "text": "Red regressions: 8 tests, 7 failures in independent mutation oracle, page-spanning history and real 40-client proxy log encoding. Additional confirmed proxy map iteration order loss \u003e=33 clients. Concrete plan plans/234-mutation-order.md awaiting cold review; no implementation yet.",
+      "timestamp": "2026-09-06T00:07:33Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Olivine batch application loses ordered atomic and range-clear mutations",
   "type": "bug",
-  "updated_at": "2026-09-06T00:04:22Z"
+  "updated_at": "2026-09-06T00:07:33Z"
 }

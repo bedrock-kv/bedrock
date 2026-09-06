@@ -81,6 +81,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       result =
         Finalization.finalize_batch(batch,
           epoch: 1,
+          recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
           sequencer: :test_sequencer,
           resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
           metadata_apply_fn: Support.metadata_apply_fn(routing_data)
@@ -126,6 +127,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
@@ -151,6 +153,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
@@ -193,6 +196,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
@@ -228,6 +232,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
@@ -258,6 +263,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
@@ -305,6 +311,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,
@@ -362,6 +369,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: mock_resolver_fn,

@@ -17,6 +17,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
   defp successful_unlock_context do
     recovery_context()
     |> with_lock_token("test_token")
+    |> Map.put(:unlock_log_fn, fn _log, _authority -> :ok end)
     |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout, _routing_data -> :ok end)
   end
 
@@ -62,7 +63,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
         })
 
       context =
-        recovery_context()
+        successful_unlock_context()
         |> with_lock_token("test_token")
         |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout, snapshot ->
           send(test_pid, {:routing_snapshot, snapshot})
@@ -102,7 +103,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
         |> Map.put(:shard_materializers, %{0 => %{"wkr_sys" => Atom.to_string(node())}})
 
       context =
-        recovery_context()
+        successful_unlock_context()
         |> with_lock_token("test_token")
         |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout, snapshot ->
           send(test_pid, {:routing_snapshot, snapshot})
@@ -141,7 +142,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
         })
 
       context =
-        recovery_context()
+        successful_unlock_context()
         |> with_lock_token("test_token")
         |> Map.put(
           :unlock_commit_proxy_fn,
@@ -150,6 +151,48 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
 
       expected_error = {:stalled, {:recovery_system_failed, {:unlock_failed, {:commit_proxy_unlock_failed, :timeout}}}}
       assert {_result, ^expected_error} = TopologyPhase.execute(recovery_attempt, context)
+    end
+
+    test "does not unlock commit proxies after any log rejects the authority" do
+      test_pid = self()
+      log_2 = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt =
+        base_recovery_attempt()
+        |> with_logs(%{"log_1" => [1], "log_2" => [2]})
+        |> with_transaction_services(%{
+          "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
+          "log_2" => %{status: {:up, log_2}, kind: :log, last_seen: {:log_2, :node1}}
+        })
+
+      context =
+        successful_unlock_context()
+        |> with_available_services(%{
+          "log_1" => {:log, self()},
+          "log_2" => {:log, log_2}
+        })
+        |> Map.put(:unlock_log_fn, fn
+          pid, authority when pid == test_pid ->
+            send(test_pid, {:log_unlock, :log_1_ref, authority})
+            :ok
+
+          pid, authority when pid == log_2 ->
+            send(test_pid, {:log_unlock, :log_2_ref, authority})
+            {:error, :stale_recovery_authority}
+        end)
+        |> Map.put(:unlock_commit_proxy_fn, fn _, _, _, _, _ ->
+          send(test_pid, :proxy_unlocked)
+          :ok
+        end)
+
+      assert {_attempt,
+              {:stalled,
+               {:recovery_system_failed, {:unlock_failed, {:log_unlock_failed, "log_2", :stale_recovery_authority}}}}} =
+               TopologyPhase.execute(recovery_attempt, context)
+
+      assert_received {:log_unlock, :log_1_ref, %{generation: 1, recovery_id: "test_token"}}
+      assert_received {:log_unlock, :log_2_ref, %{generation: 1, recovery_id: "test_token"}}
+      refute_received :proxy_unlocked
     end
 
     test "the TSL is wiring only — it carries no membership map" do

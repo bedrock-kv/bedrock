@@ -9,6 +9,7 @@ defmodule Bedrock.DataPlane.Log do
   # EncodedTransaction removed - using Transaction binary format
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Service.RecoveryAuthority
   alias Bedrock.Service.Worker
 
   @type ref :: Worker.ref()
@@ -85,13 +86,20 @@ defmodule Bedrock.DataPlane.Log do
   """
   @spec push(
           log_ref :: ref(),
+          authority :: RecoveryAuthority.input(),
           transaction :: Transaction.encoded(),
           last_commit_version :: Bedrock.version(),
           opts :: [known_committed_version: Bedrock.version() | nil]
         ) ::
           :ok | {:error, :tx_out_of_order | :locked | :unavailable | wal_limit_error()}
-  def push(log, transaction, last_commit_version, opts \\ []) do
-    call(log, {:push, transaction, last_commit_version, opts[:known_committed_version]}, :infinity)
+  @spec push(ref(), Transaction.encoded(), Bedrock.version()) :: {:error, :invalid_recovery_authority}
+  def push(_log, _transaction, _last_commit_version), do: {:error, :invalid_recovery_authority}
+
+  @spec push(ref(), Transaction.encoded(), Bedrock.version(), keyword()) :: {:error, :invalid_recovery_authority}
+  def push(_log, _transaction, _last_commit_version, _opts), do: {:error, :invalid_recovery_authority}
+
+  def push(log, authority, transaction, last_commit_version, opts) do
+    call(log, {:push, authority, transaction, last_commit_version, opts[:known_committed_version]}, :infinity)
   end
 
   @doc """
@@ -139,6 +147,7 @@ defmodule Bedrock.DataPlane.Log do
             limit: pos_integer(),
             last_version: Bedrock.version(),
             recovery: boolean(),
+            recovery_authority: RecoveryAuthority.input(),
             willing_to_wait_in_ms: Bedrock.timeout_in_ms(),
             timeout_in_ms: Bedrock.timeout_in_ms()
           ]
@@ -153,8 +162,15 @@ defmodule Bedrock.DataPlane.Log do
           | {:error, {:version_too_old, floor :: Bedrock.version()}}
           | {:error, :version_not_found}
           | {:error, :unavailable}
+          | {:error, :invalid_recovery_authority}
   @type pull_error :: pull_errors()
-  def pull(log, start_after, opts), do: call(log, {:pull, start_after, opts}, opts[:timeout_in_ms] || :infinity)
+  def pull(log, start_after, opts) do
+    if opts[:recovery] == true and is_nil(opts[:recovery_authority]) do
+      {:error, :invalid_recovery_authority}
+    else
+      call(log, {:pull, start_after, opts}, opts[:timeout_in_ms] || :infinity)
+    end
+  end
 
   @doc """
   Returns the Demux ShardServer for the given shard on this log.
@@ -189,10 +205,11 @@ defmodule Bedrock.DataPlane.Log do
   to prevent new transactions from being accepted while it is establishing
   its authority.
 
-  In order for the lock to succeed, the given epoch needs to be greater than
-  the current epoch.
+  Authority is the exact recovery grant `{generation, recovery_id}`. A higher
+  generation takes ownership; the same pair is idempotent; an equal-generation
+  foreign recovery id is rejected.
   """
-  @spec lock_for_recovery(log :: ref(), Bedrock.epoch()) ::
+  @spec lock_for_recovery(log :: ref(), RecoveryAuthority.input()) ::
           {:ok, pid(),
            recovery_info :: [
              kind: :log,
@@ -202,7 +219,12 @@ defmodule Bedrock.DataPlane.Log do
              minimum_durable_version: Bedrock.version() | :unavailable
            ]}
           | {:error, :newer_epoch_exists}
-  defdelegate lock_for_recovery(storage, epoch), to: Worker
+  def lock_for_recovery(storage, authority) do
+    case RecoveryAuthority.new(authority) do
+      {:ok, canonical} -> call(storage, {:lock_for_recovery, canonical}, :infinity)
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc """
   Initiates recovery from source logs over `(replay_after, last_inclusive]`.
@@ -213,6 +235,8 @@ defmodule Bedrock.DataPlane.Log do
   ## Parameters:
 
     - `log`: Reference to the target log where recovery should be applied.
+    - `authority`: The exact grant that locked both the destination and every
+      recovery source.
     - `source_logs`: List of source log references from which transactions are
       recovered, or a single ref for backward compatibility. Empty list or nil
       is sent for initial recovery when there are no source logs.
@@ -235,13 +259,23 @@ defmodule Bedrock.DataPlane.Log do
   """
   @spec recover_from(
           log :: ref(),
+          authority :: RecoveryAuthority.input(),
           source_logs :: [ref()] | ref() | nil,
           replay_after :: Bedrock.version(),
           last_inclusive :: Bedrock.version()
         ) ::
           {:ok, pid()} | {:error, {:failed_to_recover, term()}} | {:error, :unavailable}
-  def recover_from(log, source_logs, replay_after, last_inclusive),
-    do: call(log, {:recover_from, normalize_source_logs(source_logs), replay_after, last_inclusive}, :infinity)
+  @spec recover_from(ref(), [ref()] | ref() | nil, Bedrock.version(), Bedrock.version()) ::
+          {:error, :invalid_recovery_authority}
+  def recover_from(_log, _source_logs, _replay_after, _last_inclusive), do: {:error, :invalid_recovery_authority}
+
+  def recover_from(log, authority, source_logs, replay_after, last_inclusive),
+    do:
+      call(log, {:recover_from, authority, normalize_source_logs(source_logs), replay_after, last_inclusive}, :infinity)
+
+  @doc "Publishes the running checkpoint for the exact authority that completed replay."
+  @spec unlock_after_recovery(ref(), RecoveryAuthority.input()) :: :ok | {:error, term()}
+  def unlock_after_recovery(log, authority), do: call(log, {:unlock_after_recovery, authority}, :infinity)
 
   # Normalize source_logs to always be a list for consistent handling
   defp normalize_source_logs(nil), do: []

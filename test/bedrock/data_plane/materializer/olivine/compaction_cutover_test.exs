@@ -15,6 +15,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Server
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.RecoveryAuthorityTestSupport
 
   # A shard-stream stand-in that owns the full transaction history and can
   # serve a pull from any position — exactly the contract chunks + buffer
@@ -88,10 +89,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
   defp start_worker(tmp_dir) do
     worker_id = "cutover-worker-#{System.unique_integer([:positive])}"
     otp_name = :"olivine_cutover_#{System.unique_integer([:positive])}"
+    cluster = RecoveryAuthorityTestSupport.prepare_worker!(tmp_dir, worker_id, Bedrock.DataPlane.Materializer.Olivine)
 
     child_spec = %{
       id: {Server, worker_id},
-      start: {GenServer, :start_link, [Server, {otp_name, self(), worker_id, tmp_dir, [shard_id: 1]}, [name: otp_name]]}
+      start:
+        {GenServer, :start_link,
+         [Server, {otp_name, self(), worker_id, tmp_dir, [cluster: cluster, shard_id: 1]}, [name: otp_name]]}
     }
 
     {:ok, pid} = start_supervised(child_spec)
@@ -100,9 +104,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
   end
 
   defp unlock_with_stream(pid, log_stub) do
-    {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, 1})
+    authority = RecoveryAuthorityTestSupport.authority()
+    {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, authority})
 
-    :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), [{"log-a", log_stub}]})
+    :ok = GenServer.call(pid, {:unlock_after_recovery, authority, Version.zero(), [{"log-a", log_stub}]})
   end
 
   defp slice(version, value) do

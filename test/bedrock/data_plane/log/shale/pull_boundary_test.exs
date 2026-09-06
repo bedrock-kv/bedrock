@@ -2,15 +2,18 @@ defmodule Bedrock.DataPlane.Log.Shale.PullBoundaryTest do
   use ExUnit.Case, async: false
 
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Shale
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.Test.RecoveryAuthorityTestSupport
 
   @moduletag :tmp_dir
+  @authority %{generation: 1, recovery_id: "pull-boundary"}
 
   setup %{tmp_dir: tmp_dir} do
-    cluster = Bedrock.Cluster
+    cluster = RecoveryAuthorityTestSupport.TestCluster
     otp_name = :"boundary_test_#{System.unique_integer([:positive])}"
     id = "boundary_log_#{System.unique_integer([:positive])}"
     foreman = self()
@@ -18,14 +21,20 @@ defmodule Bedrock.DataPlane.Log.Shale.PullBoundaryTest do
     object_storage = ObjectStorage.backend(LocalFilesystem, root: Path.join(tmp_dir, "object_storage"))
 
     File.mkdir_p!(path)
+    RecoveryAuthorityTestSupport.prepare_worker!(path, id, Shale, cluster: cluster)
 
     # Start the Shale server
     {:ok, pid} =
-      GenServer.start_link(
-        Server,
-        {cluster, otp_name, id, foreman, path, object_storage, true, nil, nil},
-        name: otp_name
-      )
+      [cluster: cluster, otp_name: otp_name, id: id, foreman: foreman, path: path, object_storage: object_storage]
+      |> Server.child_spec()
+      |> then(fn %{start: {GenServer, :start_link, [module, args, opts]}} ->
+        GenServer.start_link(module, args, opts)
+      end)
+
+    {:ok, ^pid, _} = Log.lock_for_recovery(pid, @authority)
+    zero = Version.zero()
+    {:ok, ^pid} = Log.recover_from(pid, @authority, [], zero, zero)
+    :ok = Log.unlock_after_recovery(pid, @authority)
 
     on_exit(fn ->
       if Process.alive?(pid) do

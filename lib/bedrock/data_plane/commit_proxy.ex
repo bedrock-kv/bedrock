@@ -38,13 +38,13 @@ defmodule Bedrock.DataPlane.CommitProxy do
   """
   @spec recover_from(
           commit_proxy_ref :: ref(),
-          lock_token :: binary(),
+          recovery_authority :: Bedrock.Service.RecoveryAuthority.input(),
           sequencer :: pid(),
           resolver_layout :: ResolverLayout.t(),
           routing_snapshot :: RoutingData.snapshot()
         ) :: :ok | {:error, :timeout} | {:error, :unavailable}
-  def recover_from(commit_proxy, lock_token, sequencer, resolver_layout, routing_snapshot),
-    do: call(commit_proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot}, :infinity)
+  def recover_from(commit_proxy, recovery_authority, sequencer, resolver_layout, routing_snapshot),
+    do: call(commit_proxy, {:recover_from, recovery_authority, sequencer, resolver_layout, routing_snapshot}, :infinity)
 
   @doc """
   Fetches the covering routing entry for one key: the shard's bounds,

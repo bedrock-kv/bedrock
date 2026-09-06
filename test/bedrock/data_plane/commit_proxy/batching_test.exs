@@ -66,6 +66,7 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       cluster: nil,
       director: self(),
       epoch: 1,
+      recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
       max_latency_in_ms: 100,
       max_per_batch: 5,
       empty_transaction_timeout_ms: 1000,

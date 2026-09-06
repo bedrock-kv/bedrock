@@ -89,6 +89,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationPrivateMutationTest do
       assert {:ok, 0, 1} =
                Finalization.finalize_batch(batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: :test_sequencer,
                  resolver_layout: %ResolverLayout.Single{resolver_ref: :test_resolver},
                  metadata_apply_fn: Support.metadata_apply_fn(routing_data),

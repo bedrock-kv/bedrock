@@ -42,6 +42,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
       shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
       log_map: log_map,
       log_services: %{},
+      recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
       replication_factor: max(1, map_size(logs))
     })
   end

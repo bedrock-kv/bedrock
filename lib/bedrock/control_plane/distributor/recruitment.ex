@@ -33,6 +33,7 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   @type context :: %{
           required(:cluster) => module(),
           required(:epoch) => Bedrock.epoch(),
+          required(:recovery_authority) => Bedrock.Service.RecoveryAuthority.input(),
           required(:node_capabilities) => %{Bedrock.Cluster.capability() => [node()]},
           required(:logs) => %{Log.id() => [Bedrock.range_tag()]},
           required(:log_refs) => %{Log.id() => Log.ref()},
@@ -146,7 +147,7 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   defp lock_materializer(worker, node, context) do
     lock_fn = Map.get(context, :lock_materializer_fn, &default_lock_materializer/2)
 
-    case lock_fn.(worker, context.epoch) do
+    case lock_fn.(worker, Map.fetch!(context, :recovery_authority)) do
       {:ok, pid, recovery_info} -> {:ok, pid, recovery_info}
       {:error, reason} -> {:error, {:materializer_lock_failed, reason, node}}
     end
@@ -161,9 +162,11 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
     do: Materializer.lock_for_recovery(worker, epoch, timeout_in_ms: 30_000)
 
   defp unlock_and_start_pulling(pid, node, recovery_info, sources, context) do
-    unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/3)
+    unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/4)
 
-    case unlock_fn.(pid, start_version(recovery_info), sources) do
+    args = [pid, Map.fetch!(context, :recovery_authority), start_version(recovery_info), sources]
+
+    case invoke_unlock(unlock_fn, args) do
       :ok -> :ok
       {:error, reason} -> {:error, {:unlock_failed, reason, node}}
       {:failure, reason, _ref} -> {:error, {:unlock_failed, reason, node}}
@@ -183,8 +186,12 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
 
   defp start_version(_recovery_info), do: Version.zero()
 
-  defp default_unlock_materializer(pid, durable_version, pull_sources),
-    do: Materializer.unlock_after_recovery(pid, durable_version, pull_sources, timeout_in_ms: 30_000)
+  defp default_unlock_materializer(pid, authority, durable_version, pull_sources),
+    do: Materializer.unlock_after_recovery(pid, authority, durable_version, pull_sources, timeout_in_ms: 30_000)
+
+  defp invoke_unlock(fun, [pid, authority, version, sources]) do
+    fun.(pid, authority, version, sources)
+  end
 
   # The typed seed: this shard's replica set as {log_id, log_ref} pairs,
   # resolved through the same ShardRouter walk proxies route with and

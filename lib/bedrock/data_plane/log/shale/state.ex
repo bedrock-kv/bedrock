@@ -21,6 +21,8 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           cluster: module(),
           director: Director.ref() | nil,
           epoch: Bedrock.epoch() | nil,
+          recovery_authority: Bedrock.Service.RecoveryAuthority.input() | nil,
+          recovery_control: Bedrock.Service.RecoveryControl.t(),
           id: Worker.id(),
           foreman: Foreman.ref(),
           path: String.t(),
@@ -38,8 +40,13 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
           active_segment: Segment.t() | nil,
           segments: [Segment.t()],
           pending_pushes: %{
-            Bedrock.version() => {encoded_transaction :: Transaction.encoded(), reply_token :: term()}
+            Bedrock.version() => %{
+              authority: map(),
+              transaction: Transaction.encoded(),
+              waiters: [term()]
+            }
           },
+          replay_operation: nil | map(),
           #
           reject_pushes_above_lag_us: non_neg_integer() | nil,
           #
@@ -61,6 +68,8 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             cluster: nil,
             director: nil,
             epoch: nil,
+            recovery_authority: nil,
+            recovery_control: nil,
             foreman: nil,
             id: nil,
             path: nil,
@@ -78,6 +87,7 @@ defmodule Bedrock.DataPlane.Log.Shale.State do
             segments: [],
             active_segment: nil,
             pending_pushes: %{},
+            replay_operation: nil,
             #
             reject_pushes_above_lag_us: nil,
             #

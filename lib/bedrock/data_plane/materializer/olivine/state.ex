@@ -16,7 +16,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
           path: Path.t(),
           foreman: Foreman.ref(),
           id: Worker.id(),
-          shard_id: String.t(),
+          shard_id: String.t() | non_neg_integer() | nil,
           database: Database.t(),
           index_manager: IndexManager.t(),
           pull_task: Task.t() | nil,
@@ -34,7 +34,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
           idle_timeout: pos_integer() | :infinity,
           last_read_at: integer() | nil,
           known_committed_version: Bedrock.version() | nil,
-          pending_ingest: GenServer.from() | nil
+          pending_ingest: GenServer.from() | nil,
+          recovery_authority: Bedrock.Service.RecoveryAuthority.input() | nil,
+          recovery_control: Bedrock.Service.RecoveryControl.t()
         }
   defstruct otp_name: nil,
             path: nil,
@@ -58,7 +60,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.State do
             idle_timeout: :infinity,
             last_read_at: nil,
             known_committed_version: nil,
-            pending_ingest: nil
+            pending_ingest: nil,
+            recovery_authority: nil,
+            recovery_control: nil
 
   @spec update_mode(t(), :locked | :running) :: t()
   def update_mode(t, mode), do: %{t | mode: mode}

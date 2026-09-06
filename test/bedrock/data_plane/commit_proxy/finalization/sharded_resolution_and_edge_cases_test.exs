@@ -75,6 +75,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
     Keyword.merge(
       [
         epoch: 1,
+        recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
         sequencer: :test_sequencer,
         resolver_layout: resolver_layout,
         metadata_apply_fn: Support.metadata_apply_fn(routing_data),
@@ -471,6 +472,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
                  %{"log_1" => "encoded"},
                  @commit_version,
                  log_services: %{"log_1" => self()},
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  async_stream_fn: async_stream_fn
                )
     end
@@ -487,6 +489,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
                  %{"log_1" => "encoded"},
                  @commit_version,
                  log_services: %{"log_1" => self()},
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  async_stream_fn: async_stream_fn
                )
     end
@@ -497,7 +500,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
                  @last_commit_version,
                  %{},
                  @commit_version,
-                 log_services: %{}
+                 log_services: %{},
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"}
                )
     end
 
@@ -510,6 +514,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationShardedResolutionAndEdgeCase
       assert :ok =
                Finalization.try_to_push_transaction_to_log_direct(
                  {name, node()},
+                 %{generation: 1, recovery_id: "commit-proxy-test"},
                  "encoded_transaction",
                  @last_commit_version,
                  nil

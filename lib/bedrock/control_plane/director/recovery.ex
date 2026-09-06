@@ -36,6 +36,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Distributor
   alias Bedrock.Internal.Time.Interval
+  alias Bedrock.Service.RecoveryAuthority
   alias Bedrock.Service.Worker
 
   require Logger
@@ -47,7 +48,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
           lock_token: binary(),
           available_services: %{Worker.id() => {atom(), {atom(), node()}}},
-          coordinator: pid()
+          coordinator: pid(),
+          recovery_authority: RecoveryAuthority.input()
         }
 
   @spec try_to_recover(State.t()) :: State.t()
@@ -93,6 +95,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec do_recovery(State.t()) :: State.t()
   def do_recovery(t) do
+    # A reservation is the coordinator's grant for this exact recovery.
+    # Validate it before observing or contacting any recoverable service.
+    recovery_authority = recovery_authority!(t)
+
     trace_recovery_attempt_started(
       t.cluster,
       t.epoch,
@@ -107,15 +113,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     # orphaned. On any failure, fall back to what we already know.
     t = %{t | services: refresh_available_services(t)}
 
-    context = %{
-      cluster_config: t.config,
-      prior_core_state: t.prior_core_state,
-      node_capabilities: t.node_capabilities,
-      lock_token: t.lock_token,
-      available_services: t.services,
-      coordinator: t.coordinator,
-      bootstrap_reservation: t.bootstrap_reservation
-    }
+    context =
+      Map.put(
+        %{
+          cluster_config: t.config,
+          prior_core_state: t.prior_core_state,
+          node_capabilities: t.node_capabilities,
+          lock_token: t.lock_token,
+          available_services: t.services,
+          coordinator: t.coordinator,
+          bootstrap_reservation: t.bootstrap_reservation
+        },
+        :recovery_authority,
+        recovery_authority
+      )
 
     t.recovery_attempt
     |> run_recovery_attempt(context)
@@ -158,6 +169,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
         # Errors are fatal - this director should stop trying to recover
         trace_recovery_failed(Interval.between(t.recovery_attempt.started_at, now()), reason)
         t
+    end
+  end
+
+  defp recovery_authority!(%{epoch: generation, bootstrap_reservation: reservation}) do
+    with {:ok, authority} <- RecoveryAuthority.new(reservation),
+         true <- authority.generation == generation do
+      RecoveryAuthority.external(authority)
+    else
+      _ -> raise ArgumentError, "bootstrap reservation does not grant this recovery generation"
     end
   end
 
@@ -211,7 +231,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           into: %{},
           do: {log_id, ref}
 
-    %{t | distributor_wiring: %{logs: completed.logs, log_refs: log_refs}}
+    %{
+      t
+      | distributor_wiring: %{
+          logs: completed.logs,
+          log_refs: log_refs,
+          recovery_authority: recovery_authority!(t)
+        }
+    }
   end
 
   @doc """
@@ -236,6 +263,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
            recruitment_ctx: %{
              cluster: t.cluster,
              epoch: t.epoch,
+             recovery_authority: wiring.recovery_authority,
              node_capabilities: t.node_capabilities,
              logs: wiring.logs,
              log_refs: wiring.log_refs

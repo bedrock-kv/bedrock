@@ -10,6 +10,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Materializer.Olivine
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.RecoveryAuthorityTestSupport, as: AuthoritySupport
 
   @timeout 10_000
 
@@ -23,18 +24,27 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
     end
   end
 
+  defp prepared_child_spec(opts) do
+    path = Keyword.fetch!(opts, :path)
+    id = Keyword.fetch!(opts, :id)
+    cluster = AuthoritySupport.prepare_worker!(path, id, Olivine)
+    opts |> Keyword.put(:cluster, cluster) |> Olivine.child_spec()
+  end
+
   defp create_worker_child_spec(tmp_dir, suffix) do
     worker_id = random_id()
     unique_int = System.unique_integer([:positive])
     name_suffix = if suffix, do: "_#{suffix}", else: ""
     otp_name = String.to_atom("olivine#{name_suffix}_#{unique_int}")
+    cluster = AuthoritySupport.prepare_worker!(tmp_dir, worker_id, Olivine)
 
     child_spec =
-      Olivine.child_spec(
+      prepared_child_spec(
         otp_name: otp_name,
         foreman: self(),
         id: worker_id,
-        path: tmp_dir
+        path: tmp_dir,
+        cluster: cluster
       )
 
     {worker_id, otp_name, child_spec}
@@ -117,7 +127,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_supervised_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -151,7 +161,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       worker_id = random_id()
       otp_name = :"olivine_concurrent_#{System.unique_integer([:positive])}"
 
-      init_args = {otp_name, self(), worker_id, tmp_dir}
+      cluster = AuthoritySupport.prepare_worker!(tmp_dir, worker_id, Olivine)
+      init_args = {otp_name, self(), worker_id, tmp_dir, [cluster: cluster]}
 
       tasks =
         for _i <- 1..5 do
@@ -218,7 +229,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_mock_foreman_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: mock_foreman,
           id: worker_id,
@@ -250,7 +261,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_foreman_fail_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: failing_foreman,
           id: worker_id,
@@ -291,7 +302,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_range_msgs_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -343,7 +354,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_recovery_msgs_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -356,9 +367,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       wait_for_health_report(worker_id, pid)
 
       # Test lock for recovery
-      epoch = 1
+      authority = AuthoritySupport.authority()
 
-      result = GenServer.call(pid, {:lock_for_recovery, epoch}, @timeout)
+      result = GenServer.call(pid, {:lock_for_recovery, authority}, @timeout)
 
       case result do
         {:ok, returned_pid, recovery_info} ->
@@ -380,7 +391,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
           unlock_result =
             GenServer.call(
               pid,
-              {:unlock_after_recovery, durable_version, []},
+              {:unlock_after_recovery, authority, durable_version, []},
               @timeout
             )
 
@@ -398,7 +409,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_invalid_msgs_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -427,7 +438,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_info_handling_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -452,7 +463,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_state_mgmt_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -493,7 +504,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_shutdown_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -517,7 +528,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       {:ok, new_pid} =
         GenServer.start_link(
           Olivine.Server,
-          {otp_name, self(), worker_id, tmp_dir},
+          {otp_name, self(), worker_id, tmp_dir, [cluster: AuthoritySupport.TestCluster]},
           name: :"#{otp_name}_restart"
         )
 
@@ -535,7 +546,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_storage_fetch_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -585,7 +596,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_storage_range_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -623,7 +634,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_storage_lock_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -635,10 +646,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       # Wait for startup
       wait_for_health_report(worker_id, pid)
 
-      epoch = 1
+      authority = AuthoritySupport.authority()
 
       # Test via Storage interface
-      result = Materializer.lock_for_recovery(pid, epoch)
+      result = Materializer.lock_for_recovery(pid, authority)
 
       case result do
         {:ok, returned_pid, recovery_info} ->
@@ -649,7 +660,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
           # Test unlock
           durable_version = Version.zero()
 
-          unlock_result = Materializer.unlock_after_recovery(pid, durable_version, [])
+          unlock_result = Materializer.unlock_after_recovery(pid, authority, durable_version, [])
           assert unlock_result == :ok
 
         {:error, _reason} ->
@@ -666,7 +677,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       otp_name = :"olivine_stress_#{System.unique_integer([:positive])}"
 
       child_spec =
-        Olivine.child_spec(
+        prepared_child_spec(
           otp_name: otp_name,
           foreman: self(),
           id: worker_id,
@@ -706,24 +717,25 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
 
   describe "unlock authority (assignment verification, bedrock-q67.21.5)" do
     @tag :tmp_dir
-    test "only the locker may unlock: a foreign caller's unlock is refused", %{tmp_dir: tmp_dir} do
+    test "the durable grant, rather than the caller PID, controls unlock", %{tmp_dir: tmp_dir} do
       {_worker_id, _otp_name, pid} = setup_supervised_worker(tmp_dir, "unlock_auth")
+      authority = AuthoritySupport.authority(5, "winner")
+      foreign = AuthoritySupport.authority(5, "loser")
 
-      # Lock from THIS process: we are the lock owner.
-      assert {:ok, ^pid, _info} = GenServer.call(pid, {:lock_for_recovery, 5}, @timeout)
+      assert {:ok, ^pid, _info} = GenServer.call(pid, {:lock_for_recovery, authority}, @timeout)
 
-      # A different process's unlock — a superseded adopter's late call —
-      # must be refused, not flip the worker to :running with the
-      # loser's pull sources.
+      # The same grant remains valid after the recovery work moves to a
+      # different task process.
       task =
         Task.async(fn ->
-          GenServer.call(pid, {:unlock_after_recovery, Version.zero(), []}, @timeout)
+          GenServer.call(pid, {:unlock_after_recovery, authority, Version.zero(), []}, @timeout)
         end)
 
-      assert {:error, :not_lock_owner} = Task.await(task)
+      assert :ok = Task.await(task)
 
-      # The owner's unlock still works.
-      assert :ok = GenServer.call(pid, {:unlock_after_recovery, Version.zero(), []}, @timeout)
+      # A foreign grant is rejected even from the process that locked it.
+      assert {:error, :not_lock_owner} =
+               GenServer.call(pid, {:unlock_after_recovery, foreign, Version.zero(), []}, @timeout)
     end
   end
 end

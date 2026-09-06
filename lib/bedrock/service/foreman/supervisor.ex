@@ -6,7 +6,8 @@ defmodule Bedrock.Service.Foreman.Supervisor do
           cluster: module(),
           capabilities: [Bedrock.Cluster.capability()],
           path: Path.t(),
-          object_storage: term()
+          object_storage: term(),
+          recovery_authority_migration: :disabled | :allow_legacy
         ]
 
   @spec child_spec(foreman_opts()) :: Supervisor.child_spec()
@@ -15,6 +16,7 @@ defmodule Bedrock.Service.Foreman.Supervisor do
     capabilities = Keyword.get(opts, :capabilities) || raise "Missing :capabilities option"
     path = Keyword.get(opts, :path) || raise "Missing :path option"
     object_storage = Keyword.get(opts, :object_storage) || raise "Missing :object_storage option"
+    migration = Keyword.get(opts, :recovery_authority_migration, :disabled)
 
     children = [
       {DynamicSupervisor, name: cluster.otp_name(:worker_supervisor)},
@@ -24,7 +26,8 @@ defmodule Bedrock.Service.Foreman.Supervisor do
          capabilities: capabilities,
          path: path,
          otp_name: cluster.otp_name(:foreman),
-         object_storage: object_storage
+         object_storage: object_storage,
+         recovery_authority_migration: migration
        ]}
     ]
 

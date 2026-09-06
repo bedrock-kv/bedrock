@@ -4,6 +4,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   alias Bedrock.Cluster
   alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Demux.ShardServer
+  alias Bedrock.DataPlane.Log.Shale
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.Server
   alias Bedrock.DataPlane.Log.Shale.State
@@ -12,11 +13,18 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Test.DataPlane.TransactionTestSupport
+  alias Bedrock.Test.RecoveryAuthorityTestSupport
 
   @moduletag :tmp_dir
+  @authority %{generation: 1, recovery_id: "server-test-authority"}
+
+  defmodule TestCluster do
+    @moduledoc false
+    def name, do: "shale-server-test-cluster"
+  end
 
   setup %{tmp_dir: tmp_dir} do
-    cluster = Cluster
+    cluster = TestCluster
     otp_name = :"test_log_#{:rand.uniform(10_000)}"
     id = "test_log_#{:rand.uniform(10_000)}"
     foreman = self()
@@ -24,6 +32,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     object_storage = ObjectStorage.backend(LocalFilesystem, root: Path.join(tmp_dir, "object_storage"))
 
     File.mkdir_p!(path)
+    RecoveryAuthorityTestSupport.prepare_worker!(path, id, Shale, cluster: cluster)
 
     {:ok,
      cluster: cluster,
@@ -128,7 +137,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       version_0 = Version.from_integer(0)
 
       assert %State{
-               cluster: Cluster,
+               cluster: TestCluster,
                id: id,
                otp_name: otp_name,
                foreman: foreman,
@@ -202,9 +211,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end
 
     test "handles lock_for_recovery request", %{server: pid} do
-      epoch = 1
-
-      result = GenServer.call(pid, {:lock_for_recovery, epoch})
+      result = GenServer.call(pid, {:lock_for_recovery, @authority})
 
       assert is_tuple(result)
     end
@@ -216,7 +223,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       # Materialize a shard server in the tree so the teardown has children
       {:ok, shard_server} = GenServer.call(pid, {:get_shard_server, 777})
 
-      assert {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, 1})
+      assert {:ok, _pid, _info} = GenServer.call(pid, {:lock_for_recovery, @authority})
 
       state = :sys.get_state(pid)
       assert state.demux == nil
@@ -227,7 +234,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       # A push while locked still appends to the WAL without crashing on
       # the missing demux
       encoded_bytes = TransactionTestSupport.new_log_transaction(1, %{"k" => "v"})
-      result = GenServer.call(pid, {:push, encoded_bytes, Version.from_integer(1)}, 1000)
+      result = GenServer.call(pid, {:push, @authority, encoded_bytes, Version.from_integer(1), nil}, 1000)
       assert result == :ok or match?({:error, _}, result)
       assert Process.alive?(pid)
     end
@@ -236,6 +243,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   describe "handle_call/3 - push operations" do
     setup %{server_opts: opts} do
       pid = setup_server(opts)
+      unlock_server(pid)
       on_exit(fn -> cleanup_server(pid) end)
       {:ok, server: pid}
     end
@@ -244,7 +252,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       invalid_bytes = "invalid transaction data"
       expected_version = 1
 
-      result = GenServer.call(pid, {:push, invalid_bytes, expected_version})
+      result = GenServer.call(pid, {:push, @authority, invalid_bytes, expected_version, nil})
 
       assert {:error, _reason} = result
     end
@@ -255,7 +263,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       expected_version = 0
 
-      result = GenServer.call(pid, {:push, encoded_bytes, expected_version}, 1000)
+      result = GenServer.call(pid, {:push, @authority, encoded_bytes, expected_version, nil}, 1000)
 
       assert result == :ok or match?({:error, _}, result)
     end
@@ -270,7 +278,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       v1 = Version.from_integer(100)
       tx = TransactionTestSupport.new_log_transaction(v1, %{"k" => "v"})
 
-      :ok = GenServer.call(pid, {:push, tx, Version.zero(), v1}, 1000)
+      :ok = GenServer.call(pid, {:push, @authority, tx, Version.zero(), v1}, 1000)
 
       demux = demux_of(pid)
       send(demux, {:currency_request, self(), nil})
@@ -290,11 +298,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       tx2 = TransactionTestSupport.new_log_transaction(v2, %{"two" => "2"})
       tx3 = TransactionTestSupport.new_log_transaction(v3, %{"three" => "3"})
 
-      assert :ok = GenServer.call(pid, {:push, tx1, Version.zero(), Version.zero()})
+      assert :ok = GenServer.call(pid, {:push, @authority, tx1, Version.zero(), Version.zero()})
 
       future_push =
         Task.async(fn ->
-          GenServer.call(pid, {:push, tx3, v2, v1}, 5_000)
+          GenServer.call(pid, {:push, @authority, tx3, v2, v1}, 5_000)
         end)
 
       eventually(fn ->
@@ -304,7 +312,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       demux = demux_of(pid)
       assert %{high_water: ^v1, known_committed_version: ^v1} = :sys.get_state(demux)
 
-      assert :ok = GenServer.call(pid, {:push, tx2, v1, Version.zero()})
+      assert :ok = GenServer.call(pid, {:push, @authority, tx2, v1, Version.zero()})
       assert :ok = Task.await(future_push, 2_000)
 
       assert {:ok, shard_server} = GenServer.call(pid, {:get_shard_server, 0})
@@ -321,7 +329,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       version = Version.from_integer(100)
       unsliceable_transaction = Transaction.encode(%{commit_version: version})
 
-      assert :ok = GenServer.call(pid, {:push, unsliceable_transaction, Version.zero(), version})
+      assert :ok = GenServer.call(pid, {:push, @authority, unsliceable_transaction, Version.zero(), version})
 
       assert_receive {:DOWN, ^ref, :process, ^pid, {:push_failed, {:slice_failed, :section_not_found}}}, 2_000
     end
@@ -369,20 +377,21 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       {:ok, server: pid}
     end
 
-    test "handles recover_from request", %{server: pid} do
+    test "legacy recover_from request fails closed", %{server: pid} do
       source_logs = [self()]
       first_version = Version.from_integer(1)
       last_version = Version.from_integer(10)
 
-      catch_exit(GenServer.call(pid, {:recover_from, source_logs, first_version, last_version}, 500))
+      assert {:error, :invalid_recovery_authority} =
+               GenServer.call(pid, {:recover_from, source_logs, first_version, last_version}, 500)
     end
 
-    test "handles recover_from with invalid version range", %{server: pid} do
+    test "legacy recover_from fails closed before interpreting its version range", %{server: pid} do
       source_logs = [self()]
       replay_after = Version.from_integer(10)
       last_inclusive = Version.from_integer(1)
 
-      assert {:error, {:failed_to_recover, :invalid_version_range}} =
+      assert {:error, :invalid_recovery_authority} =
                GenServer.call(pid, {:recover_from, source_logs, replay_after, last_inclusive}, 500)
     end
   end
@@ -674,6 +683,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
         )
         |> setup_server()
 
+      unlock_server(pid)
+
       on_exit(fn -> cleanup_server(pid) end)
 
       :sys.replace_state(pid, fn state ->
@@ -688,7 +699,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       encoded_bytes = TransactionTestSupport.new_log_transaction(5_000_001, %{"k" => "v"})
 
       assert {:error, {:recovery_required, {:wal_limit_exceeded, details}}} =
-               GenServer.call(pid, {:push, encoded_bytes, Version.from_integer(5_000_001)})
+               GenServer.call(pid, {:push, @authority, encoded_bytes, Version.from_integer(5_000_001), nil})
 
       assert details.commit_version == Version.from_integer(5_000_001)
       assert details.min_durable_version == Version.from_integer(10)
@@ -726,15 +737,9 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       spec = Server.child_spec(opts)
       {GenServer, :start_link, [module, init_args, gen_opts]} = spec.start
-      {:ok, pid} = GenServer.start_link(module, init_args, gen_opts)
 
-      # A missing directory is a WAL I/O failure with its POSIX cause —
-      # cold start validates the WAL set before acquiring any resources.
-      assert_receive {:EXIT, ^pid, {%RuntimeError{message: message}, _stack}}, 2000
-      assert message =~ "WAL I/O failure"
-      assert message =~ "enoent"
-
-      refute Process.alive?(pid)
+      assert {:error, {:recovery_authority, :unprepared_worker_directory}} =
+               GenServer.start_link(module, init_args, gen_opts)
     end
   end
 
@@ -848,12 +853,12 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
 
       unlocked_opts =
         base_opts
-        |> Keyword.put(:start_unlocked, true)
         |> Keyword.put(:otp_name, :"test_log_#{iteration_id}")
         |> Keyword.put(:id, "test_log_#{iteration_id}")
         |> Keyword.put(:path, unique_path)
 
       server = setup_server(unlocked_opts)
+      unlock_server(server)
 
       # Create transaction specs with correct version semantics
       # expected_version should equal server's current last_version (starting from 0)
@@ -873,7 +878,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
       tasks =
         for {version, transaction} <- shuffled_specs do
           Task.async(fn ->
-            GenServer.call(server, {:push, transaction, version}, 5_000)
+            GenServer.call(server, {:push, @authority, transaction, version, nil}, 5_000)
           end)
         end
 
@@ -903,6 +908,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
   end
 
   defp setup_server(opts) do
+    RecoveryAuthorityTestSupport.prepare_worker!(opts[:path], opts[:id], Shale,
+      cluster: opts[:cluster],
+      params: opts[:params] || %{}
+    )
+
     pid = start_supervised!(Server.child_spec(opts))
 
     eventually(fn ->
@@ -911,6 +921,13 @@ defmodule Bedrock.DataPlane.Log.Shale.ServerTest do
     end)
 
     pid
+  end
+
+  defp unlock_server(pid) do
+    assert {:ok, ^pid, _info} = GenServer.call(pid, {:lock_for_recovery, @authority})
+    zero = Version.zero()
+    assert {:ok, ^pid} = GenServer.call(pid, {:recover_from, @authority, [], zero, zero})
+    assert :ok = GenServer.call(pid, {:unlock_after_recovery, @authority})
   end
 
   defp cleanup_server(pid) do

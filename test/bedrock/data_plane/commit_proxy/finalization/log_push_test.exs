@@ -79,6 +79,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: :test_sequencer,
                  resolver_layout: ResolverLayout.from_layout(transaction_system_layout),
                  resolver_fn: resolver_fn,
@@ -121,6 +122,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
@@ -160,6 +162,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
@@ -223,6 +226,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,
@@ -269,7 +273,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 log_services: build_log_services(layout)
+                 log_services: build_log_services(layout),
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"}
                )
     end
 
@@ -277,7 +282,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log_server =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
+            {:"$gen_call", from, {:push, _authority, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :disk_full})
           end
         end)
@@ -304,7 +309,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 log_services: build_log_services(layout)
+                 log_services: build_log_services(layout),
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"}
                )
     end
 
@@ -337,6 +343,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
         transactions_by_log,
         commit_version,
         log_services: build_log_services(layout),
+        recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
         async_stream_fn: mock_async_stream_fn,
         timeout: 3000
       )
@@ -350,7 +357,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
+            {:"$gen_call", from, {:push, _authority, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :disk_full})
           end
         end)
@@ -377,7 +384,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 log_services: build_log_services(layout)
+                 log_services: build_log_services(layout),
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"}
                )
 
       assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_1" end)
@@ -389,7 +397,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
+            {:"$gen_call", from, {:push, _authority, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :timeout})
           end
         end)
@@ -414,7 +422,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 log_services: build_log_services(layout)
+                 log_services: build_log_services(layout),
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"}
                )
 
       assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_2" end)
@@ -427,7 +436,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
+            {:"$gen_call", from, {:push, _authority, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :network_error})
           end
         end)
@@ -453,7 +462,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 log_services: build_log_services(layout)
+                 log_services: build_log_services(layout),
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"}
                )
 
       assert Enum.any?(errors, fn {log_id, _reason} -> log_id == "log_2" end)
@@ -479,6 +489,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  transactions_by_log,
                  commit_version,
                  log_services: log_services,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  async_stream_fn: mock_async_stream_fn
                )
     end
@@ -501,7 +512,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
           Version.from_integer(99),
           transactions_by_log,
           commit_version,
-          log_services: log_services
+          log_services: log_services,
+          recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"}
         )
 
       # Should succeed because we only have 1 log service (the one that's up)
@@ -512,7 +524,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log1 =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
+            {:"$gen_call", from, {:push, _authority, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :disk_full})
           end
         end)
@@ -520,7 +532,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log2 =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
+            {:"$gen_call", from, {:push, _authority, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :timeout})
           end
         end)
@@ -547,7 +559,8 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                  Version.from_integer(99),
                  transactions_by_log,
                  commit_version,
-                 log_services: build_log_services(layout)
+                 log_services: build_log_services(layout),
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"}
                )
     end
   end
@@ -559,7 +572,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
       failing_log =
         spawn(fn ->
           receive do
-            {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
+            {:"$gen_call", from, {:push, _authority, _transaction, _last_version, _kcv}} ->
               GenServer.reply(from, {:error, :disk_full})
           end
         end)
@@ -601,6 +614,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationLogPushTest do
                Finalization.finalize_batch(
                  batch,
                  epoch: 1,
+                 recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
                  sequencer: layout.sequencer,
                  resolver_layout: ResolverLayout.from_layout(layout),
                  resolver_fn: resolver_fn,

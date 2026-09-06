@@ -10,40 +10,246 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   alias Bedrock.DataPlane.Demux
   alias Bedrock.DataPlane.Log
+  alias Bedrock.DataPlane.Log.Shale.ColdStarting
   alias Bedrock.DataPlane.Log.Shale.DemuxControl
   alias Bedrock.DataPlane.Log.Shale.Segment
   alias Bedrock.DataPlane.Log.Shale.SegmentRecycler
   alias Bedrock.DataPlane.Log.Shale.State
   alias Bedrock.DataPlane.Log.Shale.Writer
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Service.RecoveryAuthority
+
+  @doc false
+  @spec recover_from(State.t(), [Log.ref()], Bedrock.version(), Bedrock.version()) ::
+          {:ok, State.t()} | {:error, term(), State.t()}
+  def recover_from(%{recovery_authority: nil} = t, _source_logs, _replay_after, _last_inclusive),
+    do: {:error, :invalid_recovery_authority, t}
+
+  def recover_from(t, source_logs, replay_after, last_inclusive),
+    do: recover_from(t, t.recovery_authority, source_logs, replay_after, last_inclusive)
 
   @spec recover_from(
           State.t(),
+          RecoveryAuthority.input(),
           source_logs :: [Log.ref()],
           replay_after :: Bedrock.version(),
           last_inclusive :: Bedrock.version()
         ) ::
           {:ok, State.t()} | {:error, term(), State.t()}
-  def recover_from(t, _, _, _) when t.mode != :locked, do: {:error, :lock_required, t}
+  def recover_from(t, _, _, _, _) when t.mode != :locked, do: {:error, :lock_required, t}
 
-  def recover_from(t, _source_logs, replay_after, last_inclusive) when replay_after > last_inclusive,
+  def recover_from(t, _authority, _source_logs, replay_after, last_inclusive) when replay_after > last_inclusive,
     do: {:error, :invalid_version_range, t}
 
-  def recover_from(t, source_logs, replay_after, last_inclusive) do
+  def recover_from(t, authority, source_logs, replay_after, last_inclusive) do
+    {:ok, authority} = RecoveryAuthority.new(authority)
     t = prepare_replay(t, replay_after)
 
     result =
       if replay_after == last_inclusive do
         persist_empty_baseline(t, replay_after)
       else
-        pull_transactions_from_sources(t, source_logs, replay_after, last_inclusive)
+        pull_transactions_from_sources(t, authority, source_logs, replay_after, last_inclusive)
       end
 
     case result do
-      {:ok, %{last_version: ^last_inclusive} = t} -> {:ok, %{t | mode: :running}}
+      {:ok, %{last_version: ^last_inclusive} = t} -> {:ok, %{t | mode: :locked}}
       {:ok, t} -> {:error, {:incomplete_replay, t.last_version, last_inclusive}, lock_failed_replay(t)}
       {:error, reason, t} -> {:error, reason, lock_failed_replay(t)}
     end
+  end
+
+  @doc false
+  @spec pull_transactions(State.t(), Log.ref(), Bedrock.version(), Bedrock.version()) ::
+          {:ok, State.t()} | {:error, term(), State.t()}
+  def pull_transactions(%{recovery_authority: nil} = t, _log_ref, _replay_after, _last_inclusive),
+    do: {:error, :invalid_recovery_authority, t}
+
+  def pull_transactions(t, log_ref, replay_after, last_inclusive),
+    do: pull_transactions(t, t.recovery_authority, log_ref, replay_after, last_inclusive)
+
+  @spec recover_transactions(State.t(), [Transaction.encoded()], Bedrock.version(), Bedrock.version()) ::
+          {:ok, State.t()} | {:error, term(), State.t()}
+  def recover_transactions(t, transactions, replay_after, last_inclusive) do
+    t = prepare_replay(t, replay_after)
+
+    result =
+      transactions
+      |> Enum.reduce_while({replay_after, t}, fn bytes, acc ->
+        process_transaction_bytes(bytes, acc, last_inclusive)
+      end)
+      |> case do
+        {:error, reason, t} -> {:error, reason, t}
+        {^last_inclusive, t} -> {:ok, t}
+        {cursor, t} -> {:error, {:incomplete_replay, cursor, last_inclusive}, t}
+      end
+
+    case result do
+      {:ok, t} -> {:ok, %{t | mode: :locked}}
+      {:error, reason, t} -> {:error, reason, lock_failed_replay(t)}
+    end
+  end
+
+  @spec fetch_transactions_from_sources(RecoveryAuthority.input(), [Log.ref()], Bedrock.version(), Bedrock.version()) ::
+          {:ok, [Transaction.encoded()]} | {:error, term()}
+  def fetch_transactions_from_sources(authority, sources, replay_after, last_inclusive) do
+    with {:ok, authority} <- RecoveryAuthority.new(authority) do
+      Enum.reduce_while(sources, {:error, :no_source_logs_available}, fn source, _last_error ->
+        case fetch_source(authority, source, replay_after, last_inclusive, []) do
+          {:ok, transactions} -> {:halt, {:ok, transactions}}
+          {:error, _} = error -> {:cont, error}
+        end
+      end)
+    end
+  end
+
+  @spec stream_transactions_from_sources(
+          pid(),
+          reference(),
+          RecoveryAuthority.input(),
+          [Log.ref()],
+          Bedrock.version(),
+          Bedrock.version()
+        ) :: :ok | {:error, term()}
+  def stream_transactions_from_sources(server, operation_id, authority, sources, replay_after, last_inclusive) do
+    with {:ok, authority} <- RecoveryAuthority.new(authority) do
+      stream_sources(server, operation_id, authority, sources, replay_after, last_inclusive)
+    end
+  end
+
+  defp stream_sources(_server, _id, _authority, [], _cursor, _last), do: {:error, :no_source_logs_available}
+
+  defp stream_sources(server, id, authority, [source | rest], cursor, last) do
+    case stream_source(server, id, authority, source, cursor, last, false) do
+      {:error, _reason, false} -> stream_sources(server, id, authority, rest, cursor, last)
+      {:error, reason, true} -> {:error, reason}
+      :ok -> :ok
+    end
+  end
+
+  defp stream_source(_server, _id, _authority, _source, cursor, cursor, _started), do: :ok
+
+  defp stream_source(server, id, authority, source, cursor, last, started) do
+    case Log.pull(source, cursor,
+           recovery: true,
+           recovery_authority: RecoveryAuthority.external(authority),
+           last_version: last,
+           limit: 100
+         ) do
+      {:ok, []} ->
+        {:error, {:incomplete_replay, cursor, last}, started}
+
+      {:ok, transactions} ->
+        with {:ok, next_cursor} <- validate_fetched_page(transactions, cursor, last),
+             :ok <- deliver_page(server, id, authority, transactions) do
+          stream_source(server, id, authority, source, next_cursor, last, true)
+        else
+          {:error, reason} -> {:error, reason, started}
+        end
+
+      {:error, reason} ->
+        {:error, {:log_pull_failed, reason, source}, started}
+    end
+  end
+
+  defp deliver_page(server, id, authority, transactions) do
+    send(server, {:replay_page, id, RecoveryAuthority.external(authority), transactions, self()})
+
+    receive do
+      {:replay_page_ack, ^id, :ok} -> :ok
+      {:replay_page_ack, ^id, {:error, reason}} -> {:error, reason}
+    after
+      30_000 -> {:error, :destination_timeout}
+    end
+  end
+
+  @spec prepare_replay_state(State.t(), Bedrock.version()) :: State.t()
+  def prepare_replay_state(t, replay_after), do: prepare_replay(t, replay_after)
+
+  @spec apply_replay_page(State.t(), [Transaction.encoded()], Bedrock.version()) ::
+          {:ok, State.t()} | {:error, term(), State.t()}
+  def apply_replay_page(t, transactions, last_inclusive) do
+    transactions
+    |> Enum.reduce_while({t.last_version, t}, fn bytes, acc ->
+      process_transaction_bytes(bytes, acc, last_inclusive)
+    end)
+    |> case do
+      {:error, reason, t} -> {:error, reason, t}
+      {_cursor, t} -> {:ok, t}
+    end
+  end
+
+  @spec replay_complete_on_disk?(Path.t(), Bedrock.version(), Bedrock.version()) :: boolean()
+  def replay_complete_on_disk?(path, replay_after, last_inclusive) do
+    with {:ok, segments} <- ColdStarting.reload_segments_at_path(path),
+         true <- segments != [],
+         chronological = Enum.reverse(segments),
+         true <- hd(chronological).previous_version == replay_after,
+         transactions =
+           Enum.flat_map(chronological, fn segment ->
+             segment |> Segment.ensure_transactions_are_loaded() |> Segment.transactions() |> Enum.reverse()
+           end),
+         {:ok, cursor} <- validate_fetched_page(transactions, replay_after, last_inclusive) do
+      cursor == last_inclusive and valid_segment_chain?(chronological)
+    else
+      _ -> false
+    end
+  end
+
+  defp valid_segment_chain?([_]), do: true
+
+  defp valid_segment_chain?(segments) do
+    segments
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.all?(fn [previous, next] ->
+      previous = Segment.ensure_transactions_are_loaded(previous)
+      (Segment.last_version(previous) || previous.previous_version) == next.previous_version
+    end)
+  end
+
+  defp fetch_source(_authority, _source, cursor, cursor, acc), do: {:ok, Enum.reverse(acc)}
+
+  defp fetch_source(authority, source, cursor, last_inclusive, acc) do
+    case Log.pull(source, cursor,
+           recovery: true,
+           recovery_authority: RecoveryAuthority.external(authority),
+           last_version: last_inclusive
+         ) do
+      {:ok, []} ->
+        {:error, {:incomplete_replay, cursor, last_inclusive}}
+
+      {:ok, transactions} ->
+        with {:ok, next_cursor} <- validate_fetched_page(transactions, cursor, last_inclusive) do
+          fetch_source(authority, source, next_cursor, last_inclusive, Enum.reverse(transactions, acc))
+        end
+
+      {:error, :unavailable} ->
+        {:error, {:source_log_unavailable, source}}
+
+      {:error, reason} ->
+        {:error, {:log_pull_failed, reason, source}}
+    end
+  end
+
+  defp validate_fetched_page(transactions, cursor, last_inclusive) do
+    Enum.reduce_while(transactions, {:ok, cursor}, fn bytes, {:ok, previous} ->
+      case Transaction.commit_version(bytes) do
+        {:ok, version} when is_binary(version) and version > previous and version <= last_inclusive ->
+          {:cont, {:ok, version}}
+
+        {:ok, version} when is_binary(version) and version > last_inclusive ->
+          {:halt, {:error, {:transaction_beyond_replay_endpoint, version, last_inclusive}}}
+
+        {:ok, version} when is_binary(version) ->
+          {:halt, {:error, {:transaction_not_after_cursor, version, previous}}}
+
+        {:ok, nil} ->
+          {:halt, {:error, :missing_transaction_id}}
+
+        {:error, _} ->
+          {:halt, {:error, :invalid_transaction}}
+      end
+    end)
   end
 
   defp lock_failed_replay(t) do
@@ -95,6 +301,11 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
                  writer: nil
              }}
 
+          # No chunk cleanup pass: cut broadcasts are gated on the known-committed
+          # version, so chunks can never contain versions a recovery would discard.
+          # Deterministic replay re-produces byte-identical chunks, and
+          # `:already_exists` is always a truthful confirmation.
+
           {:error, reason} ->
             _ = Writer.close(writer)
             :ok = Segment.return_to_recycler(segment, t.segment_recycler)
@@ -117,6 +328,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   States without an object storage backend (segment-only unit tests) are
   left untouched.
   """
+
   @spec reset_demux(State.t()) :: State.t()
   def reset_demux(%{object_storage: nil} = t), do: t
 
@@ -129,33 +341,30 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     end
   end
 
-  # No chunk cleanup pass: cut broadcasts are gated on the known-committed
-  # version, so chunks can never contain versions a recovery would discard.
-  # Deterministic replay re-produces byte-identical chunks, and
-  # `:already_exists` is always a truthful confirmation.
-
   @spec pull_transactions_from_sources(
           t :: State.t(),
+          authority :: RecoveryAuthority.input(),
           source_logs :: [Log.ref()],
           replay_after :: Bedrock.version(),
           last_inclusive :: Bedrock.version()
         ) ::
           {:ok, State.t()} | {:error, term(), State.t()}
 
-  def pull_transactions_from_sources(t, [], _replay_after, _last_inclusive), do: {:error, :no_source_logs_available, t}
+  def pull_transactions_from_sources(t, _authority, [], _replay_after, _last_inclusive),
+    do: {:error, :no_source_logs_available, t}
 
   # Single source log - use original behavior
-  def pull_transactions_from_sources(t, [source_log], replay_after, last_inclusive) do
-    pull_transactions(t, source_log, replay_after, last_inclusive)
+  def pull_transactions_from_sources(t, authority, [source_log], replay_after, last_inclusive) do
+    pull_transactions(t, authority, source_log, replay_after, last_inclusive)
   end
 
   # Multiple source logs - try each in order until one succeeds
   # All logs have the same version sequence, so any survivor works
-  def pull_transactions_from_sources(t, source_logs, replay_after, last_inclusive) do
-    try_pull_from_sources(t, source_logs, replay_after, last_inclusive, [])
+  def pull_transactions_from_sources(t, authority, source_logs, replay_after, last_inclusive) do
+    try_pull_from_sources(t, authority, source_logs, replay_after, last_inclusive, [])
   end
 
-  defp try_pull_from_sources(t, [], _replay_after, _last_inclusive, errors) do
+  defp try_pull_from_sources(t, _authority, [], _replay_after, _last_inclusive, errors) do
     # All sources failed, return the last error
     case errors do
       [reason | _] -> {:error, reason, t}
@@ -163,8 +372,8 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
     end
   end
 
-  defp try_pull_from_sources(t, [source_log | rest], replay_after, last_inclusive, errors) do
-    case pull_transactions(t, source_log, replay_after, last_inclusive) do
+  defp try_pull_from_sources(t, authority, [source_log | rest], replay_after, last_inclusive, errors) do
+    case pull_transactions(t, authority, source_log, replay_after, last_inclusive) do
       {:ok, t} ->
         {:ok, t}
 
@@ -172,7 +381,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
         # A source may disappear between pages. Reset the partial destination
         # before trying another survivor so bytes from attempts cannot mix.
         t = prepare_replay(t, replay_after)
-        try_pull_from_sources(t, rest, replay_after, last_inclusive, [reason | errors])
+        try_pull_from_sources(t, authority, rest, replay_after, last_inclusive, [reason | errors])
 
       {:error, _reason, _t} = error ->
         error
@@ -181,15 +390,26 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
 
   @spec pull_transactions(
           t :: State.t(),
+          authority :: RecoveryAuthority.input(),
           log_ref :: Log.ref(),
           replay_after :: Bedrock.version(),
           last_inclusive :: Bedrock.version()
         ) ::
           {:ok, State.t()} | {:error, term(), State.t()}
-  def pull_transactions(t, _, replay_after, last_inclusive) when replay_after == last_inclusive, do: {:ok, t}
+  def pull_transactions(t, _authority, _, replay_after, last_inclusive) when replay_after == last_inclusive,
+    do: {:ok, t}
 
-  def pull_transactions(t, log_ref, replay_after, last_inclusive) do
-    case Log.pull(log_ref, replay_after, recovery: true, last_version: last_inclusive) do
+  def pull_transactions(t, authority, log_ref, replay_after, last_inclusive) do
+    with_result =
+      with {:ok, authority} <- RecoveryAuthority.new(authority) do
+        Log.pull(log_ref, replay_after,
+          recovery: true,
+          recovery_authority: RecoveryAuthority.external(authority),
+          last_version: last_inclusive
+        )
+      end
+
+    case with_result do
       {:ok, []} ->
         {:error, {:incomplete_replay, replay_after, last_inclusive}, t}
 
@@ -201,7 +421,7 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
         |> case do
           {:error, _reason, _t} = error -> error
           {^last_inclusive, t} -> {:ok, t}
-          {next_replay_after, t} -> pull_transactions(t, log_ref, next_replay_after, last_inclusive)
+          {next_replay_after, t} -> pull_transactions(t, authority, log_ref, next_replay_after, last_inclusive)
         end
 
       {:error, :unavailable} ->
@@ -288,8 +508,9 @@ defmodule Bedrock.DataPlane.Log.Shale.Recovery do
   # them here is the server replying.
   @spec abort_all_pending_pushes(State.t()) :: State.t()
   def abort_all_pending_pushes(%{pending_pushes: pending_pushes} = t) do
-    Enum.each(pending_pushes, fn {_version, {_transaction, from}} ->
-      :ok = GenServer.reply(from, {:error, :not_ready})
+    Enum.each(pending_pushes, fn
+      {_version, %{waiters: waiters}} -> Enum.each(waiters, &GenServer.reply(&1, {:error, :not_ready}))
+      {_version, {_transaction, from}} -> GenServer.reply(from, {:error, :not_ready})
     end)
 
     %{t | pending_pushes: %{}}

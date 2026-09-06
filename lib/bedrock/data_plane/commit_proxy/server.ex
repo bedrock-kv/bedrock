@@ -59,13 +59,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.Service.RecoveryAuthority
 
   @spec child_spec(
           opts :: [
             cluster: Cluster.t(),
             director: pid(),
             epoch: Bedrock.epoch(),
-            lock_token: Bedrock.lock_token(),
+            recovery_authority: RecoveryAuthority.input(),
             instance: non_neg_integer(),
             sequencer: pid(),
             resolver_layout: ResolverLayout.t(),
@@ -78,7 +79,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     cluster = opts[:cluster] || raise "Missing :cluster option"
     director = opts[:director] || raise "Missing :director option"
     epoch = opts[:epoch] || raise "Missing :epoch option"
-    lock_token = opts[:lock_token] || raise "Missing :lock_token option"
+
+    recovery_authority = opts[:recovery_authority] || raise("Missing :recovery_authority option")
+
     instance = opts[:instance] || raise "Missing :instance option"
     # sequencer and resolver_layout can be nil at startup - set via recover_from/5
     sequencer = opts[:sequencer]
@@ -93,8 +96,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, lock_token,
-            sequencer, resolver_layout}
+           {cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms,
+            recovery_authority, sequencer, resolver_layout}
          ]},
       restart: :temporary
     }
@@ -102,12 +105,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
   @impl true
   @spec init(
-          {module(), pid(), Bedrock.epoch(), non_neg_integer(), pos_integer(), non_neg_integer(), binary(), pid(),
-           ResolverLayout.t()}
+          {module(), Bedrock.ControlPlane.Director.ref(), Bedrock.epoch(), non_neg_integer(), pos_integer(),
+           non_neg_integer(), RecoveryAuthority.input(), pid() | nil, ResolverLayout.t()}
         ) ::
           {:ok, State.t(), timeout()}
   def init(
-        {cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, lock_token,
+        {cluster, director, epoch, max_latency_in_ms, max_per_batch, empty_transaction_timeout_ms, recovery_authority,
          sequencer, resolver_layout}
       ) do
     # Monitor the Director - if it dies, this commit proxy should terminate
@@ -125,7 +128,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
         max_latency_in_ms: max_latency_in_ms,
         max_per_batch: max_per_batch,
         empty_transaction_timeout_ms: empty_transaction_timeout_ms,
-        lock_token: lock_token,
+        recovery_authority: RecoveryAuthority.new!(recovery_authority),
         sequencer: sequencer,
         resolver_layout: resolver_layout,
         routing_data: routing_data
@@ -138,12 +141,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
   @spec terminate(term(), State.t()) :: :ok
   def terminate(_reason, %State{} = t) do
     abort_current_batch(t)
+    Enum.each(t.finalization_tasks, fn {pid, {_ref, _batch}} -> Process.exit(pid, :kill) end)
+    await_finalization_shutdown(t.finalization_tasks)
     :ok
   end
 
   @impl true
   @spec handle_call(
-          {:recover_from, binary(), pid(), ResolverLayout.t(), RoutingData.snapshot()}
+          {:recover_from, RecoveryAuthority.input(), pid(), ResolverLayout.t(), RoutingData.snapshot()}
           | {:commit, Bedrock.epoch(), Bedrock.transaction()}
           | {:commit, Bedrock.epoch(), Bedrock.transaction(), :user | :system}
           | {:apply_metadata_and_route, pos_integer(), Bedrock.version(), term()}
@@ -152,12 +157,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           State.t()
         ) ::
           {:reply, term(), State.t()} | {:noreply, State.t(), timeout() | {:continue, term()}}
-  def handle_call(
-        {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot},
-        _from,
-        %{mode: :locked} = t
-      ) do
-    if lock_token == t.lock_token do
+  def handle_call({:recover_from, authority, sequencer, resolver_layout, routing_snapshot}, _from, %{mode: :locked} = t) do
+    if same_authority?(authority, t.recovery_authority) do
       routing_data = RoutingData.from_snapshot(routing_snapshot)
 
       reply(
@@ -317,6 +318,25 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
     {:stop, :normal, t}
   end
 
+  def handle_info({:DOWN, ref, :process, pid, reason}, %{finalization_tasks: tasks} = t) do
+    case Map.get(tasks, pid) do
+      {^ref, batch} ->
+        t = %{t | finalization_tasks: Map.delete(tasks, pid)}
+
+        case reason do
+          :normal ->
+            noreply(t)
+
+          _ ->
+            Enum.each(Batch.all_callers(batch), & &1.({:error, :aborted}))
+            stop(t, {:finalization_task_failed, reason})
+        end
+
+      _ ->
+        noreply(t)
+    end
+  end
+
   # A failed finalization cannot be treated as an isolated transaction
   # abort. Version assignment and conflict resolution have already mutated
   # epoch-local state, and some required logs may have fsynced the batch.
@@ -337,32 +357,54 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
 
     %{epoch: epoch, sequencer: sequencer, resolver_layout: resolver_layout} = state
 
-    Task.start_link(fn ->
-      trace_metadata(trace_meta)
+    {task_pid, task_ref} =
+      spawn_monitor(fn ->
+        trace_metadata(trace_meta)
 
-      case finalize_batch(batch,
-             epoch: epoch,
-             sequencer: sequencer,
-             resolver_layout: resolver_layout,
-             # Stable proxy identity (this server, not the per-batch task):
-             # the resolver keys this proxy's exact windows off it.
-             proxy_id: server_pid,
-             # Serialized apply-and-route: the server folds this batch's
-             # committed metadata into its state in commit-version order and
-             # returns the immutable routing snapshot the batch pushes with.
-             metadata_apply_fn: fn commit_version, window ->
-               GenServer.call(server_pid, {:apply_metadata_and_route, seq, commit_version, window}, :infinity)
-             end
-           ) do
-        {:ok, _n_aborts, _n_oks} ->
-          :ok
+        case finalize_batch(batch,
+               epoch: epoch,
+               recovery_authority: RecoveryAuthority.external(state.recovery_authority),
+               sequencer: sequencer,
+               resolver_layout: resolver_layout,
+               # Stable proxy identity (this server, not the per-batch task):
+               # the resolver keys this proxy's exact windows off it.
+               proxy_id: server_pid,
+               # Serialized apply-and-route: the server folds this batch's
+               # committed metadata into its state in commit-version order and
+               # returns the immutable routing snapshot the batch pushes with.
+               metadata_apply_fn: fn commit_version, window ->
+                 GenServer.call(server_pid, {:apply_metadata_and_route, seq, commit_version, window}, :infinity)
+               end
+             ) do
+          {:ok, _n_aborts, _n_oks} ->
+            :ok
 
-        {:error, reason} ->
-          send(server_pid, {:finalization_failed, reason})
-      end
-    end)
+          {:error, reason} ->
+            send(server_pid, {:finalization_failed, reason})
+        end
+      end)
 
-    %{state | batch_seq: seq}
+    %{state | batch_seq: seq, finalization_tasks: Map.put(state.finalization_tasks, task_pid, {task_ref, batch})}
+  end
+
+  defp await_finalization_shutdown(tasks) when map_size(tasks) == 0, do: :ok
+
+  defp await_finalization_shutdown(tasks) do
+    receive do
+      {:DOWN, ref, :process, pid, _reason} ->
+        if match?({^ref, _batch}, Map.get(tasks, pid)) do
+          await_finalization_shutdown(Map.delete(tasks, pid))
+        else
+          await_finalization_shutdown(tasks)
+        end
+    end
+  end
+
+  defp same_authority?(incoming, current) do
+    case RecoveryAuthority.new(incoming) do
+      {:ok, incoming} -> RecoveryAuthority.compare(incoming, current) == :same
+      _ -> false
+    end
   end
 
   # Applies one batch's committed metadata window - which covers through the

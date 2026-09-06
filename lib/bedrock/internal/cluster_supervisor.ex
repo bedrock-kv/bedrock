@@ -197,17 +197,17 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     |> Enum.map(fn {module, capabilities} ->
       # For modules that serve multiple capabilities (like Foreman),
       # we need to find a common config that works for all capabilities
+      capability_config_sets =
+        Enum.map(capabilities, fn capability -> Keyword.get(config, capability, []) end)
+
       capability_configs =
-        capabilities
-        |> Enum.map(fn capability ->
-          Keyword.get(config, capability, [])
-        end)
-        |> Enum.reduce([], fn capability_config, acc ->
+        Enum.reduce(capability_config_sets, [], fn capability_config, acc ->
           Keyword.merge(acc, capability_config)
         end)
 
       # Fall back to module-specific config if no capability-specific config exists
       module_config = Keyword.get(config, module.config_key(), [])
+      validate_recovery_migration_config!(module, [module_config | capability_config_sets])
 
       # Merge configs with capability-specific taking precedence
       merged_config = Keyword.merge(module_config, capability_configs)
@@ -227,6 +227,22 @@ defmodule Bedrock.Internal.ClusterSupervisor do
        ] ++ merged_config}
     end)
   end
+
+  defp validate_recovery_migration_config!(Foreman, configs) do
+    values =
+      configs
+      |> List.flatten()
+      |> Keyword.get_values(:recovery_authority_migration)
+      |> Enum.uniq()
+
+    case values do
+      [] -> :ok
+      [_one] -> :ok
+      _ -> raise ArgumentError, "conflicting recovery_authority_migration settings for Foreman capabilities"
+    end
+  end
+
+  defp validate_recovery_migration_config!(_module, _configs), do: :ok
 
   defp ensure_object_storage(config) do
     case Keyword.fetch(config, :object_storage) do

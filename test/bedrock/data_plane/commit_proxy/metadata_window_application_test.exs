@@ -39,6 +39,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataWindowApplicationTest do
       cluster: __MODULE__,
       director: self(),
       epoch: 1,
+      recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
       empty_transaction_timeout_ms: 1_000,
       mode: :running,
       routing_data: RoutingData.new_empty(),

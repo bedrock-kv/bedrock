@@ -8,6 +8,8 @@ defmodule Bedrock.DataPlane.Log.Shale.DurabilityContractTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
+  @authority %{generation: 1, recovery_id: "transition-test"}
+
   setup do
     path = Path.join(System.tmp_dir!(), "shale_durability_contract_#{System.unique_integer([:positive])}.log")
     File.write!(path, :binary.copy(<<0>>, 1024))
@@ -52,6 +54,7 @@ defmodule Bedrock.DataPlane.Log.Shale.DurabilityContractTest do
     assert {:ok, writer} = Writer.open(path, Version.zero(), sync_fun: fn _fd -> {:error, :eio} end)
 
     state = %State{
+      recovery_authority: @authority,
       mode: :ready,
       last_version: Version.from_integer(0),
       pending_pushes: %{},

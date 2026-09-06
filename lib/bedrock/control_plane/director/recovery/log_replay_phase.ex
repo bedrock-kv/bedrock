@@ -91,7 +91,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
         recovery_attempt,
         context \\ %{}
       ) do
-    copy_log_data_fn = Map.get(context, :copy_log_data_fn, &copy_log_data/5)
+    authority = Map.fetch!(context, :recovery_authority)
+
+    copy_log_data_fn =
+      Map.get(context, :copy_log_data_fn, fn id, sources, after_v, last_v, pids ->
+        copy_log_data(id, authority, sources, after_v, last_v, pids)
+      end)
+
     service_pids = recovery_attempt.service_pids
 
     # Build list of survivor PIDs from their IDs
@@ -150,14 +156,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogReplayPhase do
   """
   @spec copy_log_data(
           new_log_id :: Log.id(),
+          authority :: Bedrock.Service.RecoveryAuthority.input(),
           survivor_pids :: [pid()],
           replay_after :: Bedrock.version(),
           last_inclusive :: Bedrock.version(),
           service_pids :: %{Log.id() => pid()}
         ) :: {:ok, pid()} | {:error, term()}
-  def copy_log_data(new_log_id, survivor_pids, replay_after, last_inclusive, service_pids) do
+  def copy_log_data(new_log_id, authority, survivor_pids, replay_after, last_inclusive, service_pids) do
     Log.recover_from(
       Map.fetch!(service_pids, new_log_id),
+      authority,
       survivor_pids,
       replay_after,
       last_inclusive

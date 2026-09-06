@@ -200,18 +200,25 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   end
 
   # Lock a newly created materializer
-  defp lock_new_materializer(service, epoch, context) do
+  defp lock_new_materializer(service, _epoch, context) do
     lock_fn = Map.get(context, :lock_materializer_fn, &default_lock_materializer/2)
-    lock_fn.(service, epoch)
+    lock_fn.(service, recovery_authority(context))
   end
 
   # Start materializer pulling from its replica set of logs
   defp start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
     # For fresh cluster, start from version zero
     durable_version = Bedrock.DataPlane.Version.zero()
-    unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/3)
+    unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/4)
 
-    case unlock_fn.(pid, durable_version, pull_sources_for_shard(shard_tag, recovery_attempt)) do
+    args = [
+      pid,
+      recovery_authority(context),
+      durable_version,
+      pull_sources_for_shard(shard_tag, recovery_attempt)
+    ]
+
+    case invoke_unlock(unlock_fn, args) do
       :ok -> :ok
       {:error, reason} -> {:error, {:unlock_failed, reason}}
       {:failure, reason, _ref} -> {:error, {:unlock_failed, reason}}
@@ -605,18 +612,31 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # recovery (rollback) version — vector last — never the durable floor,
   # which regresses to zero on restart by design.
   defp unlock_and_start_pulling(materializer_pid, shard_tag, recovery_version, recovery_attempt, context) do
-    unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/3)
+    unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/4)
 
-    case unlock_fn.(materializer_pid, recovery_version, pull_sources_for_shard(shard_tag, recovery_attempt)) do
+    args = [
+      materializer_pid,
+      recovery_authority(context),
+      recovery_version,
+      pull_sources_for_shard(shard_tag, recovery_attempt)
+    ]
+
+    case invoke_unlock(unlock_fn, args) do
       :ok -> :ok
       {:error, reason} -> {:error, {:unlock_failed, reason}}
       {:failure, reason, _ref} -> {:error, {:unlock_failed, reason}}
     end
   end
 
-  defp default_unlock_materializer(pid, durable_version, pull_sources) do
-    Materializer.unlock_after_recovery(pid, durable_version, pull_sources, timeout_in_ms: 30_000)
+  defp default_unlock_materializer(pid, authority, durable_version, pull_sources) do
+    Materializer.unlock_after_recovery(pid, authority, durable_version, pull_sources, timeout_in_ms: 30_000)
   end
+
+  defp invoke_unlock(fun, [pid, authority, version, sources]) do
+    fun.(pid, authority, version, sources)
+  end
+
+  defp recovery_authority(context), do: Map.fetch!(context, :recovery_authority)
 
   # Poll until materializer reaches target version. The label — shard and
   # recovery attempt — makes repeated lines attributable: recovery retries
@@ -667,9 +687,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     Materializer.info(pid, fact_names, timeout_in_ms: 5_000)
   end
 
-  defp lock_materializer(service, epoch, context) do
+  defp lock_materializer(service, _epoch, context) do
     lock_fn = Map.get(context, :lock_materializer_fn, &default_lock_materializer/2)
-    lock_fn.(service, epoch)
+    lock_fn.(service, recovery_authority(context))
   end
 
   defp default_lock_materializer({:materializer, name}, epoch) do

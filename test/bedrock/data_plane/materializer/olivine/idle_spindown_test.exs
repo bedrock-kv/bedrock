@@ -25,6 +25,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
   alias Bedrock.ObjectStorage.Keys, as: ObjectStorageKeys
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
+  alias Bedrock.Test.RecoveryAuthorityTestSupport
 
   defmodule TestCluster do
     @moduledoc false
@@ -43,11 +44,17 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
   defp start_worker(tmp_dir, params, opts \\ []) do
     worker_id = "idle_wkr_#{System.unique_integer([:positive])}"
     otp_name = :"olivine_idle_#{System.unique_integer([:positive])}"
+    cluster = Keyword.get(opts, :cluster, RecoveryAuthorityTestSupport.TestCluster)
+
+    RecoveryAuthorityTestSupport.prepare_worker!(tmp_dir, worker_id, Olivine,
+      cluster: cluster,
+      params: params
+    )
 
     child_spec =
       Olivine.child_spec(
         Keyword.merge(
-          [otp_name: otp_name, foreman: self(), id: worker_id, path: tmp_dir, params: params],
+          [otp_name: otp_name, foreman: self(), id: worker_id, path: tmp_dir, params: params, cluster: cluster],
           opts
         )
       )

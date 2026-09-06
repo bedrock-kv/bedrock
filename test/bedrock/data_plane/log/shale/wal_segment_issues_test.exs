@@ -11,6 +11,8 @@ defmodule Bedrock.DataPlane.Log.Shale.WalSegmentIssuesTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.TransactionTestSupport
 
+  @authority %{generation: 1, recovery_id: "transition-test"}
+
   @moduletag :tmp_dir
 
   describe "segment management issues" do
@@ -119,6 +121,8 @@ defmodule Bedrock.DataPlane.Log.Shale.WalSegmentIssuesTest do
       target_version = Version.from_integer(250)
 
       # Request transactions up to version 250 - should load multiple segments
+      # Helper functions to create test data
+
       assert {:ok, loaded_segments} =
                Pulling.ensure_necessary_segments_are_loaded(target_version, [state.active_segment | state.segments])
 
@@ -129,8 +133,6 @@ defmodule Bedrock.DataPlane.Log.Shale.WalSegmentIssuesTest do
       """
     end
   end
-
-  # Helper functions to create test data
 
   defp create_test_state_with_versions(versions) do
     # Create a mock state with an active segment containing transactions with these versions
@@ -174,6 +176,7 @@ defmodule Bedrock.DataPlane.Log.Shale.WalSegmentIssuesTest do
 
   defp create_basic_state do
     %State{
+      recovery_authority: @authority,
       cluster: Cluster,
       director: nil,
       epoch: nil,

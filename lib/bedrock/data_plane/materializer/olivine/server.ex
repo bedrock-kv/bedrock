@@ -6,6 +6,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Materializer
+  alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.DataDatabase
   alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
@@ -18,6 +19,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
   alias Bedrock.DataPlane.Materializer.Telemetry
   alias Bedrock.Service.Foreman
+  alias Bedrock.Service.RecoveryAuthority
+  alias Bedrock.Service.RecoveryControl
 
   require Logger
 
@@ -75,7 +78,26 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   end
 
   @impl true
-  def init(args), do: {:ok, args, {:continue, :finish_startup}}
+  def init({_otp_name, _foreman, id, path, opts} = args) do
+    with {:ok, control} <-
+           RecoveryControl.validate_prepared(path, opts[:cluster], id, Bedrock.DataPlane.Materializer.Olivine),
+         :ok <- validate_data_identity(path, control) do
+      {:ok, {args, control}, {:continue, :finish_startup}}
+    else
+      {:error, reason} -> {:stop, reason}
+    end
+  end
+
+  defp validate_data_identity(path, %{phase: phase, last_inclusive: last, wal_identity: expected})
+       when phase in [:replay_complete, :running] do
+    case RecoveryControl.data_identity(path, last) do
+      {:ok, ^expected} -> :ok
+      {:ok, _} -> {:error, {:recovery_authority, :data_identity_mismatch}}
+      {:error, reason} -> {:error, {:recovery_authority, {:data_identity_unavailable, reason}}}
+    end
+  end
+
+  defp validate_data_identity(_path, _control), do: :ok
 
   @impl true
 
@@ -173,8 +195,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   def handle_call({:info, fact_names}, _from, %State{} = t), do: t |> Logic.info(fact_names) |> then(&reply(t, &1))
 
   @impl true
-  def handle_call({:lock_for_recovery, epoch}, {director, _}, t) do
-    with {:ok, t} <- Logic.lock_for_recovery(t, director, epoch),
+  def handle_call({:lock_for_recovery, authority}, _from, t) do
+    with {:ok, authority} <- RecoveryAuthority.new(authority),
+         {:ok, t} <- Logic.lock_for_recovery(t, nil, authority),
          {:ok, info} <- Logic.info(t, Materializer.recovery_info()) do
       reply(t, {:ok, self(), info})
     else
@@ -182,29 +205,21 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     end
   end
 
-  # The lock's taker is the unlock's only authority: adoption
-  # (bedrock-q67.21.5) means family-named workers can now be locked by
-  # racing epochs — an equal-or-newer lock replaces `director`, and a
-  # superseded locker's late unlock must not flip the worker to
-  # :running with the loser's pull sources mid-recovery. A worker with
-  # no lock owner has no authority to violate (static configurations
-  # unlock directly).
-  @impl true
-  def handle_call(
-        {:unlock_after_recovery, _durable_version, _pull_sources},
-        {caller, _},
-        %State{director: director} = t
-      )
-      when director != nil and caller != director do
-    reply(t, {:error, :not_lock_owner})
+  def handle_call({:unlock_after_recovery, authority, durable_version, pull_sources}, _from, t) do
+    with {:ok, authority} <- RecoveryAuthority.new(authority),
+         :ok <- validate_owner(t, authority) do
+      case unlock_durably(t, authority, durable_version, pull_sources) do
+        {:already_running, unchanged} -> reply(unchanged, :ok)
+        {:ok, updated_state} -> reply(touch_read_activity(updated_state), :ok)
+        {:error, reason} -> reply(t, {:error, reason})
+      end
+    else
+      {:error, reason} -> reply(t, {:error, reason})
+    end
   end
 
-  def handle_call({:unlock_after_recovery, durable_version, pull_sources}, {_director, _}, t) do
-    {:ok, updated_state} = Logic.unlock_after_recovery(t, durable_version, pull_sources)
-    # Service starts now: a worker that spent its whole idle window locked
-    # (a long recovery) must not spin down on its first post-unlock check.
-    reply(touch_read_activity(updated_state), :ok)
-  end
+  def handle_call({:unlock_after_recovery, _durable_version, _pull_sources}, _from, t),
+    do: reply(t, {:error, :invalid_recovery_authority})
 
   @impl true
   def handle_call(:compact, _from, %State{compaction_task: task} = t) when not is_nil(task) do
@@ -222,15 +237,62 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   @impl true
   def handle_call(_, _from, t), do: reply(t, {:error, :not_ready})
 
-  @impl true
-  # Handle new 5-tuple format with opts
-  def handle_continue(:finish_startup, {otp_name, foreman, id, path, opts}) when is_list(opts) do
-    do_finish_startup(otp_name, foreman, id, path, opts)
+  defp validate_owner(%{recovery_authority: nil}, _), do: {:error, :not_lock_owner}
+
+  defp validate_owner(%{recovery_authority: current}, incoming) do
+    if RecoveryAuthority.compare(incoming, current) == :same, do: :ok, else: {:error, :not_lock_owner}
   end
 
-  # Backward compatibility: handle old 4-tuple format (for tests that bypass child_spec)
-  def handle_continue(:finish_startup, {otp_name, foreman, id, path}) do
-    do_finish_startup(otp_name, foreman, id, path, [])
+  defp unlock_durably(t, authority, durable_version, pull_sources) do
+    intent = RecoveryControl.unlock_intent(durable_version, pull_sources)
+
+    case validate_unlock_intent(t, intent) do
+      :ok -> do_unlock_durably(t, authority, durable_version, pull_sources, intent)
+      :already_running -> {:already_running, t}
+      :rehydrate -> rehydrate_running(t, authority, durable_version, pull_sources)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp validate_unlock_intent(%{mode: :running, recovery_control: %{phase: :running, unlock_intent: intent}}, intent),
+    do: :already_running
+
+  defp validate_unlock_intent(%{recovery_control: %{phase: :running, unlock_intent: intent}}, intent), do: :rehydrate
+  defp validate_unlock_intent(%{recovery_control: %{unlock_intent: nil}}, _intent), do: :ok
+  defp validate_unlock_intent(%{recovery_control: %{unlock_intent: intent}}, intent), do: :ok
+  defp validate_unlock_intent(_t, _intent), do: {:error, :conflicting_recovery_intent}
+
+  defp rehydrate_running(t, authority, durable_version, pull_sources) do
+    with {:ok, t} <- Logic.unlock_after_recovery(t, durable_version, pull_sources) do
+      {:ok, %{t | recovery_authority: RecoveryAuthority.external(authority)}}
+    end
+  end
+
+  defp do_unlock_durably(t, authority, durable_version, pull_sources, intent) do
+    started = RecoveryControl.replay_started(t.recovery_control, authority, durable_version, durable_version, intent)
+
+    with :ok <- persist_control(t.path, started),
+         {:ok, identity} <- RecoveryControl.data_identity(t.path, durable_version),
+         complete = RecoveryControl.replay_complete(started, identity),
+         :ok <- persist_control(t.path, complete),
+         running = RecoveryControl.running(complete),
+         :ok <- persist_control(t.path, running),
+         {:ok, t} <- Logic.unlock_after_recovery(%{t | recovery_control: running}, durable_version, pull_sources) do
+      {:ok, %{t | recovery_control: running, recovery_authority: RecoveryAuthority.external(authority)}}
+    end
+  end
+
+  defp persist_control(path, record) do
+    case RecoveryControl.write(path, record) do
+      {:error, {:post_publish_sync_failed, reason}} -> exit({:recovery_authority_durability_uncertain, reason})
+      result -> result
+    end
+  end
+
+  @impl true
+  # Handle new 5-tuple format with opts
+  def handle_continue(:finish_startup, {{otp_name, foreman, id, path, opts}, control}) when is_list(opts) do
+    do_finish_startup(otp_name, foreman, id, path, Keyword.put(opts, :recovery_control, control))
   end
 
   def handle_continue(:report_health_to_foreman, %State{} = t) do
@@ -283,7 +345,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   def handle_continue(:advance_window, %State{} = t) do
     if t.allow_window_advancement do
       {:ok, state_after_window} = Logic.advance_window(t)
-      noreply(state_after_window)
+      noreply(refresh_running_control(state_after_window))
     else
       # Compaction in progress - skip window advancement
       noreply(t)
@@ -393,7 +455,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
         # Now advance window after processing transactions
         {:ok, final_state} = Logic.advance_window(state_after_txns)
-        noreply(final_state, continue: :maybe_process_transactions)
+        noreply(refresh_running_control(final_state), continue: :maybe_process_transactions)
     end
   end
 
@@ -410,20 +472,20 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     noreply(updated_state)
   end
 
+  # Atomic cutover to compacted files
+  # The cutover rewinds the index to the durable snapshot, so the
+  # running puller's position (and any batch it has in flight) is
+  # meaningless. Stop it first — releasing a backpressure-parked ingest
+  # reply on the way — and rejoin the stream at the durable boundary
+  # once the new state is built. The stream re-delivers everything
+  # ingested during compaction; nothing is lost and nothing special
+  # remembers it.
   @impl true
   def handle_info(
         {:compaction_ready, compact_data_fd, compact_idx_fd, compact_data_path, compact_idx_path, new_data_offset,
          index_offset, compacted_pages, durable_version, duration, data_size_before, index_size_before},
         %State{} = t
       ) do
-    # Atomic cutover to compacted files
-    # The cutover rewinds the index to the durable snapshot, so the
-    # running puller's position (and any batch it has in flight) is
-    # meaningless. Stop it first — releasing a backpressure-parked ingest
-    # reply on the way — and rejoin the stream at the durable boundary
-    # once the new state is built. The stream re-delivers everything
-    # ingested during compaction; nothing is lost and nothing special
-    # remembers it.
     t = Logic.stop_pulling(t)
 
     {data_db, index_db} = t.database
@@ -526,7 +588,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
     # Resume: a fresh puller joins the stream at the durable boundary and
     # re-delivers everything after it through the normal apply path.
-    noreply(Logic.resume_pulling_from(new_state, durable_version))
+    new_state
+    |> refresh_running_control(true)
+    |> Logic.resume_pulling_from(durable_version)
+    |> noreply()
   end
 
   @impl true
@@ -584,6 +649,31 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
   @impl true
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # The running checkpoint describes the durable database bytes, so every
+  # operation that advances or replaces those bytes publishes the matching
+  # identity before the worker continues. A crash between the database write
+  # and this record deliberately fails closed on restart: the process cannot
+  # prove which recovery authority produced the new durable state.
+  defp refresh_running_control(t, force? \\ false)
+
+  defp refresh_running_control(%{recovery_control: %{phase: :running} = control} = t, force?) do
+    last_inclusive = Database.durable_version(t.database)
+
+    if force? or control.last_inclusive != last_inclusive do
+      with {:ok, identity} <- RecoveryControl.data_identity(t.path, last_inclusive),
+           record = %{control | last_inclusive: last_inclusive, wal_identity: identity},
+           :ok <- persist_control(t.path, record) do
+        %{t | recovery_control: record}
+      else
+        {:error, reason} -> exit({:unable_to_refresh_recovery_authority, reason})
+      end
+    else
+      t
+    end
+  end
+
+  defp refresh_running_control(t, _force?), do: t
 
   # Only a layout that had the chance to include us may judge us: pushed
   # epoch at or past the one we were locked into (nil means never locked —

@@ -9,7 +9,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
 
   @type t :: %__MODULE__{
           cluster: module(),
-          director: pid(),
+          director: Bedrock.ControlPlane.Director.ref(),
           sequencer: pid() | nil,
           resolver_layout: ResolverLayout.t() | nil,
           epoch: Bedrock.epoch(),
@@ -19,12 +19,14 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
           recent_batch_fill: float(),
           empty_transaction_timeout_ms: non_neg_integer(),
           mode: mode(),
-          lock_token: binary(),
+          lock_token: binary() | nil,
+          recovery_authority: Bedrock.Service.RecoveryAuthority.input(),
           routing_data: RoutingData.t() | nil,
           applied_version: Bedrock.version() | nil,
           batch_seq: non_neg_integer(),
           routed_seq: non_neg_integer(),
-          pending_applies: %{pos_integer() => {GenServer.from(), Bedrock.version(), term()}}
+          pending_applies: %{pos_integer() => {GenServer.from(), Bedrock.version(), term()}},
+          finalization_tasks: %{pid() => {reference(), Batch.t()}}
         }
   defstruct cluster: nil,
             director: nil,
@@ -40,6 +42,7 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
             empty_transaction_timeout_ms: nil,
             mode: :locked,
             lock_token: nil,
+            recovery_authority: nil,
             routing_data: nil,
             # The highest metadata-window to_version this proxy has applied.
             # Its one reader is the tiling assert: every window's from must
@@ -58,5 +61,6 @@ defmodule Bedrock.DataPlane.CommitProxy.State do
             routed_seq: 0,
             # Apply requests that arrived ahead of their predecessor, keyed by
             # their own sequence number.
-            pending_applies: %{}
+            pending_applies: %{},
+            finalization_tasks: %{}
 end

@@ -10,6 +10,7 @@ defmodule Bedrock.DataPlane.Materializer do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Materializer.Telemetry
   alias Bedrock.KeySelector
+  alias Bedrock.Service.RecoveryAuthority
   alias Bedrock.Service.Worker
 
   @type ref :: Worker.ref()
@@ -28,6 +29,8 @@ defmodule Bedrock.DataPlane.Materializer do
           | :key_ranges
           | :current_version
           | :durable_version
+          | :recovery_authority
+          | :mode
           | :shard_id
           | :n_objects
           | :path
@@ -265,10 +268,11 @@ defmodule Bedrock.DataPlane.Materializer do
   to prevent new transactions from being accepted while it is establishing
   its authority.
 
-  In order for the lock to succeed, the given epoch needs to be greater than
-  the current epoch.
+  The lock uses the exact recovery grant `{generation, recovery_id}`. The same
+  pair is idempotent across caller processes; an equal-generation foreign id
+  is rejected.
   """
-  @spec lock_for_recovery(storage_ref :: ref(), recovery_epoch :: Bedrock.epoch()) ::
+  @spec lock_for_recovery(storage_ref :: ref(), RecoveryAuthority.input()) ::
           {:ok, storage_pid :: pid(),
            recovery_info :: [
              {:kind, :materializer}
@@ -276,12 +280,16 @@ defmodule Bedrock.DataPlane.Materializer do
              | {:oldest_durable_version, Bedrock.version()}
            ]}
           | {:error, :newer_epoch_exists}
-  defdelegate lock_for_recovery(storage, epoch), to: Worker
+  defdelegate lock_for_recovery(storage, authority), to: Worker
 
   @doc "As `lock_for_recovery/2`, with a bounded call timeout."
-  @spec lock_for_recovery(ref(), Bedrock.epoch(), opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]) ::
+  @spec lock_for_recovery(
+          ref(),
+          RecoveryAuthority.input(),
+          opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
+        ) ::
           {:ok, pid(), recovery_info :: term()} | {:error, :newer_epoch_exists}
-  defdelegate lock_for_recovery(storage, epoch, opts), to: Worker
+  defdelegate lock_for_recovery(storage, authority, opts), to: Worker
 
   @doc """
   Unlocks the materializer after recovery is complete. This allows the materializer
@@ -295,16 +303,17 @@ defmodule Bedrock.DataPlane.Materializer do
   """
   @spec unlock_after_recovery(
           storage :: ref(),
+          authority :: RecoveryAuthority.input(),
           durable_version :: Bedrock.version(),
           pull_sources(),
           opts :: [timeout_in_ms: Bedrock.timeout_in_ms()]
         ) :: :ok | {:error, :unavailable} | {:failure, :timeout, ref()}
-  def unlock_after_recovery(storage, durable_version, pull_sources, opts \\ []) do
+  def unlock_after_recovery(storage, authority, durable_version, pull_sources, opts \\ []) do
     timeout = opts[:timeout_in_ms] || :infinity
     start_time = System.monotonic_time()
 
     try do
-      result = GenServer.call(storage, {:unlock_after_recovery, durable_version, pull_sources}, timeout)
+      result = GenServer.call(storage, {:unlock_after_recovery, authority, durable_version, pull_sources}, timeout)
 
       Telemetry.emit_materializer_operation(
         :unlock_after_recovery_success,

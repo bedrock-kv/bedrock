@@ -4,9 +4,9 @@ The [Director](../../../glossary.md#director) is Bedrock's [recovery](../../../g
 
 **Location**: [`lib/bedrock/control_plane/director.ex`](../../../lib/bedrock/control_plane/director.ex)
 
-## Epoch-Based Authority
+## Recovery Authority
 
-Each Director receives a unique, monotonically increasing epoch number that determines recovery authority. Higher epochs win when multiple Directors exist, preventing split-brain scenarios. This eliminates complex distributed consensus during recovery when coordination infrastructure may be compromised.
+Each Director receives the coordinator's durable bootstrap reservation. Its exact `{generation, recovery_id}` pair determines recovery authority. Higher generations win; the same pair is an idempotent retry; a different id at the same generation is a competing owner and fails closed. The Director validates that the reservation generation equals its epoch before contacting any durable worker.
 
 When Coordinator leadership changes during recovery, the new Coordinator creates a Director with a higher epoch, automatically superseding existing recovery processes.
 

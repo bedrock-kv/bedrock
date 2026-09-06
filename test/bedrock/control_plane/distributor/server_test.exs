@@ -274,10 +274,13 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           recruitment_ctx: %{
             cluster: __MODULE__,
             epoch: 3,
+            recovery_authority: %{generation: 3, recovery_id: "distributor-test"},
             node_capabilities: %{materializer: [node()]},
             logs: %{"log_1" => []},
             log_refs: %{"log_1" => :ref},
-            info_fn: fn _worker, [:epoch], _opts -> {:ok, %{epoch: 3}} end,
+            info_fn: fn _worker, [:recovery_authority, :mode], _opts ->
+              {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
+            end,
             create_worker_fn: fn _f, _i, _k, _o -> {:error, :scripted} end
           }
         )
@@ -303,7 +306,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         {SystemKeys.materializer_key(1, "wkr_a"), Values.encode_materializer_node(Atom.to_string(node()))}
       ]
 
-      t = verified_sweep_state(refs_entries, test_pid, fn _worker, [:epoch], _opts -> {:ok, %{epoch: 3}} end)
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _worker, [:recovery_authority, :mode], _opts ->
+          {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
+        end)
 
       assert {:noreply, t2} = Server.handle_continue(:startup_sweep, t)
 
@@ -326,6 +332,38 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       refute_received {:committed, _}
     end
 
+    test "equal-generation foreign ownership is fenced instead of classified current" do
+      test_pid = self()
+
+      refs_entries = [
+        {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(Atom.to_string(node()))}
+      ]
+
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _worker, [:recovery_authority, :mode], _opts ->
+          {:ok, %{recovery_authority: %{generation: 3, recovery_id: "foreign"}, mode: :running}}
+        end)
+
+      ctx =
+        Map.put(t.recruitment_ctx, :lock_materializer_fn, fn _worker, authority ->
+          send(test_pid, {:foreign_adoption_fenced_with, authority})
+          {:error, :newer_epoch_exists}
+        end)
+
+      assert {:noreply, _t2} = Server.handle_continue(:startup_sweep, %{t | recruitment_ctx: ctx})
+      assert_receive {:committed, _startup_lock_write}
+
+      assert_receive {:foreign_adoption_fenced_with, %{generation: 3, recovery_id: "distributor-test"}},
+                     5_000
+
+      assert_receive {:assignment_verified, 0, "wkr_sys",
+                      {:error, {:materializer_lock_failed, :newer_epoch_exists, _node}}},
+                     5_000
+
+      refute_received {:assignment_verified, 0, "wkr_sys", :current}
+      refute_received {:committed, _}
+    end
+
     test "a stale-epoch assignment is adopted: locked, unlocked at its own version, re-asserted under the fence" do
       test_pid = self()
       {lock, _} = Lock.take(nil, nil)
@@ -340,8 +378,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       adopted = spawn(fn -> Process.sleep(:infinity) end)
 
       info_fn = fn
-        {name, _node}, [:epoch], _opts ->
-          if name == otp_name_for_worker("wkr_stale"), do: {:ok, %{epoch: 2}}, else: {:ok, %{epoch: 3}}
+        {name, _node}, [:recovery_authority, :mode], _opts ->
+          if name == otp_name_for_worker("wkr_stale"),
+            do: {:ok, %{recovery_authority: %{generation: 2, recovery_id: "stale"}, mode: :running}},
+            else: {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
       end
 
       t = verified_sweep_state(refs_entries, test_pid, info_fn)
@@ -352,7 +392,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
             send(test_pid, {:adopt_locked, worker, epoch})
             {:ok, adopted, %{durable_version: Version.from_integer(5)}}
           end,
-          unlock_materializer_fn: fn _pid, version, _sources ->
+          unlock_materializer_fn: fn _pid, _authority, version, _sources ->
             send(test_pid, {:adopt_unlocked, version})
             :ok
           end
@@ -364,7 +404,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       # The stale worker was locked into THIS epoch and unlocked at the
       # version IT reported.
-      assert_receive {:adopt_locked, {_name, _node}, 3}, 5_000
+      assert_receive {:adopt_locked, {_name, _node}, %{generation: 3, recovery_id: "distributor-test"}}, 5_000
       assert_receive {:adopt_unlocked, version}, 5_000
       assert version == Version.from_integer(5)
 
@@ -397,8 +437,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       # A stale answer whose adoption then definitively fails: wedged
       # mid-adopt, alive — heal, never remove.
       info_fn = fn
-        {name, _node}, [:epoch], _opts ->
-          if name == otp_name_for_worker("wkr_wedged"), do: {:ok, %{epoch: 2}}, else: {:ok, %{epoch: 3}}
+        {name, _node}, [:recovery_authority, :mode], _opts ->
+          if name == otp_name_for_worker("wkr_wedged"),
+            do: {:ok, %{recovery_authority: %{generation: 2, recovery_id: "stale"}, mode: :running}},
+            else: {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
       end
 
       t = verified_sweep_state(refs_entries, test_pid, info_fn)
@@ -442,7 +484,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       node_string = Atom.to_string(node())
 
       refs_entries = [{SystemKeys.materializer_key(0, "wkr_far"), Values.encode_materializer_node(node_string)}]
-      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:recovery_authority, :mode], _o ->
+          {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
+        end)
 
       t = %{
         t
@@ -482,7 +528,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       adopted = spawn(fn -> Process.sleep(:infinity) end)
 
       refs_entries = [{SystemKeys.materializer_key(0, "wkr_adopt"), Values.encode_materializer_node(node_string)}]
-      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:recovery_authority, :mode], _o ->
+          {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
+        end)
 
       ctx =
         Map.put(t.recruitment_ctx, :remove_worker_fn, fn _f, _i, _o ->
@@ -519,7 +569,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       adopted = spawn(fn -> Process.sleep(:infinity) end)
 
       refs_entries = [{SystemKeys.materializer_key(0, "wkr_adopt"), Values.encode_materializer_node(node_string)}]
-      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:recovery_authority, :mode], _o ->
+          {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
+        end)
 
       ctx =
         Map.put(t.recruitment_ctx, :remove_worker_fn, fn _f, _i, _o ->
@@ -555,9 +609,9 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       refs_entries = [{SystemKeys.materializer_key(0, "wkr_back"), Values.encode_materializer_node(node_string)}]
 
       t =
-        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o ->
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:recovery_authority, :mode], _o ->
           send(test_pid, :probed)
-          {:ok, %{epoch: 3}}
+          {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
         end)
 
       t = %{
@@ -587,7 +641,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         {SystemKeys.materializer_key(1, "wkr_gone"), Values.encode_materializer_node(node_string)}
       ]
 
-      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:recovery_authority, :mode], _o ->
+          {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
+        end)
+
       assert {:noreply, t2} = Server.handle_continue(:startup_sweep, t)
 
       # Death healing re-owned tag 1 meanwhile: the ref now names the
@@ -623,6 +681,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         recruitment_ctx: %{
           cluster: __MODULE__,
           epoch: 3,
+          recovery_authority: %{generation: 3, recovery_id: "distributor-test"},
           node_capabilities: %{materializer: [node()]},
           logs: %{"log_1" => []},
           log_refs: %{"log_1" => :ref},
@@ -759,6 +818,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
             recruitment_ctx: %{
               cluster: __MODULE__,
               epoch: 3,
+              recovery_authority: %{generation: 3, recovery_id: "distributor-test"},
               node_capabilities: %{materializer: [node()]},
               logs: %{},
               log_refs: %{},
@@ -1022,6 +1082,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
             recruitment_ctx: %{
               cluster: __MODULE__,
               epoch: 3,
+              recovery_authority: %{generation: 3, recovery_id: "distributor-test"},
               node_capabilities: %{materializer: [node()]},
               logs: %{"log_1" => []},
               log_refs: %{"log_1" => :ref},
@@ -1438,7 +1499,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           snapshot: %{shard_layout: %{}, materializer_refs: %{7 => %{"wkr_alive" => Atom.to_string(node())}}}
         )
 
-      ctx = Map.put(t.recruitment_ctx, :info_fn, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+      ctx =
+        Map.put(t.recruitment_ctx, :info_fn, fn _w, [:recovery_authority, :mode], _o ->
+          {:ok, %{recovery_authority: %{generation: 3, recovery_id: "distributor-test"}, mode: :running}}
+        end)
+
       t = %{t | recruitment_ctx: ctx, unreachable_counts: %{{7, "wkr_alive"} => 2}}
 
       assert {:noreply, t2} = Server.handle_info({:reverify_assignment, 7, "wkr_alive"}, t)

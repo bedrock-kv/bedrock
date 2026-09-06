@@ -52,6 +52,9 @@ defmodule Bedrock.Test.DataPlane.FinalizationTestSupport do
     pid =
       spawn(fn ->
         receive do
+          {:"$gen_call", from, {:push, _authority, _transaction, _last_version, _kcv}} ->
+            GenServer.reply(from, :ok)
+
           {:"$gen_call", from, {:push, _transaction, _last_version, _kcv}} ->
             GenServer.reply(from, :ok)
         after

@@ -10,7 +10,7 @@ defmodule Bedrock.Service.Foreman.Server do
   alias Bedrock.Service.Foreman.State
 
   @spec required_opt_keys() :: [atom()]
-  def required_opt_keys, do: [:cluster, :path, :capabilities, :otp_name, :object_storage]
+  def required_opt_keys, do: [:cluster, :path, :capabilities, :otp_name, :object_storage, :recovery_authority_migration]
 
   @spec child_spec(
           opts :: [

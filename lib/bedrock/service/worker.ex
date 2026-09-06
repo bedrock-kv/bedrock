@@ -8,6 +8,7 @@ defmodule Bedrock.Service.Worker do
   use Bedrock.Internal.GenServerApi
 
   alias Bedrock.Internal.Id
+  alias Bedrock.Service.RecoveryAuthority
 
   @type ref :: pid() | atom() | {atom(), node()}
   @type id :: Bedrock.service_id()
@@ -31,12 +32,16 @@ defmodule Bedrock.Service.Worker do
 
   @spec lock_for_recovery(
           worker_ref :: ref(),
-          recovery_epoch :: Bedrock.epoch(),
+          recovery_authority :: RecoveryAuthority.input(),
           opts :: [timeout_in_ms: timeout_in_ms()]
         ) ::
           {:ok, worker_pid :: pid(), recovery_info :: [kind: :log | :materializer, version: Bedrock.version()]}
           | {:error, :newer_epoch_exists}
           | {:error, :timeout}
-  def lock_for_recovery(worker, epoch, opts \\ []),
-    do: call(worker, {:lock_for_recovery, epoch}, opts[:timeout_in_ms] || :infinity)
+  def lock_for_recovery(worker, authority, opts \\ []) do
+    case RecoveryAuthority.new(authority) do
+      {:ok, authority} -> call(worker, {:lock_for_recovery, authority}, opts[:timeout_in_ms] || :infinity)
+      {:error, reason} -> {:error, reason}
+    end
+  end
 end

@@ -724,7 +724,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   defp start_verification(%State{} = t, tag, worker_id, node_string) do
     server = self()
     ctx = t.recruitment_ctx
-    epoch = t.epoch
+    authority = Map.fetch!(ctx, :recovery_authority)
     name = t.cluster.otp_name_for_worker(worker_id)
     # credo:disable-for-next-line Credo.Check.Warning.UnsafeToAtom
     node_atom = String.to_atom(node_string)
@@ -734,9 +734,9 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       spawn_monitor(fn ->
         verdict =
           try do
-            case info_fn.({name, node_atom}, [:epoch], timeout_in_ms: @verification_timeout_ms) do
-              {:ok, %{epoch: ^epoch}} -> :current
-              {:ok, %{epoch: _stale_or_nil}} -> Recruitment.adopt(tag, worker_id, node_atom, ctx)
+            case info_fn.({name, node_atom}, [:recovery_authority, :mode], timeout_in_ms: @verification_timeout_ms) do
+              {:ok, %{recovery_authority: ^authority, mode: :running}} -> :current
+              {:ok, %{recovery_authority: _owner, mode: _mode}} -> Recruitment.adopt(tag, worker_id, node_atom, ctx)
               {:error, reason} -> {:error, reason}
             end
           catch

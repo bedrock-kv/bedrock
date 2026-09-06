@@ -6,17 +6,28 @@ defmodule Bedrock.Integration.BrandNewSystemInitializationTest do
 
   @moduletag :integration
 
-  describe "copy_log_data/5" do
+  describe "copy_log_data/6" do
+    @authority %{generation: 1, recovery_id: "brand-new-system-test"}
+
     # Helper function to attempt log data copy and handle expected failures
     defp attempt_copy_log_data(new_log_id, survivor_pids, first_version, last_version, service_pids) do
-      LogReplayPhase.copy_log_data(new_log_id, survivor_pids, first_version, last_version, service_pids)
+      LogReplayPhase.copy_log_data(new_log_id, @authority, survivor_pids, first_version, last_version, service_pids)
     catch
       # Expected failures when using mock process (self())
-      :exit, {:noproc, _} -> :attempted_log_call
-      :exit, {:calling_self, {GenServer, :call, [_, {:recover_from, [], 0, 0}, _]}} -> :new_system_call
-      :exit, {:calling_self, {GenServer, :call, [_, {:recover_from, [_ | _], _, _}, _]}} -> :existing_system_call
-      :exit, {reason, _} when reason in [:normal, :killed, :shutdown] -> :attempted_log_call
-      error_type, reason -> {error_type, reason}
+      :exit, {:noproc, _} ->
+        :attempted_log_call
+
+      :exit, {:calling_self, {GenServer, :call, [_, {:recover_from, @authority, [], 0, 0}, _]}} ->
+        :new_system_call
+
+      :exit, {:calling_self, {GenServer, :call, [_, {:recover_from, @authority, [_ | _], _, _}, _]}} ->
+        :existing_system_call
+
+      :exit, {reason, _} when reason in [:normal, :killed, :shutdown] ->
+        :attempted_log_call
+
+      error_type, reason ->
+        {error_type, reason}
     end
 
     test "calls recover_from with empty list for brand new system" do

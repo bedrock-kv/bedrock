@@ -3,13 +3,14 @@ defmodule Bedrock.Service.Manifest do
   Service manifest utilities for worker specifications and metadata.
   """
   alias Bedrock.Cluster
+  alias Bedrock.Service.RecoveryControl
 
   @derive Jason.Encoder
   @type t :: %__MODULE__{
           cluster: Cluster.name(),
           id: String.t(),
           worker: module(),
-          params: %{atom() => term()}
+          params: map()
         }
   defstruct [:cluster, :id, :worker, :params]
 
@@ -17,7 +18,7 @@ defmodule Bedrock.Service.Manifest do
           Cluster.name(),
           id :: Bedrock.service_id(),
           worker :: module(),
-          params :: %{atom() => term()}
+          params :: map()
         ) ::
           t()
   def new(cluster, id, worker, params \\ %{}) do
@@ -40,11 +41,8 @@ defmodule Bedrock.Service.Manifest do
         params: manifest.params
       })
 
-    write_file_contents(path_to_manifest, json)
+    RecoveryControl.atomic_write(path_to_manifest, json)
   end
-
-  @spec write_file_contents(Path.t(), String.t()) :: :ok | {:error, File.posix()}
-  defp write_file_contents(path_to_manifest, json), do: File.write(path_to_manifest, json)
 
   @spec load_from_file(path_to_manifest :: Path.t()) ::
           {:ok, t()}

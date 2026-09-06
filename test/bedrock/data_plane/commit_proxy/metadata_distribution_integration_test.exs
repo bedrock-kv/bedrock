@@ -40,7 +40,8 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
 
     def init(state), do: {:ok, state}
 
-    def handle_call({:push, _transaction, _last_commit_version, _kcv}, _from, state), do: {:reply, :ok, state}
+    def handle_call({:push, _authority, _transaction, _last_commit_version, _kcv}, _from, state),
+      do: {:reply, :ok, state}
   end
 
   setup do
@@ -56,6 +57,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
            otp_name: :metadata_dist_test_sequencer,
            director: director,
            epoch: epoch,
+           recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
            last_committed_version: Version.zero()
          ]}
       )
@@ -67,6 +69,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
            lock_token: lock_token,
            key_range: {"", <<0xFF, 0xFF>>},
            epoch: epoch,
+           recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
            last_version: Version.zero(),
            director: director,
            cluster: TestCluster,
@@ -83,6 +86,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
       shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
       log_map: %{0 => "log_1"},
       log_services: %{"log_1" => log},
+      recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
       materializers: %{0 => %{"wkr_sys" => "n1@host"}},
       replication_factor: 1
     }
@@ -93,6 +97,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
           cluster: TestCluster,
           director: director,
           epoch: epoch,
+          recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
           instance: 0,
           max_latency_in_ms: 1,
           max_per_batch: 10,
@@ -103,7 +108,12 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
         )
       )
 
-    :ok = GenServer.call(proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot})
+    :ok =
+      GenServer.call(
+        proxy,
+        {:recover_from, %{generation: 1, recovery_id: "commit-proxy-test"}, sequencer, resolver_layout,
+         routing_snapshot}
+      )
 
     %{proxy: proxy, resolver: resolver, epoch: epoch}
   end
@@ -233,6 +243,7 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
             cluster: TestCluster,
             director: self(),
             epoch: epoch,
+            recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
             instance: 1,
             max_latency_in_ms: 1,
             max_per_batch: 10,

@@ -7,9 +7,9 @@ defmodule Bedrock.Service.Foreman.Impl do
     only: [
       abandoned_paths_from_disk: 1,
       worker_info_from_path: 2,
-      try_to_start_workers: 3,
+      try_to_start_workers: 4,
       try_to_start_worker: 3,
-      initialize_new_worker: 5
+      initialize_new_worker: 6
     ]
 
   import Bedrock.Service.Foreman.State
@@ -91,12 +91,20 @@ defmodule Bedrock.Service.Foreman.Impl do
     # it once the entry is gone.
     release_monitor(Map.get(t.workers, id))
 
+    initialized =
+      initialize_new_worker(id, worker_for_kind(kind), params, t.path, t.cluster, resume_incomplete_creation: id)
+
     worker_info =
-      id
-      |> initialize_new_worker(worker_for_kind(kind), params, t.path, t.cluster)
-      |> try_to_start_worker(t.cluster, t.object_storage)
-      |> advertise_running_worker(t.cluster)
-      |> monitor_worker()
+      case initialized.health do
+        :stopped ->
+          initialized
+          |> try_to_start_worker(t.cluster, t.object_storage)
+          |> advertise_running_worker(t.cluster)
+          |> monitor_worker()
+
+        _ ->
+          initialized
+      end
 
     t =
       t
@@ -453,7 +461,7 @@ defmodule Bedrock.Service.Foreman.Impl do
       workers
       |> Map.values()
       |> Enum.filter(&(&1.health == :stopped))
-      |> try_to_start_workers(t.cluster, t.object_storage)
+      |> try_to_start_workers(t.cluster, t.object_storage, recovery_authority_migration: t.recovery_authority_migration)
       |> advertise_running_workers(t.cluster)
       |> Enum.map(&monitor_worker/1)
       |> merge_worker_info_into_workers(workers)

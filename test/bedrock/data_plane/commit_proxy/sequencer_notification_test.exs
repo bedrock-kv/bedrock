@@ -28,6 +28,7 @@ defmodule Bedrock.DataPlane.CommitProxy.SequencerNotificationTest do
   defp create_finalization_opts do
     [
       epoch: 1,
+      recovery_authority: %{generation: 1, recovery_id: "commit-proxy-test"},
       resolver_layout: %ResolverLayout.Single{resolver_ref: :test_resolver},
       resolver_fn: fn _, _, last, commit, _, _, _ -> last |> Support.tiling_window(commit) |> then(&{:ok, [], &1}) end,
       batch_log_push_fn: fn _, _, _, _ -> :ok end

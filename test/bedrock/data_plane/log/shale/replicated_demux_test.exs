@@ -1,7 +1,6 @@
 defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
   use ExUnit.Case, async: false
 
-  alias Bedrock.Cluster
   alias Bedrock.DataPlane.Demux.Server, as: Demux
   alias Bedrock.DataPlane.Demux.ShardServer
   alias Bedrock.DataPlane.Log
@@ -10,8 +9,15 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Test.DataPlane.TransactionTestSupport
+  alias Bedrock.Test.RecoveryAuthorityTestSupport
 
   @moduletag :tmp_dir
+  @authority %{generation: 1, recovery_id: "replicated-demux-test"}
+
+  defmodule TestCluster do
+    @moduledoc false
+    def name, do: "replicated-demux-test-cluster"
+  end
 
   defmodule GatedObjectStorage do
     @moduledoc false
@@ -84,8 +90,8 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
     crossing_transaction =
       TransactionTestSupport.new_log_transaction(crossing_version, %{"key" => "second"}, shard_id: shard_id)
 
-    :ok = Log.push(first_log, first_transaction, Version.zero(), known_committed_version: first_version)
-    :ok = Log.push(second_log, first_transaction, Version.zero(), known_committed_version: first_version)
+    :ok = Log.push(first_log, @authority, first_transaction, Version.zero(), known_committed_version: first_version)
+    :ok = Log.push(second_log, @authority, first_transaction, Version.zero(), known_committed_version: first_version)
 
     assert {:ok, first_shard_server} = Log.get_shard_server(first_log, shard_id)
     assert {:ok, second_shard_server} = Log.get_shard_server(second_log, shard_id)
@@ -102,8 +108,11 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
     assert {:ok, ^first_slices, _currency} =
              ShardServer.pull(second_shard_server, first_version, timeout: 100, limit: 10)
 
-    :ok = Log.push(first_log, crossing_transaction, first_version, known_committed_version: crossing_version)
-    :ok = Log.push(second_log, crossing_transaction, first_version, known_committed_version: crossing_version)
+    :ok =
+      Log.push(first_log, @authority, crossing_transaction, first_version, known_committed_version: crossing_version)
+
+    :ok =
+      Log.push(second_log, @authority, crossing_transaction, first_version, known_committed_version: crossing_version)
 
     assert_receive {:conditional_create_waiting, persistence_worker, gate_ref, chunk_key, proposed_chunk}, 2_000
 
@@ -180,13 +189,13 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
 
     first_crossing = queue_push(first_log, crossing, second_version)
     first_second = queue_push(first_log, second, first_version)
-    assert :ok = Log.push(first_log, first, Version.zero(), known_committed_version: Version.zero())
+    assert :ok = Log.push(first_log, @authority, first, Version.zero(), known_committed_version: Version.zero())
     assert :ok = Task.await(first_second, 2_000)
     assert :ok = Task.await(first_crossing, 2_000)
 
     second_second = queue_push(second_log, second, first_version)
     second_crossing = queue_push(second_log, crossing, second_version)
-    assert :ok = Log.push(second_log, first, Version.zero(), known_committed_version: Version.zero())
+    assert :ok = Log.push(second_log, @authority, first, Version.zero(), known_committed_version: Version.zero())
     assert :ok = Task.await(second_second, 2_000)
     assert :ok = Task.await(second_crossing, 2_000)
 
@@ -205,10 +214,10 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
     assert second_slices == first_slices
 
     assert :ok =
-             Log.push(first_log, heartbeat, crossing_version, known_committed_version: crossing_version)
+             Log.push(first_log, @authority, heartbeat, crossing_version, known_committed_version: crossing_version)
 
     assert :ok =
-             Log.push(second_log, heartbeat, crossing_version, known_committed_version: crossing_version)
+             Log.push(second_log, @authority, heartbeat, crossing_version, known_committed_version: crossing_version)
 
     assert_receive {:conditional_create_waiting, first_worker, first_ref, chunk_key, proposed_chunk}, 2_000
 
@@ -223,16 +232,18 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
 
   defp start_log(label, wal_root, object_storage) do
     suffix = :erlang.unique_integer([:positive])
+    id = "replicated-demux-#{label}-#{suffix}"
+
+    RecoveryAuthorityTestSupport.prepare_worker!(wal_root, id, Bedrock.DataPlane.Log.Shale, cluster: TestCluster)
 
     spec =
       [
-        cluster: Cluster,
+        cluster: TestCluster,
         otp_name: String.to_atom("replicated_demux_#{label}_#{suffix}"),
-        id: "replicated-demux-#{label}-#{suffix}",
+        id: id,
         foreman: self(),
         path: wal_root,
-        object_storage: object_storage,
-        start_unlocked: true
+        object_storage: object_storage
       ]
       |> Shale.child_spec()
       |> Supervisor.child_spec(restart: :temporary)
@@ -246,13 +257,18 @@ defmodule Bedrock.DataPlane.Log.Shale.ReplicatedDemuxTest do
       assert is_pid(state.segment_recycler)
     end)
 
+    assert {:ok, ^pid, _} = Log.lock_for_recovery(pid, @authority)
+    zero = Version.zero()
+    assert {:ok, ^pid} = Log.recover_from(pid, @authority, [], zero, zero)
+    assert :ok = Log.unlock_after_recovery(pid, @authority)
+
     pid
   end
 
   defp queue_push(log, transaction, expected_version) do
     task =
       Task.async(fn ->
-        Log.push(log, transaction, expected_version, known_committed_version: Version.zero())
+        Log.push(log, @authority, transaction, expected_version, known_committed_version: Version.zero())
       end)
 
     eventually(fn ->

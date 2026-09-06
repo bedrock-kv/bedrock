@@ -35,6 +35,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.Time
+  alias Bedrock.Service.RecoveryAuthority
   alias Bedrock.SystemKeys
 
   @type metadata_mutations :: [Bedrock.Internal.TransactionBuilder.Tx.mutation()]
@@ -70,13 +71,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
                                 ] ->
                                   :ok | {:error, log_push_error() | recovery_required_error()})
 
-  @type log_push_single_fn() :: (ServiceDescriptor.t(), binary(), Bedrock.version() ->
+  @type log_push_single_fn() :: (ServiceDescriptor.t(), RecoveryAuthority.input(), binary(), Bedrock.version() ->
                                    :ok | {:error, :unavailable})
 
   @type async_stream_fn() :: (enumerable :: Enumerable.t(), fun :: (term() -> term()), opts :: keyword() ->
                                 Enumerable.t())
 
   @type abort_reply_fn() :: ([Batch.reply_fn()] -> :ok)
+
+  # ============================================================================
+  # Data Structures
+  # ============================================================================
 
   @type success_reply_fn() :: ([{Batch.reply_fn(), non_neg_integer(), non_neg_integer()}], Bedrock.version() -> :ok)
 
@@ -101,10 +106,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           | log_push_error()
           | recovery_required_error()
 
-  # ============================================================================
-  # Data Structures
-  # ============================================================================
-
   defmodule FinalizationPlan do
     @moduledoc """
     Pipeline state for transaction finalization using unified transaction storage
@@ -120,6 +121,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     defstruct [
       :transactions,
       :transaction_count,
+      # ============================================================================
+      # Main Pipeline
+      # ============================================================================
       :commit_version,
       :last_commit_version,
       :known_committed_version,
@@ -147,10 +151,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
             error: term() | nil
           }
   end
-
-  # ============================================================================
-  # Main Pipeline
-  # ============================================================================
 
   @doc """
   Executes the complete transaction finalization pipeline for a batch of transactions.
@@ -206,6 +206,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           Batch.t(),
           opts :: [
             epoch: Bedrock.epoch(),
+            recovery_authority: RecoveryAuthority.input(),
             sequencer: pid(),
             resolver_layout: ResolverLayout.t(),
             resolver_fn: resolver_fn(),
@@ -227,7 +228,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     trace_commit_proxy_batch_started(batch.commit_version, length(batch.buffer), Time.now_in_ms())
 
     epoch = Keyword.get(opts, :epoch) || raise "Missing epoch in finalization opts"
+
+    recovery_authority =
+      Keyword.get(opts, :recovery_authority) || raise "Missing recovery_authority in finalization opts"
+
+    {:ok, _recovery_authority} = RecoveryAuthority.new(recovery_authority)
     sequencer = Keyword.get(opts, :sequencer) || raise "Missing sequencer in finalization opts"
+    # ============================================================================
+    # Pipeline Initialization
+    # ============================================================================
     resolver_layout = Keyword.get(opts, :resolver_layout) || raise "Missing resolver_layout in finalization opts"
 
     if Keyword.get(opts, :metadata_apply_fn) == nil, do: raise("Missing metadata_apply_fn in finalization opts")
@@ -254,10 +263,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         {:error, reason}
     end
   end
-
-  # ============================================================================
-  # Pipeline Initialization
-  # ============================================================================
 
   @spec create_finalization_plan(Batch.t()) :: FinalizationPlan.t()
   def create_finalization_plan(batch) do
@@ -333,6 +338,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec first_rejected_mutation(Transaction.encoded(), Batch.commit_mode()) ::
           {:key_out_of_range, Bedrock.key()} | :invalid_transaction | nil
   defp first_rejected_mutation(transaction, commit_mode) do
+    # ============================================================================
+    # Conflict Resolution
+    # ============================================================================
     bound = keyspace_bound(commit_mode)
 
     case Transaction.mutations(transaction) do
@@ -359,10 +367,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   defp key_past_bound(key, bound), do: if(key >= bound, do: {:key_out_of_range, key})
-
-  # ============================================================================
-  # Conflict Resolution
-  # ============================================================================
 
   @spec resolve_conflicts(
           FinalizationPlan.t(),
@@ -547,13 +551,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
       end)
       |> Enum.reject(fn {_version, mutations} -> mutations == [] end)
 
+    # Every resolver receives the full metadata_per_tx so each can record
+    # verdict-carrying entries (see resolve_conflicts above).
     {from, to, committed}
   end
 
-  # Every resolver receives the full metadata_per_tx so each can record
-  # verdict-carrying entries (see resolve_conflicts above).
   @spec call_all_resolvers_with_map(
           %{Resolver.ref() => [Transaction.encoded()]},
+          # Every resolver must have transactions after task processing
           [metadata_mutations()],
           Bedrock.epoch(),
           Bedrock.version(),
@@ -576,7 +581,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     resolvers
     |> async_stream_fn.(
       fn {_start_key, ref} ->
-        # Every resolver must have transactions after task processing
         filtered_transactions = Map.fetch!(resolver_transaction_map, ref)
         call_resolver(ref, epoch, last_version, commit_version, filtered_transactions, metadata_per_tx, opts)
       end,
@@ -681,16 +685,19 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     ConflictSharding.shard_conflicts_across_resolvers(sections, ends, refs)
   end
 
+  # ============================================================================
+  # Log Preparation
+  # ============================================================================
+  # Rejected transactions were already answered with their specific error;
+  # never let a conflict-abort double-reply them. (Their emptied conflict
+  # sections make resolver aborts impossible today - this guard makes the
+  # invariant structural rather than incidental.)
   @spec split_and_notify_aborts_with_set(FinalizationPlan.t(), MapSet.t(non_neg_integer()), keyword()) ::
           FinalizationPlan.t()
   defp split_and_notify_aborts_with_set(%FinalizationPlan{stage: :conflicts_resolved} = plan, aborted_set, opts) do
     abort_reply_fn =
       Keyword.get(opts, :abort_reply_fn, &reply_to_all_clients_with_aborted_transactions/1)
 
-    # Rejected transactions were already answered with their specific error;
-    # never let a conflict-abort double-reply them. (Their emptied conflict
-    # sections make resolver aborts impossible today - this guard makes the
-    # invariant structural rather than incidental.)
     newly_aborted = MapSet.difference(aborted_set, plan.replied_indices)
 
     newly_aborted
@@ -707,10 +714,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec reply_to_all_clients_with_aborted_transactions([Batch.reply_fn()]) :: :ok
   def reply_to_all_clients_with_aborted_transactions([]), do: :ok
   def reply_to_all_clients_with_aborted_transactions(aborts), do: Enum.each(aborts, & &1.({:error, :aborted}))
-
-  # ============================================================================
-  # Log Preparation
-  # ============================================================================
 
   @spec prepare_for_logging(FinalizationPlan.t()) :: FinalizationPlan.t()
   def prepare_for_logging(%FinalizationPlan{stage: :failed} = plan), do: plan
@@ -920,6 +923,11 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           Bedrock.key() | {Bedrock.key(), Bedrock.key()}
   def mutation_to_key_or_range({:set, key, _value}), do: key
   def mutation_to_key_or_range({:clear, key}), do: key
+
+  # ============================================================================
+  # Log Distribution
+  # ============================================================================
+
   def mutation_to_key_or_range({:clear_range, start_key, end_key}), do: {start_key, end_key}
   def mutation_to_key_or_range({:atomic, _op, key, _value}), do: key
 
@@ -961,10 +969,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp min_binary(a, b) when a <= b, do: a
   defp min_binary(_a, b), do: b
 
-  # ============================================================================
-  # Log Distribution
-  # ============================================================================
-
   @spec push_to_logs(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
   def push_to_logs(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan
 
@@ -989,21 +993,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         %{plan | error: reason, stage: :failed}
     end
   end
-
-  @spec try_to_push_transaction_to_log(ServiceDescriptor.t(), binary(), Bedrock.version(), Bedrock.version() | nil) ::
-          :ok | {:error, :unavailable}
-  def try_to_push_transaction_to_log(descriptor, transaction, last_commit_version, known_committed_version \\ nil)
-
-  def try_to_push_transaction_to_log(
-        %{kind: :log, status: {:up, log_server}},
-        transaction,
-        last_commit_version,
-        known_committed_version
-      ) do
-    Log.push(log_server, transaction, last_commit_version, known_committed_version: known_committed_version)
-  end
-
-  def try_to_push_transaction_to_log(_, _, _, _), do: {:error, :unavailable}
 
   @doc """
   Pushes transactions directly to logs and waits for acknowledgement from ALL log servers.
@@ -1041,7 +1030,8 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
           opts :: [
             log_services: %{Log.id() => pid() | {atom(), node()}},
             async_stream_fn: async_stream_fn(),
-            log_push_fn: (pid() | {atom(), node()}, binary(), Bedrock.version() -> :ok | {:error, term()}),
+            log_push_fn: (pid() | {atom(), node()}, RecoveryAuthority.input(), binary(), Bedrock.version() ->
+                            :ok | {:error, term()}),
             timeout: non_neg_integer()
           ]
         ) :: :ok | {:error, log_push_error() | recovery_required_error()}
@@ -1049,10 +1039,17 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     log_services = Keyword.fetch!(opts, :log_services)
     async_stream_fn = Keyword.get(opts, :async_stream_fn, &Task.async_stream/3)
     known_committed_version = Keyword.get(opts, :known_committed_version)
+    recovery_authority = Keyword.fetch!(opts, :recovery_authority)
 
     log_push_fn =
-      Keyword.get(opts, :log_push_fn, fn service_ref, transaction, last_version ->
-        try_to_push_transaction_to_log_direct(service_ref, transaction, last_version, known_committed_version)
+      Keyword.get(opts, :log_push_fn, fn service_ref, authority, transaction, last_version ->
+        try_to_push_transaction_to_log_direct(
+          service_ref,
+          authority,
+          transaction,
+          last_version,
+          known_committed_version
+        )
       end)
 
     timeout = Keyword.get(opts, :timeout, 5_000)
@@ -1068,7 +1065,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     |> async_stream_fn.(
       fn {log_id, service_ref} ->
         encoded_transaction = Map.get(transactions_by_log, log_id)
-        result = log_push_fn.(service_ref, encoded_transaction, last_commit_version)
+        result = log_push_fn.(service_ref, recovery_authority, encoded_transaction, last_commit_version)
         {log_id, result}
       end,
       timeout: timeout
@@ -1124,6 +1121,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
          {_log_id, {:recovery_required, _reason}} -> true
          _error -> false
        end) do
+      # ============================================================================
+      # Sequencer Notification
+      # ============================================================================
       {:error, {:recovery_required, log_failures}}
     else
       {:error, log_failures}
@@ -1132,18 +1132,26 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   @spec try_to_push_transaction_to_log_direct(
           pid() | {atom(), node()},
+          RecoveryAuthority.input(),
           binary(),
           Bedrock.version(),
           Bedrock.version() | nil
         ) ::
           :ok | {:error, term()}
-  def try_to_push_transaction_to_log_direct(service_ref, transaction, last_commit_version, known_committed_version) do
-    Log.push(service_ref, transaction, last_commit_version, known_committed_version: known_committed_version)
+  # ============================================================================
+  # Success Notification
+  # ============================================================================
+  def try_to_push_transaction_to_log_direct(
+        service_ref,
+        recovery_authority,
+        transaction,
+        last_commit_version,
+        known_committed_version
+      ) do
+    Log.push(service_ref, recovery_authority, transaction, last_commit_version,
+      known_committed_version: known_committed_version
+    )
   end
-
-  # ============================================================================
-  # Sequencer Notification
-  # ============================================================================
 
   @spec notify_sequencer(FinalizationPlan.t(), Sequencer.ref(), keyword()) :: FinalizationPlan.t()
   def notify_sequencer(%FinalizationPlan{stage: :failed} = plan, _sequencer, _opts), do: plan
@@ -1160,10 +1168,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
         %{plan | error: reason, stage: :failed}
     end
   end
-
-  # ============================================================================
-  # Success Notification
-  # ============================================================================
 
   @spec notify_successes(FinalizationPlan.t(), keyword()) :: FinalizationPlan.t()
   def notify_successes(%FinalizationPlan{stage: :failed} = plan, _opts), do: plan

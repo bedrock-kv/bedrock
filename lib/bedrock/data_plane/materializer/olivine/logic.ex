@@ -20,6 +20,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.ObjectStorage.SnapshotBundle
+  alias Bedrock.Service.RecoveryAuthority
+  alias Bedrock.Service.RecoveryControl
   alias Bedrock.Service.Worker
 
   require Logger
@@ -30,6 +32,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
   def startup(otp_name, foreman, id, path, opts \\ []) do
     cluster = Keyword.get(opts, :cluster)
+    control = Keyword.get(opts, :recovery_control)
     {shard_tag, shard_num} = normalize_shard(Keyword.get(opts, :shard_id))
     idle_timeout = Keyword.get(opts, :idle_timeout, :infinity)
     snapshot = build_snapshot_handle(cluster, shard_tag)
@@ -50,7 +53,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
          index_manager: index_manager,
          snapshot: snapshot,
          idle_timeout: idle_timeout,
-         last_read_at: System.monotonic_time(:millisecond)
+         last_read_at: System.monotonic_time(:millisecond),
+         recovery_control: control,
+         recovery_authority: control && control.authority,
+         epoch: control && control.authority && control.authority.generation,
+         mode: :locked
        }}
     end
   end
@@ -168,16 +175,43 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     :ok = Database.close(t.database)
   end
 
-  @spec lock_for_recovery(State.t(), Director.ref(), Bedrock.epoch()) ::
-          {:ok, State.t()} | {:error, :newer_epoch_exists | String.t()}
-  def lock_for_recovery(t, _, epoch) when not is_nil(t.epoch) and epoch < t.epoch, do: {:error, :newer_epoch_exists}
+  @spec lock_for_recovery(State.t(), Director.ref() | nil, RecoveryAuthority.input()) ::
+          {:ok, State.t()} | {:error, term()}
+  def lock_for_recovery(t, _director, authority) do
+    with {:ok, authority} <- RecoveryAuthority.new(authority),
+         :ok <- admit_authority(authority, t.recovery_authority),
+         record = RecoveryControl.locked(t.recovery_control, authority),
+         :ok <- persist_control(t.path, record) do
+      updated =
+        t
+        |> update_mode(:locked)
+        |> update_director_and_epoch(nil, authority.generation)
+        |> stop_pulling()
 
-  def lock_for_recovery(t, director, epoch) do
-    t
-    |> update_mode(:locked)
-    |> update_director_and_epoch(director, epoch)
-    |> stop_pulling()
-    |> then(&{:ok, &1})
+      {:ok,
+       %{
+         updated
+         | recovery_authority: RecoveryAuthority.external(authority),
+           recovery_control: record
+       }}
+    end
+  end
+
+  defp persist_control(path, record) do
+    case RecoveryControl.write(path, record) do
+      {:error, {:post_publish_sync_failed, reason}} -> exit({:recovery_authority_durability_uncertain, reason})
+      result -> result
+    end
+  end
+
+  defp admit_authority(_incoming, nil), do: :ok
+
+  defp admit_authority(incoming, current) do
+    case RecoveryAuthority.compare(incoming, current) do
+      :older -> {:error, :newer_epoch_exists}
+      :equal_generation_foreign -> {:error, :not_lock_owner}
+      _ -> :ok
+    end
   end
 
   @spec stop_pulling(State.t()) :: State.t()
@@ -295,8 +329,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
       path
       key_ranges
       kind
+      mode
       n_keys
       otp_name
+      recovery_authority
       shard_id
       size_in_bytes
       supported_info
@@ -315,6 +351,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   # worker that is IN the epoch from one the epoch never embraced — a
   # node that missed recovery's roll call and rejoined later.
   defp gather_info(:epoch, t), do: t.epoch
+  defp gather_info(:recovery_authority, t), do: t.recovery_authority
+  defp gather_info(:mode, t), do: t.mode
   defp gather_info(:id, t), do: t.id
   defp gather_info(:key_ranges, t), do: IndexManager.info(t.index_manager, :key_ranges)
   defp gather_info(:kind, _t), do: :materializer

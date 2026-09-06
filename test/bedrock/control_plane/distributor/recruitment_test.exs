@@ -23,12 +23,13 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
       %{
         cluster: TestCluster,
         epoch: 4,
+        recovery_authority: %{generation: 4, recovery_id: "recruitment-test"},
         node_capabilities: %{materializer: [:node_a@host]},
         logs: %{"log_1" => [], "log_2" => []},
         log_refs: %{"log_1" => :ref_1, "log_2" => :ref_2},
         create_worker_fn: fn _foreman, _id, :materializer, _opts -> {:ok, :worker_ref} end,
         lock_materializer_fn: fn _worker, _epoch -> {:ok, self(), %{durable_version: Version.zero()}} end,
-        unlock_materializer_fn: fn _pid, _version, _sources -> :ok end,
+        unlock_materializer_fn: fn _pid, _authority, _version, _sources -> :ok end,
         remove_worker_fn: fn _foreman, _id, _opts -> :ok end
       },
       overrides
@@ -48,8 +49,8 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
           send(test_pid, {:locked, worker, epoch})
           {:ok, test_pid, %{durable_version: Version.from_integer(0)}}
         end,
-        unlock_materializer_fn: fn pid, version, sources ->
-          send(test_pid, {:unlocked, pid, version, sources})
+        unlock_materializer_fn: fn pid, authority, version, sources ->
+          send(test_pid, {:unlocked, pid, authority, version, sources})
           :ok
         end
       })
@@ -59,7 +60,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
     assert_received {:created, {:recruitment_test_foreman, :node_a@host}, ^worker_id, params}
     assert params["shard_id"] == 7
 
-    assert_received {:locked, {:worker_ref, :node_a@host}, 4}
+    assert_received {:locked, {:worker_ref, :node_a@host}, %{generation: 4, recovery_id: "recruitment-test"}}
 
     # The seed is the shard's replica set from the single placement site.
     expected =
@@ -70,7 +71,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         "log_2" -> {"log_2", :ref_2}
       end)
 
-    assert_received {:unlocked, _pid, version, ^expected}
+    assert_received {:unlocked, _pid, %{generation: 4, recovery_id: "recruitment-test"}, version, ^expected}
     assert version == Version.from_integer(0)
   end
 
@@ -95,7 +96,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
 
     ctx =
       ctx(%{
-        unlock_materializer_fn: fn _pid, _v, _sources -> {:failure, :timeout, :ref} end,
+        unlock_materializer_fn: fn _pid, _authority, _v, _sources -> {:failure, :timeout, :ref} end,
         remove_worker_fn: fn _foreman, id, _opts ->
           send(test_pid, {:removed, id})
           :ok
@@ -152,8 +153,8 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
             send(test_pid, {:locked, worker, epoch})
             {:ok, test_pid, %{durable_version: own_durable}}
           end,
-          unlock_materializer_fn: fn pid, version, sources ->
-            send(test_pid, {:unlocked, pid, version, sources})
+          unlock_materializer_fn: fn pid, authority, version, sources ->
+            send(test_pid, {:unlocked, pid, authority, version, sources})
             :ok
           end,
           create_worker_fn: fn _f, _i, _k, _o -> flunk("adoption must never create a worker") end
@@ -162,11 +163,13 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
       assert {:ok, _pid, :node_b@host, "wkr_named"} = Recruitment.adopt(7, "wkr_named", :node_b@host, ctx)
 
       # Locked by its callable name on ITS node — no node selection.
-      assert_received {:locked, {:recruitment_test_worker_wkr_named, :node_b@host}, 4}
+      assert_received {:locked, {:recruitment_test_worker_wkr_named, :node_b@host},
+                       %{generation: 4, recovery_id: "recruitment-test"}}
 
       # Unlocked at the version the worker itself reports: it resumes
       # pulling from exactly where its own store left off.
-      assert_received {:unlocked, _pid, ^own_durable, [{"log_1", :ref_1} | _]}
+      assert_received {:unlocked, _pid, %{generation: 4, recovery_id: "recruitment-test"}, ^own_durable,
+                       [{"log_1", :ref_1} | _]}
     end
 
     test "a failed adoption never removes the worker — it pre-exists this attempt and holds real state" do

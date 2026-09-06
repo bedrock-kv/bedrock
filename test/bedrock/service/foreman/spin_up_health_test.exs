@@ -3,6 +3,9 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
 
   alias Bedrock.Service.Foreman.Impl
   alias Bedrock.Service.Foreman.State
+  alias Bedrock.Service.Manifest
+  alias Bedrock.Service.RecoveryControl
+  alias Bedrock.Service.WorkerBehaviour
 
   # Spin-up is where a foreman learns what it has and starts it. If the
   # verdict is not recomputed there, the foreman keeps the :starting it
@@ -23,7 +26,7 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
 
   defmodule SpinUpTestWorker do
     @moduledoc false
-    use Bedrock.Service.WorkerBehaviour, kind: :log
+    use WorkerBehaviour, kind: :log
     use GenServer
 
     def child_spec(opts), do: %{id: {__MODULE__, opts[:id]}, start: {__MODULE__, :start_link, [opts]}}
@@ -31,6 +34,14 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
 
     @impl GenServer
     def init(opts), do: {:ok, opts}
+  end
+
+  defmodule OtherWorker do
+    @moduledoc false
+    use WorkerBehaviour, kind: :log
+
+    def child_spec(opts),
+      do: %{id: {__MODULE__, opts[:id]}, start: {Task, :start_link, [fn -> Process.sleep(:infinity) end]}}
   end
 
   defp write_worker(dir, id) do
@@ -52,6 +63,7 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
         health: :starting,
         otp_name: :spin_up_test_foreman,
         path: dir,
+        recovery_authority_migration: :allow_legacy,
         workers: %{}
       },
       overrides
@@ -98,6 +110,61 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
       assert %{health: :ok} = state
       assert [%{id: "aaaaaaaa", health: {:ok, pid}}] = Map.values(state.workers)
       assert Process.alive?(pid)
+    end
+
+    test "legacy adoption is disabled unless the actual Foreman state opts in", %{tmp_dir: dir} do
+      write_worker(dir, "aaaaaaaa")
+      before = File.read!(Path.join(dir, "aaaaaaaa/manifest.json"))
+
+      state = Impl.do_spin_up(base_state(dir, recovery_authority_migration: :disabled))
+
+      assert %{health: {:failed_to_start, {:recovery_authority, :migration_required}}} = state.workers["aaaaaaaa"]
+      assert File.read!(Path.join(dir, "aaaaaaaa/manifest.json")) == before
+      refute File.exists?(RecoveryControl.path(Path.join(dir, "aaaaaaaa")))
+    end
+
+    test "Foreman resumes record-first initialization and publishes the marker last", %{tmp_dir: dir} do
+      start_supervised!(
+        {DynamicSupervisor, strategy: :one_for_one, name: SpinUpTestCluster.otp_name(:worker_supervisor)}
+      )
+
+      write_worker(dir, "aaaaaaaa")
+      path = Path.join(dir, "aaaaaaaa")
+      :ok = RecoveryControl.write(path, RecoveryControl.no_grant(SpinUpTestCluster, "aaaaaaaa", SpinUpTestWorker))
+
+      state = Impl.do_spin_up(base_state(dir, recovery_authority_migration: :allow_legacy))
+
+      assert %{health: {:ok, pid}} = state.workers["aaaaaaaa"]
+      assert Process.alive?(pid)
+
+      assert {:ok, %{params: %{"recovery_authority_protocol" => 1}}} =
+               Manifest.load_from_file(Path.join(path, "manifest.json"))
+
+      assert {:ok, %{phase: :no_grant}} = RecoveryControl.load(path)
+    end
+
+    test "Foreman rejects a record-first resume bound to a different cluster", %{tmp_dir: dir} do
+      write_worker(dir, "aaaaaaaa")
+      path = Path.join(dir, "aaaaaaaa")
+      :ok = RecoveryControl.write(path, RecoveryControl.no_grant("other-cluster", "aaaaaaaa", SpinUpTestWorker))
+
+      state = Impl.do_spin_up(base_state(dir, recovery_authority_migration: :allow_legacy))
+
+      assert %{health: {:failed_to_start, :creation_identity_mismatch}} = state.workers["aaaaaaaa"]
+      assert {:ok, %{params: params}} = Manifest.load_from_file(Path.join(path, "manifest.json"))
+      refute Map.has_key?(params, "recovery_authority_protocol")
+    end
+
+    test "Foreman rejects a record-first resume bound to a different worker", %{tmp_dir: dir} do
+      write_worker(dir, "aaaaaaaa")
+      path = Path.join(dir, "aaaaaaaa")
+      :ok = RecoveryControl.write(path, RecoveryControl.no_grant(SpinUpTestCluster, "aaaaaaaa", OtherWorker))
+
+      state = Impl.do_spin_up(base_state(dir, recovery_authority_migration: :allow_legacy))
+
+      assert %{health: {:failed_to_start, :creation_identity_mismatch}} = state.workers["aaaaaaaa"]
+      assert {:ok, %{params: params}} = Manifest.load_from_file(Path.join(path, "manifest.json"))
+      refute Map.has_key?(params, "recovery_authority_protocol")
     end
 
     test "a worker whose directory cannot produce one leaves the foreman unhealthy", %{tmp_dir: dir} do

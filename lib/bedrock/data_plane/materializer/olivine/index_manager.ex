@@ -180,13 +180,29 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
   Creates a new version and applies all mutations in the transaction.
   Uses a two-pass approach: first collect all instructions, then process each page.
   """
-  @spec apply_transaction(t(), binary(), Database.t()) :: {t(), Database.t()}
+  @spec apply_transaction(t(), binary(), Database.t()) :: {t(), Database.t()} | no_return()
   def apply_transaction(
         %{versions: [{_version, {current_index, _prev_modified}} | _]} = index_manager,
         transaction,
         database
       ) do
     commit_version = Transaction.commit_version!(transaction)
+
+    # The applied position only ever advances. Every rewind rejoins the
+    # stream strictly above it — recovery unlock resumes at
+    # `Version.increment(current_version)` and so does the compaction
+    # cutover (`streaming.ex:65`, `logic.ex:238`, `server.ex:528`) — so
+    # neither a re-delivered nor an out-of-order commit version can reach
+    # here. This is an assertion, not a guard: `versions` is descending by
+    # construction and `find_target/2`, `rollback_to/2` and the eviction
+    # queue all read it that way, so prepending a version at or below the
+    # head corrupts the MVCC window silently rather than crashing. FDB
+    # asserts the same thing on the same edge —
+    # `ASSERT(cloneCursor2->version().version > data->version.get())`,
+    # `storageserver.actor.cpp:12318`.
+    if commit_version <= index_manager.current_version do
+      exit({:non_monotonic_commit_version, %{applied: index_manager.current_version, got: commit_version}})
+    end
 
     update =
       current_index

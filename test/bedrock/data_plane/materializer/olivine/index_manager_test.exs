@@ -668,6 +668,61 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
     end
   end
 
+  describe "commit version monotonicity" do
+    test "a commit version below the applied version is refused" do
+      db = create_test_database()
+
+      try do
+        v10 = Version.from_integer(10_000)
+        v5 = Version.from_integer(5_000)
+
+        {im, db} =
+          IndexManager.apply_transaction(IndexManager.new(), test_transaction([{:set, "a", "1"}], v10), db)
+
+        assert catch_exit(IndexManager.apply_transaction(im, test_transaction([{:set, "a", "2"}], v5), db)) ==
+                 {:non_monotonic_commit_version, %{applied: v10, got: v5}}
+      after
+        Database.close(db)
+      end
+    end
+
+    test "the applied commit version re-presented is refused" do
+      db = create_test_database()
+
+      try do
+        v10 = Version.from_integer(10_000)
+
+        {im, db} =
+          IndexManager.apply_transaction(IndexManager.new(), test_transaction([{:set, "a", "1"}], v10), db)
+
+        assert catch_exit(IndexManager.apply_transaction(im, test_transaction([{:set, "b", "2"}], v10), db)) ==
+                 {:non_monotonic_commit_version, %{applied: v10, got: v10}}
+      after
+        Database.close(db)
+      end
+    end
+
+    test "a batch stops at the offending transaction, leaving the chain intact" do
+      db = create_test_database()
+
+      try do
+        v10 = Version.from_integer(10_000)
+        v20 = Version.from_integer(20_000)
+
+        transactions = [
+          test_transaction([{:set, "a", "1"}], v10),
+          test_transaction([{:set, "b", "2"}], v20),
+          test_transaction([{:set, "c", "3"}], v10)
+        ]
+
+        assert catch_exit(IndexManager.apply_transactions(IndexManager.new(), transactions, db)) ==
+                 {:non_monotonic_commit_version, %{applied: v20, got: v10}}
+      after
+        Database.close(db)
+      end
+    end
+  end
+
   describe "version management and windowing" do
     test "version_in_window?/2 correctly identifies versions in window" do
       window_start = Version.from_integer(5_000_000)

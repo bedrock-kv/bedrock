@@ -24,11 +24,15 @@
     {
       "text": "Implementation/local audit ready: 17 doctests,158 properties,2892 ordinary tests pass (17 S3/distributed excluded); native Linux arm64 UBSan focused65/0; Darwin/Linux extracted package peer and Darwin release smoke pass; Credo/Dialyzer clean. Audit /tmp/bedrock-followups-20260905.zKTZxP/302-author-audit.md. Native x86_64 QEMU failed compiling dependency before product; root will obtain actual GitHub CI and final independent review. No author commit/push.",
       "timestamp": "2026-09-06T04:17:11Z"
+    },
+    {
+      "text": "Final reviewer test amendments complete: removable marker gates with unconditional on_exit cancellation; empirical case-volume detection/reporting; direct+nested metadata get/version assertions; obsolete TOCTOU comment removed. Final Darwin focused65/0 and Linux arm64 UBSan focused65/0 (302-focused-review-final.log,302-linux-review-final.log). Audit updated; root owns commit/push/CI/final review from here.",
+      "timestamp": "2026-09-06T04:22:21Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Make LocalFilesystem version-matched writes atomic",
   "type": "bug",
-  "updated_at": "2026-09-06T04:17:11Z"
+  "updated_at": "2026-09-06T04:22:21Z"
 }

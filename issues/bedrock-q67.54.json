@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T03:49:57Z",
+  "description": "Follow-up from bedrock-q67.21.15 (PR #303). The new \\xFF/system/logs/\u003cgeneration\u003e/\u003clog_id\u003e family records :old generation logs so the exclusion check refuses their addresses while recovery may still need them. FDB's updateLogsValue rewrites logsKey without the old vector once those generations drain; Bedrock commits exactly one recovery transaction and has no post-recovery commit path, so :old entries survive until the next recovery replaces them — over-refusing exclusions (safe direction) for the epoch's life. Add the trigger: when the object-storage durable version for every shard passes the recovery version (the point after which no old-generation log can be needed for replay), the distributor (the only mid-epoch system-keyspace writer, under its lock) clears logs/old/ for that generation. Pin with a test that the entries exist after recovery and are gone after durability passes.",
+  "id": "bedrock-q67.54",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "logs/old/ generation records are never pruned: add a durability trigger that clears them once the object-storage durable version passes the recovery version",
+  "type": "task",
+  "updated_at": "2026-09-06T03:49:57Z"
+}

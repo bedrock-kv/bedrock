@@ -867,6 +867,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       state = %{
         coordinator: coordinator,
+        epoch: 3,
+        publication_sequence: 0,
+        config: %{recovery_attempt: :stalled},
         transaction_system_layout: layout,
         # Deliberately EMPTY here, and populated only on `completed`.
         recovery_attempt: %RecoveryAttempt{
@@ -880,9 +883,20 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       completed = %{state.recovery_attempt | shard_materializers: %{0 => adopted}}
 
-      Recovery.persist_new_transaction_system_layout(state, completed)
+      # Counter state flows through stalled progress and the successful
+      # config/layout pair, using the actual public notification helpers.
+      state = Recovery.persist_config(state)
+      assert state.publication_sequence == 1
+      assert_receive {:cast, {:notify_config, {sender, 3, 1}, %{recovery_attempt: :stalled}}}
+      assert sender == self()
+      state = Recovery.persist_config(%{state | config: %{}})
+      assert state.publication_sequence == 2
+      assert_receive {:cast, {:notify_config, {^sender, 3, 2}, %{}}}
+      state = Recovery.persist_new_transaction_system_layout(state, completed)
+      assert state.publication_sequence == 3
 
-      assert_receive {:cast, {:notify_transaction_system_layout, ^layout, core_state}}, 500
+      assert_receive {:cast, {:notify_transaction_system_layout, {sender, 3, 3}, ^layout, core_state}}, 500
+      assert sender == self()
       assert core_state.system_materializers == adopted
     end
 

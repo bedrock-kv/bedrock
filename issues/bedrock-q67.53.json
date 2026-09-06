@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T03:49:57Z",
+  "description": "Second half of bedrock-q67.21.15 (PR #303), deliberately not done there. FDB's exclusion/recovery safety reasoning assumes a stale master can still attempt commits after a newer generation has locked the tlogs, and the lock refuses it. Settle whether Bedrock has the same hazard with a falsifiable spike (per the spike-before-fixing rule): start recovery A, let it reach the point where its recovery transaction (attempt.pending_tx) is about to commit, start recovery B in a newer epoch that locks the same logs/materializers, then let A's commit proceed. Expected safe outcome: A's commit is refused by the epoch lock on every service (locking_phase / the log's lock_for_recovery epoch check) and A's director exits. If A's commit lands anywhere, that is the hazard and needs the fence. Record the result on this ticket either way; if safe, note which check makes it so and pin it with a test.",
+  "id": "bedrock-q67.53",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Spike: does Bedrock have FDB's stale-master hazard? Drive a superseded director's recovery commit against services locked at a newer epoch",
+  "type": "task",
+  "updated_at": "2026-09-06T03:49:57Z"
+}

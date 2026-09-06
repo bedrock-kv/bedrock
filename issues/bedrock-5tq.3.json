@@ -9,9 +9,15 @@
   "id": "bedrock-5tq.3",
   "labels": [],
   "parent": "bedrock-5tq",
+  "comments": [
+    {
+      "text": "Correction to close reason: the rewrite was PR #121 (bc96d253, merged 2026-08-18), which replaced the Manifest/Configuration sections (68+/99-). #138 only touched 5 lines.",
+      "timestamp": "2026-09-06T14:06:17Z"
+    }
+  ],
   "priority": 2,
   "status": "closed",
   "title": "shale.md describes mechanisms that do not exist in the implementation",
   "type": "bug",
-  "updated_at": "2026-09-06T14:05:38Z"
+  "updated_at": "2026-09-06T14:06:17Z"
 }

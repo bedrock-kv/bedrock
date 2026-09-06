@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T02:07:05Z",
+  "description": "`Server.handle_continue(:advance_window, ...)` (server.ex:282-290) checks `t.allow_window_advancement` and skips the advance while a compaction is open. `handle_info(:timeout, ...)` (server.ex:394) calls `Logic.advance_window/1` with no such guard.\n\nA window advance during an open compaction evicts versions and moves `index_db.durable_version`. The compaction task captured the pre-advance `durable_version`, and the cutover then looks that version up in the live `versions` list with a strict match (`server.ex:477`) — a MatchError that takes the worker down.\n\nBounded today: nothing in `lib/` drives `:compact`, so the cutover is only reachable from tests. It becomes live the moment compaction is scheduled (bedrock-947).\n\nOne clause, or moving the guard into `Logic.advance_window/1` so both callers share it.\n\nFound by the cold audit on bedrock-3v1 (note N3); pre-existing, not introduced there.",
+  "id": "bedrock-ngl",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "[BUG] Olivine window advance on the :timeout path ignores allow_window_advancement",
+  "type": "bug",
+  "updated_at": "2026-09-06T02:07:05Z"
+}

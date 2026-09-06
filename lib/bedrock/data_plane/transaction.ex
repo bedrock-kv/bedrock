@@ -137,6 +137,11 @@ defmodule Bedrock.DataPlane.Transaction do
   Automatically selects the most compact opcode variants based on data sizes
   and omits empty sections for optimal space efficiency.
 
+  Read conflicts use `read_conflicts: {read_version, ranges}`. A separate
+  `read_version` field does not supply that version. Nonempty flat lists raise
+  rather than silently dropping conflict checks; omitted, nil, and empty-list
+  read conflicts remain compatible no-read forms.
+
   ## Options
   - `:include_commit_version` - Include placeholder commit version section
   - `:include_transaction_id` - DEPRECATED: Use `:include_commit_version` instead
@@ -180,6 +185,10 @@ defmodule Bedrock.DataPlane.Transaction do
         section = encode_section(@read_conflicts_tag, payload)
         [section | sections]
     end
+  end
+
+  defp add_read_conflicts_section(_sections, %{read_conflicts: [_ | _]}) do
+    raise ArgumentError, "read_conflicts must be {read_version, ranges}, not a nonempty flat list"
   end
 
   defp add_read_conflicts_section(sections, _), do: sections

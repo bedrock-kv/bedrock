@@ -9,9 +9,15 @@
   "description": "A delayed old Director publication restores retired log routing after replacement at the same epoch. Add PID and generation attribution, require the current registered Director and current leadership, prevent notifications from changing epoch, clear and broadcast unavailable on retirement, and define idempotent current-instance publication identity. RED: recover a real cluster then replay the old layout; cover stale config, equal-generation foreign PID, leadership loss, and duplicate notifications. No schema or generation-allocation changes. Dependency of bedrock-t0k.",
   "id": "bedrock-ls9",
   "labels": [],
+  "comments": [
+    {
+      "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/295. Split from cold-rejected broad GH259 plan; bounded stale-notification protocol first.",
+      "timestamp": "2026-09-06T02:56:13Z"
+    }
+  ],
   "priority": 1,
   "status": "open",
   "title": "Attribute Director layout and config notifications to the current instance",
   "type": "bug",
-  "updated_at": "2026-09-06T02:56:12Z"
+  "updated_at": "2026-09-06T02:56:13Z"
 }

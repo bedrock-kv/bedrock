@@ -26,6 +26,7 @@ defmodule Bedrock.DataPlane.Materializer do
   @type fact_name ::
           Worker.fact_name()
           | :key_ranges
+          | :mode
           | :current_version
           | :durable_version
           | :shard_id

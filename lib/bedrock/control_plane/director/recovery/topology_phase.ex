@@ -210,32 +210,40 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
       shard_layout: shard_layout || %{},
       log_map: log_map,
       log_services: log_services,
-      materializers: committed_materializers(recovery_attempt),
+      materializers: seeded_materializers(recovery_attempt),
       replication_factor: max(1, map_size(logs))
     }
   end
 
-  # The materializer half of the seed is the COMMITTED family as recovery
-  # read it, plus the tag-0 member recovery seated — which is exactly what
-  # the family says once the persistence commit lands, so the seed and the
-  # keyspace are one view read twice, and the in-band mutation stream
-  # (RoutingData.apply_mutations/2) carries it forward from there.
+  # The materializer half of the seed, per tag: what recovery SEATED for
+  # the tags it seated, and the COMMITTED family for the tags it did not
+  # touch.
   #
-  # It cannot be "what recovery seated" alone: recovery seats only tag 0
+  # It cannot be the seat alone. Recovery seats only tag 0
   # (bedrock-q67.21.13), and every data tag would then be unroutable for
   # the epoch and — worse — every data-tag materializer would ask a proxy
   # at rejoin validation, be told the keyspace names nobody for its shard,
-  # and dispose of its own store. FDB seeds its proxies the same way, from
-  # the log-replayed txnStateStore, not from what recovery started.
-  @spec committed_materializers(RecoveryAttempt.t()) ::
+  # and dispose of its own store. For those tags the keyspace is all
+  # anyone knows, and it is what FDB seeds its proxies with too (the
+  # log-replayed txnStateStore, not a record of what recovery started).
+  #
+  # And it cannot be the family alone, for the tag recovery DID seat. The
+  # family names members recovery could not put in service — a node that
+  # missed the roll call, a replica the distributor added last epoch —
+  # and the pick is by worker id (RoutingData.pick_member/1), so one of
+  # them can win the tag-0 entry. Tag 0 is where the distributor's own
+  # startup snapshot is read from, so a tag-0 entry naming a worker that
+  # is not serving stops the sweep before it can heal anything: it
+  # restart-loops, never adopts the data tags, and never clears the entry
+  # that is wedging it. For a tag recovery seated, recovery knows who is
+  # in service this epoch, and that beats the keyspace's older answer.
+  @spec seeded_materializers(RecoveryAttempt.t()) ::
           %{Bedrock.range_tag() => %{Worker.id() => String.t()}}
-  defp committed_materializers(recovery_attempt) do
+  defp seeded_materializers(recovery_attempt) do
     committed = Map.get(recovery_attempt, :prior_materializer_refs) || %{}
     seated = Map.get(recovery_attempt, :shard_materializers) || %{}
 
-    Map.merge(committed, seated, fn _tag, committed_members, seated_members ->
-      Map.merge(committed_members, seated_members)
-    end)
+    Map.merge(committed, seated)
   end
 
   # Validate that recovery state is ready for system transaction

@@ -143,7 +143,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
       rolled = IndexManager.rollback_to(im, v1)
 
       assert live_page_ids(rolled) == page_ids_at_v1
-      assert Enum.all?(IndexManager.info(rolled, :free_ids), &(&1 not in page_ids_at_v1))
+      assert IndexManager.info(rolled, :free_ids) == []
 
       # 120 more keys below the page boundary overflow page 0 again, so the
       # replayed suffix asks the allocator for another id.

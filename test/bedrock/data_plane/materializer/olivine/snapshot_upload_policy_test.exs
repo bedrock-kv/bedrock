@@ -1,18 +1,20 @@
 defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotUploadPolicyTest do
   @moduledoc """
-  Snapshot upload policy (bedrock-zi44) as the worker sees it: the
-  manifest params a materializer is created with have to reach its
-  `snapshot_policy`, one knob at a time, and a worker created without
-  them has to end up with the policy that uploads at every opportunity —
-  the behaviour every materializer had before the policy existed.
+  Snapshot upload policy (bedrock-zi44) and snapshot retention
+  (bedrock-s1zr) as the worker sees them: the manifest params a
+  materializer is created with have to reach its `snapshot_policy` and
+  `snapshot_retention`, one knob at a time, and a worker created without
+  them has to end up uploading at every opportunity and deleting
+  nothing — the behaviour every materializer had before either existed.
 
-  What the policy DOES with those knobs is `SnapshotPolicyTest`; where
-  it is consulted is `LogicTest`.
+  What the policies DO with those knobs is `SnapshotPolicyTest` and
+  `SnapshotRetentionTest`; where they are consulted is `LogicTest`.
   """
   use ExUnit.Case, async: false
 
   alias Bedrock.DataPlane.Materializer.Olivine
   alias Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotRetention
 
   defmodule TestCluster do
     @moduledoc false
@@ -81,6 +83,20 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotUploadPolicyTest do
 
       assert %SnapshotPolicy{min_interval_ms: nil, after_bytes: nil, after_transactions: nil} = policy
       assert :upload = SnapshotPolicy.decide(policy, System.monotonic_time(:millisecond))
+    end
+
+    test "set the worker's retention", %{tmp_dir: tmp_dir} do
+      pid = start_worker(tmp_dir, %{"shard_id" => 42, "snapshot_keep_last" => 3})
+
+      assert %SnapshotRetention{keep_last: 3} = :sys.get_state(pid).snapshot_retention
+    end
+
+    test "left out leave the worker deleting nothing", %{tmp_dir: tmp_dir} do
+      pid = start_worker(tmp_dir, %{"shard_id" => 42})
+      retention = :sys.get_state(pid).snapshot_retention
+
+      assert %SnapshotRetention{keep_last: nil} = retention
+      refute SnapshotRetention.configured?(retention)
     end
   end
 end

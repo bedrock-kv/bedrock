@@ -11,6 +11,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotRetention
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Materializer.Olivine.Streaming
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
@@ -35,6 +36,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     idle_timeout = Keyword.get(opts, :idle_timeout, :infinity)
 
     snapshot_policy = Keyword.get(opts, :snapshot_policy, %SnapshotPolicy{})
+    snapshot_retention = Keyword.get(opts, :snapshot_retention, %SnapshotRetention{})
     snapshot = build_snapshot_handle(cluster, shard_tag)
 
     with :ok <- ensure_directory_exists(path),
@@ -53,6 +55,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
          index_manager: index_manager,
          snapshot: snapshot,
          snapshot_policy: snapshot_policy,
+         snapshot_retention: snapshot_retention,
          idle_timeout: idle_timeout,
          last_read_at: System.monotonic_time(:millisecond)
        }}
@@ -542,6 +545,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
            {:ok, idx} <- File.read(to_string(spindown_idx_path)),
            :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
         Logger.info("Snapshot uploaded to ObjectStorage before idle spin-down", version: version_int)
+        prune_snapshots(snapshot, t.snapshot_retention)
         :ok
       else
         {:error, reason} ->
@@ -589,6 +593,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
       :upload ->
         version_int = Version.to_integer(durable_version)
+        retention = t.snapshot_retention
 
         Task.start(fn ->
           # Read files and upload as iodata (no intermediate bundle file)
@@ -596,6 +601,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
                {:ok, idx} <- File.read(to_string(idx_path)),
                :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
             Logger.info("Snapshot uploaded to ObjectStorage", version: version_int)
+            prune_snapshots(snapshot, retention)
           else
             {:error, reason} ->
               Logger.warning("Snapshot upload failed", version: version_int, reason: inspect(reason))
@@ -605,4 +611,54 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
         %{t | snapshot_policy: SnapshotPolicy.uploaded(t.snapshot_policy, now_in_ms)}
     end
   end
+
+  # Retention runs only AFTER a snapshot has landed, which is what makes
+  # it safe: the newest object is already durable, so pruning behind it
+  # can never leave the shard without a baseline to cold start from. It
+  # is best-effort cleanup and never a reason to fail the upload it
+  # follows — but a failure is REPORTED, not swallowed. An unconfigured
+  # policy costs the shard nothing, not even a listing.
+  @spec prune_snapshots(Snapshot.t(), SnapshotRetention.t()) :: :ok
+  defp prune_snapshots(snapshot, retention) do
+    if SnapshotRetention.configured?(retention) do
+      snapshot |> delete_below_retention(retention) |> log_prune_outcome()
+    else
+      :ok
+    end
+  end
+
+  # The rescue covers the WHOLE prune, not just the listing it starts
+  # with: `Snapshot.delete_older_than/2` lists again to walk the
+  # deletions, and on the spin-down path this all runs in the worker, so
+  # an exception escaping from either listing would take down a
+  # materializer that had already written its snapshot successfully.
+  #
+  # It is deliberately broad. `Snapshot.list/2` raises when the listing
+  # failed, and once bedrock-q67.21.19 lands it raises again — a
+  # different exception this branch cannot yet name — for an object under
+  # the shard's prefix whose name will not parse. Neither is an empty
+  # history: deciding retention on a listing known to be short would
+  # delete a snapshot the shard still wants, and reporting "nothing to
+  # delete" would hide a prefix growing without bound. The exception
+  # itself goes into the reason, so a genuine bug caught here is still
+  # named for what it is rather than blending into a backend outage.
+  @spec delete_below_retention(Snapshot.t(), SnapshotRetention.t()) :: {:ok, non_neg_integer()} | {:error, term()}
+  defp delete_below_retention(snapshot, retention) do
+    versions = snapshot |> Snapshot.list() |> Enum.map(fn {version, _key} -> version end)
+
+    case SnapshotRetention.oldest_to_keep(retention, versions) do
+      :keep_all -> {:ok, 0}
+      {:ok, oldest_to_keep} -> Snapshot.delete_older_than(snapshot, oldest_to_keep)
+    end
+  rescue
+    e -> {:error, {:snapshot_prune_failed, e}}
+  end
+
+  @spec log_prune_outcome({:ok, non_neg_integer()} | {:error, term()}) :: :ok
+  defp log_prune_outcome({:ok, 0}), do: :ok
+
+  defp log_prune_outcome({:ok, deleted}), do: Logger.info("Pruned snapshots past the retention limit", deleted: deleted)
+
+  defp log_prune_outcome({:error, reason}),
+    do: Logger.warning("Snapshot retention pruning failed", reason: inspect(reason))
 end

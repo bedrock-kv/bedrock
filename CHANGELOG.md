@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Snapshots can be pruned once they are written.** Every snapshot a
+  materializer ever wrote stayed in object storage forever; nothing in
+  `lib/` called `Snapshot.delete_older_than/2`. A new manifest param,
+  `snapshot_keep_last`, says how many of a shard's newest snapshots to
+  keep, and the prune runs after a snapshot has durably landed — so a
+  shard can never be left without a baseline, and the newest snapshot is
+  never the one deleted. A worker without the param deletes nothing and
+  does not even list. A prune that cannot complete its listing says so
+  rather than reporting nothing to delete. Shard chunks are untouched:
+  they are the history, and reclaiming them needs a replay floor
+  (bedrock-wxf.6.11).
+
 - **Snapshot uploads answer to a policy.** A materializer uploaded a
   snapshot whenever a compaction happened to finish, with no way to say how
   much of that cadence was worth paying for. Three new manifest params say

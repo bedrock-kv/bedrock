@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:29Z",
+  "close_reason": "Delivered in PR #244 (audited 2026-09-06: PLT cache keyed on resolved OTP/Elixir outputs, v4 bump; CI green)",
   "created": "2026-09-05T13:19:13Z",
   "description": "Seen 2026-09-03 on PR #223's run: OTP 27.3 and 29.0 jobs failed with ':dialyzer.run error: Old PLT file plts/dialyzer.plt' immediately after a cache hit, while 28.3 passed with a cache from the same 2026-08-28 save. elixir_ci.yaml keys the PLT cache as ${{runner.os}}-${{matrix.elixir}}-${{matrix.otp}}-plts-v3-${{hashFiles('**/mix.lock')}} — matrix.otp is '27.3', not the resolved patch release, so a runner-image OTP patch bump invalidates the PLT format without invalidating the key. Fix: include setup-beam's resolved otp-version/elixir-version outputs in the key (or bump plts-v3 and add the outputs). Immediate remediation already done: deleted cache ids 7106643988/7106652589 and reran.",
   "id": "bedrock-bkt",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "CI: PLT cache key omits resolved OTP patch version, so runner image updates poison dialyzer PLTs",
   "type": "task",
-  "updated_at": "2026-09-06T00:26:46Z"
+  "updated_at": "2026-09-06T14:05:29Z"
 }

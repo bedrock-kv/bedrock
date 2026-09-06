@@ -18,11 +18,15 @@
     {
       "text": "Cold plan and final audit approved: /tmp/bedrock-issue-team-20260905/235-final-review.md. Original 13 range regressions failed; fixed range scans expose a second resolver read-range versus point-write hole, separately reproduced and cold-reviewed. Final 21 focused tests green, full 17 doctests/158 properties/2913 tests/0 failures; strict Credo and Dialyzer clean. Public Repo concurrent test uses real builder/encoding/resolver and retry loop with controlled scheduling/storage; full-core harness remains #239. One earlier full run hit MinIO port collision and one timing-sensitive LongPulls test exceeded its 100ms tolerance under compile load; final isolated full run passed. Arbitrary offset selector cross-shard semantics remain bedrock-mi1; canonical range selectors covered.",
       "timestamp": "2026-09-06T00:32:10Z"
+    },
+    {
+      "text": "Draft PR https://github.com/bedrock-kv/bedrock/pull/245 published, commit d8ae2513. Final audit approved and required checks passed; no merge performed.",
+      "timestamp": "2026-09-06T00:34:18Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Empty range reads omit pending writes and read-conflict ranges",
   "type": "bug",
-  "updated_at": "2026-09-06T00:32:10Z"
+  "updated_at": "2026-09-06T00:34:18Z"
 }

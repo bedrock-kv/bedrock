@@ -8,6 +8,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Internal.TransactionBuilder.Tx
+  alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   # Helper to create test state with node capabilities
   defp create_test_state(overrides \\ %{}) do
@@ -364,6 +367,28 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       assert %State{recovery_attempt: retried} = Recovery.setup_for_subsequent_recovery(state)
       assert retried.attempt == 4
       assert retried.lock_failed_service_ids == remembered
+    end
+
+    test "the retry starts the system transaction over" do
+      # The attempt struct is reused across retries, so the mutations the
+      # abandoned attempt's phases contributed have to go: the retry may
+      # take a different branch (a cluster that looked fresh once may read
+      # its layout the next time), and those writes would otherwise ride
+      # along into the commit.
+      state = %State{
+        recovery_attempt: %RecoveryAttempt{
+          cluster: TestCluster,
+          epoch: 1,
+          attempt: 3,
+          started_at: 12_345,
+          pending_tx: Tx.set(Tx.new(), SystemKeys.shard_key(<<0xFF>>), Values.encode_shard_key_entry(1, <<>>))
+        },
+        config: %{},
+        services: %{}
+      }
+
+      assert %State{recovery_attempt: retried} = Recovery.setup_for_subsequent_recovery(state)
+      assert retried.pending_tx == Tx.new()
     end
 
     test "increments attempt counter and resets state" do

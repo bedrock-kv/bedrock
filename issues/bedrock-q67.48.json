@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:23:44Z",
+  "description": "Found by the cold audit of bedrock-q67.34 (PR #261). resolver_startup_phase.ex (~129-141) and commit_proxy_startup_phase.ex (~153-157) Enum.reduce_while to {:error, _} on the first failed start and discard the accumulator, so components that DID start in that batch never reach attempt.resolvers / attempt.proxies. #261's retire_stalled_attempt/1 can therefore never find them: they are partial-start leaks that outlive the attempt (a resolver or unlocked-later proxy nobody references). Fix: on partial failure, either terminate the already-started components before returning the error, or record them on the attempt so retirement reaches them. Reproduce with a test where the second of two proxy starts fails and assert the first is terminated (or recorded).",
+  "id": "bedrock-q67.48",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Recruitment phases drop already-started components when a later start in the batch fails, orphaning them",
+  "type": "bug",
+  "updated_at": "2026-09-06T01:23:44Z"
+}

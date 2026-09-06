@@ -18,11 +18,15 @@
     {
       "text": "Independent oracle uncovered actual missed conflict on235base: writes[a,c),[a,b) then stale readb incorrectly commits (seed500675, /tmp/issue238-oracle-baseline.log). Tree matches only start and loses extent; second red shows long left subtree interval[a,z) missed for queryp under root[m,n). Root authorized scoped repair; amended plan adds full interval identity + subtree max_end augmentation, preserves versions/filtering. Tree red /tmp/issue238-tree-red.log; awaiting amended cold review.",
       "timestamp": "2026-09-06T00:45:05Z"
+    },
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/248 — read conflicts now encode in the tuple form and the property asserts abort membership in both directions; vacuity proven (old test passed with read-conflict detection deleted) and the new tests fail against four distinct resolver breakages. Cold audit PASS-WITH-NOTES.",
+      "timestamp": "2026-09-06T00:45:16Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Resolver conflict tests encode read conflicts in a shape Transaction.encode ignores, making read-abort assertions vacuous",
   "type": "bug",
-  "updated_at": "2026-09-06T00:45:05Z"
+  "updated_at": "2026-09-06T00:45:16Z"
 }

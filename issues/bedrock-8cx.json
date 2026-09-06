@@ -26,11 +26,15 @@
     {
       "text": "Implemented reviewed pending overlays, deterministic proxy transaction order and deletion dirty-page bookkeeping. Final 13-regression suite green, targeted 29 properties/546 tests green, full 17 doctests/158 properties/2905 tests green (2 distributed excluded). Format/Credo clean. Red amended predecessor durability evidence /tmp/issue234-amended-red.log; final audit mapping /tmp/bedrock-issue-team-20260905/234-final-audit.md. Awaiting independent final audit.",
       "timestamp": "2026-09-06T00:18:54Z"
+    },
+    {
+      "text": "mix dialyzer passed with 0 errors, 0 skips. Independent final audit underway.",
+      "timestamp": "2026-09-06T00:19:34Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Olivine batch application loses ordered atomic and range-clear mutations",
   "type": "bug",
-  "updated_at": "2026-09-06T00:18:54Z"
+  "updated_at": "2026-09-06T00:19:34Z"
 }

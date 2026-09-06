@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:32Z",
+  "close_reason": "Delivered in PR #274 (audited 2026-09-06: unreachable page-0 branch removed with comment; keys_removed clause moot once #253 lands; stacked, no CI run)",
   "created": "2026-07-14T18:55:14Z",
   "description": "Audit of bedrock-zsw confirmed index_update.ex lines ~203-215 (if 0 in middle_page_ids) are unreachable: chain traversal uses next_id == 0 as end-of-chain sentinel, so page 0 can only ever be the first collected page, never middle or last. Remove the branch or coveralls-ignore it. Also consider the keys_removed asymmetry: clear_range counts unconditionally while set/clear stats are gated on track_statistics. See PR #78.",
   "id": "bedrock-9mo",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Remove unreachable page-0-as-middle-page branch in IndexUpdate.clear_range",
   "type": "task",
-  "updated_at": "2026-09-06T01:56:53Z"
+  "updated_at": "2026-09-06T14:05:32Z"
 }

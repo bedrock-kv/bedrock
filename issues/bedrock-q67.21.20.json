@@ -11,11 +11,15 @@
     {
       "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/237. Published the 2026-09-05 implementation evaluation, pinned to 8f962e09, with evidence and acceptance criteria. Reproduced findings are distinguished from source-level risks. No implementation fix is included.",
       "timestamp": "2026-09-05T23:58:15Z"
+    },
+    {
+      "text": "Reproduced #237 before production edits with real ShardServer chunk+buffer history, real Olivine workers, and real Distributor fenced add/retire handlers. Epoch2 bootstrap stalls solely on stale CoreState w1 after committed family becomesw2. Regression test bootstrap_membership_test.exs. Proposed authority is existing independent recovered log/chunk record, reconstructing fresh tag0 coverage rather than synchronizing distributor with bootstrap. Cold plan: /tmp/bedrock-issue-team-20260905/237-plan.md; production implementation paused for review.",
+      "timestamp": "2026-09-06T00:26:19Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Tag 0 has two membership owners: the distributor can retire the member the durable pointer names",
   "type": "task",
-  "updated_at": "2026-09-06T00:20:04Z"
+  "updated_at": "2026-09-06T00:26:19Z"
 }

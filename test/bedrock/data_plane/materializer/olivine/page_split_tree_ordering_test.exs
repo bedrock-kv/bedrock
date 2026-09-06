@@ -3,7 +3,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageSplitTreeOrderingTest do
 
   import Bedrock.Test.Materializer.Olivine.InvariantChecks
 
-  alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IdAllocator
   alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
@@ -12,19 +11,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PageSplitTreeOrderingTest do
   alias Bedrock.Test.Materializer.Olivine.IndexTestHelpers
 
   setup do
-    # Create temporary directory for test database
-    temp_dir = System.tmp_dir!() <> "/test_page_split_#{System.unique_integer()}"
-    File.mkdir_p!(temp_dir)
-
-    db_file_path = Path.join(temp_dir, "page_split_test.dets")
-    {:ok, database} = Database.open(:"test_db_#{System.unique_integer()}", db_file_path)
-
-    on_exit(fn ->
-      :ok = Database.close(database)
-      File.rm_rf!(temp_dir)
-    end)
-
-    {:ok, database: database}
+    {:ok, database: IndexTestHelpers.open_test_database("page_split_test")}
   end
 
   describe "page splitting maintains tree ordering" do

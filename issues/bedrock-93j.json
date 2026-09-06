@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:33Z",
+  "close_reason": "Delivered in PR #284 (audited 2026-09-06: generated start_link/2 forwards to GenServer.start_link/3; CI green)",
   "created": "2026-07-14T22:58:32Z",
   "description": "use Bedrock.Internal.GenServerApi generates start_link/1 passing a keyword list to inits expecting tuples — latent broken-but-unused function across ~7 facades (Distributor, Placeholder, Sequencer, ...). child_specs bypass it. Either generate a compatible start_link or stop generating it. Surfaced in PR #94 second-pass audit.",
   "id": "bedrock-93j",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 4,
-  "status": "in_progress",
+  "status": "closed",
   "title": "GenServerApi-generated start_link/1 is unusable for tuple-init servers",
   "type": "task",
-  "updated_at": "2026-09-06T02:29:03Z"
+  "updated_at": "2026-09-06T14:05:33Z"
 }

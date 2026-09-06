@@ -60,7 +60,7 @@ defmodule Bedrock.Directory.PropertyTest do
             layer_name <- valid_layer_name()
           ) do
       # Use keyspace-aware stubs
-      parent_path = if length(path) > 0, do: Enum.drop(path, -1)
+      parent_path = if not Enum.empty?(path), do: Enum.drop(path, -1)
 
       stub(MockRepo, :get, fn _keyspace, key ->
         case key do

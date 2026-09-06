@@ -170,7 +170,7 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
       base_tx = %{
         mutations: mutations,
         read_conflicts:
-          if(has_read_conflicts and not is_nil(read_version) and length(read_conflict_ranges) > 0,
+          if(has_read_conflicts and not is_nil(read_version) and not Enum.empty?(read_conflict_ranges),
             do: {read_version, read_conflict_ranges},
             else: {nil, []}
           ),
@@ -333,7 +333,7 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
 
     property "produces minimal size for given data" do
       check all(mutations <- mutation_list_generator()) do
-        if length(mutations) > 0 do
+        if not Enum.empty?(mutations) do
           transaction = mutations_transaction(mutations)
           encoded = Transaction.encode(transaction)
 
@@ -423,7 +423,7 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
   describe "header structure" do
     property "decoded opcodes are in valid ranges" do
       check all(mutations <- mutation_list_generator()) do
-        if length(mutations) > 0 do
+        if not Enum.empty?(mutations) do
           transaction = mutations_transaction(mutations)
           encoded = Transaction.encode(transaction)
 
@@ -544,7 +544,7 @@ defmodule Bedrock.DataPlane.TransactionPropertyTest do
   describe "streaming and section extraction" do
     property "mutation streaming produces identical results to decode" do
       check all(mutations <- mutation_list_generator()) do
-        if length(mutations) > 0 do
+        if not Enum.empty?(mutations) do
           transaction = mutations_transaction(mutations)
           encoded = Transaction.encode(transaction)
 

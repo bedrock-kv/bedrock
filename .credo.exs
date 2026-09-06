@@ -34,9 +34,6 @@
         # Specs required for lib code only; test helpers are exempt (bedrock-qjp)
         {Credo.Check.Readability.Specs, files: %{excluded: [~r"(^|/)test/"]}},
 
-        # Disabled pending cleanup of existing findings (bedrock-jsu)
-        {Credo.Check.Refactor.Nesting, false},
-        {Credo.Check.Warning.ExpensiveEmptyEnumCheck, false}
       ]
     }
   ]

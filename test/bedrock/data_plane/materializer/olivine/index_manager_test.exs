@@ -432,14 +432,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
                IndexManager.pages_for_range(vm_updated, start_key, end_key, Version.from_integer(1000))
 
       assert is_list(pages)
-      assert length(pages) > 0
+      refute Enum.empty?(pages)
 
       # All pages should contain keys in the requested range
       all_keys = Enum.flat_map(pages, &Page.keys/1)
       range_keys = Enum.filter(all_keys, fn key -> key >= start_key and key <= end_key end)
 
       # Should find keys in the range
-      assert length(range_keys) > 0
+      refute Enum.empty?(range_keys)
 
       Database.close(db)
     end

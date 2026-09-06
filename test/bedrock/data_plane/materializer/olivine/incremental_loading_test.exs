@@ -168,7 +168,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
 
       # Verify pages contain the expected keys
       page_0_keys = Page.keys(page_0)
-      assert length(page_0_keys) > 0, "Page 0 should contain keys"
+      assert not Enum.empty?(page_0_keys), "Page 0 should contain keys"
 
       # Verify we can locate keys using the index and get correct locators
       {:ok, page_for_key1, locator1} = Index.locator_for_key(recovered_index, "key_00001")

@@ -776,7 +776,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
 
       # Should receive the data
       assert_receive {:pull_result, {:ok, transactions, _}}, 1_000
-      assert length(transactions) >= 1
+      refute Enum.empty?(transactions)
     end
 
     test "a woken waiter receives data from its own start position, not from zero", %{

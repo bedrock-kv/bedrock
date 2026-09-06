@@ -176,7 +176,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerPropertyTest do
 
   property "tree maintains sorted order invariant" do
     check all(pages <- non_overlapping_pages_generator()) do
-      if length(pages) > 0 do
+      if not Enum.empty?(pages) do
         tree = build_tree_from_pages(pages)
 
         tree_entries = extract_tree_entries(tree)
@@ -200,7 +200,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerPropertyTest do
 
   property "page_for_key returns correct page for keys in range" do
     check all(pages <- non_overlapping_pages_generator()) do
-      if length(pages) > 0 do
+      if not Enum.empty?(pages) do
         tree = build_tree_from_pages(pages)
 
         # Verify page_for_key returns correct page for each key
@@ -219,7 +219,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerPropertyTest do
             pages <- non_overlapping_pages_generator(),
             test_key <- binary_key_generator()
           ) do
-      if length(pages) > 0 do
+      if not Enum.empty?(pages) do
         tree = build_tree_from_pages(pages)
 
         found_page_id = Tree.page_for_key(tree, test_key)
@@ -233,7 +233,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerPropertyTest do
 
   property "find_rightmost_page returns page with highest last_key" do
     check all(pages <- non_overlapping_pages_generator()) do
-      if length(pages) > 0 do
+      if not Enum.empty?(pages) do
         tree = build_tree_from_pages(pages)
 
         rightmost_page_id = find_rightmost_page(tree)
@@ -290,7 +290,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerPropertyTest do
 
         tree_entries = extract_tree_entries(updated_tree)
 
-        if length(tree_entries) > 0 do
+        if not Enum.empty?(tree_entries) do
           expected_page_id = Page.id(page)
           _expected_first_key = List.first(new_keys)
           expected_last_key = List.last(new_keys)

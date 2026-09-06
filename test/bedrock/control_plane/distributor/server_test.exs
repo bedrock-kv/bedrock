@@ -957,6 +957,160 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
     end
   end
 
+  describe "placement spreads across the capable nodes" do
+    # A recruit's placement is a pure function of the capability
+    # directory and what this distributor knows to be placed already —
+    # committed members plus its own in-flight recruits. The in-flight
+    # half is what makes the sweep spread: it starts a recruit for every
+    # uncovered tag at once, so nothing has been committed yet when the
+    # second and third are placed.
+    defp spreading_state(test_pid, nodes, overrides) do
+      recruiting_state(
+        Keyword.merge(
+          [
+            recruitment_ctx: %{
+              cluster: __MODULE__,
+              epoch: 3,
+              node_capabilities: %{materializer: nodes},
+              logs: %{"log_1" => []},
+              log_refs: %{"log_1" => :ref},
+              create_worker_fn: fn {_foreman, node}, _id, :materializer, _opts ->
+                send(test_pid, {:created_on, node})
+                {:ok, :worker_ref}
+              end,
+              lock_materializer_fn: fn _worker, _epoch -> {:ok, test_pid, %{durable_version: Version.zero()}} end,
+              unlock_materializer_fn: fn _pid, _version, _sources -> :ok end
+            }
+          ],
+          overrides
+        )
+      )
+    end
+
+    defp created_nodes(count) do
+      Enum.map(1..count, fn _ ->
+        assert_receive {:created_on, node_name}, 5_000
+        node_name
+      end)
+    end
+
+    test "three recruits over three capable nodes land one apiece, not three on the first" do
+      test_pid = self()
+      t = spreading_state(test_pid, [:node_a@host, :node_b@host, :node_c@host], [])
+
+      assert {:noreply, t2} = Server.handle_cast({:coverage_demand, 7}, t)
+      assert {:noreply, t3} = Server.handle_cast({:coverage_demand, 8}, t2)
+      assert {:noreply, _t4} = Server.handle_cast({:coverage_demand, 9}, t3)
+
+      assert Enum.sort(created_nodes(3)) == [:node_a@host, :node_b@host, :node_c@host]
+    end
+
+    test "the least-loaded node wins; equal loads break by the capability directory's order" do
+      test_pid = self()
+
+      t =
+        spreading_state(test_pid, [:node_a@host, :node_b@host, :node_c@host],
+          snapshot: %{
+            shard_layout: %{},
+            materializer_refs: %{
+              1 => %{"wkr_1" => "node_a@host"},
+              2 => %{"wkr_2" => "node_a@host"},
+              3 => %{"wkr_3" => "node_b@host"},
+              4 => %{"wkr_4" => "node_c@host"}
+            }
+          }
+        )
+
+      # node_b and node_c carry one each: the directory's order decides,
+      # and node_b is named first.
+      assert {:noreply, t2} = Server.handle_cast({:coverage_demand, 7}, t)
+      assert t2.pending_placements == %{7 => "node_b@host"}
+
+      # node_b now carries two counting the reservation, so node_c wins
+      # outright — and it is the RESERVATION that makes it so: nothing
+      # has been committed for tag 7 yet.
+      assert {:noreply, t3} = Server.handle_cast({:coverage_demand, 8}, t2)
+      assert t3.pending_placements[8] == "node_c@host"
+
+      assert Enum.sort(created_nodes(2)) == [:node_b@host, :node_c@host]
+    end
+
+    test "publication hands the reservation to the committed view — the count survives, undoubled" do
+      test_pid = self()
+      # This node first: publication monitors the assignment by name,
+      # which needs a node the runtime can actually reach.
+      t = spreading_state(test_pid, [node(), :node_b@host], [])
+
+      assert {:noreply, t2} = Server.handle_cast({:coverage_demand, 7}, t)
+      assert t2.pending_placements == %{7 => Atom.to_string(node())}
+
+      assert {:noreply, t3} =
+               Server.handle_info({:recruitment_complete, 7, {:ok, test_pid, node(), "wkr_7"}}, t2)
+
+      # The reservation is released, and the committed member carries the
+      # same load in its place — so the next recruit still sees this
+      # node as taken and goes elsewhere.
+      assert t3.pending_placements == %{}
+      assert t3.snapshot.materializer_refs[7] == %{"wkr_7" => Atom.to_string(node())}
+
+      assert {:noreply, t4} = Server.handle_cast({:coverage_demand, 8}, t3)
+      assert t4.pending_placements == %{8 => "node_b@host"}
+    end
+
+    test "a heal places the replacement against what is left, and does not re-pile on the survivor" do
+      test_pid = self()
+      ref = make_ref()
+
+      t =
+        spreading_state(test_pid, [:node_a@host, :node_b@host, :node_c@host],
+          placeholder: relaying_placeholder(test_pid),
+          snapshot: %{
+            shard_layout: %{},
+            materializer_refs: %{
+              7 => %{"wkr_7" => "node_a@host"},
+              8 => %{"wkr_8" => "node_b@host"}
+            }
+          },
+          assignment_monitors: %{ref => {8, "wkr_8"}}
+        )
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, self(), :noproc}, t)
+
+        # Retirement freed node_b, so the replacement goes back to it —
+        # node_a still carries tag 7 and is not handed a second shard.
+        assert MapSet.member?(t2.recruiting, 8)
+        assert t2.pending_placements == %{8 => "node_b@host"}
+      end)
+
+      assert created_nodes(1) == [:node_b@host]
+    end
+
+    test "no capable node takes the ordinary failure path: the placeholder sheds and the tag backs off" do
+      test_pid = self()
+
+      t =
+        spreading_state(test_pid, [], placeholder: relaying_placeholder(test_pid))
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:noreply, t2} = Server.handle_cast({:coverage_demand, 7}, t)
+          assert t2.pending_placements == %{}
+          assert_receive {:recruitment_complete, 7, {:error, :no_materializer_capable_nodes}} = completion, 100
+
+          # Nowhere to place means no worker is created anywhere.
+          refute_received {:created_on, _}
+
+          assert {:noreply, t3} = Server.handle_info(completion, t2)
+          refute MapSet.member?(t3.recruiting, 7)
+          assert Map.has_key?(t3.backoff, 7)
+          assert_receive {:placeholder_got, {:coverage_failed, 7, :no_materializer_capable_nodes}}, 5_000
+        end)
+
+      assert log =~ "recruitment for tag 7 failed"
+    end
+  end
+
   describe "failure containment" do
     test "a crashed recruit task synthesizes a failed completion — the tag never wedges" do
       test_pid = self()

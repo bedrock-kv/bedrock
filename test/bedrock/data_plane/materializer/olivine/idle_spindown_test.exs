@@ -323,7 +323,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
         create_worker_fn: &start_worker_as_foreman(tmp_dir, &1, &2, &3, &4)
       })
 
-    {ctx, Recruitment.recruit(7, ctx)}
+    {ctx, Recruitment.recruit(7, node(), ctx)}
   end
 
   # The director's own recruitment context, captured at the seam where

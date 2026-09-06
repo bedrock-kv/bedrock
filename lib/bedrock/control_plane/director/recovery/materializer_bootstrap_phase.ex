@@ -433,7 +433,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
           | {:error, {:invalid_materializer_entry, Bedrock.key()}}
   defdelegate decode_prior_refs(entries), to: Reader, as: :decode_materializer_members
 
-  # Find a node that can host materializers
+  # Find a node that can host materializers. The first capable node is
+  # the whole policy here, and stays that way: this phase creates
+  # exactly one worker, ever — tag 0, on a fresh cluster — and a
+  # singleton has nothing to spread itself against. Spreading belongs to
+  # the path that places many, `Distributor.Recruitment.place/2`
+  # (bedrock-22g), which counts this seat as load on its node like any
+  # other member.
   defp find_materializer_capable_node(%{node_capabilities: caps}) do
     case Map.get(caps, :materializer, []) do
       [node | _] -> {:ok, node}

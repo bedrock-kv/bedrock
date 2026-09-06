@@ -7,9 +7,15 @@
   "id": "bedrock-q67.20.7",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "INVALID as scoped — closing without a PR.\n\nCensus confirms the ticket's own analysis: the fallback lives in lib/bedrock/system_keys/reader.ex (decode_legacy_shard_tag/shard_layout_from_entries, not materializer_bootstrap_phase.ex — it moved there during q67.21.13's tag-0-only rework, but is the same code the ticket names).\n\n1. WRITERS are canonical: both call sites that write shard_key values (materializer_bootstrap_phase.ex:191 and routing_data.ex ~286) call Values.encode_shard_key_entry/2, the SystemKeys.Values tuple-encoding introduced by bedrock-ri40/q67.20.2. No writer anywhere in lib/ uses term_to_binary for shard_key values.\n\n2. NO MIGRATION EXISTS to re-encode already-persisted legacy entries. grep -rl migrat lib/ turns up zero migration code for this family (the other 'migration' hits are the unrelated log-window migration and the system-materializer bootstrap-record migration). The distributor's startup_sweep (control_plane/distributor/server.ex:118) only reads a snapshot and heals coverage gaps — it never rewrites shard_keys/ entries.\n\n3. LEGACY RECORDS CAN STILL REACH PRODUCTION: bedrock-q67.21.2 shipped read-and-heal recovery — shard_keys/ seeds only-when-absent and is never rewritten for an existing cluster (system_keys/reader.ex:88-94 documents this explicitly: 'recovery no longer rewrites the family... so a legacy family stays legacy... until bedrock-q67.20.7 retires the fallback with an explicit migration'). This killed the original retirement plan bedrock-q67.20.2 relied on ('every completed recovery re-encodes; remove one release after 0.7'). Unlike the single-valued materializer shape (q67.21.22, closed as never-shipped), this legacy shard-key format DID ship in real pre-Values clusters and has no rewrite path.\n\nPer the ticket-protocol INVALID criterion: a legacy record can still reach a cluster and no migration exists, so retiring the fallback now would silently break any pre-Values cluster's shard layout. Closing without code changes. The natural follow-up (an explicit one-time migration — distributor's first ownership pass or a dedicated migration step, as the ticket itself suggests) is a separate P-task the epic owner should file if still wanted; not filed here per protocol (evidence-only close, no scope creep).",
+      "timestamp": "2026-09-06T03:11:54Z"
+    }
+  ],
   "priority": 4,
   "status": "in_progress",
   "title": "Remove legacy term_to_binary shard-tag fallback from materializer bootstrap",
   "type": "task",
-  "updated_at": "2026-09-06T03:10:08Z"
+  "updated_at": "2026-09-06T03:11:54Z"
 }

@@ -2,14 +2,16 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:38Z",
+  "close_reason": "Completed by PR #138 (2026-08-18, after this ticket was filed): shale.md rewritten to WAL Segments / Ordered Appends / Pull / Recovery / WAL Trimming; no manifest, 64MB, sync-policy or tuning claims remain (verified 2026-09-06).",
   "created": "2026-08-15T17:18:22Z",
   "description": "shale.md's 'Manifest and Metadata' section describes a manifest file tracking active WAL/segment allocation — no manifest exists in lib/bedrock/data_plane/log/shale/ (recovery reloads by scanning segments; cold_starting.ex). Other unverified-or-fictional claims: '64MB WAL size limit' and file rotation; 'large transactions stored in separate segment files with WAL references' (segments ARE the WAL; there is a 10MB per-transaction cap and recycler, not a two-tier scheme); 'Sync policies' and 'Configuration and Tuning' sections describing knobs that do not exist; 'timestamps and checksums per transaction' (checksums exist in transaction_streams.ex; verify the header description). Rewrite the Storage Architecture / Transaction Storage Process / Configuration sections against writer.ex, segment.ex, segment_recycler.ex, cold_starting.ex.",
   "id": "bedrock-5tq.3",
   "labels": [],
   "parent": "bedrock-5tq",
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "shale.md describes mechanisms that do not exist in the implementation",
   "type": "bug",
-  "updated_at": "2026-08-15T17:18:22Z"
+  "updated_at": "2026-09-06T14:05:38Z"
 }

@@ -10,11 +10,15 @@
     {
       "text": "Campaign worktrees rooted at /tmp/bedrock-issue-team-20260905. Initial leads: issue233 -\u003e bedrock-wjt/compaction-version; issue234 -\u003e bedrock-8cx/mutation-order; root -\u003e issue235 bedrock-oep/empty-range. Each plan and final diff gets a cold agent review before draft PR publication. GitHub titles use numeric issue prefix, e.g. 233: short description. Dependency flow: 234 -\u003e 236 if shared mutation code requires stacking; 233/234/235/236/237/238 -\u003e 239 validation integration. Existing tickets retained under their current parents.",
       "timestamp": "2026-09-06T00:04:33Z"
+    },
+    {
+      "text": "All seven requested issue investigations delivered as reviewed draft PRs:233-\u003e241,234-\u003e242,235-\u003e245,236-\u003e247,237-\u003e254,238-\u003e255,239-\u003e267. Failing regressions, cold plan review, TDD and final criterion audits retained under /tmp/bedrock-issue-team-20260905. No PRs merged. PR267 uses explicit integration base pending prerequisite landing. Concurrent alternate PRs248 and262 overlap255 and247; descriptions flag reconciliation, no unrelated branch or ticket state changed. New production followups259/bedrock-t0k and bedrock-gu0.5 remain open.",
+      "timestamp": "2026-09-06T01:33:55Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Investigate, cold-review, and deliver fixes for GitHub issues #233–#239",
   "type": "epic",
-  "updated_at": "2026-09-06T00:04:33Z"
+  "updated_at": "2026-09-06T01:33:55Z"
 }

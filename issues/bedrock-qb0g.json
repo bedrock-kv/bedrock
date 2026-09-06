@@ -1,5 +1,5 @@
 {
-  "assignee": "21417+jallum@users.noreply.github.com",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-01-19T20:38:09.83293-05:00",
@@ -18,8 +18,8 @@
     }
   ],
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "Refactor: Thread Tx through recovery phases instead of building in PersistencePhase",
   "type": "task",
-  "updated_at": "2026-03-04T13:45:28Z"
+  "updated_at": "2026-09-06T02:40:39Z"
 }

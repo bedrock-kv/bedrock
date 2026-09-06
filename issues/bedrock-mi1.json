@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-07-17T02:23:20Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-mi1",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Olivine selector position arithmetic inconsistent with KeySelector constructor encodings",
   "type": "bug",
-  "updated_at": "2026-07-17T02:23:20Z"
+  "updated_at": "2026-09-06T00:22:52Z"
 }

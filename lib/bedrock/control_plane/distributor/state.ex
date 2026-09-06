@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.Distributor.State do
           snapshot:
             %{
               shard_layout: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}},
-              materializer_refs: %{Bedrock.range_tag() => %{String.t() => String.t()}}
+              materializer_members: %{Bedrock.range_tag() => %{String.t() => String.t()}}
             }
             | nil,
           pending_demands: MapSet.t(Bedrock.range_tag()),

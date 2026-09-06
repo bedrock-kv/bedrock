@@ -305,12 +305,12 @@ defmodule Bedrock.ControlPlane.Distributor.TransactionsTest do
           end
         })
 
-      assert {:ok, %{shard_layout: layout, materializer_refs: refs}} = Transactions.read_snapshot(deps)
+      assert {:ok, %{shard_layout: layout, materializer_members: members}} = Transactions.read_snapshot(deps)
       assert layout == %{<<0xFF, 0xFF>> => {0, <<>>}}
-      assert refs == %{0 => %{"wkr" => "n@h"}}
+      assert members == %{0 => %{"wkr" => "n@h"}}
 
       assert_received {:range_read, _shard_start, ^v}
-      assert_received {:range_read, _refs_start, ^v}
+      assert_received {:range_read, _members_start, ^v}
     end
   end
 

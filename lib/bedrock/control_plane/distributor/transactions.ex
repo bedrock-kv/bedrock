@@ -107,7 +107,7 @@ defmodule Bedrock.ControlPlane.Distributor.Transactions do
 
   @doc """
   Reads the distributor's snapshot of the durable mapping families —
-  shard layout and materializer refs — at one pinned version (a
+  shard layout and materializer members — at one pinned version (a
   single-version multi-page read cannot tear: the families are written
   transactionally). Read AFTER the lock is taken, under FDB's
   lock-first-snapshot-second startup order.
@@ -116,23 +116,23 @@ defmodule Bedrock.ControlPlane.Distributor.Transactions do
           {:ok,
            %{
              shard_layout: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}},
-             materializer_refs: %{Bedrock.range_tag() => %{String.t() => String.t()}}
+             materializer_members: %{Bedrock.range_tag() => %{String.t() => String.t()}}
            }}
           | {:error, term()}
   def read_snapshot(deps) do
     shard_prefix = SystemKeys.shard_keys_prefix()
     {_s1, shard_end} = Bedrock.KeyRange.from_prefix(shard_prefix)
-    refs_prefix = SystemKeys.materializers_prefix()
-    {_s2, refs_end} = Bedrock.KeyRange.from_prefix(refs_prefix)
+    members_prefix = SystemKeys.materializers_prefix()
+    {_s2, members_end} = Bedrock.KeyRange.from_prefix(members_prefix)
 
     with {:ok, version} <- read_version(deps),
          {:ok, shard_entries} <-
            Reader.read_family(&deps.get_range_fn.(&1, shard_end, version), shard_prefix, :snapshot_read_failed),
-         {:ok, ref_entries} <-
-           Reader.read_family(&deps.get_range_fn.(&1, refs_end, version), refs_prefix, :snapshot_read_failed),
+         {:ok, member_entries} <-
+           Reader.read_family(&deps.get_range_fn.(&1, members_end, version), members_prefix, :snapshot_read_failed),
          {:ok, shard_layout} <- Reader.shard_layout_from_entries(shard_entries),
-         {:ok, refs} <- Reader.decode_materializer_members(ref_entries) do
-      {:ok, %{shard_layout: shard_layout, materializer_refs: refs}}
+         {:ok, members} <- Reader.decode_materializer_members(member_entries) do
+      {:ok, %{shard_layout: shard_layout, materializer_members: members}}
     end
   end
 

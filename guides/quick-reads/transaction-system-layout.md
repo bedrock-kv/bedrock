@@ -74,7 +74,7 @@ The layout is a plain map, not a struct:
 - **Main Module**: `lib/bedrock/control_plane/config/transaction_system_layout.ex`
 - **Durable Counterpart**: `lib/bedrock/control_plane/config/core_state.ex`
 - **Assembly**: `lib/bedrock/control_plane/director/recovery/topology_phase.ex`
-- **Validation**: `lib/bedrock/control_plane/director/recovery/tsl_validation_phase.ex`
+- **Validation**: `lib/bedrock/control_plane/director/recovery/core_state_validation_phase.ex`
 - **Publication**: `lib/bedrock/control_plane/director/recovery/persistence_phase.ex`
 
 ## See Also

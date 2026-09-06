@@ -21,14 +21,14 @@ defmodule Bedrock.SystemKeys.ValuesTest do
     end
   end
 
-  describe "materializer refs" do
+  describe "materializer members" do
     test "round-trip" do
       # The worker id lives in the KEY now; the value carries only what a
       # consumer needs to build the callable ref.
       assert {:ok, "node@host"} = Values.decode_materializer_node(Values.encode_materializer_node("node@host"))
     end
 
-    test "encoder rejects non-binary input loudly - refs are encoded as strings, never atoms or pids" do
+    test "encoder rejects non-binary input loudly - member nodes are encoded as strings, never atoms or pids" do
       assert_raise FunctionClauseError, fn -> Values.encode_materializer_node(:node@host) end
       assert_raise FunctionClauseError, fn -> Values.encode_materializer_node(self()) end
     end

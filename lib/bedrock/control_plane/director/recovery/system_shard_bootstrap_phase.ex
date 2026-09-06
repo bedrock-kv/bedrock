@@ -1,4 +1,4 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
+defmodule Bedrock.ControlPlane.Director.Recovery.SystemShardBootstrapPhase do
   @moduledoc """
   Brings up the system shard, and stops there.
 
@@ -132,16 +132,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     # data-plane coverage it has no use for (bedrock-q67.21.13).
     case create_and_start_materializer(RecoveryAttempt.system_shard_id(), recovery_attempt, context) do
       {:ok, {worker_id, node, _pid}, {worker_id, descriptor}} ->
-        seated = seated_refs(worker_id, node)
+        seated = seated_members(worker_id, node)
 
         updated_attempt =
           recovery_attempt
           |> Map.put(:shard_layout, shard_layout)
-          |> Map.put(:shard_materializers, seated)
+          |> Map.put(:seated_materializer_members, seated)
           # The empty prior is the diff base for the membership write and
           # the routing seed both: a fresh cluster has committed nothing,
           # so every assignment is new.
-          |> Map.put(:prior_materializer_refs, %{})
+          |> Map.put(:prior_materializer_members, %{})
           # This recovery INVENTED the layout, so it seeds the durable
           # family too — the one path that writes shard_keys.
           |> Map.put(
@@ -174,8 +174,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # for one member, because the family is a set and every reader treats
   # it as one. A pid is phase-local orchestration state, not a fact any
   # reader needs.
-  @spec seated_refs(Worker.id(), node()) :: %{Bedrock.range_tag() => %{Worker.id() => String.t()}}
-  defp seated_refs(worker_id, node), do: %{RecoveryAttempt.system_shard_id() => %{worker_id => Atom.to_string(node)}}
+  @spec seated_members(Worker.id(), node()) :: %{Bedrock.range_tag() => %{Worker.id() => String.t()}}
+  defp seated_members(worker_id, node), do: %{RecoveryAttempt.system_shard_id() => %{worker_id => Atom.to_string(node)}}
 
   # Creates shard_key(end_key) -> {tag, start_key} entries (ceiling
   # search) for a layout this recovery SEEDED — FDB's seedShardServers
@@ -198,9 +198,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # this recovery did not decide are not recovery's to clean —
   # read-and-heal means stale reconciliation belongs to the distributor
   # (bedrock-q67.21.4). On the fresh path the prior is empty, so every
-  # assignment writes: the safe direction. The attempt carries refs in
-  # the family's member shape, so keyspace and routing-snapshot seed
-  # remain one map read twice.
+  # assignment writes: the safe direction. The attempt carries the
+  # members in the family's own shape, so keyspace and routing-snapshot
+  # seed remain one map read twice.
   #
   # The family is a SET, so writing one member never implies removing
   # another: members recovery never touched (other replicas of the same
@@ -307,7 +307,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
            ),
          {:ok, shard_layout} <- get_shard_layout(materializer_pid, recovery_version, context),
          :ok <- reject_empty_layout(shard_layout),
-         {:ok, prior_refs} <- read_prior_refs(materializer_pid, recovery_version, context) do
+         {:ok, prior_members} <- read_prior_members(materializer_pid, recovery_version, context) do
       # Recovery stops here. The layout names data tags, and the locking
       # phase locked their materializers into this epoch, but seating them
       # is the distributor's job — its startup sweep verifies every
@@ -316,18 +316,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
       # after every recovery regardless (bedrock-q67.21.13). The system
       # shard needs no synthetic services entry: it is looked up, never
       # created, so it is already there from the locking phase.
-      seated = seated_refs(system_worker_id, node(materializer_pid))
+      seated = seated_members(system_worker_id, node(materializer_pid))
 
       updated_attempt =
         recovery_attempt
         |> Map.put(:shard_layout, shard_layout)
-        |> Map.put(:shard_materializers, seated)
-        |> Map.put(:prior_materializer_refs, prior_refs)
+        |> Map.put(:seated_materializer_members, seated)
+        |> Map.put(:prior_materializer_members, prior_members)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
         # The layout was READ from the durable family, so there is nothing
         # to rewrite under shard_keys; only the membership this recovery
         # decided differently from the prior family is written.
-        |> Map.put(:pending_tx, put_materializer_members(recovery_attempt.pending_tx, seated, prior_refs))
+        |> Map.put(:pending_tx, put_materializer_members(recovery_attempt.pending_tx, seated, prior_members))
 
       {updated_attempt, CommitProxyStartupPhase}
     else
@@ -477,12 +477,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # answer rejoin validation for; reading only what recovery acts on
   # would make the routing view a statement about recovery's actions
   # instead of a projection of the keyspace.
-  defp read_prior_refs(materializer_pid, read_version, context) do
-    read_fn = Map.get(context, :read_prior_refs_fn, &default_read_prior_refs/2)
+  defp read_prior_members(materializer_pid, read_version, context) do
+    read_fn = Map.get(context, :read_prior_members_fn, &default_read_prior_members/2)
     read_fn.(materializer_pid, read_version)
   end
 
-  defp default_read_prior_refs(materializer_pid, read_version) do
+  defp default_read_prior_members(materializer_pid, read_version) do
     prefix = SystemKeys.materializers_prefix()
     {_range_start, range_end} = Bedrock.KeyRange.from_prefix(prefix)
 
@@ -490,17 +490,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
       Materializer.get_range(materializer_pid, start_key, range_end, read_version, limit: 1000)
     end
 
-    case Reader.read_family(range_read_fn, prefix, :prior_refs_query_failed) do
-      {:ok, entries} -> decode_prior_refs(entries)
+    case Reader.read_family(range_read_fn, prefix, :prior_members_query_failed) do
+      {:ok, entries} -> decode_prior_members(entries)
       {:error, _reason} = error -> error
     end
   end
 
   @doc false
-  @spec decode_prior_refs([{Bedrock.key(), binary()}]) ::
+  @spec decode_prior_members([{Bedrock.key(), binary()}]) ::
           {:ok, %{Bedrock.range_tag() => %{Worker.id() => String.t()}}}
           | {:error, {:invalid_materializer_entry, Bedrock.key()}}
-  defdelegate decode_prior_refs(entries), to: Reader, as: :decode_materializer_members
+  defdelegate decode_prior_members(entries), to: Reader, as: :decode_materializer_members
 
   # Find a node that can host materializers. The first capable node is
   # the whole policy here, and stays that way: this phase creates

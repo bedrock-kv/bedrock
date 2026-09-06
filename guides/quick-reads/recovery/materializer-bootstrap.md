@@ -51,4 +51,4 @@ materializer's pid and the shard layout in hand.
 
 ---
 
-**Implementation**: `lib/bedrock/control_plane/director/recovery/materializer_bootstrap_phase.ex`
+**Implementation**: `lib/bedrock/control_plane/director/recovery/system_shard_bootstrap_phase.ex`

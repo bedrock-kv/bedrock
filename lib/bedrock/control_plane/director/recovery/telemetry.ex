@@ -213,17 +213,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Telemetry do
     })
   end
 
-  @spec trace_recovery_tsl_validation_success() :: :ok
-  def trace_recovery_tsl_validation_success do
-    Telemetry.execute([:bedrock, :recovery, :tsl_validation_success], %{}, %{})
+  @spec trace_recovery_core_state_validation_success() :: :ok
+  def trace_recovery_core_state_validation_success do
+    Telemetry.execute([:bedrock, :recovery, :core_state_validation_success], %{}, %{})
   end
 
-  @spec trace_recovery_tsl_validation_failed(
+  @spec trace_recovery_core_state_validation_failed(
           CoreState.t(),
           validation_error :: term()
         ) :: :ok
-  def trace_recovery_tsl_validation_failed(core_state, validation_error) do
-    Telemetry.execute([:bedrock, :recovery, :tsl_validation_failed], %{}, %{
+  def trace_recovery_core_state_validation_failed(core_state, validation_error) do
+    Telemetry.execute([:bedrock, :recovery, :core_state_validation_failed], %{}, %{
       core_state: core_state,
       validation_error: validation_error
     })

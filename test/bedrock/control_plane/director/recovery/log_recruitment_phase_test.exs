@@ -6,7 +6,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
-  alias Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase
+  alias Bedrock.ControlPlane.Director.Recovery.SystemShardBootstrapPhase
   alias Bedrock.ControlPlane.Exclusion
   alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.DataPlane.Transaction
@@ -336,8 +336,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       # :storage_team_coverage_error), so recovery's first range mutation
       # has to land inside tag 0.
       shards =
-        Enum.reduce(MaterializerBootstrapPhase.default_shard_layout(), :gb_trees.empty(), fn {end_key, {tag, start_key}},
-                                                                                             tree ->
+        Enum.reduce(SystemShardBootstrapPhase.default_shard_layout(), :gb_trees.empty(), fn {end_key, {tag, start_key}},
+                                                                                            tree ->
           :gb_trees.enter(end_key, {tag, start_key}, tree)
         end)
 

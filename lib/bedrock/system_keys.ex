@@ -4,11 +4,11 @@ defmodule Bedrock.SystemKeys do
 
   Every key defined here has a named purpose: `shard_keys/<end_key>` feeds
   each commit proxy's routing view (through resolver metadata windows) and
-  the next recovery's materializer bootstrap; `materializers/<tag>/<worker_id>` entries
+  the next recovery's system shard bootstrap; `materializers/<tag>/<worker_id>` entries
   feed the client-facing routing projection served by commit proxies
   (FDB's `serverList/` analogue - interfaces ride the keyspace), answer
-  worker rejoin validation, and give recovery's materializer bootstrap
-  its re-adoption input (`read_prior_refs`) and the persistence phase's
+  worker rejoin validation, and give recovery's system shard bootstrap
+  its re-adoption input (`read_prior_members`) and the persistence phase's
   diff base. To clients the members are hints, unverified and cached;
   to recovery they are durable state. `distributor_lock/{owner,
   write}` is the distributor's write fence (FDB's MoveKeys lock,

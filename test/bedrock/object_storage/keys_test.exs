@@ -56,6 +56,22 @@ defmodule Bedrock.ObjectStorage.KeysTest do
       assert Keys.parse_inverted_version("123@abc") == {:error, :invalid_format}
       assert Keys.parse_inverted_version("-1") == {:error, :invalid_format}
     end
+
+    test "rejects non-canonical renderings rather than inventing a version" do
+      # base36 will read a number out of nearly anything; only the exact
+      # 13-character lowercase padding this module writes is a version.
+      assert Keys.parse_inverted_version("rs") == {:error, :invalid_format}
+      assert Keys.parse_inverted_version("0000000000rs") == {:error, :invalid_format}
+      assert Keys.parse_inverted_version("000000000000rs") == {:error, :invalid_format}
+      assert Keys.parse_inverted_version("3W5E11264SGSF") == {:error, :invalid_format}
+      assert Keys.parse_inverted_version("+000000000rs") == {:error, :invalid_format}
+    end
+
+    test "rejects a 13-character value past uint64" do
+      # "zzzzzzzzzzzzz" is 13 base36 digits but 36^13-1, well past the
+      # inverted uint64 `restore_version/1` accepts.
+      assert Keys.parse_inverted_version("zzzzzzzzzzzzz") == {:error, :invalid_format}
+    end
   end
 
   describe "version_to_key/1 and key_to_version/1" do
@@ -127,7 +143,7 @@ defmodule Bedrock.ObjectStorage.KeysTest do
     test "builds correct path with inverted version" do
       path = Keys.chunk_path("a", 1000)
       assert String.starts_with?(path, "c/a/")
-      assert {:ok, 1000} = Keys.extract_version(path)
+      assert {:ok, 1000} = Keys.extract_version(path, Keys.chunks_prefix("a"))
     end
   end
 
@@ -141,7 +157,7 @@ defmodule Bedrock.ObjectStorage.KeysTest do
     test "builds correct path with inverted version" do
       path = Keys.snapshot_path("b", 2000)
       assert String.starts_with?(path, "s/b/")
-      assert {:ok, 2000} = Keys.extract_version(path)
+      assert {:ok, 2000} = Keys.extract_version(path, Keys.snapshots_prefix("b"))
     end
   end
 
@@ -151,20 +167,31 @@ defmodule Bedrock.ObjectStorage.KeysTest do
     end
   end
 
-  describe "extract_version/1" do
+  describe "extract_version/2" do
     test "extracts version from chunk path" do
       path = Keys.chunk_path("c", 12_345)
-      assert {:ok, 12_345} = Keys.extract_version(path)
+      assert {:ok, 12_345} = Keys.extract_version(path, Keys.chunks_prefix("c"))
     end
 
     test "extracts version from snapshot path" do
       path = Keys.snapshot_path("d", 67_890)
-      assert {:ok, 67_890} = Keys.extract_version(path)
+      assert {:ok, 67_890} = Keys.extract_version(path, Keys.snapshots_prefix("d"))
     end
 
-    test "returns error for invalid path" do
-      # Path basename must contain invalid base36 chars
-      assert {:error, :invalid_format} = Keys.extract_version("invalid/path/abc!")
+    test "returns error for a direct child that will not parse" do
+      assert {:error, :invalid_format} = Keys.extract_version("c/a/manifest.json", "c/a/")
+    end
+
+    test "reports an object nested below the prefix as foreign" do
+      # Bedrock only ever writes direct children here, so anything deeper
+      # belongs to someone else who happens to share the bucket — and its
+      # last path segment must not be mistaken for one of our versions.
+      assert :foreign = Keys.extract_version("c/a/backup/" <> Keys.version_to_key(1000), "c/a/")
+      assert :foreign = Keys.extract_version("c/a/vendor/notes.txt", "c/a/")
+    end
+
+    test "reports a key outside the prefix as foreign" do
+      assert :foreign = Keys.extract_version("c/b/" <> Keys.version_to_key(1000), "c/a/")
     end
   end
 end

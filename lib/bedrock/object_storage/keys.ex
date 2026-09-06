@@ -86,6 +86,14 @@ defmodule Bedrock.ObjectStorage.Keys do
   @doc """
   Parses a base36-encoded inverted version string back to an integer.
 
+  Only the canonical rendering of `format_inverted_version/1` is accepted:
+  a 13-character, zero-padded, lowercase uint64. A name of another width
+  or case is not one this build wrote, and base36 is forgiving enough to
+  read a plausible number out of nearly anything — `"rs"` would come back
+  as version 18446744073709550615. A number we invented must never stand
+  in for a durable fact, so anything non-canonical is reported as
+  unparseable instead.
+
   ## Examples
 
       iex> Keys.parse_inverted_version("0000000000000")
@@ -94,14 +102,22 @@ defmodule Bedrock.ObjectStorage.Keys do
       iex> Keys.parse_inverted_version("00000000000rs")
       {:ok, 1000}
 
+      iex> Keys.parse_inverted_version("rs")
+      {:error, :invalid_format}
+
       iex> Keys.parse_inverted_version("invalid!")
       {:error, :invalid_format}
   """
   @spec parse_inverted_version(String.t()) :: {:ok, non_neg_integer()} | {:error, :invalid_format}
   def parse_inverted_version(str) when is_binary(str) do
     case Integer.parse(str, 36) do
-      {value, ""} when value >= 0 -> {:ok, value}
-      _ -> {:error, :invalid_format}
+      # 13 base36 characters reach past uint64, so the range still has to
+      # be checked: `restore_version/1` only accepts an inverted uint64.
+      {value, ""} when value >= 0 and value <= @max_version ->
+        if format_inverted_version(value) == str, do: {:ok, value}, else: {:error, :invalid_format}
+
+      _ ->
+        {:error, :invalid_format}
     end
   end
 
@@ -244,20 +260,39 @@ defmodule Bedrock.ObjectStorage.Keys do
   end
 
   @doc """
-  Extracts the version from a chunk or snapshot key.
+  Extracts the version from a key listed under `prefix`.
+
+  A listing is a string prefix match over a bucket Bedrock does not own
+  exclusively, so it can turn up objects that merely share the prefix.
+  The objects that are OURS under a chunks or snapshots prefix are its
+  DIRECT children — the only thing the path builders above ever write
+  there — so a key nested any deeper is `:foreign`, and is not judged by
+  a shape it was never given. Reading the last path segment alone cannot
+  make that distinction: it sees `c/a/backup/3w5e11264sg0n` as a chunk
+  of shard `a`.
+
+  A direct child that will not parse is the opposite answer. It sits in a
+  namespace only Bedrock writes to, so it is either corrupt or named by a
+  format this build does not understand — an unknown, and an unknown must
+  not be quietly turned into absence.
 
   ## Examples
 
-      iex> Keys.extract_version("c/a/3w5e11264sg0n")
+      iex> Keys.extract_version("c/a/3w5e11264sg0n", "c/a/")
       {:ok, 1000}
 
-      iex> Keys.extract_version("invalid!")
+      iex> Keys.extract_version("c/a/backup/3w5e11264sg0n", "c/a/")
+      :foreign
+
+      iex> Keys.extract_version("c/a/manifest.json", "c/a/")
       {:error, :invalid_format}
   """
-  @spec extract_version(String.t()) :: {:ok, non_neg_integer()} | {:error, :invalid_format}
-  def extract_version(key) when is_binary(key) do
-    key
-    |> Path.basename()
-    |> key_to_version()
+  @spec extract_version(String.t(), String.t()) ::
+          {:ok, non_neg_integer()} | :foreign | {:error, :invalid_format}
+  def extract_version(key, prefix) when is_binary(key) and is_binary(prefix) do
+    case String.replace_prefix(key, prefix, "") do
+      ^key -> :foreign
+      name -> if String.contains?(name, "/"), do: :foreign, else: key_to_version(name)
+    end
   end
 end

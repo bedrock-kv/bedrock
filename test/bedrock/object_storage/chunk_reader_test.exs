@@ -34,6 +34,11 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     key
   end
 
+  defp write_object(backend, key) do
+    :ok = ObjectStorage.put(backend, key, "whatever")
+    key
+  end
+
   defmodule CountingBackend do
     @moduledoc false
     @behaviour ObjectStorage
@@ -50,6 +55,39 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     def delete(config, key), do: LocalFilesystem.delete(config, key)
     @impl true
     def list(config, prefix, opts \\ []), do: LocalFilesystem.list(config, prefix, opts)
+    @impl true
+    def put_if_not_exists(config, key, data, opts \\ []), do: LocalFilesystem.put_if_not_exists(config, key, data, opts)
+    @impl true
+    def get_with_version(config, key), do: LocalFilesystem.get_with_version(config, key)
+
+    @impl true
+    def put_if_version_matches(config, key, version_token, data, opts \\ []),
+      do: LocalFilesystem.put_if_version_matches(config, key, version_token, data, opts)
+  end
+
+  defmodule ForeignFirstBackend do
+    @moduledoc false
+    # A bucket Bedrock shares with something else, whose object sorts
+    # ahead of every chunk. The backend applies `:limit` before anyone
+    # downstream can tell the two apart.
+    @behaviour ObjectStorage
+
+    @impl true
+    def list(config, prefix, opts \\ []) do
+      stream = Stream.concat([Keyword.fetch!(config, :foreign)], LocalFilesystem.list(config, prefix, opts))
+
+      case Keyword.get(opts, :limit) do
+        nil -> stream
+        limit -> Stream.take(stream, limit)
+      end
+    end
+
+    @impl true
+    def get(config, key), do: LocalFilesystem.get(config, key)
+    @impl true
+    def put(config, key, data, opts \\ []), do: LocalFilesystem.put(config, key, data, opts)
+    @impl true
+    def delete(config, key), do: LocalFilesystem.delete(config, key)
     @impl true
     def put_if_not_exists(config, key, data, opts \\ []), do: LocalFilesystem.put_if_not_exists(config, key, data, opts)
     @impl true
@@ -136,7 +174,7 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
       # Should be newest first (300, 200, 100)
       versions =
         Enum.map(keys, fn key ->
-          {:ok, v} = Keys.extract_version(key)
+          {:ok, v} = Keys.extract_version(key, Keys.chunks_prefix("shard"))
           v
         end)
 
@@ -237,12 +275,12 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
 
       # Find in first chunk
       key1 = ChunkReader.find_chunk_for_version(reader, 125)
-      {:ok, v1} = Keys.extract_version(key1)
+      {:ok, v1} = Keys.extract_version(key1, Keys.chunks_prefix("shard"))
       assert v1 == 150
 
       # Find in second chunk
       key2 = ChunkReader.find_chunk_for_version(reader, 225)
-      {:ok, v2} = Keys.extract_version(key2)
+      {:ok, v2} = Keys.extract_version(key2, Keys.chunks_prefix("shard"))
       assert v2 == 250
     end
 
@@ -369,6 +407,71 @@ defmodule Bedrock.ObjectStorage.ChunkReaderTest do
     test "returns nil for empty shard", %{backend: backend} do
       reader = ChunkReader.new(backend, "shard")
       assert nil == ChunkReader.latest_version(reader)
+    end
+  end
+
+  describe "keys the shard's prefix turns up" do
+    # A name this build cannot read is not absence. Sorted ahead of every
+    # real chunk (it starts with "0"), it used to be the one key a
+    # limit-of-one listing returned, and `latest_version/1` reported the
+    # shard as empty while it held version 500.
+    @unreadable_name "0000000000000.tmp"
+
+    test "latest_version raises rather than reporting an empty shard", %{backend: backend} do
+      write_chunk(backend, "shard", [{500, "a"}])
+      key = write_object(backend, Keys.chunks_prefix("shard") <> @unreadable_name)
+
+      reader = ChunkReader.new(backend, "shard")
+
+      assert_raise ObjectStorage.UnparseableKeyError, ~r/#{Regex.escape(key)}/, fn ->
+        ChunkReader.latest_version(reader)
+      end
+    end
+
+    test "a non-canonical version is unreadable, not a version", %{backend: backend} do
+      # 12 base36 characters, not 13: base36 reads 1000 out of it happily,
+      # which would name a version 18446744073709550615 that was never
+      # written.
+      key = write_object(backend, Keys.chunks_prefix("shard") <> "0000000000rs")
+
+      reader = ChunkReader.new(backend, "shard")
+
+      assert_raise ObjectStorage.UnparseableKeyError, ~r/#{Regex.escape(key)}/, fn ->
+        ChunkReader.latest_version(reader)
+      end
+    end
+
+    test "list_chunks raises rather than yielding a shorter listing", %{backend: backend} do
+      write_chunk(backend, "shard", [{500, "a"}])
+      write_object(backend, Keys.chunks_prefix("shard") <> @unreadable_name)
+
+      reader = ChunkReader.new(backend, "shard")
+
+      assert_raise ObjectStorage.UnparseableKeyError, fn ->
+        reader |> ChunkReader.list_chunks() |> Enum.to_list()
+      end
+    end
+
+    test "an object nested below the prefix is not this shard's chunk", %{backend: backend} do
+      key = write_chunk(backend, "shard", [{500, "a"}])
+      # Somebody else's object, co-located in the bucket: it shares the
+      # prefix but is not a chunk, and judging it by its last path
+      # segment would break a healthy shard.
+      write_object(backend, Keys.chunks_prefix("shard") <> "vendor/manifest.json")
+
+      reader = ChunkReader.new(backend, "shard")
+
+      assert [key] == reader |> ChunkReader.list_chunks() |> Enum.to_list()
+      assert 500 == ChunkReader.latest_version(reader)
+    end
+
+    test "a foreign object sorting first does not consume the listing", %{backend: backend, root: root} do
+      write_chunk(backend, "shard", [{500, "a"}])
+
+      sharing = ObjectStorage.backend(ForeignFirstBackend, root: root, foreign: "c/shard/00-vendor/index")
+      reader = ChunkReader.new(sharing, "shard")
+
+      assert 500 == ChunkReader.latest_version(reader)
     end
   end
 

@@ -130,6 +130,53 @@ defmodule Bedrock.ObjectStorage.SnapshotTest do
     end
   end
 
+  describe "keys the shard's prefix turns up" do
+    # Sorted ahead of every real snapshot, so it is also the first key a
+    # limit-of-one listing sees.
+    @unreadable_key "s/shard/0000000000000.tmp"
+
+    test "list drops nothing: an unreadable name raises", %{backend: backend} do
+      snapshot = Snapshot.new(backend, "shard")
+
+      :ok = Snapshot.write(snapshot, 300, "state at 300")
+      :ok = ObjectStorage.put(backend, @unreadable_key, "written by a build we do not know")
+
+      # Before: the stream yielded [{300, _}] and the caller read a
+      # one-snapshot history as fact.
+      assert_raise ObjectStorage.UnparseableKeyError, ~r/#{Regex.escape(@unreadable_key)}/, fn ->
+        snapshot |> Snapshot.list() |> Enum.to_list()
+      end
+    end
+
+    test "read_latest names the offending key instead of a baseline", %{backend: backend} do
+      snapshot = Snapshot.new(backend, "shard")
+
+      :ok = Snapshot.write(snapshot, 300, "state at 300")
+      :ok = ObjectStorage.put(backend, @unreadable_key, "written by a build we do not know")
+
+      assert {:error, {:unparseable_key, @unreadable_key}} = Snapshot.read_latest(snapshot)
+    end
+
+    test "exists? refuses a boolean it cannot stand behind", %{backend: backend} do
+      snapshot = Snapshot.new(backend, "shard")
+
+      :ok = ObjectStorage.put(backend, @unreadable_key, "written by a build we do not know")
+
+      assert_raise ObjectStorage.UnparseableKeyError, fn -> Snapshot.exists?(snapshot) end
+      assert_raise ObjectStorage.UnparseableKeyError, fn -> Snapshot.latest_version(snapshot) end
+    end
+
+    test "an object nested below the prefix is not this shard's snapshot", %{backend: backend} do
+      snapshot = Snapshot.new(backend, "shard")
+
+      :ok = Snapshot.write(snapshot, 300, "state at 300")
+      :ok = ObjectStorage.put(backend, "s/shard/vendor/manifest.json", "not ours")
+
+      assert [{300, _key}] = snapshot |> Snapshot.list() |> Enum.to_list()
+      assert {:ok, 300} = Snapshot.latest_version(snapshot)
+    end
+  end
+
   describe "delete/2" do
     test "deletes snapshot", %{backend: backend} do
       snapshot = Snapshot.new(backend, "shard")

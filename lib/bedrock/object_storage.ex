@@ -116,6 +116,30 @@ defmodule Bedrock.ObjectStorage do
       do: "failed to list objects under #{inspect(prefix)}: #{inspect(reason)}"
   end
 
+  defmodule UnparseableKeyError do
+    @moduledoc """
+    Raised when an object in a prefix only Bedrock writes to carries a
+    name this build cannot read a version out of.
+
+    The listing itself succeeded, so this is not `ListError`: the object
+    is there, and it is ours — a nested object that merely shares the
+    prefix is foreign and is passed over instead (see
+    `Bedrock.ObjectStorage.Keys.extract_version/2`). What we do not know
+    is which version it holds, because the name is either corrupt or
+    written in a format a later build understands and this one does not.
+
+    Dropping it would shorten the history and make the shard look older
+    or emptier than it is — the same lie `ListError` exists to prevent,
+    one layer up. Absence and ignorance are different answers and must
+    not share a representation.
+    """
+    defexception [:key, :prefix]
+
+    @impl true
+    def message(%__MODULE__{key: key, prefix: prefix}),
+      do: "unparseable object key #{inspect(key)} under #{inspect(prefix)}"
+  end
+
   @doc """
   List objects with the given prefix.
 

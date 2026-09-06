@@ -506,6 +506,10 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     # struct. Named explicitly so it does not ride the catch-all below,
     # which exists for genuine bugs and should stay visible as such.
     e in ObjectStorage.ListError -> {:error, {:storage_read_failed, e.reason}}
+    # Likewise a chunk whose key names no version we can read: the object
+    # is there and it is ours, so it is not absence, and the offending
+    # key is what an operator needs to see.
+    e in ObjectStorage.UnparseableKeyError -> {:error, {:storage_read_failed, {:unparseable_key, e.key}}}
     e -> {:error, {:storage_read_failed, e}}
   end
 

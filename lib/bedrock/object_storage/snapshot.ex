@@ -91,14 +91,14 @@ defmodule Bedrock.ObjectStorage.Snapshot do
 
   - `{:ok, version, data}` - Latest snapshot found
   - `{:error, :not_found}` - No snapshots exist
+  - `{:error, {:unparseable_key, key}}` - A snapshot is there but this
+    build cannot read its version, so whether a newer baseline exists is
+    UNKNOWN. Distinct from `:not_found`, which is a fact.
   - `{:error, reason}` - Read failed
   """
   @spec read_latest(t()) :: {:ok, version(), snapshot_data()} | {:error, :not_found | term()}
   def read_latest(%__MODULE__{} = snapshot) do
-    prefix = Keys.snapshots_prefix(snapshot.shard_tag)
-
-    with [key] <- snapshot.backend |> ObjectStorage.list(prefix, limit: 1) |> Enum.take(1),
-         {:ok, version} <- Keys.extract_version(key),
+    with [{version, key}] <- snapshot |> list() |> Enum.take(1),
          {:ok, data} <- ObjectStorage.get(snapshot.backend, key) do
       {:ok, version, data}
     else
@@ -108,9 +108,11 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   rescue
     # :not_found is a FACT — this shard has no durable baseline, and a
     # materializer may legitimately start empty on it. A listing that
-    # failed knows nothing, and must never be able to say that: it
-    # surfaces as an ordinary error so callers fail rather than assume.
+    # failed, or one holding a name we could not read, knows nothing, and
+    # must never be able to say that: both surface as ordinary errors so
+    # callers fail rather than assume.
     e in ObjectStorage.ListError -> {:error, {:list_failed, e.reason}}
+    e in ObjectStorage.UnparseableKeyError -> {:error, {:unparseable_key, e.key}}
   end
 
   @doc """
@@ -133,6 +135,11 @@ defmodule Bedrock.ObjectStorage.Snapshot do
 
   Returns a lazy stream of `{version, key}` tuples.
 
+  Objects that merely share the prefix are passed over. A snapshot whose
+  version this build cannot read raises
+  `ObjectStorage.UnparseableKeyError`: skipping it would hand the caller
+  a shorter history as fact, which is what a listing must never do.
+
   ## Options
 
   - `:limit` - Maximum number of snapshots to return
@@ -143,13 +150,13 @@ defmodule Bedrock.ObjectStorage.Snapshot do
 
     snapshot.backend
     |> ObjectStorage.list(prefix, opts)
-    |> Stream.map(fn key ->
-      case Keys.extract_version(key) do
-        {:ok, version} -> {version, key}
-        {:error, _} -> nil
+    |> Stream.flat_map(fn key ->
+      case Keys.extract_version(key, prefix) do
+        {:ok, version} -> [{version, key}]
+        :foreign -> []
+        {:error, _reason} -> raise ObjectStorage.UnparseableKeyError, key: key, prefix: prefix
       end
     end)
-    |> Stream.reject(&is_nil/1)
   end
 
   @doc """
@@ -162,17 +169,16 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   - `{:error, {:list_failed, reason}}` - The listing could not be
     completed, so whether snapshots exist is UNKNOWN. Distinct from
     `:not_found`, which is a fact.
+
+  RAISES `ObjectStorage.UnparseableKeyError` if a snapshot is there under
+  a name this build cannot read. As with `exists?/1`, there is no honest
+  answer to give: it is neither a version nor absence.
   """
   @spec latest_version(t()) :: {:ok, version()} | {:error, :not_found} | {:error, {:list_failed, term()}}
   def latest_version(%__MODULE__{} = snapshot) do
-    prefix = Keys.snapshots_prefix(snapshot.shard_tag)
-
-    case snapshot.backend |> ObjectStorage.list(prefix, limit: 1) |> Enum.take(1) do
-      [key] ->
-        Keys.extract_version(key)
-
-      [] ->
-        {:error, :not_found}
+    case snapshot |> list() |> Enum.take(1) do
+      [{version, _key}] -> {:ok, version}
+      [] -> {:error, :not_found}
     end
   rescue
     e in ObjectStorage.ListError -> {:error, {:list_failed, e.reason}}
@@ -227,10 +233,12 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   @doc """
   Checks if any snapshots exist for this shard.
 
-  RAISES `ObjectStorage.ListError` if the listing cannot be completed.
-  There is no honest boolean for "I could not look": returning `false`
-  would be the very lie this module exists to prevent — a caller would
-  read it as "no baseline" and start a materializer empty.
+  RAISES `ObjectStorage.ListError` if the listing cannot be completed,
+  or `ObjectStorage.UnparseableKeyError` if it turned up a snapshot this
+  build cannot read a version out of. There is no honest boolean for "I
+  could not look": returning `false` would be the very lie this module
+  exists to prevent — a caller would read it as "no baseline" and start a
+  materializer empty.
   """
   @spec exists?(t()) :: boolean()
   def exists?(%__MODULE__{} = snapshot) do
@@ -247,8 +255,9 @@ defmodule Bedrock.ObjectStorage.Snapshot do
   Note: This reads the full list, so it's not efficient for shards with
   many snapshots. Use `exists?/1` to just check for presence.
 
-  RAISES `ObjectStorage.ListError` if the listing cannot be completed:
-  no count is honest when the listing is incomplete.
+  RAISES `ObjectStorage.ListError` if the listing cannot be completed, or
+  `ObjectStorage.UnparseableKeyError` if one of the snapshots will not
+  parse: no count is honest when the listing is incomplete.
   """
   @spec count(t()) :: non_neg_integer()
   def count(%__MODULE__{} = snapshot) do

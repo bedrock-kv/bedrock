@@ -72,6 +72,9 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
   Returns a lazy stream of chunk keys in lexicographic order.
   Due to inverted version keys, this means newest chunks first.
 
+  Objects that merely share the prefix are passed over; a chunk key that
+  will not parse raises `ObjectStorage.UnparseableKeyError`.
+
   ## Options
 
   - `:limit` - Maximum number of chunks to return
@@ -85,7 +88,23 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
     # a silent replay gap, which is the very thing this module raises to
     # prevent when a header will not decode. A caller cannot tell a short
     # listing from an empty shard, so it must not be handed one.
-    ObjectStorage.list(reader.backend, prefix, opts)
+    reader.backend
+    |> ObjectStorage.list(prefix, opts)
+    |> Stream.filter(&chunk_key?(&1, prefix))
+  end
+
+  # Which of the listed objects are this shard's chunks. A key that names
+  # no version we can read is not dropped for the same reason a short
+  # listing is not: the caller cannot tell the difference between a chunk
+  # we refused to understand and a chunk that was never written, and it
+  # would read the shorter history as fact.
+  @spec chunk_key?(String.t(), String.t()) :: boolean()
+  defp chunk_key?(key, prefix) do
+    case Keys.extract_version(key, prefix) do
+      {:ok, _version} -> true
+      :foreign -> false
+      {:error, _reason} -> raise ObjectStorage.UnparseableKeyError, key: key, prefix: prefix
+    end
   end
 
   @doc """
@@ -255,22 +274,21 @@ defmodule Bedrock.ObjectStorage.ChunkReader do
   @doc """
   Gets the latest (highest) version in the shard.
 
-  Returns `nil` if no chunks exist.
+  Returns `nil` if no chunks exist — which now means only that, since a
+  key this build cannot read raises rather than counting as absence.
   """
   @spec latest_version(t()) :: version() | nil
   def latest_version(%__MODULE__{} = reader) do
+    # No `:limit` on the listing: the backend applies it before foreign
+    # objects are passed over, so a single co-located object would be the
+    # whole page and the shard would read as empty. The stream is lazy, so
+    # taking one still costs one page.
     reader
-    |> list_chunks(limit: 1)
+    |> list_chunks()
     |> Enum.take(1)
     |> case do
-      [key] ->
-        case Keys.extract_version(key) do
-          {:ok, version} -> version
-          {:error, _} -> nil
-        end
-
-      [] ->
-        nil
+      [key] -> max_version_from_key(key)
+      [] -> nil
     end
   end
 

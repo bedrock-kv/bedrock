@@ -58,7 +58,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     {:ok, pid} = apply(GenServer, :start, args)
 
     receive do
-      {:"$gen_cast", {:worker_health, ^worker_id, {:ok, ^pid}}} -> :ok
+      {:"$gen_cast", {:worker_health, ^worker_id, ^pid, {:ok, ^pid}}} -> :ok
     after
       5_000 -> flunk("no health report")
     end

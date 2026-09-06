@@ -1,47 +1,17 @@
 defmodule Bedrock.ControlPlane.Config.CoreState do
   @moduledoc """
-  The durable record a recovery recovers FROM — FDB's `DBCoreState`,
-  held during recovery as `cstate.prevDBState`.
+  The durable bootstrap record consumed by recovery.
 
-  This is the other half of a divide FDB keeps in two structures and
-  Bedrock, until now, kept in one type:
+  Log identities name the previous epoch's durable sources; recovery must
+  establish their recoverable history before starting a new epoch. Transient
+  addresses and process wiring belong in TransactionSystemLayout instead.
 
-    * `CoreState` — DURABLE. Persisted (for us, in the object-storage
-      cluster bootstrap the coordinator loads at cold start), it names
-      what the next recovery must find in order to recover at all.
-      FDB's `DBCoreState` (`DBCoreState.h:132`): the tLog sets, old
-      generations, `recoveryCount`.
-    * `TransactionSystemLayout` — TRANSIENT. Rebuilt every recovery and
-      broadcast so workers can reach each other; it carries pids, which
-      are meaningless the moment the epoch ends. FDB's `ServerDBInfo`,
-      whose own comment reads: "This structure contains transient
-      information which is broadcast to all workers for a database,
-      permitting them to communicate with each other."
-
-  The rule the split makes structural: what must SURVIVE goes here;
-  what must be REACHED goes in the layout. That is why the layout may
-  never carry anything `O(workers)` (see its moduledoc) while this
-  record may — a thing you must recover is worth persisting, a thing
-  you must merely contact is not worth broadcasting.
-
-  ## Why only `logs`
-
-  Recovery consumes exactly one fact from its prior state: which logs
-  the last epoch ran, so it can lock them and copy from them. The
-  durable bootstrap record also carries the epoch, the cluster id and
-  the coordinator set — all read by the coordinator directly, none
-  consumed as recovery's prior state — so projecting them here would
-  add fields with no reader.
-
-  Log LOCATIONS are likewise absent: the bootstrap schema HAS an
-  `otp_ref` per log, but the writer always sets it to nil
-  (`persistence_phase.ex`), because recovery discovers live services
-  through foreman registration rather than trusting a durable address.
-  The record says WHICH logs, never where they were last seen.
-
-  Materializer membership joins this record in bedrock-q67.21.12, for
-  the one shard recovery cannot do without: the system shard, whose
-  keyspace holds the metadata every later phase reads.
+  System materializer names are cached locations for reading bootstrap metadata,
+  not durable-history ownership. The distributor can change their committed
+  membership between recoveries. Recovery verifies a named cache against the
+  membership it reads, or reconstructs tag 0 from recovered logs and chunks when
+  the cache is missing or displaced. Losing every materializer costs replay
+  work; it does not lose the committed shard layout.
   """
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
@@ -74,9 +44,8 @@ defmodule Bedrock.ControlPlane.Config.CoreState do
     %{logs: logs, system_materializers: members_from(bootstrap)}
   end
 
-  # A record written before this field existed names no members. That is
-  # not a crash and not a fresh cluster — it is an upgrade, and recovery
-  # says so rather than guessing where the metadata lives.
+  # Legacy records have no cache hints. Their log history still determines
+  # whether to seed a fresh cluster or reconstruct an existing one.
   defp members_from(bootstrap) do
     bootstrap
     |> Map.get(:system_materializers)
@@ -107,13 +76,10 @@ defmodule Bedrock.ControlPlane.Config.CoreState do
     do: %{logs: Map.get(layout, :logs) || %{}, system_materializers: system_materializers}
 
   @doc """
-  The system shard's materializer members — the record that says WHERE
-  the cluster's metadata lives.
+  Preferred cached locations for the system shard.
 
-  Recovery cannot read the shard layout or the materializers family
-  until it knows which workers hold tag 0, because both live IN tag 0.
-  FDB has the same indirection: its coordinated state names the tlogs
-  that hold the txnStateStore, and recovery peeks them to rebuild it.
+  These may lag committed coverage changes. Recovery can rebuild the metadata
+  view from the independently durable log/chunk history when none is usable.
   """
   @spec system_materializers(t() | nil) :: %{Worker.id() => String.t()}
   def system_materializers(nil), do: %{}

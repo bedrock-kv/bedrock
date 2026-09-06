@@ -31,12 +31,16 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
 
   In-process failures clean up after themselves. A process killed
   between the scratch write and the publish cannot, so its scratch file
-  survives — full size, hidden from `list/3`, and reclaimed by nothing.
-  That is the deliberate trade: before, the same crash left wreckage
-  visible under the real key, where it was permanent and poisonous;
-  now it is inert but invisible. Reclaiming it needs a sweep that can
-  tell a dead scratch file from a live writer's, which is a separate
-  piece of work (bedrock-ck3).
+  survives — full size and hidden from `list/3`. It is reclaimed the
+  next time anything writes into the same directory: before opening a
+  new scratch file, that directory is swept for scratch files old
+  enough to predate any plausible in-flight write, and those are
+  deleted outright. A scratch file within the window is left alone,
+  since age is a heuristic, not a signal, and deleting a live writer's
+  scratch file would corrupt its write — a slow enough write can in
+  principle outlive the window, trading a bounded, self-inflicted leak
+  for never touching a write that might still be running. This backend
+  is not the production path (S3 has no scratch state to leak).
 
   ## Durability boundary
 
@@ -75,6 +79,12 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
   # repeatedly, which is not a real filesystem state — surfacing :eexist
   # beats looping.
   @scratch_attempts 5
+
+  # A scratch file this old cannot belong to a write still in progress
+  # in any realistic scenario, and is reclaimed on sight. Anything
+  # younger is left alone: age is a heuristic, not proof of death, and
+  # deleting a live writer's scratch file would corrupt that write.
+  @scratch_reap_after_seconds 3_600
 
   @impl true
   def put(config, key, data, _opts \\ []) do
@@ -221,6 +231,8 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
   # retry can still take it.
   @spec write_scratch(Path.t(), iodata()) :: {:ok, Path.t()} | {:error, File.posix()}
   defp write_scratch(path, data) do
+    path |> Path.dirname() |> reap_stale_scratch_files()
+
     # :exclusive makes the kernel arbitrate the scratch name, which is the
     # only thing that can. A root directory is routinely shared by more
     # than one node — the default one (`ObjectStorage.Config`) is derived
@@ -273,6 +285,38 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
   end
 
   defp scratch_file?(path), do: path |> Path.basename() |> String.starts_with?(@scratch_prefix)
+
+  # Reclaims stale scratch wreckage from `dir` before a new scratch file
+  # is opened there. This is the only reclamation path: it costs nothing
+  # when there is nothing to reap, and it runs at the one moment a dead
+  # scratch file would otherwise collide with something — a retry
+  # writing into the same directory.
+  @spec reap_stale_scratch_files(Path.t()) :: :ok
+  defp reap_stale_scratch_files(dir) do
+    case File.ls(dir) do
+      {:ok, entries} ->
+        entries
+        |> Enum.filter(&String.starts_with?(&1, @scratch_prefix))
+        |> Enum.each(fn name ->
+          path = Path.join(dir, name)
+
+          if stale_scratch?(path) do
+            _ = File.rm(path)
+          end
+        end)
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  @spec stale_scratch?(Path.t()) :: boolean()
+  defp stale_scratch?(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime}} -> System.system_time(:second) - mtime >= @scratch_reap_after_seconds
+      {:error, _reason} -> false
+    end
+  end
 
   # List state: {root, dirs_to_visit, files_collected, prefix, remaining_limit}
   defp init_list_state(root, prefix_path, prefix, limit) do

@@ -14,11 +14,15 @@
     {
       "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/297. Split from GH259; depends on bedrock-7i1 and remains blocked until its ownership token is defined.",
       "timestamp": "2026-09-06T02:56:13Z"
+    },
+    {
+      "text": "Implemented and cold-audited in commit dd1c7075. Draft PR: https://github.com/bedrock-kv/bedrock/pull/307 (base bedrock-50n/ownership-base). Final broad: 3068 tests, 158 properties, 17 doctests, 0 failures; S3/distributed green; exact strict hook green. Cold audit: /tmp/bedrock-followups-20260905.zKTZxP/297-final-audit.md.",
+      "timestamp": "2026-09-06T08:48:11Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Fence Shale replay and live pushes with recovery ownership tokens",
   "type": "bug",
-  "updated_at": "2026-09-06T05:56:51Z"
+  "updated_at": "2026-09-06T08:48:11Z"
 }

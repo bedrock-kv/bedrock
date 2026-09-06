@@ -7,9 +7,15 @@
   "id": "bedrock-q67.21.13",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/263 — recovery seats tag 0 only; proxies seeded from the committed family for the tags recovery does not touch; ghost pruning and the sweep's :mode verification fixed; locked materializers now refuse reads. Two cold-audit FAILs addressed (routing seed union wedging the distributor via tag 0; locked-but-routable members serving a semi-committed suffix).",
+      "timestamp": "2026-09-06T01:23:43Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Recovery stops at tag 0: the distributor owns data-tag materializers",
   "type": "task",
-  "updated_at": "2026-09-06T00:24:03Z"
+  "updated_at": "2026-09-06T01:23:43Z"
 }

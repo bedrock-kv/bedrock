@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:35:02Z",
+  "description": "Logic.start_compaction/1 hands Database.compact/4 the CURRENT page map (IndexManager.get_complete_page_map/1, index_manager.ex:268 takes the head of versions) but Database.compact labels the result with the OLD durable version (database.ex:137-142). The cutover then installs those pages as versions: [{durable_version, ...}], current_version: durable_version (server.ex:504-513) and re-pulls from durable_version (server.ex:542). The stream re-delivers (durable_version, current_version] and re-applies transactions whose effects are ALREADY baked into the compacted pages.\n\nIdempotent {:set, k, v} hides this, which is why compaction_cutover_test.exs passes. {:atomic, op, ...} is a read-modify-write (index_update.ex:251-256) and does not. Probed on a live worker with a single {:atomic, :add, \"ctr\", 1} at v1000 and one cutover:\n\n  counter before cutover: \u003c\u003c1,0,0,0,0,0,0,0\u003e\u003e\n  counter after  cutover: \u003c\u003c2,0,0,0,0,0,0,0\u003e\u003e\n\nAlready live via upload_snapshot_before_spindown/1 (logic.ex:532-541), which uses the identical get_complete_page_map + Database.compact shape, so a spin-down/revival cycle corrupts atomics the same way today. Nothing in lib/ drives the :compact call, so the cutover proper is currently only reachable from tests.\n\nFix: label the compacted index with current_version, or compact only the durable page map so the re-delivered suffix is genuinely absent from it.\n\nFound by the cold audit on bedrock-zi44, which declined to drive this cutover on a timer because of it.",
+  "id": "bedrock-3v1",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Olivine compaction cutover double-applies atomic mutations",
+  "type": "bug",
+  "updated_at": "2026-09-06T01:35:02Z"
+}

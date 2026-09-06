@@ -7,9 +7,15 @@
   "id": "bedrock-q67.26",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/285 — client read bound (FDB getMaxReadKey/READ_SYSTEM_KEYS) in the transaction builder, plus conflict-section validation at commit ingress with read/write bounds split per FDB getMaxRead/WriteKey. Two cold-audit rounds, both PASS-WITH-NOTES; round 1 caught that a single commit-mode bound on read conflicts made read_system_keys unusable.",
+      "timestamp": "2026-09-06T02:30:26Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "Gate system-keyspace reads and validate conflict-range sections (FDB READ_SYSTEM_KEYS parity)",
   "type": "task",
-  "updated_at": "2026-09-06T01:41:14Z"
+  "updated_at": "2026-09-06T02:30:26Z"
 }

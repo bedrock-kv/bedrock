@@ -8,9 +8,15 @@
   "labels": [
     "future"
   ],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/269 — SnapshotPolicy (floor + bytes/txn thresholds) gating the compaction-completion upload, threaded from manifest params like idle_timeout. Shipped as a throttle, not a scheduler: a cold audit proved a timer-driven compaction produces nothing for an idle shard (snapshot key is the durable version, put-if-not-exists) and multiplies two pre-existing cutover defects. Follow-ups filed: bedrock-947 (nothing drives compaction, so a running materializer never snapshots), bedrock-mk2 (cutover pulls on a locked worker), plus the P1 atomic double-apply bug.",
+      "timestamp": "2026-09-06T01:36:34Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "Snapshot upload policy (scheduled/threshold)",
   "type": "task",
-  "updated_at": "2026-09-06T00:51:52Z"
+  "updated_at": "2026-09-06T01:36:34Z"
 }

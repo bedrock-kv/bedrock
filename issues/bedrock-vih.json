@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:32Z",
+  "close_reason": "Delivered in PR #273 (audited 2026-09-06: scratch-name preallocation, rename publish, size-validated adoption and check_in; CI green)",
   "created": "2026-08-25T19:53:47Z",
   "description": "Found during the bedrock-m7j audit; pre-existing.\n\n`SegmentRecycler.Logic.allocate_file/2` (lib/bedrock/data_plane/log/shale/segment_recycler.ex:174-197) opens the file with `:exclusive` — creating it — then calls `:file.allocate/3`. If the allocation fails, the `after` block closes the fd but never removes the file, and `next_id` advances only on success.\n\nSo a failed preallocation leaves `preallocated.N` on disk at zero length.\n\n## Failure scenario\n\nThe log's filesystem fills. `:file.allocate/3` fails with `:enospc`, leaving an empty `preallocated.N`. The recycler stops. On the next incarnation `Logic.new/4` calls `find_existing_preallocated_files/1` (:121), which globs `preallocated.*` and adopts every match into the pool with no size check — so the recycler starts believing it holds a 64 MiB preallocated segment that is actually 0 bytes.\n\nA checkout then hands that file to `Writer.open/3`, which derives `bytes_remaining` from `stat.size` (writer.ex:41). With size 0 the arithmetic yields a negative remaining budget, and the segment is unusable as a WAL segment while presenting as a healthy one.\n\nNot introduced by bedrock-m7j, but that ticket adds one more trigger for the continue that runs `create_new_segments/2`.\n\n## Fix\n\nRemove the file when `:file.allocate/3` fails — the `after` block already runs, so it is the natural place. Consider also validating size in `find_existing_preallocated_files/1`, so a partially-written pool file from any cause cannot be adopted as whole; that is the same 'absence is the only thing that excludes' reasoning applied to segments.\n\n## Test (write first, must fail)\n\nForce an allocation failure (a tiny filesystem, or an injected `:file.allocate` fault) and assert no `preallocated.*` file remains. Separately, plant a zero-length `preallocated.1` and assert `Logic.new/4` does not adopt it.",
   "id": "bedrock-vih",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[BUG] A failed segment preallocation leaves a zero-length file the next incarnation adopts as a full segment",
   "type": "bug",
-  "updated_at": "2026-09-06T01:48:03Z"
+  "updated_at": "2026-09-06T14:05:32Z"
 }

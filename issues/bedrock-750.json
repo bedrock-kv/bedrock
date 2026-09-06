@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:00:29Z",
+  "description": "Found while fixing bedrock-mi1 (PR #258). test/bedrock/data_plane/materializer/olivine/key_selector_property_test.exs has '_ -\u003e true' catch-alls on four of five properties, so the resolution bugs #258 fixed (last_less_or_equal returning the predecessor, first_greater_than skipping a key, backward cross-page resolution returning :not_found) never failed a property. Replace the catch-alls with the differential model the #258 auditor used: resolve every selector against a flat sorted key list via FoundationDB's KeySelectorRef semantics and assert the index returns the same key across page boundaries and at both ends. Also delete the dead zero_offset?/positive_offset?/negative_offset? KeySelector API (no callers, no FDB analogue) while in the file.",
+  "id": "bedrock-750",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "key_selector_property_test.exs never guards selector semantics: four of five properties end in a '_ -\u003e true' catch-all",
+  "type": "task",
+  "updated_at": "2026-09-06T01:00:29Z"
+}

@@ -115,7 +115,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
 
   @spec page_for_key(t(), KeySelector.t(), Bedrock.version()) ::
           {:ok, resolved_key :: binary(), Page.t()}
-          | {:partial, keys_available :: non_neg_integer()}
           | {:error, :not_found | :version_too_new | :version_too_old}
   def page_for_key(index_manager, %KeySelector{} = _key_selector, version) when index_manager.current_version < version,
     do: {:error, :version_too_new}

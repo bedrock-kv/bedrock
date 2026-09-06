@@ -27,7 +27,7 @@ defmodule Bedrock.KeySelector do
           offset: integer()
         }
 
-  defstruct key: <<>>, or_equal: true, offset: 0
+  defstruct key: <<>>, or_equal: false, offset: 0
 
   @doc """
   Creates a KeySelector that resolves to the lexicographically smallest key

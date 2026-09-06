@@ -152,18 +152,25 @@ defmodule Bedrock.DataPlane.CommitProxy.Server do
           State.t()
         ) ::
           {:reply, term(), State.t()} | {:noreply, State.t(), timeout() | {:continue, term()}}
-  def handle_call(
-        {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot},
-        _from,
-        %{mode: :locked} = t
-      ) do
+  # Unlock (FDB's proxy becoming usable once recovery reaches
+  # RECOVERY_TRANSACTION, which is where commitProxyServerCore arms
+  # commitBatcher). Replying arms the cadence: the empty-transaction
+  # heartbeat must run from unlock onward, not from the first client
+  # request, or a freshly recovered but idle cluster stops advancing
+  # versions until someone commits.
+  def handle_call({:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot}, from, %{mode: :locked} = t) do
     if lock_token == t.lock_token do
       routing_data = RoutingData.from_snapshot(routing_snapshot)
 
-      reply(
-        %{t | mode: :running, sequencer: sequencer, resolver_layout: resolver_layout, routing_data: routing_data},
-        :ok
-      )
+      GenServer.reply(from, :ok)
+
+      noreply_resuming_cadence(%{
+        t
+        | mode: :running,
+          sequencer: sequencer,
+          resolver_layout: resolver_layout,
+          routing_data: routing_data
+      })
     else
       reply(t, {:error, :unauthorized})
     end

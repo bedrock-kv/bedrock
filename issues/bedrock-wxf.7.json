@@ -9,9 +9,15 @@
   "id": "bedrock-wxf.7",
   "labels": [],
   "parent": "bedrock-wxf",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/298 — DiskCache backend wrapping another ObjectStorage backend; cold-start chunk/snapshot reads served from local disk, bounded and opt-in. Cold audit FAIL then PASS-WITH-NOTES.",
+      "timestamp": "2026-09-06T03:07:18Z"
+    }
+  ],
   "priority": 4,
   "status": "in_progress",
   "title": "Disk caching",
   "type": "task",
-  "updated_at": "2026-09-06T02:33:09Z"
+  "updated_at": "2026-09-06T03:07:18Z"
 }

@@ -40,15 +40,37 @@ defmodule Bedrock.SystemKeys.ValuesTest do
     end
   end
 
+  describe "log locations" do
+    test "round-trip" do
+      # The log id and its generation live in the KEY; the value carries
+      # only the address, which is what exclusion safety judges against.
+      assert {:ok, "node@host"} = Values.decode_log_node(Values.encode_log_node("node@host"))
+    end
+
+    test "encoder rejects non-binary input loudly - the node is a string, never an atom" do
+      assert_raise FunctionClauseError, fn -> Values.encode_log_node(:node@host) end
+    end
+
+    test "decoder never raises on garbage or wrong shapes, and never creates atoms" do
+      assert {:error, :invalid_encoding} = Values.decode_log_node(<<0xEE, 0xEE>>)
+      assert {:error, :invalid_type} = Values.decode_log_node(Values.encode_shard_key_entry(1, "m"))
+      assert {:error, :invalid_encoding} = Values.decode_log_node(:not_binary)
+    end
+  end
+
   describe "decode_for/2 - the writer/reader contract" do
     test "dispatches by parsed key family" do
       shard_value = Values.encode_shard_key_entry(3, "a")
       ref_value = Values.encode_materializer_node("node@host")
+      log_value = Values.encode_log_node("log_node@host")
 
       assert {:ok, {3, "a"}} = Values.decode_for(SystemKeys.parse_key(SystemKeys.shard_key("m")), shard_value)
 
       assert {:ok, "node@host"} =
                Values.decode_for(SystemKeys.parse_key(SystemKeys.materializer_key(7, "wkr_abc")), ref_value)
+
+      assert {:ok, "log_node@host"} =
+               Values.decode_for(SystemKeys.parse_key(SystemKeys.log_key(:old, "log_abc")), log_value)
     end
 
     test "unknown families decode as errors, never raise" do

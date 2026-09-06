@@ -2,9 +2,9 @@ defmodule Bedrock.SystemKeys.Reader do
   @moduledoc """
   The shared readers for the durable `\\xFF/system` mapping families:
   paged range reads and the family decoders. Recovery's materializer
-  bootstrap and the Distributor both read the same families the same
-  way — one reader, so two consumers cannot disagree about what the
-  bytes mean.
+  bootstrap, the Distributor and the exclusion safety check all read
+  their families the same way — one reader, so two consumers cannot
+  disagree about what the bytes mean.
 
   Paging resumes each page immediately after the last returned key and
   drains the continuation to exhaustion: a truncated boundary map is not
@@ -14,6 +14,7 @@ defmodule Bedrock.SystemKeys.Reader do
   read contract, surfaced rather than looped on.
   """
 
+  alias Bedrock.Service.Worker
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Values
 
@@ -58,7 +59,7 @@ defmodule Bedrock.SystemKeys.Reader do
   re-recruit every shard and orphan the live ones.
   """
   @spec decode_materializer_members([{Bedrock.key(), binary()}]) ::
-          {:ok, %{Bedrock.range_tag() => %{Bedrock.Service.Worker.id() => String.t()}}}
+          {:ok, %{Bedrock.range_tag() => %{Worker.id() => String.t()}}}
           | {:error, {:invalid_materializer_entry, Bedrock.key()}}
   def decode_materializer_members(entries) do
     Enum.reduce_while(entries, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
@@ -80,6 +81,46 @@ defmodule Bedrock.SystemKeys.Reader do
   end
 
   defp decode_member_entry(_not_a_member_key, _value), do: :error
+
+  @doc """
+  Decodes `logs/<generation>/<log_id>` entries into
+  `%{current: %{log_id => node}, old: %{log_id => node}}` - the two
+  vectors FDB packs into one `logsKey` value, kept apart because the
+  question its reader asks ("is recovery still finished with this
+  generation?") is answered differently for each.
+
+  Both generations always appear, empty when the family names none: a
+  caller forced to tell "no old generation" apart from "the key was
+  missing" would be reading the shape wrong.
+
+  A foreign key, or an entry whose value will not decode, fails the whole
+  decode - the same rule the membership decoder follows, and for a
+  sharper reason here: an exclusion check that read a family it cannot
+  account for as empty would answer "safe".
+  """
+  @spec decode_log_locations([{Bedrock.key(), binary()}]) ::
+          {:ok, %{current: %{Worker.id() => String.t()}, old: %{Worker.id() => String.t()}}}
+          | {:error, {:invalid_log_entry, Bedrock.key()}}
+  def decode_log_locations(entries) do
+    Enum.reduce_while(entries, {:ok, %{current: %{}, old: %{}}}, fn {key, value}, {:ok, acc} ->
+      case decode_log_entry(SystemKeys.parse_key(key), value) do
+        {:ok, generation, log_id, node} ->
+          {:cont, {:ok, Map.update!(acc, generation, &Map.put(&1, log_id, node))}}
+
+        :error ->
+          {:halt, {:error, {:invalid_log_entry, key}}}
+      end
+    end)
+  end
+
+  defp decode_log_entry({:log_key, generation, log_id}, value) do
+    case Values.decode_log_node(value) do
+      {:ok, node} -> {:ok, generation, log_id, node}
+      _ -> :error
+    end
+  end
+
+  defp decode_log_entry(_not_a_log_key, _value), do: :error
 
   @doc """
   Decodes `shard_keys/<end_key>` entries into the boundary map

@@ -14,6 +14,11 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecyclerTest do
   @segment_size 1024
   @max_available 3
 
+  # Large enough that no filesystem can satisfy it, so `:file.allocate/3`
+  # fails *after* the open has already created the file — the ENOSPC
+  # shape, without needing a full disk.
+  @unallocatable_size Bitwise.bsl(1, 62)
+
   setup %{tmp_dir: dir} do
     {:ok, state} = Logic.new(dir, @segment_size, 1, @max_available)
     %{dir: dir, state: state}
@@ -89,6 +94,83 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecyclerTest do
     end
   end
 
+  describe "a successful allocation" do
+    test "publishes a whole segment and nothing else", %{tmp_dir: dir, state: state} do
+      {:ok, state} = Logic.ensure_min_available(state, 1)
+
+      assert [pooled] = state.segments
+      assert File.stat!(pooled).size == @segment_size
+
+      assert File.ls!(dir) == [Path.basename(pooled)],
+             "the scratch name must be consumed by the publish, not left alongside the pool file"
+    end
+  end
+
+  # Preallocation is create-then-extend: the file exists at zero length
+  # before it is a segment. A failure between those two steps must leave
+  # nothing behind that a later scan can mistake for a whole segment.
+  describe "an allocation that fails partway" do
+    test "publishes nothing into the pool", %{tmp_dir: dir} do
+      {:ok, state} = Logic.new(dir, @unallocatable_size, 1, @max_available)
+
+      assert {:error, _reason} = Logic.ensure_min_available(state, 1)
+
+      assert pooled_files(dir) == [],
+             "a preallocation that never reached full size must not appear in the pool"
+    end
+
+    test "leaves nothing on disk at all", %{tmp_dir: dir} do
+      {:ok, state} = Logic.new(dir, @unallocatable_size, 1, @max_available)
+
+      assert {:error, _reason} = Logic.ensure_min_available(state, 1)
+
+      assert File.ls!(dir) == [], "the scratch file must be removed when the allocation fails"
+    end
+  end
+
+  # bedrock-61c.2's doctrine for worker directories applies to the pool:
+  # membership must be provable, not assumed from the name. `check_out`
+  # renames a pooled file straight into service and `Writer.open/3`
+  # derives its write budget from `File.stat/1`, so a short file adopted
+  # here presents as a healthy segment with a nonsense budget.
+  describe "new/4 adoption" do
+    test "adopts a pool file of the configured size", %{tmp_dir: dir} do
+      whole = Path.join(dir, "preallocated.1")
+      :ok = File.write(whole, :binary.copy(<<0>>, @segment_size))
+
+      assert {:ok, %{segments: [^whole], next_id: 2}} = Logic.new(dir, @segment_size, 1, @max_available)
+    end
+
+    test "discards a zero-length pool file", %{tmp_dir: dir} do
+      orphan = Path.join(dir, "preallocated.1")
+      :ok = File.write(orphan, "")
+
+      assert {:ok, %{segments: []}} = Logic.new(dir, @segment_size, 1, @max_available)
+
+      refute File.exists?(orphan),
+             "a file that is not a whole segment must be discarded, not left for the next scan to re-adopt"
+    end
+
+    test "discards a pool file that is short of the configured size", %{tmp_dir: dir} do
+      short = Path.join(dir, "preallocated.2")
+      :ok = File.write(short, :binary.copy(<<0>>, div(@segment_size, 2)))
+
+      assert {:ok, %{segments: []}} = Logic.new(dir, @segment_size, 1, @max_available)
+      refute File.exists?(short)
+    end
+
+    # A scratch file cannot be adopted — it does not match the pool's
+    # glob — but it must not accumulate either: at 64 MiB apiece, one
+    # per incarnation that dies mid-allocation.
+    test "sweeps a scratch file left behind by a previous incarnation", %{tmp_dir: dir} do
+      scratch = Path.join(dir, ".partial.preallocated.1")
+      :ok = File.write(scratch, "")
+
+      assert {:ok, %{segments: []}} = Logic.new(dir, @segment_size, 1, @max_available)
+      refute File.exists?(scratch)
+    end
+  end
+
   describe "new/4 configuration" do
     test "refuses a pool with no slack between min and max", %{tmp_dir: dir} do
       assert {:error, :max_available_must_exceed_min_available} = Logic.new(dir, @segment_size, 1, 1)
@@ -132,6 +214,28 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecyclerTest do
       # the very checkout the pool exists to serve.
       assert :ok = SegmentRecycler.check_out(recycler, Path.join(dir, "wal_next"))
       assert File.exists?(Path.join(dir, "wal_next"))
+    end
+  end
+
+  # The two ends joined up: wreckage left in the pool directory by a
+  # previous incarnation must never reach a WAL segment.
+  describe "a fresh incarnation over a poisoned pool directory" do
+    test "never checks out a file that is not a whole segment", %{tmp_dir: dir} do
+      :ok = File.write(Path.join(dir, "preallocated.1"), "")
+
+      {:ok, recycler} =
+        SegmentRecycler.start_link(
+          path: dir,
+          min_available: 1,
+          max_available: @max_available,
+          segment_size: @segment_size
+        )
+
+      handed_out = Path.join(dir, "wal_next")
+      assert :ok = SegmentRecycler.check_out(recycler, handed_out)
+
+      assert File.stat!(handed_out).size == @segment_size,
+             "the recycler handed out a file that is not a whole segment"
     end
   end
 end

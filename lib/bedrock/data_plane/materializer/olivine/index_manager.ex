@@ -262,11 +262,26 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
 
   @doc """
   Extracts the complete page_map from the current version's index.
-  Used during compaction to get all current pages.
+  For a durable snapshot, use the exact-version variant instead.
   """
   @spec get_complete_page_map(t()) :: %{Page.id() => {Page.t(), Page.id()}}
   def get_complete_page_map(%{versions: [{_, {current_index, _}} | _]}), do: current_index.page_map
   def get_complete_page_map(%{versions: []}), do: %{}
+
+  @doc """
+  Extracts the complete page map at an exact retained version.
+
+  Compaction must pair the durable boundary with its own index, never the
+  applied tip or a nearby version. Window advancement retains that boundary.
+  """
+  @spec get_complete_page_map(t(), Bedrock.version()) ::
+          {:ok, modified_pages()} | {:error, :version_not_retained}
+  def get_complete_page_map(%{versions: versions}, version) do
+    case List.keyfind(versions, version, 0) do
+      {^version, {index, _modified_pages}} -> {:ok, index.page_map}
+      nil -> {:error, :version_not_retained}
+    end
+  end
 
   @spec index_for_version(version_list(), Bedrock.version()) :: Index.t() | nil
   defp index_for_version(versions, target), do: find_target(versions, target)

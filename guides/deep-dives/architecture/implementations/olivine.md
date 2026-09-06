@@ -30,7 +30,9 @@ The stream puller hands each batch to the server through a synchronous ingest ca
 
 ## Compaction and Snapshots
 
-Background compaction rewrites the data and index files without blocking reads or ingestion, cutting over atomically when the compacted files are ready. After a successful compaction, olivine optionally uploads the result to object storage as the shard's snapshot bundle — the bootstrap point for cold-started replacements.
+Background compaction rewrites the data and index files without blocking reads or ingestion, cutting over atomically when the compacted files are ready. The compactor selects the exact retained index at the durable version, which is at or below KCV. It never snapshots the applied tip under an older version: even fully committed mutations after the durable boundary must be replayed from that boundary, including atomic operations. Cutover restores this historical baseline and rejoins the stream after it.
+
+After a successful compaction, olivine optionally uploads the result to object storage as the shard's snapshot bundle — the bootstrap point for cold-started replacements. It captures the compacted bytes before ingestion resumes and uploads those immutable bytes asynchronously. Idle spin-down uses the same exact-version compactor and uploads its scratch files before retiring.
 
 ## Key Components
 

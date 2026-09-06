@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-27T01:07:27Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-ljh",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "IndexManager.apply_transaction/3 accepts non-monotonic versions",
   "type": "bug",
-  "updated_at": "2026-08-27T01:07:27Z"
+  "updated_at": "2026-09-06T01:25:17Z"
 }

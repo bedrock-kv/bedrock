@@ -14,6 +14,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
   """
   use ExUnit.Case, async: false
 
+  alias Bedrock.ControlPlane.Director.Recovery
+  alias Bedrock.ControlPlane.Director.State, as: DirectorState
+  alias Bedrock.ControlPlane.Distributor.Recruitment
   alias Bedrock.DataPlane.Materializer.Olivine
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
@@ -29,6 +32,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
   defmodule TestCluster do
     @moduledoc false
     def name, do: "idle-spindown-test-cluster"
+    def otp_name(:foreman), do: :idle_spindown_test_foreman
+    def otp_name_for_worker(worker_id), do: :"idle_spindown_test_#{worker_id}"
   end
 
   setup do
@@ -272,6 +277,107 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
       refute_receive {:DOWN, ^ref, :process, ^pid, _}, 200
       assert Process.alive?(pid)
     end
+  end
+
+  describe "production wiring" do
+    # bedrock-q67.21.8: the whole path, end to end. The cluster config's
+    # materializer_idle_timeout_ms rides the director's recruitment_ctx
+    # as a worker param, Recruitment merges it into the params the
+    # foreman persists in the manifest, and the worker the foreman then
+    # starts spins itself down. Nothing below writes "idle_timeout" by
+    # hand — the only knob the test sets is the cluster parameter.
+    test "a materializer recruited the way production recruits one spins down after the configured idle period",
+         %{tmp_dir: tmp_dir} do
+      {_ctx, {:ok, pid, _node, _worker_id}} = recruit_through_the_director(tmp_dir, 50)
+      ref = Process.monitor(pid)
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, {:shutdown, :idle}}, 5_000
+    end
+
+    # The escape hatch the parameter documents: zero is not a
+    # zero-length window, it is off. The worker's opt-in gate
+    # (is_integer and > 0) is what makes it so — and the param has to
+    # ARRIVE as zero for that to mean anything, hence the first
+    # assertion (without it the test passes on a worker that was handed
+    # no param at all).
+    test "a cluster that sets the timeout to zero recruits a worker that never spins down",
+         %{tmp_dir: tmp_dir} do
+      {ctx, {:ok, pid, _node, _worker_id}} = recruit_through_the_director(tmp_dir, 0)
+      ref = Process.monitor(pid)
+
+      assert ctx.worker_params == %{"idle_timeout" => 0}
+      refute_receive {:DOWN, ^ref, :process, ^pid, _}, 300
+      assert Process.alive?(pid)
+      GenServer.stop(pid)
+    end
+  end
+
+  defp recruit_through_the_director(tmp_dir, idle_timeout_ms) do
+    ctx =
+      %{materializer_idle_timeout_ms: idle_timeout_ms}
+      |> recruitment_ctx_from_director()
+      |> Map.merge(%{
+        node_capabilities: %{materializer: [node()]},
+        logs: %{"log_1" => [7]},
+        log_refs: %{"log_1" => spawn(fn -> Process.sleep(:infinity) end)},
+        create_worker_fn: &start_worker_as_foreman(tmp_dir, &1, &2, &3, &4)
+      })
+
+    {ctx, Recruitment.recruit(7, ctx)}
+  end
+
+  # The director's own recruitment context, captured at the seam where
+  # it hands one to the distributor.
+  defp recruitment_ctx_from_director(parameters) do
+    test_pid = self()
+    stub = spawn(fn -> Process.sleep(:infinity) end)
+
+    Recovery.maybe_start_distributor(%DirectorState{
+      state: :running,
+      epoch: 1,
+      cluster: TestCluster,
+      config: %{parameters: parameters},
+      transaction_system_layout: %{
+        epoch: 1,
+        sequencer: self(),
+        proxies: [self()],
+        resolvers: [],
+        logs: %{}
+      },
+      distributor_start_fn: fn opts ->
+        send(test_pid, {:recruitment_ctx, opts[:recruitment_ctx]})
+        {:ok, stub}
+      end
+    })
+
+    assert_received {:recruitment_ctx, ctx}
+    ctx
+  end
+
+  # Stands in for Foreman.new_worker/4 on the one axis under test: the
+  # manifest params it is handed become the worker's child_spec params,
+  # the way Foreman.StartingWorkers.build_child_spec/1 hands them over.
+  # It is not full foreman fidelity — no cluster and no object_storage,
+  # so the spin-down snapshot is a no-op here (covered elsewhere in this
+  # file).
+  defp start_worker_as_foreman(tmp_dir, _foreman_ref, worker_id, :materializer, opts) do
+    otp_name = TestCluster.otp_name_for_worker(worker_id)
+    working_dir = Path.join(tmp_dir, worker_id)
+    File.mkdir_p!(working_dir)
+
+    child_spec =
+      Olivine.child_spec(
+        otp_name: otp_name,
+        foreman: self(),
+        id: worker_id,
+        path: working_dir,
+        params: opts[:params]
+      )
+
+    {GenServer, :start_link, args} = child_spec.start
+    {:ok, _pid} = apply(GenServer, :start, args)
+
+    {:ok, otp_name}
   end
 
   describe "the spin-down snapshot restores" do

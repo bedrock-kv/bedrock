@@ -59,8 +59,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   # never be gated on cluster presence); the ObjectStorage snapshot
   # handle additionally requires a cluster, which Logic guards on. Idle
   # spin-down is opt-in per worker (bedrock-q67.21.5): without an
-  # explicit positive idle_timeout the worker never spins down, which is
-  # what exempts the system shard (its bootstrap never sets the param).
+  # explicit positive idle_timeout the worker never spins down. That is
+  # what the system shard's exemption is built on — neither of the two
+  # things that create a tag-0 materializer sends the param
+  # (MaterializerBootstrapPhase, and Recruitment.worker_params/2).
   @spec startup_opts(cluster :: module() | nil, params :: map()) :: keyword()
   defp startup_opts(cluster, params) do
     base = [cluster: cluster, shard_id: params["shard_id"]]
@@ -661,6 +663,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
         OlivineTelemetry.trace_idle_spindown(idle_ms,
           n_keys: IndexManager.info(t.index_manager, :n_keys),
           size_in_bytes: IndexManager.info(t.index_manager, :size_in_bytes)
+        )
+
+        # Spin-down removes a shard's only copy on this node, and the
+        # next read pays for the revival: an operator reading the log
+        # after a slow first read needs to see that this happened, to
+        # which shard, and after how long — the telemetry event is for
+        # metrics, not for the postmortem.
+        Logger.info(
+          "Materializer #{inspect(t.id)} (shard #{inspect(t.shard_num)}) spinning down " <>
+            "after #{idle_ms}ms without a read"
         )
 
         remove_worker_after_exit(t)

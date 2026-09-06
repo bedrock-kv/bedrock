@@ -7,9 +7,15 @@
   "id": "bedrock-q67.36",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/249 — recover_from now replies via GenServer.reply + noreply_resuming_cadence, arming the heartbeat at unlock; repro pinned on both the handler return and a live proxy.",
+      "timestamp": "2026-09-06T00:45:27Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "Proxy recover_from reply leaves the empty-transaction heartbeat unarmed until first activity",
   "type": "task",
-  "updated_at": "2026-08-20T19:21:39Z"
+  "updated_at": "2026-09-06T00:45:27Z"
 }

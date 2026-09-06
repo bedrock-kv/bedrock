@@ -280,14 +280,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     end
   end
 
-  def handle_continue(:advance_window, %State{} = t) do
-    if t.allow_window_advancement do
-      {:ok, state_after_window} = Logic.advance_window(t)
-      noreply(state_after_window)
-    else
-      # Compaction in progress - skip window advancement
-      noreply(t)
-    end
+  def handle_continue(:advance_window, %State{} = t), do: noreply(maybe_advance_window(t))
+
+  # A compaction labels its output with the durable version it captured at
+  # start_compaction/1, and the cutover looks exactly that version up in
+  # `versions` to recover the index's paging parameters. Advancing the
+  # window evicts every entry below the new eviction point and carries
+  # index_db.durable_version up with it, so an advance while a compaction is
+  # open takes the cutover's anchor away. Both advance sites defer.
+  defp maybe_advance_window(%State{allow_window_advancement: false} = t), do: t
+
+  defp maybe_advance_window(%State{} = t) do
+    {:ok, state_after_window} = Logic.advance_window(t)
+    state_after_window
   end
 
   defp do_finish_startup(otp_name, foreman, id, path, opts) do
@@ -392,8 +397,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
         state_after_txns = notify_waiting_fetches(state_with_txns, version)
 
         # Now advance window after processing transactions
-        {:ok, final_state} = Logic.advance_window(state_after_txns)
-        noreply(final_state, continue: :maybe_process_transactions)
+        noreply(maybe_advance_window(state_after_txns), continue: :maybe_process_transactions)
     end
   end
 

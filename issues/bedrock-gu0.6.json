@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:40:51Z",
+  "description": "Found while fixing bedrock-jq8 (PR #270). try_to_start_workers/4 now uses on_timeout: :kill_task, which kills the async_stream TASK, not the child it started. If DynamicSupervisor.start_child/2 had already returned before the 30s overrun, the worker keeps running while the foreman records it as {:failed_to_start, :timeout} — unmonitored (bedrock-z2e's watch never attaches) and unadvertised. do_remove_worker/2 then File.rm_rf's its directory without terminating it, because terminate_worker_process(%{health: {:failed_to_start, _}}, _) returns :ok unconditionally (impl.ex ~230): a WAL deleted under a live worker. Pre-#270 the foreman's crash-loop restart re-adopted such a worker via {:error, {:already_started, _}}; #270 makes the state reachable and stable. Fix: on task timeout, look the child up in the worker DynamicSupervisor (by id/name) and either terminate it or adopt it as running; terminate_worker_process must terminate whatever is actually alive regardless of recorded health. Reproduce with a start that sleeps past the timeout, then remove the worker and assert the child is dead before the directory is gone.",
+  "id": "bedrock-gu0.6",
+  "labels": [],
+  "parent": "bedrock-gu0",
+  "priority": 3,
+  "status": "open",
+  "title": "Foreman: a worker start that overruns the timeout leaves a live, unmonitored child whose directory do_remove_worker will rm_rf",
+  "type": "bug",
+  "updated_at": "2026-09-06T01:40:51Z"
+}

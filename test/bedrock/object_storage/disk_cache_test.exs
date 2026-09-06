@@ -294,6 +294,21 @@ defmodule Bedrock.ObjectStorage.DiskCacheTest do
       refute File.exists?(entry_path(cache_root, "bootstrap"))
       assert gets(inner_config) == ["bootstrap", "bootstrap"]
     end
+
+    test "a mutable record that happens to sit under c/ or s/ is still not cached", %{
+      inner: inner,
+      cached: cached,
+      cache_root: cache_root
+    } do
+      # The bootstrap key is free-form application config. A cluster
+      # named `c` puts its record inside the cached namespace without
+      # ever being shaped like a chunk key.
+      for key <- ["c/bootstrap", "c/x/bootstrap", "s/a/not-a-version"] do
+        :ok = ObjectStorage.put(inner, key, "v1")
+        assert {:ok, "v1"} = ObjectStorage.get(cached, key)
+        refute File.exists?(entry_path(cache_root, key))
+      end
+    end
   end
 
   describe "bounded size" do
@@ -347,6 +362,48 @@ defmodule Bedrock.ObjectStorage.DiskCacheTest do
 
       {:ok, %File.Stat{mtime: mtime}} = File.stat(path, time: :posix)
       assert mtime > 1_000
+    end
+
+    test "entries that share an mtime give up the oldest object first", %{
+      inner: inner,
+      cache_root: cache_root
+    } do
+      cached = ObjectStorage.backend(DiskCache, inner: inner, root: cache_root, max_bytes: 200)
+      [older, newer, trigger] = for version <- [200, 300, 100], do: Keys.chunk_path("a", version)
+
+      for key <- [older, newer] do
+        :ok = ObjectStorage.put(inner, key, String.duplicate("x", 100))
+        {:ok, _data} = ObjectStorage.get(cached, key)
+        # A replay populates a run of chunks inside one mtime tick.
+        File.touch!(entry_path(cache_root, key), 1_000)
+      end
+
+      :ok = ObjectStorage.put(inner, trigger, String.duplicate("x", 100))
+      {:ok, _data} = ObjectStorage.get(cached, trigger)
+
+      refute File.exists?(entry_path(cache_root, older))
+      assert File.exists?(entry_path(cache_root, newer))
+    end
+
+    test "an object bigger than the cap is never written, and does not take the cache with it", %{
+      inner: inner,
+      cache_root: cache_root
+    } do
+      cached = ObjectStorage.backend(DiskCache, inner: inner, root: cache_root, max_bytes: 200)
+      warm = Keys.chunk_path("a", 100)
+      oversized = Keys.snapshot_path("a", 100)
+
+      :ok = ObjectStorage.put(inner, warm, String.duplicate("x", 100))
+      {:ok, _data} = ObjectStorage.get(cached, warm)
+      # Older than anything the oversized read could write, so a sweep
+      # would take it first.
+      File.touch!(entry_path(cache_root, warm), 1_000)
+
+      :ok = ObjectStorage.put(inner, oversized, String.duplicate("x", 500))
+      assert {:ok, _data} = ObjectStorage.get(cached, oversized)
+
+      refute File.exists?(entry_path(cache_root, oversized))
+      assert File.exists?(entry_path(cache_root, warm))
     end
 
     test "a writer's scratch file is neither counted nor evicted", %{

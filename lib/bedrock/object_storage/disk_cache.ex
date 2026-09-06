@@ -2,11 +2,14 @@ defmodule Bedrock.ObjectStorage.DiskCache do
   @moduledoc """
   A local disk cache in front of another ObjectStorage backend.
 
-  A materializer that restarts on a node it has already run on pays for
-  the same bytes twice: `Snapshot.read_latest/1` downloads the shard's
-  baseline again, and `ChunkReader.read_from_version/3` re-fetches every
-  chunk it replays. Neither object ever changed. This backend keeps a
-  copy in a local directory so the second cold start reads it from disk.
+  A node that restarts pays for the same bytes twice. A materializer's
+  cold start downloads the shard's baseline again
+  (`Snapshot.read_latest/1`, reached from
+  `Olivine.Logic.maybe_load_snapshot/2`), and a restarted
+  `Demux.ShardServer` re-reads every chunk it serves back out of history
+  (`ChunkReader.read_from_version/3`, reached from `get_from_storage/3`).
+  Neither object ever changed. This backend keeps a copy in a local
+  directory so the second read of one comes off local disk.
 
   It is a decorator: it holds another backend as `:inner` and forwards
   every operation to it. The inner backend remains the authority for what
@@ -15,44 +18,59 @@ defmodule Bedrock.ObjectStorage.DiskCache do
 
   ## What is cached, and why nothing needs invalidating
 
-  Only chunks (`c/`) and snapshots (`s/`). Both are written once under a
-  key naming the version they end at, and are never rewritten, so a copy
-  cannot go stale.
+  Only keys of the shape `Keys.chunk_path/2` and `Keys.snapshot_path/2`
+  build: `c/{tag}/{version}` and `s/{tag}/{version}`. Both are written
+  once under a key naming the version they end at, and are never
+  rewritten, so a copy cannot go stale.
 
   The other keys in the store are not like that. The bootstrap record is
   read with `get/2` (`Coordinator.Server`, recovery's `PersistencePhase`)
   and REWRITTEN in place by `put_if_version_matches/5`; serving a cached
   copy would hand a coordinator a cluster layout another node has already
-  replaced. Those keys pass straight through.
+  replaced. Those keys pass straight through. It is the whole SHAPE that
+  is tested rather than the leading `c/` or `s/`, because the bootstrap
+  key is free-form application config: a cluster named `c` would
+  otherwise put its mutable record inside the cached namespace.
 
   Immutable is not eternal, though — consolidation reclaims chunks
-  (bedrock-wxf.6) and retention drops old snapshots. Every operation that
-  removes or replaces an object at a cached key drops the entry with it,
-  so an entry never outlives the object it copies. A removal performed
-  from ANOTHER node is invisible here, but so is the key: `list/3` is
-  never served from the cache, so nothing names an object the store no
-  longer lists, and the entry ages out.
+  (bedrock-wxf.6) and retention drops old snapshots. Every operation
+  through THIS backend that removes or replaces an object at a cached key
+  drops the entry with it. Removals from another node are invisible here,
+  and so is the racing case where a `get/2` already in flight repopulates
+  a key a `delete/2` has just dropped. What makes those harmless is that
+  nothing can name the object any more: `list/3` is never served from the
+  cache, so a key the store no longer lists is never asked for again, and
+  the entry is only ever dead weight against the bound.
 
   ## Bound
 
-  `:max_bytes` caps what the directory holds. A populate that carries the
-  total over the cap deletes entries oldest-mtime-first until it fits, and
-  emits `[:bedrock, :object_storage, :disk_cache, :evicted]` with the
-  count and bytes dropped. mtime IS the recency clock: a hit touches its
-  entry, so eviction is least-recently-USED rather than
-  least-recently-written.
+  `:max_bytes` caps what the directory holds. A sweep deletes entries
+  oldest-mtime-first until the total fits, and emits
+  `[:bedrock, :object_storage, :disk_cache, :evicted]` with the count and
+  bytes dropped. mtime IS the recency clock: a hit touches its entry, so
+  eviction is least-recently-USED rather than least-recently-written.
 
-  The sweep walks the directory, which is O(entries). It runs only on a
-  populate — the path that just paid for a fetch from the inner backend,
-  which dwarfs a directory walk — and staying stateless is what lets a
-  backend remain a plain `{module, config}` term that any process can
-  hold without registering anything.
+  The sweep walks the directory, so it costs O(entries) — and sweeping on
+  every populate would make the cache slower than no cache at all, since
+  a warm 1 GiB of 522-byte chunks is two million `stat` calls to save one
+  GET. Instead a populate sweeps with probability `bytes / (slack ×
+  max_bytes)`, so one sweep falls due for every `slack × max_bytes` bytes
+  admitted however large the objects are. The expected work per populate
+  is then `1 / slack` stats no matter how big the cache grows, and the
+  cap is soft by that same fraction: the directory drifts above it
+  between sweeps, and is pulled back at the next one. Nothing is
+  registered anywhere to make this work, which is what lets a backend
+  stay a plain `{module, config}` term any process can hold.
+
+  An object larger than the whole cap is never written: it could only
+  make room for itself by evicting everything, and would then be evicted
+  in turn on the very next populate.
 
   ## Configuration
 
   - `:inner` - Required. The backend to wrap, as `{module, config}`.
   - `:root` - Required. Local directory holding the cached copies.
-  - `:max_bytes` - Cap on the bytes held (default: 1 GiB).
+  - `:max_bytes` - Soft cap on the bytes held (default: 1 GiB).
 
   Not wired in by default: `ObjectStorage.Config` reaches this backend
   only when it is asked for.
@@ -70,9 +88,17 @@ defmodule Bedrock.ObjectStorage.DiskCache do
 
   @default_max_bytes 1024 * 1024 * 1024
 
-  # `Keys` builds every chunk key under `c/` and every snapshot key under
-  # `s/`. Nothing else in the store is write-once.
-  @immutable_prefixes ["c/", "s/"]
+  # How far the directory is allowed to drift above the cap between
+  # sweeps, as a fraction of it. It is also the reciprocal of the
+  # expected `stat` calls a populate pays: 10% slack, ~10 stats.
+  @sweep_slack 0.1
+
+  # Exactly what `Keys.chunk_path/2` and `Keys.snapshot_path/2` build:
+  # a namespace, a base36 shard tag, and a 13-character base36 inverted
+  # version. Nothing else in the store is write-once. (The pattern lives
+  # here rather than in `Keys` because it is this module's question —
+  # "may I keep a copy of this forever?" — not a key-formatting one.)
+  @immutable_key ~r"^[cs]/[0-9a-z]+/[0-9a-z]{13}$"
 
   @impl true
   def get(config, key) do
@@ -127,6 +153,14 @@ defmodule Bedrock.ObjectStorage.DiskCache do
 
   @impl true
   def put_if_version_matches(config, key, version_token, data, opts \\ []) do
+    # In this cluster the only compare-and-swap is on the bootstrap
+    # record, which `cacheable?/1` never admits, so the discard below has
+    # nothing to do today. It stays because `put/4` and `delete/2` are
+    # the other two ways an object at a cached key can change, and both
+    # keep the entry honest; leaving the third as the exception would
+    # make "an entry never outlives the object it copies" conditional on
+    # a convention this module cannot enforce, for the price of one
+    # `File.rm` on a path that runs once per cluster reconfiguration.
     result = ObjectStorage.put_if_version_matches(inner(config), key, version_token, data, opts)
     discard(config, key)
     result
@@ -136,7 +170,7 @@ defmodule Bedrock.ObjectStorage.DiskCache do
   defp root(config), do: Keyword.fetch!(config, :root)
   defp max_bytes(config), do: Keyword.get(config, :max_bytes, @default_max_bytes)
 
-  defp cacheable?(key), do: String.starts_with?(key, @immutable_prefixes)
+  defp cacheable?(key), do: Regex.match?(@immutable_key, key)
 
   defp entry_path(config, key), do: Path.join(root(config), key)
 
@@ -176,14 +210,34 @@ defmodule Bedrock.ObjectStorage.DiskCache do
   # misses; it is never a reason to fail an operation the store completed.
   @spec populate(keyword(), ObjectStorage.key(), ObjectStorage.data()) :: :ok
   defp populate(config, key, data) do
-    if cacheable?(key) do
+    bytes = IO.iodata_length(data)
+    max_bytes = max_bytes(config)
+
+    if cacheable?(key) and bytes <= max_bytes do
       # LocalFilesystem writes to a scratch file in the target's own
       # directory, fsyncs it and renames, so an entry is whole or absent.
       # A short entry would be served as if it were the object.
       case LocalFilesystem.put([root: root(config)], key, data) do
-        :ok -> evict_to_fit(config)
+        :ok -> maybe_sweep(config, bytes, max_bytes)
         {:error, _reason} -> :ok
       end
+    else
+      :ok
+    end
+  end
+
+  # One sweep per `@sweep_slack * max_bytes` bytes admitted, decided by a
+  # coin weighted by the size of THIS object so the rate holds whatever
+  # the objects weigh. An independent draw per populate, not a hash of
+  # the key: a workload that cycles a handful of keys must still
+  # accumulate its way to a sweep rather than deterministically never
+  # reaching one.
+  @spec maybe_sweep(keyword(), pos_integer(), pos_integer()) :: :ok
+  defp maybe_sweep(config, bytes, max_bytes) do
+    interval = max(1, div(trunc(@sweep_slack * max_bytes), max(1, bytes)))
+
+    if :rand.uniform(interval) == 1 do
+      evict_to_fit(config, max_bytes)
     else
       :ok
     end
@@ -198,10 +252,9 @@ defmodule Bedrock.ObjectStorage.DiskCache do
     :ok
   end
 
-  @spec evict_to_fit(keyword()) :: :ok
-  defp evict_to_fit(config) do
+  @spec evict_to_fit(keyword(), pos_integer()) :: :ok
+  defp evict_to_fit(config, max_bytes) do
     root = root(config)
-    max_bytes = max_bytes(config)
     entries = entries(root)
     total = Enum.reduce(entries, 0, fn {_path, size, _mtime}, sum -> sum + size end)
 
@@ -212,20 +265,24 @@ defmodule Bedrock.ObjectStorage.DiskCache do
     end
   end
 
-  @spec evict(Path.t(), [{Path.t(), non_neg_integer(), integer()}], non_neg_integer(), non_neg_integer()) :: :ok
+  @spec evict(Path.t(), [{Path.t(), non_neg_integer(), integer()}], non_neg_integer(), pos_integer()) :: :ok
   defp evict(root, entries, total, max_bytes) do
-    {victims, freed} =
+    {victims, _condemned} =
       entries
-      |> Enum.sort_by(fn {_path, _size, mtime} -> mtime end)
-      |> Enum.reduce_while({[], 0}, fn {path, size, _mtime}, {victims, freed} ->
-        if total - freed > max_bytes do
-          {:cont, {[path | victims], freed + size}}
+      |> Enum.sort(&least_recently_used?/2)
+      |> Enum.reduce_while({[], 0}, fn {path, size, _mtime}, {victims, condemned} ->
+        if total - condemned > max_bytes do
+          {:cont, {[{path, size} | victims], condemned + size}}
         else
-          {:halt, {victims, freed}}
+          {:halt, {victims, condemned}}
         end
       end)
 
-    Enum.each(victims, &File.rm/1)
+    # Only bytes actually removed are freed bytes: a removal that failed
+    # left the entry, and the report must not claim room that is still
+    # occupied.
+    freed =
+      Enum.reduce(victims, 0, fn {path, size}, freed -> if File.rm(path) == :ok, do: freed + size, else: freed end)
 
     Telemetry.execute(
       [:bedrock, :object_storage, :disk_cache, :evicted],
@@ -233,6 +290,18 @@ defmodule Bedrock.ObjectStorage.DiskCache do
       %{root: root}
     )
   end
+
+  # mtime is whole seconds, so a replay populates a whole run of entries
+  # that tie. The tie-break has to break SOMEWHERE, and reverse key order
+  # is the least harmful direction: both cached namespaces are named by
+  # inverted version, so the greatest key is the oldest object, and the
+  # oldest object is the one a reader is least likely to want next.
+  # Without it the order is whatever `Path.wildcard/1` returned —
+  # ascending, i.e. newest object first, precisely backwards.
+  @spec least_recently_used?({Path.t(), non_neg_integer(), integer()}, {Path.t(), non_neg_integer(), integer()}) ::
+          boolean()
+  defp least_recently_used?({path_a, _size_a, mtime}, {path_b, _size_b, mtime}), do: path_a > path_b
+  defp least_recently_used?({_path_a, _size_a, mtime_a}, {_path_b, _size_b, mtime_b}), do: mtime_a < mtime_b
 
   # `Path.wildcard/1` skips dot-prefixed names, which is exactly right
   # here: a LocalFilesystem scratch file is a write in progress, not an

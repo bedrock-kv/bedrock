@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T00:46:09Z",
+  "description": "Found while fixing bedrock-q67.36 (PR #249). Two handlers in lib/bedrock/data_plane/commit_proxy/server.ex reply while mode == :running without returning through noreply_resuming_cadence/1, so the GenServer timeout that drives the empty-transaction heartbeat and batch finalization is not re-armed:\n\n1. handle_call({:commit, _epoch, ...}, _from, %{mode: :running}) -\u003e {:error, :wrong_epoch} (server.ex:184 at the time of filing)\n2. the handle_info(_msg, t) catch-all (server.ex:333)\n\nWith an OPEN batch, either path strands the batch and every caller blocked on it until the next unrelated message arrives — worse than the q67.36 defect (which only delayed the first heartbeat). Same class of fix as #249: reply and return through the cadence-resuming shape. Reproduce the way #249's recovery_heartbeat_test.exs pins the direct-handler return ({:noreply, _, timeout}) and add a live test with an open batch.",
+  "id": "bedrock-q67.47",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "Commit proxy replies in :running mode without re-arming the heartbeat: wrong_epoch commit and handle_info catch-all strand an open batch",
+  "type": "bug",
+  "updated_at": "2026-09-06T00:46:09Z"
+}

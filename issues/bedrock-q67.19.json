@@ -19,11 +19,15 @@
     {
       "text": "Stacked on #234 commit5962c283 / draftPR242 in isolated236 worktree. Red focused boundary tests plus corrected property oracle at /tmp/issue236-red.log. Concrete plan /tmp/bedrock-issue-team-20260905/236-plan.md awaiting cold review. Critical diagnosis: changing \u003c= alone would spare covered boundary-page right keys because old extraction clamps end to Page.right_key; remove clamping with half-open filter. No production edits.",
       "timestamp": "2026-09-06T00:25:21Z"
+    },
+    {
+      "text": "Reviewed half-open fix green focused2properties/25tests; corrected additional old key15 inclusive expectation found in fullsuite. Full non-S3 suite passed17doctests/158properties/2900tests/0failures(17excluded). Normal full run had old expectation +2 unrelated message timeouts, later port9000 collision from external OTP29 tests; root approved in-memory test-helper MinIO skip without repo edit. Final audit requested /tmp/bedrock-issue-team-20260905/236-final-audit.md. Format clean; Credo/Dialyzer final running.",
+      "timestamp": "2026-09-06T00:35:40Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Olivine clear_range uses inclusive end-key; everywhere else is exclusive",
   "type": "bug",
-  "updated_at": "2026-09-06T00:25:21Z"
+  "updated_at": "2026-09-06T00:35:40Z"
 }

@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T04:17:30Z",
+  "description": "Follow-up from bedrock-q67.21.14 (PR #304), which renamed modules but only touched guide lines naming a module or path. Remaining: (1) guides/quick-reads/recovery/tsl-validation.md and materializer-bootstrap.md carry the old names in filename, title, and four inbound links — rename to core-state-validation.md / system-shard-bootstrap.md and fix the links; (2) tsl-validation.md:5 says the phase validates 'the planned transaction system layout' — it validates the prior durable CoreState (#200/#304); (3) materializer-bootstrap.md:36-38 still describes per-shard re-adoption, which #263 removed (recovery seats tag 0 only; the distributor owns data tags). Also add release-note lines for the telemetry rename [:bedrock, :recovery, :tsl_validation_*] → :core_state_validation_* and metadata key transaction_system_layout → core_state, which #304 changed and no PR in the stack put in CHANGELOG.md.",
+  "id": "bedrock-5tq.8",
+  "labels": [],
+  "parent": "bedrock-5tq",
+  "priority": 3,
+  "status": "open",
+  "title": "Guides content pass for the renamed recovery phases: tsl-validation.md and materializer-bootstrap.md describe behavior that no longer exists",
+  "type": "chore",
+  "updated_at": "2026-09-06T04:17:30Z"
+}

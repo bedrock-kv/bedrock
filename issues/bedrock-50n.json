@@ -3,7 +3,9 @@
   "blocked_by": [
     "bedrock-7i1"
   ],
-  "blocks": [],
+  "blocks": [
+    "bedrock-t0k"
+  ],
   "created": "2026-09-06T02:55:29Z",
   "description": "Add an explicit generation and granted-owner token to lock, replay, unlock, live push, and delayed replies; reject same-generation foreign owners and old tasks before WAL mutation. Preserve task-based replay callers. Negative real-WAL histories cover stale replay, push, unlock, queued requests, duplicate owner, and delayed replies. No legacy unfenced fallback; compatible-binary-only upgrade. Dependency of bedrock-t0k.",
   "id": "bedrock-50n",

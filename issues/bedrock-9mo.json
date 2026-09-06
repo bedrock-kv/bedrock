@@ -6,9 +6,15 @@
   "description": "Audit of bedrock-zsw confirmed index_update.ex lines ~203-215 (if 0 in middle_page_ids) are unreachable: chain traversal uses next_id == 0 as end-of-chain sentinel, so page 0 can only ever be the first collected page, never middle or last. Remove the branch or coveralls-ignore it. Also consider the keys_removed asymmetry: clear_range counts unconditionally while set/clear stats are gated on track_statistics. See PR #78.",
   "id": "bedrock-9mo",
   "labels": [],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/274 — removed the unreachable 0-in-middle_page_ids branch in IndexUpdate.clear_range, proven dead structurally (next_id==0 chain-end sentinel means page 0 can only ever be first_page_id) and confirmed empirically (probe raise inside the branch, full suite 0 failures). Cold audit: PASS.",
+      "timestamp": "2026-09-06T01:56:53Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "Remove unreachable page-0-as-middle-page branch in IndexUpdate.clear_range",
   "type": "task",
-  "updated_at": "2026-09-06T01:48:57Z"
+  "updated_at": "2026-09-06T01:56:53Z"
 }

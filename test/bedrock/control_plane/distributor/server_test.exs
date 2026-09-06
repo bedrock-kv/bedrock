@@ -1015,21 +1015,24 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
             materializer_refs: %{
               1 => %{"wkr_1" => "node_a@host"},
               2 => %{"wkr_2" => "node_a@host"},
-              3 => %{"wkr_3" => "node_c@host"}
+              3 => %{"wkr_3" => "node_b@host"},
+              4 => %{"wkr_4" => "node_c@host"}
             }
           }
         )
 
-      # node_b carries nothing, so it wins outright.
+      # node_b and node_c carry one each: the directory's order decides,
+      # and node_b is named first.
       assert {:noreply, t2} = Server.handle_cast({:coverage_demand, 7}, t)
       assert t2.pending_placements == %{7 => "node_b@host"}
 
-      # Now node_b and node_c carry one each: the directory's order
-      # decides, and node_b is named first.
+      # node_b now carries two counting the reservation, so node_c wins
+      # outright — and it is the RESERVATION that makes it so: nothing
+      # has been committed for tag 7 yet.
       assert {:noreply, t3} = Server.handle_cast({:coverage_demand, 8}, t2)
-      assert t3.pending_placements[8] == "node_b@host"
+      assert t3.pending_placements[8] == "node_c@host"
 
-      assert Enum.sort(created_nodes(2)) == [:node_b@host, :node_b@host]
+      assert Enum.sort(created_nodes(2)) == [:node_b@host, :node_c@host]
     end
 
     test "publication hands the reservation to the committed view — the count survives, undoubled" do
@@ -1094,6 +1097,9 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           assert {:noreply, t2} = Server.handle_cast({:coverage_demand, 7}, t)
           assert t2.pending_placements == %{}
           assert_receive {:recruitment_complete, 7, {:error, :no_materializer_capable_nodes}} = completion, 100
+
+          # Nowhere to place means no worker is created anywhere.
+          refute_received {:created_on, _}
 
           assert {:noreply, t3} = Server.handle_info(completion, t2)
           refute MapSet.member?(t3.recruiting, 7)

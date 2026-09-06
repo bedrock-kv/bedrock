@@ -552,6 +552,11 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
         # black hole until the next recovery. Leave the ambiguous case
         # running; its params carry the shard assignment, so healing and
         # the next recovery's re-adoption can reconcile it either way.
+        # A worker left running this way is also invisible to placement
+        # until then — its reservation is released and no member takes
+        # its place — so its node may be handed one more shard than it
+        # holds. That is the same ambiguity, priced: one extra worker on
+        # a node, against a durable black hole.
         if commit_definitely_not_landed?(reason) do
           Recruitment.remove_orphaned_worker(worker_id, node, t.recruitment_ctx)
         end

@@ -1,11 +1,8 @@
 defmodule Bedrock.DataPlane.Materializer.Olivine.ReadingTest do
   @moduledoc """
-  Behavioral tests for the Reading module's public API.
-
-  Unlike ReadingTestHelpers (which duplicates fetch logic), these tests
-  exercise the real Reading module: synchronous and asynchronous reads,
-  waitlisting on :version_too_new, waitlist notification, active task
-  tracking, and shutdown.
+  Behavioral tests for the Reading module's public API: synchronous and
+  asynchronous reads, waitlisting on :version_too_new, waitlist
+  notification, active task tracking, and shutdown.
   """
   use ExUnit.Case, async: true
 

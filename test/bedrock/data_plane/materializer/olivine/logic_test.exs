@@ -6,7 +6,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
-  alias Bedrock.DataPlane.Materializer.Olivine.ReadingTestHelpers
+  alias Bedrock.DataPlane.Materializer.Olivine.Reading
+  alias Bedrock.DataPlane.Materializer.Olivine.Reading.ReadingContext
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
@@ -57,6 +58,31 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
     encoded = Transaction.encode(transaction_map)
     {:ok, with_version} = Transaction.add_commit_version(encoded, Version.from_integer(version_int))
     with_version
+  end
+
+  # Exercises the real Reading API against a Logic.State, mirroring how
+  # Server drives reads (see server.ex). Kept thin so these tests exercise
+  # Reading.handle_get/handle_get_range directly rather than a reimplementation.
+  defp get(%State{} = state, key_or_selector, version, opts \\ []) do
+    context = ReadingContext.new(state.index_manager, state.database)
+    {_manager, result} = Reading.handle_get(state.read_request_manager, context, key_or_selector, version, opts)
+    result
+  end
+
+  defp get_range(%State{} = state, start_key_or_selector, end_key_or_selector, version, opts) do
+    context = ReadingContext.new(state.index_manager, state.database)
+
+    {_manager, result} =
+      Reading.handle_get_range(
+        state.read_request_manager,
+        context,
+        start_key_or_selector,
+        end_key_or_selector,
+        version,
+        opts
+      )
+
+    result
   end
 
   describe "startup/4" do
@@ -162,7 +188,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
   describe "get/4" do
     test "returns error for missing key in sync mode", %{test_dir: test_dir} do
       state = create_test_state(test_dir)
-      assert {:error, _} = ReadingTestHelpers.get(state, "nonexistent_key", 1, [])
+      assert {:error, _} = get(state, "nonexistent_key", 1, [])
       Logic.shutdown(state)
     end
 
@@ -171,7 +197,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       reply_fn = fn result -> send(self(), {:async_result, result}) end
 
       # Immediate errors return error, not task pid
-      assert {:error, _} = ReadingTestHelpers.get(state, "async_key", 1, reply_fn: reply_fn)
+      assert {:error, _} = get(state, "async_key", 1, reply_fn: reply_fn)
       Logic.shutdown(state)
     end
 
@@ -180,7 +206,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       key_selector = KeySelector.first_greater_or_equal("selector_key")
       reply_fn = fn result -> send(self(), {:selector_result, result}) end
 
-      assert {:error, _} = ReadingTestHelpers.get(state, key_selector, 1, reply_fn: reply_fn)
+      assert {:error, _} = get(state, key_selector, 1, reply_fn: reply_fn)
       Logic.shutdown(state)
     end
 
@@ -188,8 +214,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       state = create_test_state(test_dir)
 
       # Test different versions that trigger error paths
-      assert {:error, _} = ReadingTestHelpers.get(state, "key", 0, [])
-      assert {:error, _} = ReadingTestHelpers.get(state, "key", 999_999, [])
+      assert {:error, _} = get(state, "key", 0, [])
+      assert {:error, _} = get(state, "key", 999_999, [])
       Logic.shutdown(state)
     end
   end
@@ -199,7 +225,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       state = create_test_state(test_dir)
 
       assert {:error, :version_too_old} =
-               ReadingTestHelpers.get_range(state, "range_key1", "range_key3", 1, [])
+               get_range(state, "range_key1", "range_key3", 1, [])
 
       Logic.shutdown(state)
     end
@@ -209,7 +235,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       reply_fn = fn result -> send(self(), {:range_result, result}) end
 
       assert {:error, _} =
-               ReadingTestHelpers.get_range(state, "async_range1", "async_range3", 1, reply_fn: reply_fn)
+               get_range(state, "async_range1", "async_range3", 1, reply_fn: reply_fn)
 
       Logic.shutdown(state)
     end
@@ -218,7 +244,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       state = create_test_state(test_dir)
 
       assert {:error, :version_too_old} =
-               ReadingTestHelpers.get_range(state, "limit_key1", "limit_key9", 1, limit: 2)
+               get_range(state, "limit_key1", "limit_key9", 1, limit: 2)
 
       Logic.shutdown(state)
     end
@@ -318,7 +344,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       assert version == Version.from_integer(1)
       assert updated_state.index_manager.current_version == version
 
-      assert {:ok, "world"} = ReadingTestHelpers.get(updated_state, "hello", version)
+      assert {:ok, "world"} = get(updated_state, "hello", version)
 
       Logic.shutdown(updated_state)
     end
@@ -336,13 +362,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       assert version == Version.from_integer(3)
 
       # All writes visible at the final version, including the overwrite
-      assert {:ok, "value_a2"} = ReadingTestHelpers.get(updated_state, "key_a", version)
-      assert {:ok, "value_b"} = ReadingTestHelpers.get(updated_state, "key_b", version)
-      assert {:ok, "value_c"} = ReadingTestHelpers.get(updated_state, "key_c", version)
+      assert {:ok, "value_a2"} = get(updated_state, "key_a", version)
+      assert {:ok, "value_b"} = get(updated_state, "key_b", version)
+      assert {:ok, "value_c"} = get(updated_state, "key_c", version)
 
       # Earlier version still sees the original value
       v1 = Version.from_integer(1)
-      assert {:ok, "value_a"} = ReadingTestHelpers.get(updated_state, "key_a", v1)
+      assert {:ok, "value_a"} = get(updated_state, "key_a", v1)
 
       Logic.shutdown(updated_state)
     end
@@ -397,7 +423,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
 
       # Evicted data remains readable at the durable version from the database
       assert {:ok, "old_value"} =
-               ReadingTestHelpers.get(updated_state, "old_key", Version.from_integer(6_000_000))
+               get(updated_state, "old_key", Version.from_integer(6_000_000))
 
       Logic.shutdown(updated_state)
     end

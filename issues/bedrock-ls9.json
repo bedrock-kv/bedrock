@@ -21,11 +21,15 @@
     {
       "text": "Cold authority blocker amended: real Raft term1 -\u003e follower2 and re-elected leader3 with cached old Director/term retained; baseline sends unauthorized pongs in both windows. 18 expected reds in authority log. Plan now binds Director to separate authoritative raft_term and checks actual leadership tuple for notification/ping/startup; stale callback ignored. Nil Raft fails closed. Awaiting renewed review; no production edits.",
       "timestamp": "2026-09-06T03:12:27Z"
+    },
+    {
+      "text": "Implementation complete pending cold final audit. Stable diff295-final.diff and criterion mapping295-final-handoff.md.201 focused tests incl real replacement/stale-message regression green; full2918tests+158properties+17doctests green; mix quality format/Credo/Dialyzer0 errors green. Actual Raft authority and term-binding windows covered, no generation/schema edits. No commit yet.",
+      "timestamp": "2026-09-06T03:22:28Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Attribute Director layout and config notifications to the current instance",
   "type": "bug",
-  "updated_at": "2026-09-06T03:12:27Z"
+  "updated_at": "2026-09-06T03:22:28Z"
 }

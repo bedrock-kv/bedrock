@@ -2,6 +2,8 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:33Z",
+  "close_reason": "Delivered in PR #282 (audited 2026-09-06: always-multicall highest epoch, periodic revalidation, client-side epoch fence; 7 tests; one CI job red on unrelated repo_transact_test flake)",
   "created": "2026-07-14T22:18:54Z",
   "description": "Rediscovery only triggers on DOWN/ping failure; a partitioned old leader that stays alive retains its links indefinitely. Pre-existing liveness question surfaced in bedrock-q67.4 audit. Consider periodic leader re-verification or coordinator-side epoch fencing on link traffic.",
   "id": "bedrock-v65",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Link discovery: partitioned-but-alive old coordinator leader is never abandoned",
   "type": "task",
-  "updated_at": "2026-09-06T02:17:18Z"
+  "updated_at": "2026-09-06T14:05:33Z"
 }

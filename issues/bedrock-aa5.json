@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:33Z",
+  "close_reason": "Delivered in PR #283 (audited 2026-09-06: build_index/1 and open_test_database/1 in index_test_helpers, 3 builders + 4 DETS setups migrated; stacked on #275, no CI run)",
   "created": "2026-07-14T18:55:14Z",
   "description": "The olivine suite now has three hand-rolled index builders (index_test.exs build_index_with_pages, range_clear_ordering_property_test.exs build_index_from_keys, index_update_test.exs build_index) plus repeated DETS temp-dir setup. Extract build_index(page_specs) and open_test_database/1 into test/support/materializer/olivine/index_test_helpers.ex (already owns rebuild_page_chain_consistency/1) and migrate callers.",
   "id": "bedrock-aa5",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Extract shared olivine test fixtures: build_index/1 and open_test_database/1",
   "type": "task",
-  "updated_at": "2026-09-06T02:28:46Z"
+  "updated_at": "2026-09-06T14:05:33Z"
 }

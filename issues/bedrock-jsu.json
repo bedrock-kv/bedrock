@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:35Z",
+  "close_reason": "Delivered in PR #294 (audited 2026-09-06: both credo checks re-enabled, all 35 sites fixed without disable comments; CI green)",
   "created": "2026-07-14T19:31:28Z",
   "description": "credo 1.7.19 (required for Elixir 1.20 compatibility, bumped in PR #81) expanded ExpensiveEmptyEnumCheck and flags 22 length/1-vs-empty-list sites (mostly tests) plus 7 Refactor.Nesting sites. Both checks were disabled in .credo.exs to keep the CI matrix PR scoped. Fix the sites and remove the two entries from the disabled list.",
   "id": "bedrock-jsu",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Fix ExpensiveEmptyEnumCheck and Nesting credo findings; re-enable checks",
   "type": "task",
-  "updated_at": "2026-09-06T02:53:40Z"
+  "updated_at": "2026-09-06T14:05:35Z"
 }

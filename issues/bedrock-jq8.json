@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:37Z",
+  "close_reason": "Delivered in PR #270 (audited 2026-09-06: unreachable clause dropped, zip_input_on_exit pairing, 30s timeout, raising start recorded as failed_to_start; ticket's 2 tests present; CI green). Overrun-leaves-live-child tracked in bedrock-gu0.6.",
   "created": "2026-08-25T19:58:22Z",
   "description": "Found during the bedrock-mxt audit; pre-existing.\n\nlib/bedrock/service/foreman/starting_workers.ex, in `try_to_start_workers/3`:\n\n    |\u003e Enum.map(fn\n      {:ok, worker_info} -\u003e worker_info\n      {:error, reason} -\u003e put_health(worker_info, {:failed_to_start, reason})\n    end)\n\nTwo defects in three lines:\n\n1. `Task.async_stream/2` yields `{:ok, value}` or `{:exit, reason}` — never `{:error, _}`. The second clause is unreachable.\n2. If it were reached, `worker_info` is the enclosing LIST argument, not the element being mapped — `put_health/2` would be applied to a list.\n\n## Failure scenario\n\nA worker's start task crashes, or exceeds `Task.async_stream`'s default 5-second `on_timeout: :exit`. The stream yields `{:exit, reason}`, which matches neither clause, and the `CaseClauseError` propagates out of `start_workers_that_are_stopped/1` and takes down the **foreman** — not just the one worker that was slow to start.\n\nA slow worker start is exactly the condition under which this fires, and a node under load starting several workers concurrently is where 5 seconds is most likely to be exceeded.\n\n## Fix\n\nHandle `{:exit, reason}` and drop the unreachable `{:error, _}` clause. The element must come from the stream, so pair each result with its input — `Enum.zip/2` over the original list, or `Task.async_stream` over `{worker_info, ...}` tuples — rather than closing over the list variable. Consider whether the 5s default timeout is right for a worker that opens and preallocates WAL segments.\n\n## Test (write first, must fail)\n\nDrive `try_to_start_workers/3` with a worker whose start blocks past the timeout, and one whose start raises; assert both come back as `{:failed_to_start, _}` and that the call returns rather than raising.",
   "id": "bedrock-jq8",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "[BUG] try_to_start_workers has an unreachable clause and crashes the foreman on a task exit",
   "type": "bug",
-  "updated_at": "2026-09-06T01:40:08Z"
+  "updated_at": "2026-09-06T14:05:37Z"
 }

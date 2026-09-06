@@ -6,9 +6,15 @@
   "description": "IndexManager.apply_transaction/3 prepends {commit_version, ...} to index_manager.versions and sets current_version: commit_version unconditionally. Nothing checks that the version advances.\n\nA re-delivered or out-of-order transaction would therefore push a non-monotonic entry onto a list every other function treats as descending (rollback_to/2, page_for_key/3 and friends compare against it), regress current_version backwards, and double-count keys_added/keys_removed in n_keys.\n\nNothing can currently produce such a delivery, so this is latent rather than live. It is worth a guard as defence in depth: the failure is silent index corruption rather than a crash, which is the worst shape for it to take.",
   "id": "bedrock-ljh",
   "labels": [],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/272 — apply_transaction/3 now exits with {:non_monotonic_commit_version, %{applied:, got:}} for any commit version at or below current_version; equal is an error too (both replay paths resume at Version.increment(current_version) and ShardServer.pull/3 is inclusive). Stacked on #262.",
+      "timestamp": "2026-09-06T01:47:41Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "IndexManager.apply_transaction/3 accepts non-monotonic versions",
   "type": "bug",
-  "updated_at": "2026-09-06T01:25:17Z"
+  "updated_at": "2026-09-06T01:47:41Z"
 }

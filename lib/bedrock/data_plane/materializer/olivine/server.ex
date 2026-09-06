@@ -77,7 +77,32 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   @impl true
   def init(args), do: {:ok, args, {:continue, :finish_startup}}
 
+  # A worker a recovery locked mid-flight holds an APPLIED suffix that
+  # may sit above the version the cluster settled on, and it has not
+  # rolled back — `Logic.unlock_after_recovery/3` is the only thing that
+  # does. So it cannot know which of the versions it holds survived.
+  # Locking already fences ingest and transaction application; reads have
+  # to be fenced with them, or the worker answers, promptly and wrongly,
+  # from state the cluster discarded. Recovery seats tag 0 and leaves the
+  # data tags locked for the distributor to adopt (bedrock-q67.21.13), so
+  # this is the ordinary post-recovery state of a data-tag member, and
+  # the committed keyspace routes clients to it.
+  #
+  # The epoch is what distinguishes that worker from one nobody has
+  # locked: a cold-started worker loads only DURABLE state, which is
+  # clamped to the known-committed version, so it has no semi-committed
+  # suffix to discard.
+  #
+  # `:locked` is the commit proxy's own answer while it waits for
+  # recovery (`commit_proxy/server.ex:227`): the caller retries and
+  # evicts its routing cache, and by then the sweep has adopted whoever
+  # serves the shard.
   @impl true
+  def handle_call({:get, _key, _version, _opts}, _from, %State{mode: :locked, epoch: epoch} = t) when not is_nil(epoch),
+    do: reply(t, {:error, :locked})
+
+  def handle_call({:get_range, _start, _end, _version, _opts}, _from, %State{mode: :locked, epoch: epoch} = t)
+      when not is_nil(epoch), do: reply(t, {:error, :locked})
 
   def handle_call({:get, key, version, opts}, from, %State{} = t) do
     t = touch_read_activity(t)

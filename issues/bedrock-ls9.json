@@ -25,11 +25,15 @@
     {
       "text": "Implementation complete pending cold final audit. Stable diff295-final.diff and criterion mapping295-final-handoff.md.201 focused tests incl real replacement/stale-message regression green; full2918tests+158properties+17doctests green; mix quality format/Credo/Dialyzer0 errors green. Actual Raft authority and term-binding windows covered, no generation/schema edits. No commit yet.",
       "timestamp": "2026-09-06T03:22:28Z"
+    },
+    {
+      "text": "Delivered draft PR https://github.com/bedrock-kv/bedrock/pull/301 after cold plan and final audit. RED18tests18expected failures, including real stale routing and actual Raft follower/newer-term cached-state windows. Final focused201tests0; ordinary17doctests158properties2918tests0fail3configured exclusions; format/Credo/Dialyzer0. Audit /tmp/bedrock-followups-20260905.zKTZxP/295-final-audit.md. Scope intentionally excludes same-term generation allocation/bootstrap reservation (#296), Shale ownership fencing (#297), and final #259 integration.",
+      "timestamp": "2026-09-06T03:23:42Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Attribute Director layout and config notifications to the current instance",
   "type": "bug",
-  "updated_at": "2026-09-06T03:22:28Z"
+  "updated_at": "2026-09-06T03:23:42Z"
 }

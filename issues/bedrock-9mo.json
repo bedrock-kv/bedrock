@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-07-14T18:55:14Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-9mo",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "Remove unreachable page-0-as-middle-page branch in IndexUpdate.clear_range",
   "type": "task",
-  "updated_at": "2026-08-15T20:46:23Z"
+  "updated_at": "2026-09-06T01:48:57Z"
 }

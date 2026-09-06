@@ -14,11 +14,15 @@
     {
       "text": "Starting isolated implementation investigation in /tmp/bedrock-followups-20260905.zKTZxP/259; same cold-plan/TDD/final-audit workflow as campaign.",
       "timestamp": "2026-09-06T02:39:45Z"
+    },
+    {
+      "text": "259 red investigation corrected for current develop: autonomous post-fsync log crash restores prefix+ambiguous tail and old proxy/sequencer die; historical service stall not reproduced. Definite2 reds: replacement reuses epoch1 and exact delayed old layout publication replaces live recovered log routing. Separate Cluster/Repo names eliminate preliminary readiness contamination. /tmp/bedrock-followups-20260905.zKTZxP/259-red.log (2tests2failures,6.3s); plan259-plan.md proposes consensus generation barrier + same-bootstrap reservation/immutable CAS + sender/fence audit, explicitly broader protocol/schema scope. No production edits; awaiting cold review.",
+      "timestamp": "2026-09-06T02:51:07Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Director failure restarts recovery with the same epoch and a single-log crash stalls service",
   "type": "bug",
-  "updated_at": "2026-09-06T02:40:11Z"
+  "updated_at": "2026-09-06T02:51:07Z"
 }

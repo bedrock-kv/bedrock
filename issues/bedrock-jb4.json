@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-07-14T18:57:46Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-jb4",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Investigate IndexManager n_keys/key_ranges accounting staying at defaults",
   "type": "task",
-  "updated_at": "2026-07-14T18:57:46Z"
+  "updated_at": "2026-09-06T00:17:18Z"
 }

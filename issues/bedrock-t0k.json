@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:03:25Z",
+  "description": "Found by GH239 real full-cluster crash harness on integration base 1aae9192. Coordinator.DirectorManagement.handle_director_failure changes only director to unavailable and directly calls try_to_start_director, which starts the replacement with unchanged t.epoch. Real post-fsync-before-ack log kill: log and director terminate, foreman restarts log, replacement recovery publishes epoch1 again, old log retires against epoch1 layout, distributor repeatedly reacquires lock, public service/new-epoch wait times out. Source proves same-epoch reuse; precise downstream stall chain requires further isolation. Not the same as bedrock-q67.34 stalled-attempt proxy cleanup. Preserve reproduction as an explicit history-suite schedule for single-log loss with coordinator left alive. Fix requires deciding a consensus-safe fresh recovery generation/epoch rather than incrementing locally without fencing. Acceptance: isolated red full-core test with acknowledged prefix and ambiguous in-flight tail, fresh fenced epoch under unchanged coordinator leadership, no competing old components, public Repo service resumes and acknowledged writes survive. GH239 bounded passing schedules explicitly couple coordinator/log failure or coordinator restart after partition heal; they do not claim this automatic recovery path is fixed. Evidence /tmp/bedrock-239-wal.log and 239-plan-review.md.",
+  "id": "bedrock-t0k",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Director failure restarts recovery with the same epoch and a single-log crash stalls service",
+  "type": "bug",
+  "updated_at": "2026-09-06T01:03:25Z"
+}

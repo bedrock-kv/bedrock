@@ -733,6 +733,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     initial_mutations_by_log = Map.new(log_ids, &{&1, []})
 
     plan.transactions
+    |> Enum.sort_by(fn {index, _entry} -> index end)
     |> Enum.reduce_while(
       {:ok, initial_mutations_by_log},
       fn {idx, entry}, {:ok, acc} ->

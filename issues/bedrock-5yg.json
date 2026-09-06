@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T00:54:14Z",
+  "description": "Found by the cold audit of bedrock-jb4 (PR #253). handle_empty_page/4 does not add the emptied page to modified_page_ids, and Index.delete_pages/2 rewrites a predecessor's next_id without marking that predecessor modified. Pre-existing and currently masked because compaction persists the whole page map; if page persistence ever becomes incremental (only modified_page_ids written), an eviction would drop the next_id rewrite and the chain would skip or dangle. Reproduce with a test that clears a range emptying a middle page, then asserts the predecessor whose next_id changed is in modified_page_ids.",
+  "id": "bedrock-5yg",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "Olivine: handle_empty_page/4 and Index.delete_pages/2 mutate pages without marking them modified",
+  "type": "bug",
+  "updated_at": "2026-09-06T00:54:14Z"
+}

@@ -7,9 +7,15 @@
   "id": "bedrock-5tq.1",
   "labels": [],
   "parent": "bedrock-5tq",
+  "comments": [
+    {
+      "text": "Audit 2026-09-06: no guide links gateway.md any more, so the headline item is done. The 'also sweep' clause is not: 13 relative links still resolve to nothing, e.g. quick-reads/{control-plane,data-plane}.md -\u003e deep-dives/architecture/infrastructure/README.md (missing), deep-dives/architecture.md -\u003e ../transactions.md|recovery.md|cluster-startup.md (wrong depth), deep-dives/cluster-startup.md -\u003e ../../../glossary.md and ../../../quick-reads/transaction-system-layout.md (wrong depth, 8 sites). Remaining scope is those 13.",
+      "timestamp": "2026-09-06T14:06:01Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Broken links: gateway.md is referenced by 8+ guides but does not exist",
   "type": "bug",
-  "updated_at": "2026-08-15T17:18:22Z"
+  "updated_at": "2026-09-06T14:06:01Z"
 }

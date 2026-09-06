@@ -28,11 +28,15 @@
     {
       "text": "Final reviewer test amendments complete: removable marker gates with unconditional on_exit cancellation; empirical case-volume detection/reporting; direct+nested metadata get/version assertions; obsolete TOCTOU comment removed. Final Darwin focused65/0 and Linux arm64 UBSan focused65/0 (302-focused-review-final.log,302-linux-review-final.log). Audit updated; root owns commit/push/CI/final review from here.",
       "timestamp": "2026-09-06T04:22:21Z"
+    },
+    {
+      "text": "Implemented and independently audited at commit 866da842. Draft PR: https://github.com/bedrock-kv/bedrock/pull/305. Baseline reproduced eight successes from one token; final evidence includes independent 65/0, Darwin/Linux arm64 UBSan/package/peer/release checks, and all seven GitHub CI jobs green on exact SHA including ubuntu x86_64 and macOS. Cold final audit APPROVED.",
+      "timestamp": "2026-09-06T04:31:42Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Make LocalFilesystem version-matched writes atomic",
   "type": "bug",
-  "updated_at": "2026-09-06T04:22:21Z"
+  "updated_at": "2026-09-06T04:31:42Z"
 }

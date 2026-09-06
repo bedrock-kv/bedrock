@@ -435,8 +435,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   @spec start_compaction(State.t()) :: {:ok, Task.t()}
   def start_compaction(%State{} = state) do
     database = state.database
-    # Get complete current page_map from index
-    complete_page_map = IndexManager.get_complete_page_map(state.index_manager)
+    index_manager = state.index_manager
     caller = self()
 
     durable_version = Database.durable_version(database)
@@ -458,7 +457,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
         with {:ok, writer} <- SplitFileWriter.new(compact_data_path, compact_idx_path),
              {:ok, result, compacted_pages, durable_version} <-
-               Database.compact(database, complete_page_map, SplitFileWriter, writer) do
+               Database.compact(database, index_manager, SplitFileWriter, writer) do
           duration = System.monotonic_time(:microsecond) - start_time
 
           send(caller, {
@@ -517,14 +516,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
   def upload_snapshot_before_spindown(%State{snapshot: snapshot} = t) do
     {data_db, index_db} = t.database
-    complete_page_map = IndexManager.get_complete_page_map(t.index_manager)
     spindown_data_path = data_db.file_name ++ ~c".spindown"
     spindown_idx_path = index_db.file_name ++ ~c".spindown"
 
     result =
       with {:ok, writer} <- SplitFileWriter.new(spindown_data_path, spindown_idx_path),
            {:ok, files, _compacted_pages, durable_version} <-
-             Database.compact(t.database, complete_page_map, SplitFileWriter, writer),
+             compact_for_spindown(t, writer),
            _ = :file.close(files.data_fd),
            _ = :file.close(files.idx_fd),
            version_int = Version.to_integer(durable_version),
@@ -544,12 +542,25 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     result
   end
 
+  defp compact_for_spindown(t, writer) do
+    case Database.compact(t.database, t.index_manager, SplitFileWriter, writer) do
+      {:ok, _, _, _} = result ->
+        result
+
+      {:error, _} = error ->
+        :file.close(writer.data_fd)
+        :file.close(writer.idx_fd)
+        error
+    end
+  end
+
   @doc """
   Optionally uploads a snapshot to ObjectStorage after compaction.
 
   This is a fire-and-forget operation. If snapshot is not configured,
-  this is a no-op. If configured, spawns an async task to read the data and
-  index files and upload them directly as a bundle (iodata).
+  this is a no-op. If configured, captures the compacted bytes before returning
+  to ingestion, then uploads that immutable bundle in an async task. The live
+  paths may be appended to or replaced as soon as this call returns.
 
   The task logs success or failure but does not affect the caller.
   """
@@ -567,18 +578,25 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   def maybe_upload_snapshot(%State{snapshot: snapshot}, data_path, idx_path, durable_version) do
     version_int = Version.to_integer(durable_version)
 
-    Task.start(fn ->
-      # Read files and upload as iodata (no intermediate bundle file)
-      with {:ok, data} <- File.read(to_string(data_path)),
-           {:ok, idx} <- File.read(to_string(idx_path)),
-           :ok <- Snapshot.write(snapshot, version_int, [data, idx]) do
-        Logger.info("Snapshot uploaded to ObjectStorage", version: version_int)
-      else
-        {:error, reason} ->
-          Logger.warning("Snapshot upload failed", version: version_int, reason: inspect(reason))
-      end
-    end)
+    # The server cannot mutate these files during its cutover callback.
+    # Never hand the async task live paths: they may represent a different
+    # version by the time it runs.
+    with {:ok, data} <- File.read(to_string(data_path)),
+         {:ok, idx} <- File.read(to_string(idx_path)) do
+      Task.start(fn ->
+        case Snapshot.write(snapshot, version_int, [data, idx]) do
+          :ok -> Logger.info("Snapshot uploaded to ObjectStorage", version: version_int)
+          {:error, reason} -> log_snapshot_upload_failure(version_int, reason)
+        end
+      end)
+    else
+      {:error, reason} -> log_snapshot_upload_failure(version_int, reason)
+    end
 
     :ok
+  end
+
+  defp log_snapshot_upload_failure(version, reason) do
+    Logger.warning("Snapshot upload failed", version: version, reason: inspect(reason))
   end
 end

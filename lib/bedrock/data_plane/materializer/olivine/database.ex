@@ -7,6 +7,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Database do
   alias Bedrock.DataPlane.Materializer.Olivine.DataDatabase
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
   alias Bedrock.DataPlane.Materializer.Olivine.IndexDatabase
+  alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
 
   @type t :: {DataDatabase.t(), IndexDatabase.t()}
   @type locator :: DataDatabase.locator()
@@ -120,31 +121,33 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Database do
   Compacts the database files by building new files with sequential data layout.
 
   Accepts a writer module and writer state for pluggable output format.
+  Selects the exact durable index from the captured manager, so the snapshot
+  contents and advertised replay boundary always describe the same state.
+  Applied mutations after that boundary must be replayed, even if committed.
   Returns the writer result, compacted pages, and durable version.
 
   This is run in a background task and should not block normal operations.
   """
   @spec compact(
           t(),
-          complete_page_map :: %{Page.id() => {Page.t(), Page.id()}},
+          index_manager :: IndexManager.t(),
           writer_module :: module(),
           writer :: CompactionWriter.t()
         ) ::
           {:ok, CompactionWriter.result(), compacted_pages :: %{Page.id() => {Page.t(), Page.id()}},
            durable_version :: Bedrock.version()}
           | {:error, term()}
-  def compact({data_db, index_db}, complete_page_map, writer_module, writer) do
+  def compact({data_db, index_db}, index_manager, writer_module, writer) do
     durable_version = IndexDatabase.durable_version(index_db)
 
-    # Build compacted data, updating writer state
-    {compacted_pages, writer} = build_compacted_data(data_db, complete_page_map, writer_module, writer)
+    with {:ok, complete_page_map} <- IndexManager.get_complete_page_map(index_manager, durable_version) do
+      {compacted_pages, writer} = build_compacted_data(data_db, complete_page_map, writer_module, writer)
+      index_record = IndexDatabase.build_snapshot_record(durable_version, compacted_pages)
 
-    # Write snapshot index record
-    index_record = IndexDatabase.build_snapshot_record(durable_version, compacted_pages)
-
-    with {:ok, writer} <- writer_module.write_index(writer, index_record),
-         {:ok, result} <- writer_module.finish(writer) do
-      {:ok, result, compacted_pages, durable_version}
+      with {:ok, writer} <- writer_module.write_index(writer, index_record),
+           {:ok, result} <- writer_module.finish(writer) do
+        {:ok, result, compacted_pages, durable_version}
+      end
     end
   end
 

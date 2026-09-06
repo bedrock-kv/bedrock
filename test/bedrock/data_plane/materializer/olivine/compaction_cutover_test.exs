@@ -11,6 +11,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
   """
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.Materializer.Olivine.Database
+  alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.Server
   alias Bedrock.DataPlane.Transaction
@@ -175,6 +177,48 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
     resumed_from = Version.increment(durable_version)
     assert_receive {:pulled, ^resumed_from}, 15_000
     assert_pulls_monotonic(resumed_from)
+  end
+
+  test "a committed atomic suffix present before compaction is replayed once", %{tmp_dir: tmp_dir} do
+    {:ok, shard_server} = ReplayShardServer.start_link(self())
+    {:ok, log_stub} = StubLog.start_link(shard_server)
+    pid = start_worker(tmp_dir)
+    unlock_with_stream(pid, log_stub)
+    v100 = Version.from_integer(100)
+    v200 = Version.from_integer(200)
+
+    :ok = ReplayShardServer.append(shard_server, v100, slice(v100, <<10>>))
+    await_value(pid, v100, <<10>>)
+
+    # Pin the durable boundary while retaining the newer committed suffix
+    # in memory, just as window advancement does in production.
+    :sys.replace_state(pid, fn state ->
+      {data, _} = state.database
+
+      {:ok, database, _} =
+        Database.advance_durable_version(
+          state.database,
+          v100,
+          Version.zero(),
+          data.file_offset,
+          [IndexManager.get_complete_page_map(state.index_manager)]
+        )
+
+      %{state | database: database}
+    end)
+
+    atomic = Transaction.encode(%{mutations: [{:atomic, :add, "key", <<5>>}], commit_version: v200})
+    :ok = ReplayShardServer.append(shard_server, v200, atomic)
+    await_value(pid, v200, <<15>>)
+    {:ok, task} = Logic.start_compaction(:sys.get_state(pid))
+    assert_receive {:compaction_ready, _, _, _, _, _, _, _, ^v100, _, _, _} = cutover, 10_000
+    Task.await(task)
+    flush_pulls()
+    send(pid, cutover)
+    resumed_from = Version.increment(v100)
+    assert_receive {:pulled, ^resumed_from}, 15_000
+    await_value(pid, v200, <<15>>)
+    await_value(pid, v100, <<10>>)
   end
 
   test "a superseded puller's queued ingest is acknowledged and discarded",

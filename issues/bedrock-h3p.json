@@ -6,9 +6,15 @@
   "description": "handle_call(:fetch_transaction_system_layout) returns the build_old_tsl_from_bootstrap stub (bare %{logs: ...}, no epoch/sequencer/proxies) before recovery completes; snapshot-on-subscribe now guards this (q67.4 audit fix 3b) but the fetch path still serves it. Should return :unavailable pre-recovery. Same wart shape as the fixed snapshot bug.",
   "id": "bedrock-h3p",
   "labels": [],
+  "comments": [
+    {
+      "text": "INVALID — already fixed. Verified on origin/develop and on the bedrock-0s9 stack base.\n\nPremise 1 (\"the fetch path still serves the stub\") is false. PR #140 / bedrock-bkj (c985d1af, 2026-08-18, 'Separate recovery input from runnable transaction layouts') added the exact clause this ticket asks for:\n\n  lib/bedrock/control_plane/coordinator/server.ex:140\n    def handle_call(:fetch_transaction_system_layout, _from, %{transaction_system_layout: nil} = t),\n      do: reply(t, {:error, :unavailable})\n\ngit log -L 138,145:lib/bedrock/control_plane/coordinator/server.ex names c985d1af as the commit that introduced it. That PR's own body lists 'unavailable runtime fetch during recovery' among its TDD regression tests, and the test is live today: test/bedrock/control_plane/coordinator/tsl_replay_test.exs:70 'fetch returns unavailable when no runnable layout exists' (passes; 5 tests, 0 failures).\n\nPremise 2 (the build_old_tsl_from_bootstrap stub) is also gone. PR #200 / bedrock-q67.21.11 (a29b11f3, 2026-08-24) replaced it with CoreState.from_bootstrap/1. Bootstrap now lands in the recovery-only slot: server.ex:464 assigns core_state to :prior_core_state, and init unconditionally sets transaction_system_layout: nil (server.ex:106). The only writer of :transaction_system_layout is the director's post-recovery cast, {:notify_transaction_system_layout, tsl, core_state} (server.ex:296), and director failure/leadership loss clears it back to nil (director_management.ex:41). grep for build_old_tsl_from_bootstrap or any synthesized %{logs: ...} TSL across lib/ returns nothing.\n\nTicket was filed 2026-07-14, a month before the fix. Contract is declared all the way up the call chain — Coordinator.fetch_transaction_system_layout/2 (coordinator.ex:80), ClusterSupervisor.fetch_transaction_system_layout/1 (cluster_supervisor.ex:288), Cluster's @callback (cluster.ex:42) — and consumers honor it: Repo.fetch_tsl_for_transaction/3 (repo.ex:305) throws :retryable_failure on {:error, reason}, matching FDB, where a client parks rather than acting on a placeholder ClientDBInfo.\n\nNo PR opened. One adjacent observation, not filed: repo.ex:337's Map.get(tsl, :proxies, []) is a leftover defensive read from the stub era — the TSL type declares :proxies as required, so plain field access would do. Cosmetic; worth a cleanup ticket only if someone is already in that file.",
+      "timestamp": "2026-09-06T00:53:31Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "Coordinator fetch_transaction_system_layout returns bootstrap stub pre-recovery",
   "type": "bug",
-  "updated_at": "2026-09-06T00:51:14Z"
+  "updated_at": "2026-09-06T00:53:31Z"
 }

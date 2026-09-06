@@ -8,9 +8,15 @@
   "labels": [
     "future"
   ],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/278 — keep-last-K snapshot retention as a pure policy beside SnapshotPolicy, pruned after a successful upload; stacked on #269. Should land AFTER #268: pre-#268 an unparseable key under s/{tag}/ can yield a fabricated max-uint64 version, which as a retention floor would delete every real snapshot.",
+      "timestamp": "2026-09-06T02:11:37Z"
+    }
+  ],
   "priority": 4,
   "status": "in_progress",
   "title": "Snapshot retention and cleanup in ObjectStorage",
   "type": "task",
-  "updated_at": "2026-09-06T01:38:22Z"
+  "updated_at": "2026-09-06T02:11:37Z"
 }

@@ -44,6 +44,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   import Bedrock.Internal.GenServer.Replies
 
   alias Bedrock.ControlPlane.Config.CoreState
+  alias Bedrock.ControlPlane.Config.Parameters
   alias Bedrock.ControlPlane.Coordinator.Commands
   alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
@@ -512,20 +513,14 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   defp build_parameters(nil, coordinator_nodes), do: default_parameters(coordinator_nodes)
 
+  # The defaults name the parameter set; the record supplies whichever
+  # of them it carries. A field absent from a record written before it
+  # existed reads back as nil and falls to its default.
   defp build_parameters(params, coordinator_nodes) do
-    defaults = default_parameters(coordinator_nodes)
-
-    %{
-      nodes: coordinator_nodes,
-      desired_coordinators: params[:desired_coordinators] || defaults.desired_coordinators,
-      desired_logs: params[:desired_logs] || defaults.desired_logs,
-      desired_replication_factor: params[:desired_replication_factor] || defaults.desired_replication_factor,
-      desired_commit_proxies: params[:desired_commit_proxies] || defaults.desired_commit_proxies,
-      desired_read_version_proxies: params[:desired_read_version_proxies] || defaults.desired_read_version_proxies,
-      ping_rate_in_hz: params[:ping_rate_in_hz] || defaults.ping_rate_in_hz,
-      retransmission_rate_in_hz: params[:retransmission_rate_in_hz] || defaults.retransmission_rate_in_hz,
-      transaction_window_in_ms: params[:transaction_window_in_ms] || defaults.transaction_window_in_ms
-    }
+    coordinator_nodes
+    |> default_parameters()
+    |> Map.new(fn {key, default} -> {key, params[key] || default} end)
+    |> Map.put(:nodes, coordinator_nodes)
   end
 
   defp default_parameters(coordinator_nodes) do
@@ -538,7 +533,8 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       desired_read_version_proxies: 1,
       ping_rate_in_hz: 10,
       retransmission_rate_in_hz: 20,
-      transaction_window_in_ms: 5_000
+      transaction_window_in_ms: 5_000,
+      materializer_idle_timeout_ms: Parameters.default_materializer_idle_timeout_ms()
     }
   end
 

@@ -18,6 +18,12 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
   parity; they never enter the metadata stream (metadata_mutation?/1 admits
   only sets and clears, exactly FDB's isMetadataMutation), so no view can
   diverge from one.
+
+  The conflict sections are bounded by the same rule (bedrock-q67.26). They
+  are DECLARED, not derived: an encoded transaction can name ranges it never
+  mutates, and a user commit naming a system range would abort every system
+  transaction that touches it. Range endpoints may sit AT the bound, because
+  an exclusive end there covers the whole legal range.
   """
   use ExUnit.Case, async: true
 
@@ -33,6 +39,14 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
       mutations: mutations,
       read_conflicts: nil,
       write_conflicts: [{conflict_key, conflict_key <> <<0>>}]
+    })
+  end
+
+  defp encode_conflicts(read_ranges, write_ranges) do
+    Transaction.encode(%{
+      mutations: [{:set, "a", "1"}],
+      read_conflicts: if(read_ranges == [], do: nil, else: {Version.from_integer(1), read_ranges}),
+      write_conflicts: write_ranges
     })
   end
 
@@ -250,6 +264,81 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
           assert_receive {^name, {:error, ^error}}
       end
     end
+  end
+
+  test "a user commit cannot declare a read conflict over the system keyspace" do
+    # The mutations are unimpeachable; the read-conflict range is the whole
+    # attack. Left unchecked it enters resolver history and aborts the next
+    # system transaction that writes there.
+    system_range = {<<0xFF, "/system/shard/">>, <<0xFF, "/system/shard0">>}
+    {system_start, _} = system_range
+
+    batch = batch_of([{reply_to_self(:tx), encode_conflicts([system_range], [{"a", "a\0"}]), :user}])
+
+    assert {:ok, 1, 0} = finalize(batch)
+    assert_receive {:tx, {:error, {:key_out_of_range, ^system_start}}}
+  end
+
+  test "a user commit cannot declare a write conflict over the system keyspace" do
+    eok = Bedrock.end_of_keyspace()
+
+    batch =
+      batch_of([
+        {reply_to_self(:tx), encode_conflicts([], [{"a", "a\0"}, {Bedrock.end_of_user_keyspace(), eok}]), :user}
+      ])
+
+    assert {:ok, 1, 0} = finalize(batch)
+    assert_receive {:tx, {:error, {:key_out_of_range, ^eok}}}
+  end
+
+  test "a system commit may declare the conflict ranges a user commit may not" do
+    system_range = {<<0xFF, "/system/shard/">>, <<0xFF, "/system/shard0">>}
+
+    batch =
+      batch_of([
+        {reply_to_self(:system_tx), encode_conflicts([system_range], [system_range]), :system},
+        {reply_to_self(:user_tx), encode_conflicts([system_range], [system_range]), :user}
+      ])
+
+    assert {:ok, 1, 1} = finalize(batch)
+
+    assert_receive {:system_tx, {:ok, _version, _index}}
+    assert_receive {:user_tx, {:error, {:key_out_of_range, _}}}
+  end
+
+  test "even a system commit cannot declare a conflict range past the end of the keyspace" do
+    past = Bedrock.end_of_keyspace() <> <<0x01>>
+
+    batch = batch_of([{reply_to_self(:tx), encode_conflicts([], [{<<0xFF, "/system/x">>, past}]), :system}])
+
+    assert {:ok, 1, 0} = finalize(batch)
+    assert_receive {:tx, {:error, {:key_out_of_range, ^past}}}
+  end
+
+  test "a conflict range ending exactly at the mode's bound is legal" do
+    boundary = Bedrock.end_of_user_keyspace()
+
+    batch = batch_of([{reply_to_self(:tx), encode_conflicts([{"a", boundary}], [{"a", boundary}]), :user}])
+
+    assert {:ok, 0, 1} = finalize(batch)
+    assert_receive {:tx, {:ok, _version, _index}}
+  end
+
+  test "a poisoned conflict range never reaches the resolver" do
+    system_range = {<<0xFF, "/system/shard/">>, <<0xFF, "/system/shard0">>}
+
+    batch =
+      batch_of([
+        {reply_to_self(:ok_tx), encode([{:set, "a", "1"}], "a"), :user},
+        {reply_to_self(:bad_tx), encode_conflicts([system_range], [system_range]), :user}
+      ])
+
+    assert {:ok, 1, 1} = finalize(batch)
+
+    empty_sections = Transaction.extract_sections!(Transaction.empty_transaction(), [:read_conflicts, :write_conflicts])
+
+    assert_receive {:resolved, [_ok_sections, rejected_sections]}
+    assert rejected_sections == empty_sections
   end
 
   test "a batch of only rejected transactions still completes" do

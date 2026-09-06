@@ -69,6 +69,12 @@ defmodule Bedrock.Internal.Repo do
       {:error, :not_found} ->
         nil
 
+      # A read outside the transaction's legal range is a permanent client
+      # error, the read-side twin of the commit rejection below: the bound
+      # is the same on every attempt, so retrying only burns the deadline.
+      {:error, {:key_out_of_range, _key} = reason} ->
+        throw({__MODULE__, :rollback, reason})
+
       {:failure, reason} when reason in @retryable_read_failures ->
         throw({__MODULE__, t, :retryable_failure, reason})
 
@@ -90,6 +96,9 @@ defmodule Bedrock.Internal.Repo do
 
       {:error, :not_found} ->
         nil
+
+      {:error, {:key_out_of_range, _key} = reason} ->
+        throw({__MODULE__, :rollback, reason})
 
       {:failure, reason} when reason in @retryable_read_failures ->
         throw({__MODULE__, t, :retryable_failure, reason})
@@ -204,6 +213,9 @@ defmodule Bedrock.Internal.Repo do
       {:failure, reason} when reason in @retryable_read_failures ->
         throw({__MODULE__, state.txn, :retryable_failure, reason})
 
+      {:error, {:key_out_of_range, _key} = reason} ->
+        throw({__MODULE__, :rollback, reason})
+
       {:error, reason} ->
         raise "Range query failed: #{inspect(reason)}"
     end
@@ -250,6 +262,10 @@ defmodule Bedrock.Internal.Repo do
   - `:timeout_in_ms` - End-to-end transaction timeout, including retries
     (default: 5000; use `:infinity` to disable)
   - `:transaction_system_layout` - Use a specific TSL instead of fetching from coordinator
+  - `:read_system_keys` - Widen the read bound to the whole keyspace, so the
+    transaction may read `\\xFF` system keys (default: false). FDB's
+    `READ_SYSTEM_KEYS`; it does not widen the COMMIT bound, which stays
+    `:user` for every client transaction.
   """
   @spec transact(cluster :: module(), repo :: module(), (-> result) | (module() -> result), opts :: keyword()) :: result
         when result: any()
@@ -273,7 +289,13 @@ defmodule Bedrock.Internal.Repo do
       run_retryable_transaction(repo, fun, 0, retry_limit, fn last_reason ->
         maybe_invalidate_routing(link, last_reason)
         tsl = fetch_tsl_for_transaction(repo, provided_tsl, link)
-        start_transaction_builder(tsl, routing_fn_for_transaction(cluster, provided_tsl, link), repo)
+
+        start_transaction_builder(
+          tsl,
+          routing_fn_for_transaction(cluster, provided_tsl, link),
+          repo,
+          Keyword.get(opts, :read_system_keys, false)
+        )
       end)
     end)
   after
@@ -365,8 +387,12 @@ defmodule Bedrock.Internal.Repo do
     {cluster.otp_name_for_worker(worker_id), String.to_atom(node)}
   end
 
-  defp start_transaction_builder(tsl, routing_fn, repo) do
-    case TransactionBuilder.start_link(transaction_system_layout: tsl, routing_fn: routing_fn) do
+  defp start_transaction_builder(tsl, routing_fn, repo, read_system_keys) do
+    case TransactionBuilder.start_link(
+           transaction_system_layout: tsl,
+           routing_fn: routing_fn,
+           read_system_keys: read_system_keys
+         ) do
       {:ok, txn} ->
         TransactionContext.put_builder(repo, txn)
         txn

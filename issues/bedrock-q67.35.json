@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:30Z",
+  "close_reason": "Delivered in PR #288 (audited 2026-09-06: finalized_at removed from Batch and all 17 sites; CI green)",
   "created": "2026-08-20T18:15:20Z",
   "description": "Found by the 2026-08-20 full lib-diff re-read of #152: batch.ex/batching.ex still set finalized_at, but nothing in lib reads it (only tests do). PR #167's commit message listed it among removed write-only fields - the deletion silently didn't happen. Remove the field and adjust the tests to assert observable behavior instead, or name a real reader.",
   "id": "bedrock-q67.35",
@@ -14,8 +16,8 @@
     }
   ],
   "priority": 4,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Trim: Batch.finalized_at is write-only in lib; #167's message claimed removal",
   "type": "task",
-  "updated_at": "2026-09-06T02:36:32Z"
+  "updated_at": "2026-09-06T14:05:30Z"
 }

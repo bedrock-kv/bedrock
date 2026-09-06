@@ -32,11 +32,15 @@
     {
       "text": "Cold amendments done: replay starts replicated floor0 and installs explicit committed G; new actual Server.init/DiskRaftLog A8/B10 test varies bootstrap7/9/14 and checkpoint/no-checkpoint. Plan specifies actual fatal Director exit, finite task/conflict/deadline policy,3-send ack exhaustion, bootstrap accepted-state table with migrated legacy completion lacking publication_id.296-amended-red.log captures baseline. No production edits; renewed cold review requested.",
       "timestamp": "2026-09-06T04:56:04Z"
+    },
+    {
+      "text": "Implemented committed explicit recovery generations, exact checkpoint replay, same-bootstrap reservation, immutable final CAS, attributed finite publication acknowledgment, and coherent S3 reads. Focused protocol, task lifetime, real quorum, migration/CAS concurrency tests pass; real cluster survives two same-term Director kills with generations 2/3/4 and acknowledged value retained. Interim audit fixes cover malformed bootstrap metadata, winning config adoption, committed-prefix gaps and contradictory checkpoints. Full suite and quality underway; no commit before cold final audit.",
+      "timestamp": "2026-09-06T05:25:58Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Allocate recovery generations through consensus and reserve bootstrap publication",
   "type": "task",
-  "updated_at": "2026-09-06T04:56:04Z"
+  "updated_at": "2026-09-06T05:25:58Z"
 }

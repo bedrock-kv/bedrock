@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:00:28Z",
+  "description": "Observed repeatedly while multiple agents ran mix test concurrently in worktrees of this repo, and by the h3p/mi1 agents on a single run: test_helper starts a MinIO on 9000, an :s3-tagged test starts another, the second bind fails and the run aborts partway. Two fixes, both worth doing: (1) one MinIO per run — the :s3 tests should reuse the test_helper instance or be the only starter; (2) pick a free port (bind 0, read it back) and thread it to the ExAws config so parallel runs on one machine don't collide. Retries are currently the only workaround.",
+  "id": "bedrock-1qh",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "MinIO test fixture binds a fixed port 9000: parallel suites and :s3 tests collide and abort the run",
+  "type": "bug",
+  "updated_at": "2026-09-06T01:00:28Z"
+}

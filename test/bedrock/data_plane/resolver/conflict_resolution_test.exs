@@ -210,7 +210,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
         end)
 
       # Pattern match the resolve result to extract failed transaction indexes
-      assert {_final_conflicts, failed_indexes} = resolve(initial_conflicts, transactions, write_version)
+      assert {final_conflicts, failed_indexes} = resolve(initial_conflicts, transactions, write_version)
 
       # They can't *all* fail...
       assert length(failed_indexes) < length(transactions)
@@ -220,32 +220,37 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       # failed_indexes exactly when its reads overlap a write recorded at a
       # later version - checking only one direction lets a resolver that never
       # aborts anything satisfy the property.
-      transactions
-      |> Enum.with_index()
-      |> Enum.reduce(initial_conflicts, fn {transaction, index}, conflicts ->
-        assert {:ok, {read_info, _writes}} = Transaction.read_write_conflicts(transaction)
+      replayed_conflicts =
+        transactions
+        |> Enum.with_index()
+        |> Enum.reduce(initial_conflicts, fn {transaction, index}, conflicts ->
+          assert {:ok, {read_info, _writes}} = Transaction.read_write_conflicts(transaction)
 
-        expected =
-          case read_info do
-            # No read version means no reads to conflict; nothing can abort it.
-            {nil, []} -> :ok
-            {read_version, reads} -> Conflicts.check_conflicts(conflicts, reads, read_version)
+          expected =
+            case read_info do
+              # No read version means no reads to conflict; nothing can abort it.
+              {nil, []} -> :ok
+              {read_version, reads} -> Conflicts.check_conflicts(conflicts, reads, read_version)
+            end
+
+          case expected do
+            :abort ->
+              assert index in failed_indexes
+              assert :abort = try_to_resolve_transaction(conflicts, transaction, write_version)
+              # An aborted transaction records nothing, so the next one sees the
+              # same conflicts.
+              conflicts
+
+            :ok ->
+              refute index in failed_indexes
+              assert {:ok, next_conflicts} = try_to_resolve_transaction(conflicts, transaction, write_version)
+              next_conflicts
           end
+        end)
 
-        case expected do
-          :abort ->
-            assert index in failed_indexes
-            assert :abort = try_to_resolve_transaction(conflicts, transaction, write_version)
-            # An aborted transaction records nothing, so the next one sees the
-            # same conflicts.
-            conflicts
-
-          :ok ->
-            refute index in failed_indexes
-            assert {:ok, next_conflicts} = try_to_resolve_transaction(conflicts, transaction, write_version)
-            next_conflicts
-        end
-      end)
+      # The replay agrees index by index, so it must land on the same structure
+      # the batch resolve produced.
+      assert replayed_conflicts == final_conflicts
     end
   end
 end

@@ -302,22 +302,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
     Enum.reduce_while(existing_log_ids, {:ok, %{}, []}, fn log_id, {:ok, locked_services, lock_failed} ->
       case Map.get(available_services, log_id) do
         {_kind, last_seen} = service ->
-          case lock_recruited_service(service, recovery_attempt.epoch, context) do
-            {:ok, pid, info} ->
-              locked_service = %{status: {:up, pid}, kind: info.kind, last_seen: last_seen}
-              {:cont, {:ok, Map.put(locked_services, log_id, locked_service), lock_failed}}
-
-            {:error, :newer_epoch_exists} = error ->
-              {:halt, error}
-
-            {:error, _reason} ->
-              {:cont, {:ok, locked_services, [log_id | lock_failed]}}
-          end
+          lock_or_fail(service, log_id, last_seen, locked_services, lock_failed, recovery_attempt, context)
 
         _ ->
           {:cont, {:ok, locked_services, [log_id | lock_failed]}}
       end
     end)
+  end
+
+  defp lock_or_fail(service, log_id, last_seen, locked_services, lock_failed, recovery_attempt, context) do
+    case lock_recruited_service(service, recovery_attempt.epoch, context) do
+      {:ok, pid, info} ->
+        locked_service = %{status: {:up, pid}, kind: info.kind, last_seen: last_seen}
+        {:cont, {:ok, Map.put(locked_services, log_id, locked_service), lock_failed}}
+
+      {:error, :newer_epoch_exists} = error ->
+        {:halt, error}
+
+      {:error, _reason} ->
+        {:cont, {:ok, locked_services, [log_id | lock_failed]}}
+    end
   end
 
   @spec replace_lock_failed_candidates(

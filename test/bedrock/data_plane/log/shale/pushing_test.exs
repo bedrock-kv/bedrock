@@ -444,14 +444,14 @@ defmodule Bedrock.DataPlane.Log.Shale.PushingTest do
     defp controlled_sync do
       {:ok, control} = Agent.start_link(fn -> %{fail: false, calls: 0} end)
 
-      sync_fun = fn _fd ->
-        Agent.get_and_update(control, fn state ->
-          result = if state.fail, do: {:error, :eio}, else: :ok
-          {result, %{state | calls: state.calls + 1}}
-        end)
-      end
+      sync_fun = fn _fd -> Agent.get_and_update(control, &sync_step/1) end
 
       {control, sync_fun}
+    end
+
+    defp sync_step(state) do
+      result = if state.fail, do: {:error, :eio}, else: :ok
+      {result, %{state | calls: state.calls + 1}}
     end
 
     defp state_with(dir, recycler, writer_opts) do

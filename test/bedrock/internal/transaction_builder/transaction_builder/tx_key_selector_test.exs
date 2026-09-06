@@ -102,7 +102,7 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx.KeySelectorTest do
       # The exact merge result depends on add_or_merge implementation
       assert is_list(range_reads)
       # Could be 1 if merged, or 2 if kept separate
-      assert length(range_reads) >= 1
+      refute Enum.empty?(range_reads)
     end
   end
 

@@ -123,14 +123,18 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
             %{state | queue: queue}
 
           {:dropped, queue} ->
-            if state.on_drop, do: state.on_drop.(payload, reason)
-            send(self(), :drain)
-            %{state | queue: queue}
+            handle_dropped(state, queue, payload, reason)
 
           {:error, :unknown_token, queue} ->
             %{state | queue: queue}
         end
     end
+  end
+
+  defp handle_dropped(state, queue, payload, reason) do
+    if state.on_drop, do: state.on_drop.(payload, reason)
+    send(self(), :drain)
+    %{state | queue: queue}
   end
 
   defp maybe_schedule_retry_tick(queue, retry_tick_ms, now_ms) do

@@ -209,7 +209,7 @@ defmodule Mix.Tasks.Bedrock.AnalyzeIndex do
       display_histogram(key_counts, page_count)
     end
 
-    if length(extra_key_pages) > 0 do
+    if not Enum.empty?(extra_key_pages) do
       display_extra_keys_analysis(extra_key_pages)
     end
 

@@ -252,17 +252,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
           # requested position: say so, and let the puller advance.
           {:reply, {:ok, [], currency(state)}, state}
         else
-          # Nothing known at or after the requested position yet: park, and
-          # subscribe to the demux's next currency advance. Event-driven —
-          # the reply arrives when the next push does, not when a timer
-          # fires.
-          reply_fn = fn response -> GenServer.reply(from, response) end
-
-          {waiting_list, _timeout} =
-            WaitingList.insert(state.waiting_list, from_version, {from_version, limit}, reply_fn, timeout)
-
-          state = request_currency(%{state | waiting_list: waiting_list})
-          {:noreply, state, next_timeout(state)}
+          park_pull_request(state, from, from_version, limit, timeout)
         end
 
       {:error, _reason} = error ->
@@ -371,6 +361,19 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
 
   defp known_current_past?(%{high_water: nil}, _from_version), do: false
   defp known_current_past?(state, from_version), do: not Version.newer?(from_version, state.high_water)
+
+  # Nothing known at or after the requested position yet: park, and
+  # subscribe to the demux's next currency advance. Event-driven — the
+  # reply arrives when the next push does, not when a timer fires.
+  defp park_pull_request(state, from, from_version, limit, timeout) do
+    reply_fn = fn response -> GenServer.reply(from, response) end
+
+    {waiting_list, _timeout} =
+      WaitingList.insert(state.waiting_list, from_version, {from_version, limit}, reply_fn, timeout)
+
+    state = request_currency(%{state | waiting_list: waiting_list})
+    {:noreply, state, next_timeout(state)}
+  end
 
   # One-shot currency subscription: tell the demux what we've seen; it
   # replies now if it knows more, otherwise on its next push. Duplicate

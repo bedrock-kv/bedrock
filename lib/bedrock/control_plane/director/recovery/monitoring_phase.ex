@@ -25,11 +25,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
 
     monitor_fn = Map.get(context, :monitor_fn, &Process.monitor/1)
 
-    recovery_attempt
-    |> extract_pids_to_monitor()
-    |> monitor_all_pids(monitor_fn)
+    # The refs are kept on the attempt: an attempt that stalls here or
+    # later is abandoned wholesale on the next retry, and releasing its
+    # monitors is what keeps that retirement from arriving at the
+    # director as a component failure.
+    monitors =
+      recovery_attempt
+      |> extract_pids_to_monitor()
+      |> Enum.map(monitor_fn)
 
-    {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
+    {%{recovery_attempt | component_monitors: monitors}, Bedrock.ControlPlane.Director.Recovery.PersistencePhase}
   end
 
   # Monitored: sequencer, proxies, resolvers, and the epoch's logs (their
@@ -55,11 +60,5 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MonitoringPhase do
       resolver_pids,
       log_pids
     ])
-  end
-
-  @spec monitor_all_pids([pid()], (pid() -> reference())) :: [pid()]
-  defp monitor_all_pids(pids, monitor_fn) do
-    Enum.each(pids, monitor_fn)
-    pids
   end
 end

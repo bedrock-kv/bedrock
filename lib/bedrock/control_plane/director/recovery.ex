@@ -79,6 +79,71 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     )
   end
 
+  @doc """
+  Ends a stalled attempt's generation, at the stall.
+
+  A recovery attempt is a generation. One that stalls after the topology
+  phase leaves an UNLOCKED set of proxies behind, beating against their own
+  sequencer and pushing empty transactions into the epoch's logs; the retry
+  recruits and unlocks a second set under the same epoch, and the two race
+  for the same log versions — which surfaces as a push failure, a
+  `:finalization_failed` exit, and an epoch lost to a component failure.
+
+  FDB gives each attempt a distinct generation — `newState.recoveryCount++`
+  before recruiting (ClusterRecovery.actor.cpp:1584) — and a commit proxy
+  that sees a `ServerDBInfo` whose `recoveryCount` is at or past its own
+  without naming it throws `worker_removed()` (`updateLocalDbInfo`,
+  CommitProxyServer.actor.cpp:4192-4202). Bedrock retries in process inside
+  one epoch, so the director ends the old generation itself — and does it
+  at the stall, not at the retry: nothing schedules a retry, so an attempt
+  that stalls with no further cluster events would otherwise keep beating
+  forever.
+
+  Only the attempt's own transaction-system processes go: the sequencer,
+  the proxies and the resolvers, all of which every attempt recruits fresh.
+  Logs and materializers stay — they hold durable state the retry re-locks
+  and replays from, and FDB does not kill its tlogs on a retry either. Their
+  MONITORS go, since the retry's monitoring phase installs its own.
+  """
+  @spec retire_stalled_attempt(RecoveryAttempt.t()) :: RecoveryAttempt.t()
+  def retire_stalled_attempt(attempt) do
+    # Flushed: the retirement is deliberate, and a queued :DOWN would reach
+    # the director's component-failure clause and stop the epoch over it.
+    Enum.each(attempt.component_monitors, &Process.demonitor(&1, [:flush]))
+
+    attempt
+    |> recruited_component_pids()
+    |> Enum.each(&terminate_component(&1, attempt.cluster))
+
+    %{attempt | sequencer: nil, proxies: [], resolvers: [], component_monitors: []}
+  end
+
+  # The resolvers field holds descriptors — plain maps — until the resolver
+  # startup phase replaces them with {start_key, pid} pairs, so the tuple
+  # pattern alone separates an attempt that got that far from one that
+  # stalled before it.
+  @spec recruited_component_pids(RecoveryAttempt.t()) :: [pid()]
+  defp recruited_component_pids(attempt) do
+    resolver_pids = for {_start_key, pid} <- attempt.resolvers, do: pid
+
+    Enum.concat([List.wrap(attempt.sequencer), attempt.proxies, resolver_pids])
+  end
+
+  # Recruits are started through the cluster's dynamic supervisor
+  # (`Shared.starter_for/1`), possibly on another node. `:not_found` is the
+  # ordinary case for a proxy that already crashed on a push the surviving
+  # generation won; an unreachable supervisor is the node that took the
+  # component with it.
+  @spec terminate_component(pid(), module()) :: :ok
+  defp terminate_component(pid, cluster) do
+    case DynamicSupervisor.terminate_child({cluster.otp_name(:sup), node(pid)}, pid) do
+      :ok -> :ok
+      {:error, :not_found} -> :ok
+    end
+  catch
+    :exit, _ -> :ok
+  end
+
   @spec setup_for_subsequent_recovery(State.t()) :: State.t()
   def setup_for_subsequent_recovery(t) do
     Map.update!(t, :recovery_attempt, fn recovery_attempt ->
@@ -134,6 +199,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
       {{:stalled, reason}, stalled} ->
         trace_recovery_stalled(Interval.between(stalled.started_at, now()), reason)
+
+        # This attempt's generation ends here: its proxies are unlocked and
+        # beating, and the retry will recruit its own set into the same
+        # epoch. What survives is the attempt's OBSERVATIONS, not its
+        # processes.
+        stalled = retire_stalled_attempt(stalled)
 
         # The live state adopts the stalled attempt too — the persisted
         # config and the in-memory attempt must be the same logical

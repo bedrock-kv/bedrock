@@ -5,7 +5,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
 
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
-  alias Bedrock.DataPlane.Materializer.Olivine.ReadingTestHelpers
+  alias Bedrock.DataPlane.Materializer.Olivine.Reading
+  alias Bedrock.DataPlane.Materializer.Olivine.Reading.ReadingContext
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
@@ -65,26 +66,51 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
     {:ok, state: create_test_state_with_data()}
   end
 
+  # Exercises the real Reading API against a State, mirroring how Server
+  # drives reads (see server.ex). Kept thin so these tests exercise
+  # Reading.handle_get/handle_get_range directly rather than a reimplementation.
+  defp get(%State{} = state, key_or_selector, version, opts) do
+    context = ReadingContext.new(state.index_manager, state.database)
+    {_manager, result} = Reading.handle_get(state.read_request_manager, context, key_or_selector, version, opts)
+    result
+  end
+
+  defp get_range(%State{} = state, start_key_or_selector, end_key_or_selector, version, opts) do
+    context = ReadingContext.new(state.index_manager, state.database)
+
+    {_manager, result} =
+      Reading.handle_get_range(
+        state.read_request_manager,
+        context,
+        start_key_or_selector,
+        end_key_or_selector,
+        version,
+        opts
+      )
+
+    result
+  end
+
   describe "KeySelector fetch operations" do
     test "fetch/4 with KeySelector resolves keys correctly", %{state: state} do
       key_selector = KeySelector.first_greater_or_equal("test:key")
 
       assert {:ok, {"test:key", "test:value"}} =
-               ReadingTestHelpers.get(state, key_selector, test_version(), [])
+               get(state, key_selector, test_version(), [])
     end
 
     test "fetch/4 with KeySelector handles offsets", %{state: state} do
       # Test offset of +1 from key1 should resolve to key2
       offset_selector = "key1" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1)
 
-      assert {:ok, {"key2", "value2"}} = ReadingTestHelpers.get(state, offset_selector, test_version(), [])
+      assert {:ok, {"key2", "value2"}} = get(state, offset_selector, test_version(), [])
     end
 
     test "fetch/4 with KeySelector handles boundary errors", %{state: state} do
       # Test high offset that goes beyond available keys
       high_offset_selector = "key1" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1000)
 
-      assert {:error, :not_found} = ReadingTestHelpers.get(state, high_offset_selector, test_version(), [])
+      assert {:error, :not_found} = get(state, high_offset_selector, test_version(), [])
     end
   end
 
@@ -93,7 +119,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
       start_selector = KeySelector.first_greater_or_equal("range:a")
       end_selector = KeySelector.first_greater_than("range:z")
 
-      result = ReadingTestHelpers.get_range(state, start_selector, end_selector, test_version(), [])
+      result = get_range(state, start_selector, end_selector, test_version(), [])
       # Range may not find data or could succeed
       case result do
         {:ok, {key_value_pairs, _has_more}} ->
@@ -116,7 +142,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
 
       # Can be :invalid_range or :not_found depending on implementation
       assert {:error, error} =
-               ReadingTestHelpers.get_range(state, start_selector, end_selector, test_version(), [])
+               get_range(state, start_selector, end_selector, test_version(), [])
 
       assert error in [:invalid_range, :not_found]
     end
@@ -126,7 +152,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
       end_selector = KeySelector.first_greater_than("range")
 
       assert {:ok, {results, _has_more}} =
-               ReadingTestHelpers.get_range(state, start_selector, end_selector, test_version(), limit: 2)
+               get_range(state, start_selector, end_selector, test_version(), limit: 2)
 
       assert length(results) <= 2
     end
@@ -179,12 +205,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
       reply_fn = fn _result -> :ok end
       timeout = 5000
 
-      fetch_request = {key_selector, version}
+      context = ReadingContext.new(state.index_manager, state.database)
 
-      updated_state =
-        ReadingTestHelpers.add_to_waitlist_from_state(state, fetch_request, version, reply_fn, timeout)
+      {manager, :ok} =
+        Reading.handle_get(state.read_request_manager, context, key_selector, version,
+          wait_ms: timeout,
+          reply_fn: reply_fn
+        )
 
-      assert map_size(updated_state.read_request_manager.waiting_fetches) > 0
+      assert map_size(manager.waiting_fetches) > 0
     end
 
     test "notify_waiting_fetches/2 processes KeySelector requests", %{state: state} do
@@ -194,18 +223,20 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
       reply_fn = fn _result -> :ok end
       timeout = 5000
 
-      fetch_request = {key_selector, version}
+      context = ReadingContext.new(state.index_manager, state.database)
 
-      state_with_waitlist =
-        ReadingTestHelpers.add_to_waitlist_from_state(state, fetch_request, version, reply_fn, timeout)
+      {manager_with_waitlist, :ok} =
+        Reading.handle_get(state.read_request_manager, context, key_selector, version,
+          wait_ms: timeout,
+          reply_fn: reply_fn
+        )
 
       # Verify request was added to waitlist
-      assert map_size(state_with_waitlist.read_request_manager.waiting_fetches) > 0
+      assert map_size(manager_with_waitlist.waiting_fetches) > 0
 
       # Simulate version becoming available - notify waiting fetches
       # Waitlist should be processed (though we can't easily verify the results are sent)
-      assert {%State{}, _pids} =
-               ReadingTestHelpers.notify_waiting_fetches_from_state(state_with_waitlist, version)
+      assert %Reading{} = Reading.notify_waiting_fetches(manager_with_waitlist, context, version)
     end
   end
 
@@ -215,7 +246,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
 
       # Should handle gracefully without crashing
       assert %KeySelector{offset: 999_999} = extreme_selector
-      assert {:error, :not_found} = ReadingTestHelpers.get(state, extreme_selector, test_version(), [])
+      assert {:error, :not_found} = get(state, extreme_selector, test_version(), [])
     end
 
     test "empty key KeySelector", %{state: state} do
@@ -224,7 +255,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
       assert %KeySelector{key: "", or_equal: true, offset: 0} = empty_key_selector
       # Should handle empty keys appropriately - should find the first key
       assert {:ok, {resolved_key, _value}} =
-               ReadingTestHelpers.get(state, empty_key_selector, test_version(), [])
+               get(state, empty_key_selector, test_version(), [])
 
       assert is_binary(resolved_key)
     end
@@ -236,7 +267,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
       assert %KeySelector{key: ^special_key} = special_selector
       # Should handle binary keys with special bytes correctly without crashing
       # Since this key doesn't exist and is after all our test keys, should be not found
-      assert {:error, :not_found} = ReadingTestHelpers.get(state, special_selector, test_version(), [])
+      assert {:error, :not_found} = get(state, special_selector, test_version(), [])
     end
   end
 end

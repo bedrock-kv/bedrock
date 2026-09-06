@@ -289,7 +289,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.RangeClearOrderingPropertyTest 
       Enum.reduce(clear_ranges, sorted_initial_keys, fn {start_key, end_key}, current_keys ->
         # Remove all keys in this range
         Enum.reject(current_keys, fn key ->
-          key >= start_key and key <= end_key
+          key >= start_key and key < end_key
         end)
       end)
 

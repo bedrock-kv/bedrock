@@ -15,11 +15,15 @@
     {
       "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/236. Published the 2026-09-05 implementation evaluation, pinned to 8f962e09, with evidence and acceptance criteria. Reproduced findings are distinguished from source-level risks. No implementation fix is included.",
       "timestamp": "2026-09-05T23:58:14Z"
+    },
+    {
+      "text": "Stacked on #234 commit5962c283 / draftPR242 in isolated236 worktree. Red focused boundary tests plus corrected property oracle at /tmp/issue236-red.log. Concrete plan /tmp/bedrock-issue-team-20260905/236-plan.md awaiting cold review. Critical diagnosis: changing \u003c= alone would spare covered boundary-page right keys because old extraction clamps end to Page.right_key; remove clamping with half-open filter. No production edits.",
+      "timestamp": "2026-09-06T00:25:21Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Olivine clear_range uses inclusive end-key; everywhere else is exclusive",
   "type": "bug",
-  "updated_at": "2026-09-06T00:22:16Z"
+  "updated_at": "2026-09-06T00:25:21Z"
 }

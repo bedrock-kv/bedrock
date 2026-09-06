@@ -75,14 +75,16 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
   defmodule Logic do
     @moduledoc false
 
+    # A segment is preallocated under this name and published into the
+    # pool by rename, so it must match neither the pool's own glob nor
+    # `Segment.file_prefix()`, which is what `reload_segments_at_path/1`
+    # picks out of this same directory.
+    @scratch_prefix ".partial."
+
     @spec unused_file_prefix() :: String.t()
     def unused_file_prefix, do: "preallocated"
     @spec generate_unused_file_name(non_neg_integer()) :: String.t()
     def generate_unused_file_name(id), do: "#{unused_file_prefix()}.#{id}"
-
-    # A segment is preallocated under this name and published into the
-    # pool by rename, so it must not match the pool's own glob.
-    @scratch_prefix ".partial."
 
     @spec new(
             path_to_dir :: binary(),
@@ -151,20 +153,22 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
     # `check_out/2` renames a pooled file straight into service and
     # `Writer.open/3` derives its write budget from `File.stat/1`, so a
     # file that is not exactly one segment long would present as a
-    # healthy segment carrying a budget it cannot honour. Discard it and
-    # let the min-refill preallocate a real one in its place.
+    # healthy segment carrying a budget it cannot honour.
+    #
+    # Reachable from three directions, which is why both entrances to the
+    # pool check: a `preallocated.N` left short on disk by a version
+    # without the atomic publish below, a `segment_size` changed between
+    # incarnations, and a short segment handed back to `check_in/2`.
+    # Discard it and let the min-refill preallocate a real one in its
+    # place — the pool is a cache, so discarding is free.
+    @spec whole_segment?(String.t(), non_neg_integer()) :: boolean()
+    defp whole_segment?(path, size), do: match?({:ok, %{size: ^size}}, File.stat(path))
+
     @spec adopt_whole_segments([String.t()], non_neg_integer()) :: [String.t()]
     defp adopt_whole_segments(paths, size) do
-      Enum.filter(paths, fn path ->
-        case File.stat(path) do
-          {:ok, %{size: ^size}} ->
-            true
-
-          _not_a_whole_segment ->
-            _ = File.rm(path)
-            false
-        end
-      end)
+      {whole, wreckage} = Enum.split_with(paths, &whole_segment?(&1, size))
+      Enum.each(wreckage, &File.rm/1)
+      whole
     end
 
     # The pool directory has exactly one owner — the recycler of the log
@@ -205,11 +209,22 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       with :ok <- File.rm(path_to_file), do: {:ok, t}
     end
 
+    # Ordinarily every returned file came out of `check_out/2` and is
+    # still exactly `size` bytes. A log recovering over the wreckage a
+    # pre-atomic-publish version left behind is the exception: the
+    # 28-byte stub a zero-length pool file becomes once `Writer.open/3`
+    # has put a header on it loads as a segment, and
+    # `Recovery.discard_all_segments/1` checks it straight back in. Take
+    # the same exit as the cap: unlink it rather than pool it.
     def check_in(t, path_to_file) do
-      new_path_to_file = Path.join(t.path, generate_unused_file_name(t.next_id))
+      if whole_segment?(path_to_file, t.size) do
+        new_path_to_file = Path.join(t.path, generate_unused_file_name(t.next_id))
 
-      with :ok <- File.rename(path_to_file, new_path_to_file) do
-        {:ok, %{t | segments: [new_path_to_file | t.segments], next_id: t.next_id + 1}}
+        with :ok <- File.rename(path_to_file, new_path_to_file) do
+          {:ok, %{t | segments: [new_path_to_file | t.segments], next_id: t.next_id + 1}}
+        end
+      else
+        with :ok <- File.rm(path_to_file), do: {:ok, t}
       end
     end
 
@@ -250,10 +265,23 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
     # the two steps, leaves a scratch file the next incarnation sweeps,
     # never a `preallocated.N` the next incarnation adopts as a whole
     # segment it does not have. Same publish-atomically shape as
-    # `LocalFilesystem.put/4`, and with the same caveat — the content is
-    # synced but the parent directory entry cannot be, so a power loss
-    # can lose the rename and leave the pool short, which the min-refill
-    # already handles.
+    # `LocalFilesystem.put/4`, and with the same caveat — the extent is
+    # synced but the parent directory entry cannot be from the BEAM, so
+    # a power loss can lose the rename and leave the pool short, which
+    # the min-refill already handles.
+    #
+    # The sync is what lets a pool file survive a power loss instead of
+    # being discarded and reallocated by the next incarnation's scan; it
+    # costs single-digit milliseconds of metadata, off the reply path.
+    #
+    # The scratch name is fixed rather than kernel-arbitrated the way
+    # `LocalFilesystem` needs — its root has many writers; this pool
+    # directory has exactly one — and a leftover would wedge the
+    # :exclusive open only until the stop-and-restart that any allocation
+    # failure already forces, whose scan sweeps it. Note the target is no
+    # longer opened :exclusive, so the publishing rename overwrites a
+    # `preallocated.N` the discard in `new/4` failed to remove, which is
+    # what we want from it.
     @spec allocate_file(String.t(), non_neg_integer()) :: {:ok, String.t()} | {:error, atom()}
     def allocate_file(path, size_in_bytes) do
       scratch = scratch_path(path)

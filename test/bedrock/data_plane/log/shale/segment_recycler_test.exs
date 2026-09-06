@@ -25,11 +25,11 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecyclerTest do
   end
 
   # A stand-in for a retired WAL segment: check_in either renames it into
-  # the pool or unlinks it, so the contents are irrelevant and the size
-  # need not be realistic.
-  defp retired_segment(dir, name) do
+  # the pool or unlinks it, so the contents are irrelevant — but the size
+  # is not, since only a whole segment is worth pooling.
+  defp retired_segment(dir, name, size \\ @segment_size) do
     path = Path.join(dir, name)
-    :ok = File.write(path, "retired")
+    :ok = File.write(path, :binary.copy(<<0>>, size))
     path
   end
 
@@ -91,6 +91,23 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecyclerTest do
 
       assert Path.wildcard(Path.join(dir, "wal_*")) == [],
              "every checked-in segment must be either pooled or unlinked"
+    end
+  end
+
+  # A log recovering over the wreckage a pre-atomic-publish version left
+  # behind checks that wreckage back in: the 28-byte stub a zero-length
+  # pool file becomes once Writer.open/3 has written a header loads as a
+  # segment, and Recovery.discard_all_segments/1 returns it to the pool.
+  # new/4 never sees it — it arrives under a `wal_` name, after the scan.
+  describe "check_in/2 of something that is not a whole segment" do
+    test "unlinks it instead of pooling it", %{dir: dir, state: state} do
+      stub = retired_segment(dir, "wal_stub", 28)
+
+      {:ok, state} = Logic.check_in(state, stub)
+
+      assert state.segments == []
+      refute File.exists?(stub)
+      assert pooled_files(dir) == []
     end
   end
 

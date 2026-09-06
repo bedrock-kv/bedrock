@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:37Z",
+  "close_reason": "Delivered in PR #269 (audited 2026-09-06: SnapshotPolicy floor + byte/transaction thresholds wired from manifest params; CI green). Scheduled half deliberately not shipped: nothing drives compaction on a running materializer, tracked in bedrock-947 and bedrock-mk2.",
   "created": "2026-01-17T17:36:37.849729-05:00",
   "description": "",
   "id": "bedrock-zi44",
@@ -15,8 +17,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Snapshot upload policy (scheduled/threshold)",
   "type": "task",
-  "updated_at": "2026-09-06T01:36:34Z"
+  "updated_at": "2026-09-06T14:05:37Z"
 }

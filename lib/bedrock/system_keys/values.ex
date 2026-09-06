@@ -8,10 +8,11 @@ defmodule Bedrock.SystemKeys.Values do
   bytes must never create atoms.
 
   The surface is exactly the written families - `shard_keys/` entries
-  (the routing boundary map) and `materializers/` membership (the node as
-  a string; consumers derive the callable `{otp_name, node}` ref from it
-  and the worker id in the key, so the no-atoms rule holds through
-  decode). Families return here when their readers do.
+  (the routing boundary map), `materializers/` membership and `logs/`
+  locations (both the node as a string; consumers derive the callable
+  `{otp_name, node}` ref from it and the worker id in the key, so the
+  no-atoms rule holds through decode). Families return here when their
+  readers do.
   """
 
   alias Bedrock.Encoding.Tuple, as: TupleEncoding
@@ -43,6 +44,19 @@ defmodule Bedrock.SystemKeys.Values do
   @spec encode_materializer_node(String.t()) :: binary()
   def encode_materializer_node(node) when is_binary(node), do: TupleEncoding.pack(node)
 
+  @doc """
+  Encodes a log location value: the log's node, a string.
+
+  The same shape and the same rationale as the materializer node above -
+  the id lives in the key (`logs/<generation>/<log_id>`), so the value
+  carries only the address, string-encoded so decoding durable bytes
+  never creates atoms. FDB's `logsKey` value pairs each log's UID with a
+  `NetworkAddress` for exactly this reader; the node is what a Bedrock
+  operator excludes.
+  """
+  @spec encode_log_node(String.t()) :: binary()
+  def encode_log_node(node) when is_binary(node), do: TupleEncoding.pack(node)
+
   @doc "Decodes a shard key entry to `{:ok, {tag, start_key}}`."
   @spec decode_shard_key_entry(binary()) :: {:ok, {Bedrock.range_tag(), Bedrock.key()}} | decode_error()
   def decode_shard_key_entry(binary),
@@ -52,6 +66,10 @@ defmodule Bedrock.SystemKeys.Values do
   @spec decode_materializer_node(binary()) :: {:ok, String.t()} | decode_error()
   def decode_materializer_node(binary), do: safe_unpack(binary, &is_binary/1)
 
+  @doc "Decodes a log location value to `{:ok, node}` (string)."
+  @spec decode_log_node(binary()) :: {:ok, String.t()} | decode_error()
+  def decode_log_node(binary), do: safe_unpack(binary, &is_binary/1)
+
   @doc """
   Decodes a value given its parsed system key (from
   `Bedrock.SystemKeys.parse_key/1`).
@@ -60,6 +78,7 @@ defmodule Bedrock.SystemKeys.Values do
   def decode_for({:distributor_lock, _which}, value), do: decode_lock_uid(value)
   def decode_for({:shard_key, _end_key}, value), do: decode_shard_key_entry(value)
   def decode_for({:materializer_key, _tag, _worker_id}, value), do: decode_materializer_node(value)
+  def decode_for({:log_key, _generation, _log_id}, value), do: decode_log_node(value)
   def decode_for(_unknown, _value), do: {:error, :unknown_family}
 
   defp safe_unpack(binary, valid?) when is_binary(binary) do

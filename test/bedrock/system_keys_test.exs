@@ -35,6 +35,20 @@ defmodule Bedrock.SystemKeysTest do
       assert SystemKeys.parse_key(SystemKeys.materializers_prefix() <> "7") == :unknown
     end
 
+    test "log_key/2 round-trips through parse_key/1, carrying the GENERATION" do
+      assert SystemKeys.parse_key(SystemKeys.log_key(:current, "log_a")) == {:log_key, :current, "log_a"}
+      assert SystemKeys.parse_key(SystemKeys.log_key(:old, "log_a")) == {:log_key, :old, "log_a"}
+    end
+
+    test "malformed log keys parse as :unknown" do
+      # There are exactly two generations; anything else under the prefix
+      # is a key this reader must not silently accept as one or the other.
+      assert SystemKeys.parse_key(SystemKeys.logs_prefix() <> "ancient/log_a") == :unknown
+      assert SystemKeys.parse_key(SystemKeys.logs_prefix() <> "current/") == :unknown
+      assert SystemKeys.parse_key(SystemKeys.logs_prefix() <> "current") == :unknown
+      assert SystemKeys.parse_key(SystemKeys.logs_prefix()) == :unknown
+    end
+
     test "prefixes cover exactly their families" do
       assert String.starts_with?(SystemKeys.shard_key("x"), SystemKeys.shard_keys_prefix())
       assert String.starts_with?(SystemKeys.materializer_key(3, "wkr_a"), SystemKeys.materializers_prefix())
@@ -52,7 +66,8 @@ defmodule Bedrock.SystemKeysTest do
         shard_key: {SystemKeys.shard_keys_prefix(), [SystemKeys.shard_key(<<>>), SystemKeys.shard_key(<<0xFF, 0xFF>>)]},
         materializer_key:
           {SystemKeys.materializers_prefix(),
-           [SystemKeys.materializer_key(0, "wkr_a"), SystemKeys.materializer_key(4200, "wkr_b")]}
+           [SystemKeys.materializer_key(0, "wkr_a"), SystemKeys.materializer_key(4200, "wkr_b")]},
+        log_key: {SystemKeys.logs_prefix(), [SystemKeys.log_key(:current, "log_a"), SystemKeys.log_key(:old, "log_b")]}
       }
 
       # Plausible future siblings that share leading bytes with a family.

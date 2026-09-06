@@ -694,11 +694,15 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # The membership check the committed family demands (FDB's DD verifies
   # every serverList entry the same way; membership is never assumed
   # from liveness): each named assignment is asked, bounded, which epoch
-  # it was last locked into. Current answers verify silently. A stale or
-  # never-locked answer means the epoch never embraced this worker — its
-  # node missed recovery's roll call — and it is ADOPTED: locked at the
-  # epoch, unlocked at its own durable version, its entry re-asserted
-  # under the fence. Anything else (wedged, dead, unreachable beyond the
+  # it was last locked into AND whether it is serving that epoch. Only
+  # in-epoch-and-running verifies silently. Anything else demonstrably
+  # alive is ADOPTED: locked at the epoch, unlocked at its own durable
+  # version, its entry re-asserted under the fence. That covers the
+  # worker whose node missed recovery's roll call (a stale or absent
+  # epoch) and, since bedrock-q67.21.13, the ordinary case — recovery
+  # locks every advertised materializer into its epoch and unlocks only
+  # tag 0's, so a data-tag member is in the current epoch and still
+  # locked. Anything else (wedged, dead, unreachable beyond the
   # monitor's damping) is healed; the worker itself is never removed —
   # it retires in-band when its OWN key is cleared — membership is a set,
   # so another member appearing is not displacement. One shot,

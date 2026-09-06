@@ -6,9 +6,15 @@
   "description": "Materializer placement always picks the first capable node: find_materializer_capable_node (materializer_bootstrap_phase.ex:373-377) returns hd(node_capabilities[:materializer]), so every shard's materializer piles onto one node. Rotate/spread placement (round-robin or load-aware), matching the round-robin already used in commit_proxy_startup_phase.ex and log_recruitment_phase.ex.\n\nRescoped 2026-08-15: the original thundering-herd half (N :noproc DOWNs -\u003e N uncapped concurrent recruitments, from the PR #99 gating audit) is stale — after bedrock-qzr.8/qzr.9 (dfd15d02, 7b57281f) node loss stops the director and recruitment is a sequential reduce_while inside recovery, so no concurrency cap is needed. Only the placement-spreading ask remains.",
   "id": "bedrock-22g",
   "labels": [],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/290 — placement is now Recruitment.place/2 (least-loaded capable node, ties by directory order), decided and reserved in the distributor server so the sweep's concurrent recruits spread; stacked on #280.",
+      "timestamp": "2026-09-06T02:39:06Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "Materializer placement always picks first capable node; spread round-robin",
   "type": "task",
-  "updated_at": "2026-09-06T02:15:47Z"
+  "updated_at": "2026-09-06T02:39:06Z"
 }

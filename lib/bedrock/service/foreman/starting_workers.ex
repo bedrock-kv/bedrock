@@ -101,26 +101,30 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   # loaded node can plausibly exceed — and a timeout here is not a
   # diagnosis, the worker may be starting perfectly well. Give it room.
   # Still bounded, though: spin-up runs in a `handle_continue`, so an
-  # unbounded wait would leave the foreman answering nothing at all.
+  # unbounded wait would leave the foreman answering nothing at all. What
+  # it costs is that window, once per batch of concurrent starts, on a
+  # boot that has a stuck worker in it.
   @start_timeout_ms 30_000
 
   @doc """
   Starts each stopped worker, concurrently, and records what happened to
   each one.
 
-  A start runs arbitrary worker-module code — `child_spec/1` from a
-  manifest, an `init/1` that touches the disk — so it can raise, and it
-  can overrun. Neither is the foreman's death: `Task.async_stream` links
-  its tasks, so an uncaught exception reaches the foreman as an exit
-  signal and takes down every OTHER worker it hosts, and the default
-  `on_timeout: :exit` does the same to a worker that is merely slow.
+  A start that overruns is not the foreman's death. `Task.async_stream`'s
+  default is `on_timeout: :exit`, which exits the CALLER — spin-up runs
+  in a `handle_continue`, so the foreman dies before a single result is
+  mapped, and it dies over a worker that may be starting perfectly well.
+  Restarting does not help: `do_spin_up/1` re-reads the same directory
+  and stalls on the same worker, so the foreman crash-loops until the
+  supervisor's restart intensity gives out and takes the worker
+  `DynamicSupervisor` — and every worker under it — down with it.
 
-  Both are caught here and become `{:failed_to_start, reason}` for the
-  one worker id they belong to, which is the verdict `recompute_health/1`
-  already knows how to read. The exception is caught inside the task, so
-  no signal is ever raised; the timeout cannot be, so `:kill_task` turns
-  it into a result instead. `zip_input_on_exit` is what carries the
-  worker the result belongs to — the stream is the only thing that knows.
+  `:kill_task` turns the overrun into a result for the one worker it
+  belongs to instead, and `zip_input_on_exit` carries the worker that
+  result belongs to, since the stream is the only thing that knows it.
+  Raising is handled a level down, in `try_to_start_worker/3`, because
+  `do_new_worker/4` calls that one directly and is exposed to the same
+  thing.
   """
   @spec try_to_start_workers(
           [WorkerInfo.t()],
@@ -130,24 +134,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
         ) :: [WorkerInfo.t()]
   def try_to_start_workers(worker_info, cluster, object_storage, timeout \\ @start_timeout_ms) do
     worker_info
-    |> Task.async_stream(
-      fn worker_info ->
-        try do
-          try_to_start_worker(worker_info, cluster, object_storage)
-        catch
-          # The crash report the task used to emit on its way out went
-          # with it. It is the only place the stacktrace exists, so say
-          # it here — a health field an operator has to go looking for is
-          # not a substitute for knowing which worker blew up and where.
-          kind, reason ->
-            Logger.error(
-              "Bedrock foreman: worker #{worker_info.id} raised while starting\n" <>
-                Exception.format(kind, reason, __STACKTRACE__)
-            )
-
-            put_health(worker_info, {:failed_to_start, {kind, reason}})
-        end
-      end,
+    |> Task.async_stream(&try_to_start_worker(&1, cluster, object_storage),
       timeout: timeout,
       on_timeout: :kill_task,
       zip_input_on_exit: true
@@ -156,6 +143,8 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
       {:ok, worker_info} ->
         worker_info
 
+      # `:kill_task` emits no report of its own, so this is the only
+      # record that a worker was given up on.
       {:exit, {worker_info, reason}} ->
         Logger.error("Bedrock foreman: worker #{worker_info.id} failed to start (#{inspect(reason)})")
         put_health(worker_info, {:failed_to_start, reason})
@@ -169,6 +158,24 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
     defstruct [:path, :id, :otp_name, :cluster, :manifest, :child_spec, :pid, :error, :object_storage]
   end
 
+  @doc """
+  Attempts one worker's start and answers with its health, whatever
+  happened.
+
+  Answering is the contract, and the pipeline below only honours it for
+  failures it can see coming — every step it runs is the worker module's
+  own code, named by a manifest on disk. `child_spec/1` may not exist or
+  may raise; `start_link/1` may exit on a `GenServer.call` of its own.
+  Uncaught, that reaches the caller: the foreman itself in
+  `do_new_worker/4`, or a linked task in `try_to_start_workers/4`, which
+  signals the foreman just the same. One unstartable worker is not a
+  reason for a node to lose the workers that started fine.
+
+  The reason is kept as `{kind, reason}` — nothing reads it, but the
+  stacktrace exists nowhere else once the crash report is suppressed, and
+  a health field an operator has to go looking for is no substitute for
+  knowing which worker blew up and where.
+  """
   @spec try_to_start_worker(WorkerInfo.t(), cluster :: Cluster.t(), object_storage :: term()) ::
           WorkerInfo.t()
   def try_to_start_worker(worker_info, cluster, object_storage) do
@@ -194,6 +201,14 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
         end
       )
     end)
+  catch
+    kind, reason ->
+      Logger.error(
+        "Bedrock foreman: worker #{worker_info.id} failed to start\n" <>
+          Exception.format(kind, reason, __STACKTRACE__)
+      )
+
+      put_health(worker_info, {:failed_to_start, {kind, reason}})
   end
 
   @spec load_manifest(StartWorkerOp.t()) :: StartWorkerOp.t()

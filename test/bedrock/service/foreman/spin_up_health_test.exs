@@ -1,6 +1,8 @@
 defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog, only: [with_log: 1]
+
   alias Bedrock.Service.Foreman.Impl
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.WorkerBehaviour
@@ -128,9 +130,11 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
     end
 
     # Starting runs in a linked task, so a worker whose start RAISES used
-    # to reach the foreman as an exit signal — spin-up never returned,
-    # and every other worker on the node went down with it. One bad
-    # manifest is one bad worker.
+    # to reach the foreman as an exit signal: spin-up never returned, the
+    # foreman died, and — since it re-reads the same directory on restart
+    # — it did so again on every restart until the supervisor gave up and
+    # took the node's other workers with it. One bad manifest is one bad
+    # worker, and spin-up has to finish.
     test "a worker whose start raises does not take its siblings down", %{tmp_dir: dir} do
       start_supervised!(
         {DynamicSupervisor, strategy: :one_for_one, name: SpinUpTestCluster.otp_name(:worker_supervisor)}
@@ -139,7 +143,7 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
       write_worker(dir, "aaaaaaaa")
       write_worker(dir, "bbbbbbbb", SpinUpRaisingWorker)
 
-      state = Impl.do_spin_up(base_state(dir))
+      {state, _log} = with_log(fn -> Impl.do_spin_up(base_state(dir)) end)
 
       assert %{health: {:ok, pid}} = state.workers["aaaaaaaa"]
       assert Process.alive?(pid)

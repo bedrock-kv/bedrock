@@ -1,6 +1,8 @@
 defmodule Bedrock.Service.Foreman.StartingWorkersTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog, only: [with_log: 1]
+
   alias Bedrock.Service.Foreman.StartingWorkers
   alias Bedrock.Service.Foreman.StartingWorkers.StartWorkerOp
   alias Bedrock.Service.WorkerBehaviour
@@ -45,7 +47,7 @@ defmodule Bedrock.Service.Foreman.StartingWorkersTest do
     use WorkerBehaviour, kind: :log
 
     def child_spec(_opts) do
-      Process.sleep(500)
+      Process.sleep(2_000)
       %{id: __MODULE__, start: {__MODULE__, :start_link, []}}
     end
   end
@@ -98,36 +100,42 @@ defmodule Bedrock.Service.Foreman.StartingWorkersTest do
     end
 
     # Starting happens inside a linked task, so a start that raises used
-    # to reach the FOREMAN as an exit signal — before any result was
-    # mapped — and take every other worker on the node with it. The
-    # failure belongs to the one worker that could not start.
+    # to reach the CALLER as an exit signal — before any result was
+    # mapped — and there is no result at all for the workers that started
+    # fine. The exception is the one worker's, and so is the verdict.
     @tag :tmp_dir
     test "a start that raises fails that worker alone", %{dir: dir} do
-      health =
-        [
-          write_worker(dir, "aaaaaaaa", StartsWorker),
-          write_worker(dir, "bbbbbbbb", RaisesWorker)
-        ]
-        |> StartingWorkers.try_to_start_workers(MockCluster, nil)
-        |> Map.new(&{&1.id, &1.health})
+      {health, _log} =
+        with_log(fn ->
+          [
+            write_worker(dir, "aaaaaaaa", StartsWorker),
+            write_worker(dir, "bbbbbbbb", RaisesWorker)
+          ]
+          |> StartingWorkers.try_to_start_workers(MockCluster, nil)
+          |> Map.new(&{&1.id, &1.health})
+        end)
 
       assert {:ok, pid} = health["aaaaaaaa"]
       assert Process.alive?(pid)
-      assert {:failed_to_start, _reason} = health["bbbbbbbb"]
+
+      assert {:failed_to_start, {:error, %RuntimeError{message: "this worker cannot be started"}}} =
+               health["bbbbbbbb"]
     end
 
-    # The timeout is the reachable half: a worker that opens a WAL and
-    # preallocates segments is exactly the one that overruns, and the
-    # overrun is not a diagnosis of the whole node.
+    # The timeout is the half that needs no bug at all to reach: a worker
+    # that opens a WAL and preallocates segments is exactly the one that
+    # overruns, and an overrun is not a diagnosis of the whole node.
     @tag :tmp_dir
     test "a start that overruns the timeout fails that worker alone", %{dir: dir} do
-      health =
-        [
-          write_worker(dir, "cccccccc", StartsWorker),
-          write_worker(dir, "dddddddd", SlowWorker)
-        ]
-        |> StartingWorkers.try_to_start_workers(MockCluster, nil, 50)
-        |> Map.new(&{&1.id, &1.health})
+      {health, _log} =
+        with_log(fn ->
+          [
+            write_worker(dir, "cccccccc", StartsWorker),
+            write_worker(dir, "dddddddd", SlowWorker)
+          ]
+          |> StartingWorkers.try_to_start_workers(MockCluster, nil, 200)
+          |> Map.new(&{&1.id, &1.health})
+        end)
 
       assert {:ok, pid} = health["cccccccc"]
       assert Process.alive?(pid)

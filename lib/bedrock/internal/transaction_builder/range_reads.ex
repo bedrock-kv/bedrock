@@ -41,20 +41,64 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
            | {:error, :timeout | :unavailable | :version_too_new}
            | {:failure,
               %{(:timeout | :unavailable | :version_too_old | :no_servers_to_race | :layout_lookup_failed) => [pid()]}}}
-  def get_range(state, {min_key, max_key_ex} = range, batch_size, opts \\ []) do
-    storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Materializer.get_range/5)
+  def get_range(state, range, batch_size, opts \\ [])
+
+  def get_range(state, {min_key, max_key}, _batch_size, _opts) when min_key >= max_key, do: {state, {:ok, {[], false}}}
+
+  def get_range(state, {min_key, max_key}, batch_size, opts) do
+    source = Keyword.get(opts, :storage_get_range_fn, &Materializer.get_range/5)
 
     case ensure_read_version(state, opts) do
-      {:ok, state} ->
-        execute_range_query(
-          state,
-          min_key,
-          &storage_get_range_fn.(&1, min_key, max_key_ex, &2, limit: batch_size, timeout: &3),
-          fn _results -> range end
-        )
+      {:ok, state} -> scan(state, min_key, max_key, batch_size, source, opts, [])
+      {:failure, reasons} -> {state, {:failure, reasons}}
+    end
+  end
 
-      {:failure, failures_by_reason} ->
-        {state, {:failure, failures_by_reason}}
+  defp scan(state, cursor, end_key, remaining, source, opts, accumulated) do
+    operation = &source.(&1, cursor, end_key, &2, limit: remaining, timeout: &3)
+
+    case StorageRacing.race_storage_servers(state, cursor, operation) do
+      {state, {:ok, {{rows, source_more}, {shard_start, shard_end}}}}
+      when shard_start <= cursor and cursor < shard_end ->
+        proof_end = proof_end(rows, source_more, cursor, min(end_key, shard_end))
+
+        if proof_end <= cursor do
+          {state, {:failure, %{unavailable: []}}}
+        else
+          consume_page(state, rows, proof_end, {cursor, end_key, remaining}, source, opts, accumulated)
+        end
+
+      {state, {:ok, _invalid_coverage}} ->
+        {state, {:failure, %{unavailable: []}}}
+
+      {state, {:failure, reasons}} ->
+        {state, {:failure, reasons}}
+    end
+  end
+
+  defp proof_end([], true, cursor, _end_key), do: cursor
+  defp proof_end(_rows, false, _cursor, end_key), do: end_key
+  defp proof_end(rows, true, _cursor, end_key), do: min(end_key, rows |> List.last() |> elem(0) |> Key.key_after())
+
+  defp consume_page(state, rows, proof_end, {cursor, end_key, remaining}, source, opts, accumulated) do
+    visible = Tx.range_view(state.tx, rows, {cursor, proof_end})
+    {page, excess} = Enum.split(visible, remaining)
+    consumed_end = if excess == [], do: proof_end, else: page |> List.last() |> elem(0) |> Key.key_after()
+
+    tx =
+      if Keyword.get(opts, :snapshot, false),
+        do: state.tx,
+        else: Tx.add_read_conflict_range(state.tx, cursor, consumed_end)
+
+    state = %{state | tx: tx}
+    accumulated = Enum.reverse(page, accumulated)
+    remaining = remaining - length(page)
+
+    cond do
+      excess != [] -> {state, {:ok, {Enum.reverse(accumulated), true}}}
+      proof_end >= end_key -> {state, {:ok, {Enum.reverse(accumulated), false}}}
+      remaining == 0 -> {state, {:ok, {Enum.reverse(accumulated), true}}}
+      true -> scan(state, proof_end, end_key, remaining, source, opts, accumulated)
     end
   end
 
@@ -75,7 +119,17 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
            | {:error, :timeout | :unavailable | :version_too_new}
            | {:failure,
               %{(:timeout | :unavailable | :version_too_old | :no_servers_to_race | :layout_lookup_failed) => [pid()]}}}
-  def get_range_selectors(state, start_selector, end_selector, batch_size, opts \\ []) do
+  def get_range_selectors(state, start_selector, end_selector, batch_size, opts \\ [])
+
+  def get_range_selectors(
+        state,
+        %KeySelector{key: start_key, or_equal: true, offset: 0},
+        %KeySelector{key: end_key, or_equal: true, offset: 0},
+        batch_size,
+        opts
+      ), do: get_range(state, {start_key, end_key}, batch_size, opts)
+
+  def get_range_selectors(state, start_selector, end_selector, batch_size, opts) do
     storage_get_range_fn = Keyword.get(opts, :storage_get_range_fn, &Materializer.get_range/5)
 
     case ensure_read_version(state, opts) do
@@ -84,7 +138,8 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
           state,
           start_selector.key,
           &storage_get_range_fn.(&1, start_selector, end_selector, &2, limit: batch_size, timeout: &3),
-          &range_from_batch/1
+          &range_from_batch/1,
+          opts
         )
 
       {:failure, failures_by_reason} ->
@@ -94,7 +149,7 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
 
   # Private helper functions
 
-  defp execute_range_query(state, racing_key, operation_fn, range_fn) do
+  defp execute_range_query(state, racing_key, operation_fn, range_fn, opts) do
     state
     |> StorageRacing.race_storage_servers(racing_key, operation_fn)
     |> case do
@@ -111,6 +166,11 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
             shard_range
           )
 
+        updated_tx =
+          if Keyword.get(opts, :snapshot, false),
+            do: %{updated_tx | reads: state.tx.reads, range_reads: state.tx.range_reads},
+            else: updated_tx
+
         {%{state | tx: updated_tx}, {:ok, {merged_batch_results, has_more}}}
 
       {state, {:failure, failures_by_reason}} ->
@@ -118,5 +178,6 @@ defmodule Bedrock.Internal.TransactionBuilder.RangeReads do
     end
   end
 
-  defp range_from_batch([{min_key, _value} | rest]), do: {min_key, rest |> List.last() |> elem(0) |> Key.key_after()}
+  defp range_from_batch([{min_key, _value} | _] = rows),
+    do: {min_key, rows |> List.last() |> elem(0) |> Key.key_after()}
 end

@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:29Z",
+  "close_reason": "Delivered in PR #246 (audited 2026-09-06: app env overrides static use-config, optional init/1; 6 precedence tests; CI green)",
   "created": "2026-08-15T16:44:32Z",
   "description": "Bedrock.Cluster static `use` config currently takes precedence over the otp_app application environment; convention (Ecto/Phoenix/Oban) is the reverse: `use` holds compile-time identity/defaults, app env overrides at runtime (runtime.exs must work without recompiling), optionally with an init/1 callback for last-mile adjustment. Surfaced while writing a full-cluster test that couldn't inject per-run paths via put_env.",
   "id": "bedrock-31d",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "App env should override static use-config (Ecto-style init pattern)",
   "type": "chore",
-  "updated_at": "2026-09-06T00:34:49Z"
+  "updated_at": "2026-09-06T14:05:29Z"
 }

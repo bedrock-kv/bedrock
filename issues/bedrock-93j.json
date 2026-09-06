@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-07-14T22:58:32Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-93j",
   "labels": [],
   "priority": 4,
-  "status": "open",
+  "status": "in_progress",
   "title": "GenServerApi-generated start_link/1 is unusable for tuple-init servers",
   "type": "task",
-  "updated_at": "2026-07-14T22:58:32Z"
+  "updated_at": "2026-09-06T02:12:43Z"
 }

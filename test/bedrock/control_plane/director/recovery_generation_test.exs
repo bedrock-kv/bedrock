@@ -188,18 +188,18 @@ defmodule Bedrock.ControlPlane.Director.RecoveryGenerationTest do
     :ok = CommitProxy.recover_from(ctx.proxy, ctx.lock_token, ctx.sequencer, resolver_layout, routing_snapshot)
   end
 
-  describe "retrying a stalled recovery" do
-    test "ends the abandoned attempt's proxy, sequencer and resolvers", ctx do
+  describe "a stalled recovery attempt" do
+    test "stops beating, at the stall — no retry needed to end it", ctx do
       unlock(ctx)
 
       # The abandoned generation is live: it beats on its own, without any
       # client, into its own logs (bedrock-q67.36).
       assert_receive {:log_push, _transaction, _last_commit_version}, @heartbeat_ms * 5
 
-      result = ctx |> director_state(monitored(stalled_attempt(ctx))) |> retry()
+      # Nothing schedules a recovery retry — it takes a cluster event — so
+      # the stall itself has to be what ends the generation.
+      result = ctx |> director_state(monitored(stalled_attempt(ctx))) |> run(&Recovery.do_recovery/1)
 
-      # The retry did happen — it is attempt 2, and it stalled again.
-      assert result.recovery_attempt.attempt == 2
       assert result.state == :recovery
 
       # The abandoned generation no longer pushes into the epoch's logs…
@@ -212,16 +212,20 @@ defmodule Bedrock.ControlPlane.Director.RecoveryGenerationTest do
       refute Process.alive?(ctx.sequencer), "the abandoned attempt's sequencer is still running"
     end
 
-    test "does not leave the abandoned attempt's components in the retried attempt", ctx do
-      result = ctx |> director_state(monitored(stalled_attempt(ctx))) |> retry()
+    test "is retired in the attempt the retry then builds on", ctx do
+      result = ctx |> director_state(monitored(stalled_attempt(ctx))) |> run(&Recovery.try_to_recover/1)
 
+      # The retry did happen — it is attempt 2, and it stalled again — and
+      # it carries none of the previous generation's processes.
+      assert result.recovery_attempt.attempt == 2
       assert result.recovery_attempt.sequencer == nil
       assert result.recovery_attempt.proxies == []
       assert result.recovery_attempt.resolvers == []
+      refute Process.alive?(ctx.proxy)
     end
 
-    test "does not report the retired components as component failures", ctx do
-      _result = ctx |> director_state(monitored(stalled_attempt(ctx))) |> retry()
+    test "does not report its retired components as component failures", ctx do
+      _result = ctx |> director_state(monitored(stalled_attempt(ctx))) |> run(&Recovery.do_recovery/1)
 
       # The monitors the monitoring phase installed are released with a
       # flush: a deliberate retirement is not a component failure, and the
@@ -229,20 +233,21 @@ defmodule Bedrock.ControlPlane.Director.RecoveryGenerationTest do
       refute_receive {:DOWN, _ref, :process, _pid, _reason}, 200
     end
 
-    test "an attempt that recruited nothing retires cleanly", ctx do
-      result = ctx |> director_state(RecoveryAttempt.new(TestCluster, ctx.epoch, DateTime.utc_now())) |> retry()
+    test "that recruited nothing retires cleanly", ctx do
+      attempt = RecoveryAttempt.new(TestCluster, ctx.epoch, DateTime.utc_now())
+      result = ctx |> director_state(attempt) |> run(&Recovery.try_to_recover/1)
 
       assert result.recovery_attempt.attempt == 2
       assert Process.alive?(ctx.proxy)
     end
   end
 
-  defp retry(state) do
+  defp run(state, fun) do
     holder = self()
-    capture_log(fn -> send(holder, {:retried, Recovery.try_to_recover(state)}) end)
+    capture_log(fn -> send(holder, {:ran, fun.(state)}) end)
 
     receive do
-      {:retried, result} -> result
+      {:ran, result} -> result
     end
   end
 

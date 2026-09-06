@@ -208,6 +208,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.MutationOrderTest do
     :ok = Database.close(db)
 
     replay_db = open_database(Path.join(dir, "replay"))
+    assert Database.durable_version(replay_db) == Version.zero()
     {replayed, replay_db} = IndexManager.apply_transactions(IndexManager.new(), encoded, replay_db)
     assert values(replayed, replay_db) == expected
     :ok = Database.close(replay_db)
@@ -239,7 +240,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.MutationOrderTest do
   end
 
   defp open_database(path) do
-    {:ok, db} = Database.open(__MODULE__, path)
+    File.mkdir_p!(path)
+    {:ok, db} = Database.open(__MODULE__, Path.join(path, "db"))
 
     on_exit(fn ->
       try do

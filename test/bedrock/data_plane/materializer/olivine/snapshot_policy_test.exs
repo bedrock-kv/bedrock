@@ -18,16 +18,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicyTest do
     end
   end
 
-  describe "decide/2 with a scheduled interval" do
+  describe "decide/2 with a minimum interval" do
     setup do
-      {:ok, policy: %SnapshotPolicy{interval_ms: 1_000}}
+      {:ok, policy: %SnapshotPolicy{min_interval_ms: 1_000}}
     end
 
-    test "uploads when no snapshot has been taken yet", %{policy: policy} do
+    test "uploads when there is no previous upload to be too close to", %{policy: policy} do
       assert :upload = SnapshotPolicy.decide(policy, 0)
     end
 
-    test "waits until the interval has elapsed", %{policy: policy} do
+    test "waits until the floor has been cleared", %{policy: policy} do
       policy = SnapshotPolicy.uploaded(policy, 10_000)
 
       assert :wait = SnapshotPolicy.decide(policy, 10_000)
@@ -36,7 +36,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicyTest do
       assert :upload = SnapshotPolicy.decide(policy, 50_000)
     end
 
-    test "the accumulated work is irrelevant to a pure interval policy", %{policy: policy} do
+    test "no amount of accumulated work clears the floor early", %{policy: policy} do
       policy = policy |> SnapshotPolicy.uploaded(0) |> SnapshotPolicy.observe(1_000_000, 1_000_000_000)
 
       assert :wait = SnapshotPolicy.decide(policy, 999)
@@ -44,90 +44,83 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicyTest do
   end
 
   describe "decide/2 with thresholds" do
-    test "a byte threshold fires at or above the configured size" do
-      policy = %SnapshotPolicy{after_bytes: 4_096} |> SnapshotPolicy.uploaded(0) |> SnapshotPolicy.observe(1, 4_095)
+    test "a byte threshold is met at or above the configured size" do
+      policy = SnapshotPolicy.observe(%SnapshotPolicy{after_bytes: 4_096}, 1, 4_095)
 
       assert :wait = SnapshotPolicy.decide(policy, 0)
       assert :upload = policy |> SnapshotPolicy.observe(1, 1) |> SnapshotPolicy.decide(0)
     end
 
-    test "a transaction threshold fires at or above the configured count" do
-      policy =
-        %SnapshotPolicy{after_transactions: 100} |> SnapshotPolicy.uploaded(0) |> SnapshotPolicy.observe(99, 1)
+    test "a transaction threshold is met at or above the configured count" do
+      policy = SnapshotPolicy.observe(%SnapshotPolicy{after_transactions: 100}, 99, 1)
 
       assert :wait = SnapshotPolicy.decide(policy, 0)
       assert :upload = policy |> SnapshotPolicy.observe(1, 1) |> SnapshotPolicy.decide(0)
     end
 
-    test "triggers are a disjunction: whichever fires first wins" do
-      policy =
-        SnapshotPolicy.uploaded(%SnapshotPolicy{interval_ms: 60_000, after_bytes: 4_096, after_transactions: 100}, 0)
+    test "thresholds are a disjunction with each other: either one qualifies" do
+      policy = %SnapshotPolicy{after_bytes: 4_096, after_transactions: 100}
 
-      assert :wait = policy |> SnapshotPolicy.observe(99, 4_095) |> SnapshotPolicy.decide(59_999)
-      assert :upload = policy |> SnapshotPolicy.observe(99, 4_095) |> SnapshotPolicy.decide(60_000)
+      assert :wait = policy |> SnapshotPolicy.observe(99, 4_095) |> SnapshotPolicy.decide(0)
       assert :upload = policy |> SnapshotPolicy.observe(100, 0) |> SnapshotPolicy.decide(0)
       assert :upload = policy |> SnapshotPolicy.observe(0, 4_096) |> SnapshotPolicy.decide(0)
     end
   end
 
-  describe "uploaded/2" do
-    test "restarts the clock and clears the accumulators" do
+  describe "decide/2 with both a floor and a threshold" do
+    setup do
       policy =
-        %SnapshotPolicy{interval_ms: 1_000, after_bytes: 10, after_transactions: 10}
+        SnapshotPolicy.uploaded(%SnapshotPolicy{min_interval_ms: 60_000, after_transactions: 100}, 0)
+
+      {:ok, policy: policy}
+    end
+
+    test "the floor is a floor: a met threshold does not override it", %{policy: policy} do
+      assert :wait = policy |> SnapshotPolicy.observe(1_000, 0) |> SnapshotPolicy.decide(59_999)
+      assert :upload = policy |> SnapshotPolicy.observe(1_000, 0) |> SnapshotPolicy.decide(60_000)
+    end
+
+    test "clearing the floor is not enough on its own", %{policy: policy} do
+      assert :wait = policy |> SnapshotPolicy.observe(99, 0) |> SnapshotPolicy.decide(600_000)
+      assert :upload = policy |> SnapshotPolicy.observe(100, 0) |> SnapshotPolicy.decide(600_000)
+    end
+  end
+
+  describe "uploaded/2" do
+    test "restarts the floor and clears the accumulators" do
+      policy =
+        %SnapshotPolicy{min_interval_ms: 1_000, after_transactions: 10}
         |> SnapshotPolicy.uploaded(0)
         |> SnapshotPolicy.observe(50, 50)
 
-      assert :upload = SnapshotPolicy.decide(policy, 0)
+      assert :upload = SnapshotPolicy.decide(policy, 1_000)
 
-      policy = SnapshotPolicy.uploaded(policy, 500)
+      policy = SnapshotPolicy.uploaded(policy, 1_000)
 
-      assert :wait = SnapshotPolicy.decide(policy, 500)
-      assert :upload = SnapshotPolicy.decide(policy, 1_500)
-    end
-  end
-
-  describe "check_interval_ms/1" do
-    test "an unarmed policy never schedules a check" do
-      assert :never = SnapshotPolicy.check_interval_ms(%SnapshotPolicy{})
-    end
-
-    test "an interval is checked four times per interval, with a floor" do
-      assert 15_000 = SnapshotPolicy.check_interval_ms(%SnapshotPolicy{interval_ms: 60_000})
-      assert 10 = SnapshotPolicy.check_interval_ms(%SnapshotPolicy{interval_ms: 1})
-    end
-
-    test "thresholds alone still need polling" do
-      assert 1_000 = SnapshotPolicy.check_interval_ms(%SnapshotPolicy{after_bytes: 4_096})
-      assert 1_000 = SnapshotPolicy.check_interval_ms(%SnapshotPolicy{after_transactions: 100})
-    end
-  end
-
-  describe "started/2" do
-    test "an interval measured from startup does not fire immediately" do
-      policy = SnapshotPolicy.started(%SnapshotPolicy{interval_ms: 1_000}, 5_000)
-
-      assert :wait = SnapshotPolicy.decide(policy, 5_999)
-      assert :upload = SnapshotPolicy.decide(policy, 6_000)
+      # Both halves reset: inside the floor, and with nothing accumulated.
+      assert :wait = SnapshotPolicy.decide(policy, 1_500)
+      assert :wait = SnapshotPolicy.decide(policy, 2_000)
+      assert :upload = policy |> SnapshotPolicy.observe(10, 0) |> SnapshotPolicy.decide(2_000)
     end
   end
 
   describe "from_params/1" do
     test "reads the manifest params a worker is created with" do
-      assert %SnapshotPolicy{interval_ms: 60_000, after_bytes: 4_096, after_transactions: 100} =
+      assert %SnapshotPolicy{min_interval_ms: 60_000, after_bytes: 4_096, after_transactions: 100} =
                SnapshotPolicy.from_params(%{
-                 "snapshot_interval_ms" => 60_000,
+                 "snapshot_min_interval_ms" => 60_000,
                  "snapshot_after_bytes" => 4_096,
                  "snapshot_after_transactions" => 100
                })
     end
 
-    test "absent, non-integer or non-positive params leave the trigger disabled" do
-      assert %SnapshotPolicy{interval_ms: nil, after_bytes: nil, after_transactions: nil} =
+    test "absent, non-integer or non-positive params leave the knob off" do
+      assert %SnapshotPolicy{min_interval_ms: nil, after_bytes: nil, after_transactions: nil} =
                SnapshotPolicy.from_params(%{})
 
-      assert %SnapshotPolicy{interval_ms: nil, after_bytes: nil, after_transactions: nil} =
+      assert %SnapshotPolicy{min_interval_ms: nil, after_bytes: nil, after_transactions: nil} =
                SnapshotPolicy.from_params(%{
-                 "snapshot_interval_ms" => 0,
+                 "snapshot_min_interval_ms" => 0,
                  "snapshot_after_bytes" => -1,
                  "snapshot_after_transactions" => "100"
                })

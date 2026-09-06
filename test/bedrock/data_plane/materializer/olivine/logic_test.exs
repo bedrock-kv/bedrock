@@ -536,7 +536,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       Logic.shutdown(state)
     end
 
-    test "a configured interval suppresses a second upload inside the window", %{test_dir: test_dir} do
+    test "a minimum interval suppresses a second upload inside the floor", %{test_dir: test_dir} do
       object_storage_root = Path.join(test_dir, "object_storage")
       File.mkdir_p!(object_storage_root)
 
@@ -544,7 +544,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       snapshot = Snapshot.new(backend, "logic-policy-shard")
 
       state = create_test_state(Path.join(test_dir, "storage"), :snapshot_policy_test)
-      state = %{state | snapshot: snapshot, snapshot_policy: %SnapshotPolicy{interval_ms: 60_000}}
+      state = %{state | snapshot: snapshot, snapshot_policy: %SnapshotPolicy{min_interval_ms: 60_000}}
 
       data_path = Path.join(test_dir, "policy_data")
       idx_path = Path.join(test_dir, "policy_idx")
@@ -560,18 +560,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
         )
       end
 
-      # Nothing has ever been uploaded, so the interval trigger fires.
+      # Nothing has ever been uploaded, so there is no floor to clear.
       state = upload.(state, 1)
       assert {:ok, _} = await_snapshot_version(snapshot, 1, 100)
 
-      # A second compaction inside the window is skipped: version 2 never
+      # A second compaction inside the floor is skipped: version 2 never
       # lands, and the latest snapshot is still version 1.
       state = upload.(state, 2)
       Process.sleep(100)
       assert {:error, :not_found} = Snapshot.read(snapshot, 2)
       assert {:ok, 1} = Snapshot.latest_version(snapshot)
 
-      # Rewinding the policy's clock past the interval releases the next one.
+      # Rewinding the policy's clock past the floor releases the next one.
       state = %{
         state
         | snapshot_policy: %{state.snapshot_policy | last_upload_at: state.snapshot_policy.last_upload_at - 60_000}

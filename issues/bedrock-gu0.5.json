@@ -7,9 +7,15 @@
   "id": "bedrock-gu0.5",
   "labels": [],
   "parent": "bedrock-gu0",
+  "comments": [
+    {
+      "text": "GitHub issue published: https://github.com/bedrock-kv/bedrock/issues/292. Starting isolated investigation in /tmp/bedrock-followups-20260905.zKTZxP/292; same cold-plan/TDD/final-audit workflow as campaign.",
+      "timestamp": "2026-09-06T02:39:45Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "Late restarted worker health crashes Foreman after explicit worker removal",
   "type": "bug",
-  "updated_at": "2026-09-06T01:05:34Z"
+  "updated_at": "2026-09-06T02:39:45Z"
 }

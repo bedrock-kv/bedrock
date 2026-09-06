@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T03:08:01Z",
+  "description": "Follow-up from bedrock-wxf.7 (PR #298). The LRU sweep is amortised probabilistically (one populate in ~bytes/(0.1*max_bytes) triggers a full directory walk) but is still inline in whichever process called get/put — including Demux.ShardServer's per-cut chunk write — and unbounded per pass: at defaults, one populate in ~205k pays a walk of a ~2M-entry directory (~88s extrapolated). Move the sweep off the caller (a task or a small owner process per cache root) and/or bound per-pass work (walk a fixed number of entries per trigger, resuming from a cursor). Pin with a test that a populate never blocks longer than a bound regardless of directory size.",
+  "id": "bedrock-k9k",
+  "labels": [],
+  "priority": 4,
+  "status": "open",
+  "title": "DiskCache eviction sweep runs inline in the caller with unbounded wall time on large directories",
+  "type": "task",
+  "updated_at": "2026-09-06T03:08:01Z"
+}

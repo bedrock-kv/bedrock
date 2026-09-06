@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-19T22:40:31Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "Gate system-keyspace reads and validate conflict-range sections (FDB READ_SYSTEM_KEYS parity)",
   "type": "task",
-  "updated_at": "2026-08-19T22:40:31Z"
+  "updated_at": "2026-09-06T01:41:14Z"
 }

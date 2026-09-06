@@ -48,7 +48,8 @@ defmodule Bedrock.SystemKeys.Values do
   Encodes a `config/<name>` value: a positive integer.
 
   Every member of the family is a count or a duration today, so the
-  family has one codec and `decode_for/2` needs no per-name dispatch.
+  family has one codec and `decode_for/2` needs no per-name dispatch; a
+  boolean or string parameter needs one (bedrock-q67.50).
   FDB stores its `\\xff/conf/` values as decimal text and parses them per
   key (`DatabaseConfiguration::setInternal`); we keep the repo's tuple
   encoding, which is self-describing enough that a wrongly-typed value

@@ -92,6 +92,13 @@ defmodule Bedrock.SystemKeys.Reader do
   absent means "seed me from the coordinator's bootstrap anchor" - so a
   single corrupt value would silently revert a configured cluster to its
   cold-boot defaults and then rewrite them as committed.
+
+  This is stricter than FDB, which discards `setInternal`'s return value
+  in `DatabaseConfiguration::fromKeyValues` and so simply skips a
+  `\\xff/conf/` key it does not recognize. With one member and one codec
+  the strict direction is the safe one; when the family goes
+  heterogeneous or version-skewed, an unreadable NAME must be tolerated
+  where an unreadable VALUE still must not (bedrock-q67.50).
   """
   @spec decode_config_parameters([{Bedrock.key(), binary()}]) ::
           {:ok, %{binary() => pos_integer()}} | {:error, {:invalid_config_entry, Bedrock.key()}}

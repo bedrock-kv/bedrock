@@ -287,7 +287,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         # The committed cluster configuration, read at the same version
         # from the same materializer as the other two families. Later
         # phases size the transaction system from it; the coordinator's
-        # copy is only the anchor for what the family does not carry.
+        # copy is only the anchor for what the family does not carry. A
+        # STALLED attempt is stashed into the coordinator's config (as
+        # shard_layout already is), so the read transits coordinator
+        # state — as scratch, never as authority: the next attempt
+        # re-reads before any phase consumes it.
         |> Map.put(:committed_parameters, committed_parameters)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
         |> Map.update!(:transaction_services, &Map.merge(&1, created_services))

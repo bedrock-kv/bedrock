@@ -16,8 +16,9 @@ defmodule Bedrock.SystemKeys do
   mutating distributor transaction, so ownership is enforced by the
   commit pipeline itself. `config/<name>` carries the cluster's
   configuration (FDB's `\\xff/conf/`, `SystemData.cpp:1005`): recovery
-  READS it to size the transaction system, and an ordinary transaction
-  is what changes it. A system key without a
+  READS it to size the transaction system, and recovery seeds it exactly
+  once - only `desired_commit_proxies` lives here so far, the rest
+  following their own readers (bedrock-q67.50). A system key without a
   reader is inventory, not communication - unread MACHINERY is deleted,
   while durable observability keys stay by decision, named as such;
   families return here when their readers do.
@@ -43,8 +44,10 @@ defmodule Bedrock.SystemKeys do
   reading this range out of the txnStateStore during recovery
   (`ClusterRecovery.actor.cpp:1191-1193`), never from the coordinators,
   and configuration changes are ordinary transactions over the range
-  (`ManagementAPI.actor.cpp` `changeConfig`). Recovery only seeds a
-  parameter the family does not carry yet.
+  (`changeConfig`, `GenericManagementAPI.actor.h:256`). Recovery only
+  seeds a parameter the family does not carry yet; Bedrock has no
+  operator-facing writer for the range yet (bedrock-q67.51), so a seeded
+  parameter is currently fixed until one lands.
   """
   @spec config_key(name :: binary()) :: Bedrock.key()
   def config_key(name) when is_binary(name), do: "#{@system_prefix}/config/#{name}"
@@ -55,7 +58,7 @@ defmodule Bedrock.SystemKeys do
 
   @doc """
   The parameter naming the desired number of commit proxies (FDB's
-  `\\xff/conf/commit_proxies`, `DatabaseConfiguration.cpp:606-609`).
+  `\\xff/conf/commit_proxies`, `DatabaseConfiguration.cpp:607-610`).
 
   The name is the family's vocabulary, shared by recovery's seed writer
   and the commit-proxy startup phase that reads it, so neither can spell

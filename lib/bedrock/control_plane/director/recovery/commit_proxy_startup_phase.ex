@@ -67,9 +67,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
   # `configuration.getDesiredCommitProxies()` — a field of the
   # DatabaseConfiguration the cluster controller built by reading
   # `\xff/conf/` out of the txnStateStore (ClusterRecovery.actor.cpp:1191,
-  # DatabaseConfiguration.cpp:606-609), and `\xff/conf/commit_proxies` is
-  # changed by an ordinary transaction, not by touching the coordinators.
-  # The materializer bootstrap phase performed the equivalent read.
+  # DatabaseConfiguration.cpp:607-610), and `\xff/conf/commit_proxies` is
+  # changed by an ordinary transaction, not by touching the coordinators
+  # (Bedrock has no operator-facing writer for the range yet,
+  # bedrock-q67.51). The materializer bootstrap phase performed the
+  # equivalent read.
   #
   # The coordinator's value is the BOOTSTRAP ANCHOR: it answers only for
   # a cluster whose committed family does not carry the parameter yet (a

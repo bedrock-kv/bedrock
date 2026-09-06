@@ -184,7 +184,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # cluster that has none, and a cluster that has one ignores it (FDB's
   # coordinated state carries the connection string, not the
   # configuration). The rest are still authoritative here, and move to the
-  # keyspace as their readers move with them.
+  # keyspace as their readers move with them (bedrock-q67.50).
   defp build_parameters(config) do
     params = config.parameters
 
@@ -263,8 +263,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   #
   # The keyspace copy is the authority, so this must not be a rewrite:
   # `\xff/conf/` is changed by an ordinary transaction (FDB's
-  # `changeConfig`, ManagementAPI.actor.cpp), and recovery's own commit
-  # only READS it (ClusterRecovery.actor.cpp:1191). Re-stamping the
+  # `changeConfig`, GenericManagementAPI.actor.h:256), and recovery's own
+  # commit only READS it (ClusterRecovery.actor.cpp:1191). Re-stamping the
   # coordinator's bootstrap anchor over the committed value each epoch
   # would make every configuration change last exactly until the next
   # recovery. The coordinator keeps the anchor and nothing more: it
@@ -273,7 +273,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # Only `desired_commit_proxies` moves here for now — the parameter with
   # a live keyspace-side reader (the commit-proxy startup phase). The
   # rest of the parameters and the policies follow their own readers, one
-  # at a time; writing them ahead of a reader would be inventory.
+  # at a time (bedrock-q67.50); writing them ahead of a reader would be
+  # inventory. Bedrock has no operator-facing writer for the family yet
+  # (bedrock-q67.51), so a seeded parameter is fixed until one lands.
   @spec build_config_keys(Tx.t(), RecoveryAttempt.t(), map()) :: Tx.t()
   defp build_config_keys(tx, recovery_attempt, cluster_config) do
     name = SystemKeys.desired_commit_proxies()

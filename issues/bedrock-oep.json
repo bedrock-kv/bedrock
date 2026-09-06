@@ -10,11 +10,15 @@
     {
       "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/235. Published the 2026-09-05 implementation evaluation, pinned to 8f962e09, with evidence and acceptance criteria. Reproduced findings are distinguished from source-level risks. No implementation fix is included.",
       "timestamp": "2026-09-05T23:58:12Z"
+    },
+    {
+      "text": "Red stage: test/bedrock/internal/transaction_builder/range_reads_test.exs has 11 tests/11 failures at cfaab90a. Includes missing local writes, no absence conflicts, real resolver admitting both conditional inserts, ignored snapshot options, pending prefix omission and premature pagination completion on empty/cleared pages. Plan for cold review: /tmp/bedrock-issue-team-20260905/235-plan.md. No implementation edits yet.",
+      "timestamp": "2026-09-06T00:09:12Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Empty range reads omit pending writes and read-conflict ranges",
   "type": "bug",
-  "updated_at": "2026-09-06T00:04:33Z"
+  "updated_at": "2026-09-06T00:09:12Z"
 }

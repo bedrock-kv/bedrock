@@ -7,9 +7,15 @@
   "id": "bedrock-q67.35",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/288 — trim confirmed valid, no lib reader exists (including telemetry/tracing, which measure duration independently); field removed, all gates green, cold audit PASS.",
+      "timestamp": "2026-09-06T02:36:32Z"
+    }
+  ],
   "priority": 4,
   "status": "in_progress",
   "title": "Trim: Batch.finalized_at is write-only in lib; #167's message claimed removal",
   "type": "task",
-  "updated_at": "2026-09-06T02:31:00Z"
+  "updated_at": "2026-09-06T02:36:32Z"
 }

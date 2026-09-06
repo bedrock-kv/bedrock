@@ -115,14 +115,20 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       conflicts = Conflicts.new()
 
       # Create a transaction with read version and read conflicts
+      read_version = Bedrock.DataPlane.Version.from_integer(50)
+
       transaction_map = %{
         mutations: [{:set, "key1", "value"}],
-        read_conflicts: [{"key1", "key2"}],
-        write_conflicts: [{"key1", "key2"}],
-        read_version: Bedrock.DataPlane.Version.from_integer(50)
+        read_conflicts: {read_version, [{"key1", "key2"}]},
+        write_conflicts: [{"key1", "key2"}]
       }
 
       transaction = Transaction.encode(transaction_map)
+
+      # The read conflicts have to survive encoding, or every assertion below is
+      # about a transaction that reads nothing.
+      assert {:ok, {{^read_version, [{"key1", "key2"}]}, [{"key1", "key2"}]}} =
+               Transaction.read_write_conflicts(transaction)
 
       # Should successfully resolve (no prior conflicts)
       write_version = Bedrock.DataPlane.Version.from_integer(100)
@@ -131,6 +137,9 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       assert failed_indexes == []
       # New conflict should be added for the write
       assert new_conflicts != conflicts
+
+      # ...and the same read now aborts against the write it just recorded.
+      assert :abort = try_to_resolve_transaction(new_conflicts, transaction, write_version)
     end
   end
 
@@ -138,9 +147,15 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
     check all(
             reads_and_writes <-
               list_of(reads_and_writes_generator(), min_length: 10, max_length: 40),
-            write_version <- integer(1_000_000..100_000_000)
+            write_version_int <- integer(1_000_000..100_000_000)
           ) do
       initial_conflicts = Conflicts.new()
+
+      # Writes are recorded at the same version the reads are compared against,
+      # so both have to be Version binaries: mixing an integer in here makes
+      # every `v > version` comparison fall through term ordering and nothing
+      # ever conflicts.
+      write_version = Bedrock.DataPlane.Version.from_integer(write_version_int)
 
       # Generate binary transactions with read and write conflicts. The write_version is
       # used to generate the read version for each transaction. The read
@@ -150,7 +165,7 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
         reads_and_writes
         |> Enum.with_index()
         |> Enum.map(fn {{reads, writes}, index} ->
-          read_version = rem(write_version, index + 1) - 1
+          read_version = rem(write_version_int, index + 1) - 1
           read_version_binary = if read_version >= 0, do: Bedrock.DataPlane.Version.from_integer(read_version)
 
           # Convert read keys/ranges to conflicts
@@ -167,6 +182,11 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
               {start_key, end_key} -> {start_key, end_key}
             end)
 
+          # Read conflicts only encode as a {read_version, ranges} pair; a
+          # transaction with no read version carries no read conflicts at all.
+          read_conflicts_section =
+            if read_version_binary, do: {read_version_binary, read_conflicts}, else: {nil, []}
+
           # Create transaction map
           transaction_map = %{
             mutations:
@@ -175,13 +195,18 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
                 # Use start key for ranges
                 {start_key, _end_key} -> {:set, start_key, "value"}
               end),
-            read_conflicts: read_conflicts,
-            write_conflicts: write_conflicts,
-            read_version: read_version_binary
+            read_conflicts: read_conflicts_section,
+            write_conflicts: write_conflicts
           }
 
           # Encode to binary
-          Transaction.encode(transaction_map)
+          encoded = Transaction.encode(transaction_map)
+
+          # The reads have to survive encoding, or the abort assertions below
+          # are checked against a transaction that reads nothing.
+          assert {:ok, {^read_conflicts_section, ^write_conflicts}} = Transaction.read_write_conflicts(encoded)
+
+          encoded
         end)
 
       # Pattern match the resolve result to extract failed transaction indexes
@@ -190,42 +215,36 @@ defmodule Bedrock.DataPlane.Resolver.ConflictResolutionTest do
       # They can't *all* fail...
       assert length(failed_indexes) < length(transactions)
 
-      # Ensure that the failed indexes are the ones that have conflicts.
-      Enum.each(failed_indexes, fn index ->
-        transactions_up_to_failure = Enum.take(transactions, index)
+      # Replay the batch against the conflict structure the resolver would have
+      # had when it reached each transaction. A transaction must be in
+      # failed_indexes exactly when its reads overlap a write recorded at a
+      # later version - checking only one direction lets a resolver that never
+      # aborts anything satisfy the property.
+      transactions
+      |> Enum.with_index()
+      |> Enum.reduce(initial_conflicts, fn {transaction, index}, conflicts ->
+        assert {:ok, {read_info, _writes}} = Transaction.read_write_conflicts(transaction)
 
-        # Resolve transactions up to the failure point to build the conflict structure
-        assert {conflicts, failed_indexes} = resolve(initial_conflicts, transactions_up_to_failure, write_version)
+        expected =
+          case read_info do
+            # No read version means no reads to conflict; nothing can abort it.
+            {nil, []} -> :ok
+            {read_version, reads} -> Conflicts.check_conflicts(conflicts, reads, read_version)
+          end
 
-        # The first transaction has an empty conflicts structure and should never conflict
-        # with anything.
-        assert index != 0
+        case expected do
+          :abort ->
+            assert index in failed_indexes
+            assert :abort = try_to_resolve_transaction(conflicts, transaction, write_version)
+            # An aborted transaction records nothing, so the next one sees the
+            # same conflicts.
+            conflicts
 
-        # The transactions up to the failed index should not include the one
-        # that has failed (since we're not supposed to have processed it yet.)
-        refute index in failed_indexes
-
-        # Pull out the transaction that failed.
-        failed_transaction = Enum.at(transactions, index)
-
-        # The failed transaction should have read-write conflicts
-        case Transaction.read_write_conflicts(failed_transaction) do
-          {:ok, {read_info, _writes}} ->
-            # Only check read-write conflicts
-            case read_info do
-              {read_version, reads} ->
-                assert :abort == Conflicts.check_conflicts(conflicts, reads, read_version)
-
-              _ ->
-                :ok
-            end
-
-          _ ->
-            assert false, "Failed to extract conflicts from transaction"
+          :ok ->
+            refute index in failed_indexes
+            assert {:ok, next_conflicts} = try_to_resolve_transaction(conflicts, transaction, write_version)
+            next_conflicts
         end
-
-        # The failed transaction should abort when attempted against the conflict structure
-        assert :abort = try_to_resolve_transaction(conflicts, failed_transaction, index)
       end)
     end
   end

@@ -182,6 +182,12 @@ defmodule Bedrock.DataPlane.Transaction do
     end
   end
 
+  # A bare list of ranges carries no read version, so there is nothing to encode
+  # against. Silently dropping it would strip the transaction's read conflicts.
+  defp add_read_conflicts_section(_sections, %{read_conflicts: [_ | _]}) do
+    raise ArgumentError, "read_conflicts must be {read_version, ranges}; a bare list of ranges has no read version"
+  end
+
   defp add_read_conflicts_section(sections, _), do: sections
 
   defp add_write_conflicts_section(sections, %{write_conflicts: []}), do: sections

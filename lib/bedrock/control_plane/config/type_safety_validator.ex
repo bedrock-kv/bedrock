@@ -1,47 +1,61 @@
-defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
+defmodule Bedrock.ControlPlane.Config.TypeSafetyValidator do
   @moduledoc """
-  TSL (Transaction System Layout) type safety validation to prevent data corruption.
+  Type-checks the two fields a corrupt value can smuggle a wrong type
+  through: `logs` and `resolvers`.
 
-  This module provides comprehensive type checking for TSL fields to prevent issues
-  like integer-to-binary version conversion errors that can cause MVCC lookup failures.
-  The critical distinction is between:
+  It checks exactly those two, and it is deliberately not named for one
+  record, because both of the config records that carry them go through
+  it:
+
+    * `CoreState` — the DURABLE record, read back off object storage and
+      possibly written by a previous version of this software. Checked
+      defensively by `validate_type_safety/1`, from
+      `CoreStateValidationPhase`; it carries `logs` and no `resolvers`,
+      so the resolver half is vacuous there.
+    * `TransactionSystemLayout` — the TRANSIENT broadcast this recovery
+      just built. Asserted by `assert_type_safety!/1`, from
+      `TopologyPhase`; a wrong type in a layout recovery assembled itself
+      is a programmer error, so it raises.
+
+  The corruption it exists to catch is integer-to-binary version
+  conversion, which causes MVCC lookup failures far from its cause. The
+  critical distinction:
   - Log ranges: should contain integers (not binary versions)
   - Version fields: should contain Version.t() binary versions
-
-  Provides both defensive validation (returns errors) and assertive validation (raises).
   """
 
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @doc """
-  Validates TSL type safety defensively, returning error tuples.
+  Validates type safety defensively, returning error tuples.
 
   Use this for validating old/recovered data where corruption should be handled gracefully.
   """
-  @spec validate_type_safety(TransactionSystemLayout.t()) :: :ok | {:error, term()}
-  def validate_type_safety(%{} = tsl) do
-    with :ok <- validate_logs(Map.get(tsl, :logs)) do
-      validate_resolvers(Map.get(tsl, :resolvers))
+  @spec validate_type_safety(CoreState.t() | TransactionSystemLayout.t()) :: :ok | {:error, term()}
+  def validate_type_safety(%{} = record) do
+    with :ok <- validate_logs(Map.get(record, :logs)) do
+      validate_resolvers(Map.get(record, :resolvers))
     end
   end
 
   @doc """
-  Validates TSL type safety assertively, raising on errors.
+  Validates type safety assertively, raising on errors.
 
   Use this for validating new data where type mismatches indicate programmer errors.
   """
   @spec assert_type_safety!(TransactionSystemLayout.t()) :: TransactionSystemLayout.t()
-  def assert_type_safety!(%{} = tsl) do
-    case validate_type_safety(tsl) do
+  def assert_type_safety!(%{} = transaction_system_layout) do
+    case validate_type_safety(transaction_system_layout) do
       :ok ->
-        tsl
+        transaction_system_layout
 
       {:error, reason} ->
         raise ArgumentError, """
-        TSL type safety assertion failed: #{inspect(reason)}
+        Type safety assertion failed: #{inspect(reason)}
 
-        This indicates a programmer error - new TSL data should have correct types.
-        TransactionSystemLayout: #{inspect(tsl, limit: :infinity)}
+        This indicates a programmer error - a freshly built layout should have correct types.
+        TransactionSystemLayout: #{inspect(transaction_system_layout, limit: :infinity)}
         """
     end
   end

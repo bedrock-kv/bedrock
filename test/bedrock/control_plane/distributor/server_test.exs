@@ -123,7 +123,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
     alias Bedrock.SystemKeys
     alias Bedrock.SystemKeys.Values
 
-    defp two_shard_snapshot_deps(refs_entries, test_pid) do
+    defp two_shard_snapshot_deps(member_entries, test_pid) do
       shard_entries = [
         {SystemKeys.shard_key("m"), Values.encode_shard_key_entry(1, <<>>)},
         {SystemKeys.shard_key(<<0xFF, 0xFF>>), Values.encode_shard_key_entry(0, "m")}
@@ -133,7 +133,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         get_range_fn: fn start_key, _end, _version ->
           cond do
             String.starts_with?(start_key, SystemKeys.shard_keys_prefix()) -> {:ok, {shard_entries, false}}
-            String.starts_with?(start_key, SystemKeys.materializers_prefix()) -> {:ok, {refs_entries, false}}
+            String.starts_with?(start_key, SystemKeys.materializers_prefix()) -> {:ok, {member_entries, false}}
           end
         end,
         commit_fn: fn _p, _e, encoded, _o ->
@@ -147,11 +147,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       }
     end
 
-    defp swept_state(refs_entries, test_pid) do
+    defp swept_state(member_entries, test_pid) do
       {lock, _} = Lock.take(nil, nil)
       Process.put(:my_owner, lock.my_owner)
 
-      state(two_shard_snapshot_deps(refs_entries, test_pid),
+      state(two_shard_snapshot_deps(member_entries, test_pid),
         lock: lock,
         placeholder_start_fn: fn opts ->
           send(test_pid, {:placeholder_started, opts})
@@ -160,15 +160,15 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       )
     end
 
-    test "publishes placeholder refs for every uncovered tag in one fenced commit" do
+    test "publishes placeholder members for every uncovered tag in one fenced commit" do
       test_pid = self()
 
       # Tag 0 is covered; tag 1 has no entry — the gap.
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(Atom.to_string(node()))}
       ]
 
-      assert {:noreply, t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
+      assert {:noreply, t} = Server.handle_continue(:startup_sweep, swept_state(member_entries, test_pid))
       assert t.snapshot.shard_layout == %{"m" => {1, <<>>}, <<0xFF, 0xFF>> => {0, "m"}}
 
       assert_received {:placeholder_started, opts}
@@ -191,18 +191,18 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       # The local view must record what the commit just wrote. Every
       # later placeholder decision reads this map; a stale view omits
       # the clear when a real member lands and leaks the key forever.
-      assert t.snapshot.materializer_refs[1] == %{Placeholder.worker_id() => node_string}
+      assert t.snapshot.materializer_members[1] == %{Placeholder.worker_id() => node_string}
     end
 
     test "publishing a real member clears the placeholder the sweep committed" do
       test_pid = self()
       node_string = Atom.to_string(node())
 
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(node_string)}
       ]
 
-      assert {:noreply, t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
+      assert {:noreply, t} = Server.handle_continue(:startup_sweep, swept_state(member_entries, test_pid))
 
       # Drain the sweep's own commit; the recruit for tag 1 is next.
       assert_received {:committed, _}
@@ -230,31 +230,31 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
                _ -> false
              end)
 
-      assert t2.snapshot.materializer_refs[1] == %{"wkr_new" => node_string}
+      assert t2.snapshot.materializer_members[1] == %{"wkr_new" => node_string}
     end
 
-    test "pre-existing placeholder refs are not republished — same name, same node, still valid" do
+    test "pre-existing placeholder members are not republished — same name, same node, still valid" do
       test_pid = self()
       node_string = Atom.to_string(node())
 
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(node_string)},
         {SystemKeys.materializer_key(1, Placeholder.worker_id()), Values.encode_materializer_node(node_string)}
       ]
 
-      assert {:noreply, _t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
+      assert {:noreply, _t} = Server.handle_continue(:startup_sweep, swept_state(member_entries, test_pid))
       refute_received {:committed, _}
     end
 
     test "full coverage publishes nothing" do
       test_pid = self()
 
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(Atom.to_string(node()))},
         {SystemKeys.materializer_key(1, "wkr_a"), Values.encode_materializer_node(Atom.to_string(node()))}
       ]
 
-      assert {:noreply, _t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
+      assert {:noreply, _t} = Server.handle_continue(:startup_sweep, swept_state(member_entries, test_pid))
       refute_received {:committed, _}
     end
 
@@ -263,12 +263,12 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       {lock, _} = Lock.take(nil, nil)
       Process.put(:my_owner, lock.my_owner)
 
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(Atom.to_string(node()))}
       ]
 
       t =
-        state(two_shard_snapshot_deps(refs_entries, test_pid),
+        state(two_shard_snapshot_deps(member_entries, test_pid),
           lock: lock,
           placeholder_start_fn: fn _opts -> {:ok, spawn(fn -> Process.sleep(:infinity) end)} end,
           recruitment_ctx: %{
@@ -298,13 +298,13 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       {lock, _} = Lock.take(nil, nil)
       Process.put(:my_owner, lock.my_owner)
 
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(Atom.to_string(node()))},
         {SystemKeys.materializer_key(1, "wkr_a"), Values.encode_materializer_node(Atom.to_string(node()))}
       ]
 
       t =
-        verified_sweep_state(refs_entries, test_pid, fn _worker, [:epoch, :mode], _opts ->
+        verified_sweep_state(member_entries, test_pid, fn _worker, [:epoch, :mode], _opts ->
           {:ok, %{epoch: 3, mode: :running}}
         end)
 
@@ -344,7 +344,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       test_pid = self()
       node_string = Atom.to_string(node())
 
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(node_string)},
         {SystemKeys.materializer_key(1, "wkr_locked"), Values.encode_materializer_node(node_string)}
       ]
@@ -357,7 +357,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           else: {:ok, %{epoch: 3, mode: :running}}
       end
 
-      t = verified_sweep_state(refs_entries, test_pid, info_fn)
+      t = verified_sweep_state(member_entries, test_pid, info_fn)
 
       ctx =
         Map.merge(t.recruitment_ctx, %{
@@ -384,7 +384,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       Process.put(:my_owner, lock.my_owner)
       node_string = Atom.to_string(node())
 
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(node_string)},
         {SystemKeys.materializer_key(1, "wkr_stale"), Values.encode_materializer_node(node_string)}
       ]
@@ -398,7 +398,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
             else: {:ok, %{epoch: 3, mode: :running}}
       end
 
-      t = verified_sweep_state(refs_entries, test_pid, info_fn)
+      t = verified_sweep_state(member_entries, test_pid, info_fn)
 
       ctx =
         Map.merge(t.recruitment_ctx, %{
@@ -434,7 +434,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       assert_received {:committed, _}
       refute MapSet.member?(t3.recruiting, 1)
       assert Enum.count(Map.values(t3.assignment_monitors), &match?({1, _}, &1)) == 1
-      assert t3.snapshot.materializer_refs[1] == %{"wkr_stale" => node_string}
+      assert t3.snapshot.materializer_members[1] == %{"wkr_stale" => node_string}
     end
 
     test "an unadoptable named assignment is healed — parked and re-recruited, the worker never removed" do
@@ -443,7 +443,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       Process.put(:my_owner, lock.my_owner)
       node_string = Atom.to_string(node())
 
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(node_string)},
         {SystemKeys.materializer_key(1, "wkr_wedged"), Values.encode_materializer_node(node_string)}
       ]
@@ -457,7 +457,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
             else: {:ok, %{epoch: 3, mode: :running}}
       end
 
-      t = verified_sweep_state(refs_entries, test_pid, info_fn)
+      t = verified_sweep_state(member_entries, test_pid, info_fn)
 
       ctx =
         Map.merge(t.recruitment_ctx, %{
@@ -486,7 +486,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           # Healed: placeholder published over the wedged worker's entry,
           # replacement recruiting.
           assert_received {:committed, _}
-          assert t3.snapshot.materializer_refs[1] == %{Placeholder.worker_id() => node_string}
+          assert t3.snapshot.materializer_members[1] == %{Placeholder.worker_id() => node_string}
           assert MapSet.member?(t3.recruiting, 1)
         end)
 
@@ -497,17 +497,17 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       test_pid = self()
       node_string = Atom.to_string(node())
 
-      refs_entries = [{SystemKeys.materializer_key(0, "wkr_far"), Values.encode_materializer_node(node_string)}]
+      member_entries = [{SystemKeys.materializer_key(0, "wkr_far"), Values.encode_materializer_node(node_string)}]
 
       t =
-        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
+        verified_sweep_state(member_entries, test_pid, fn _w, [:epoch, :mode], _o ->
           {:ok, %{epoch: 3, mode: :running}}
         end)
 
       t = %{
         t
         | placeholder: spawn(fn -> Process.sleep(:infinity) end),
-          snapshot: %{shard_layout: %{}, materializer_refs: %{0 => %{"wkr_far" => node_string}}},
+          snapshot: %{shard_layout: %{}, materializer_members: %{0 => %{"wkr_far" => node_string}}},
           reverify_interval_ms: 5
       }
 
@@ -541,10 +541,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       node_string = Atom.to_string(node())
       adopted = spawn(fn -> Process.sleep(:infinity) end)
 
-      refs_entries = [{SystemKeys.materializer_key(0, "wkr_adopt"), Values.encode_materializer_node(node_string)}]
+      member_entries = [{SystemKeys.materializer_key(0, "wkr_adopt"), Values.encode_materializer_node(node_string)}]
 
       t =
-        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
+        verified_sweep_state(member_entries, test_pid, fn _w, [:epoch, :mode], _o ->
           {:ok, %{epoch: 3, mode: :running}}
         end)
 
@@ -556,7 +556,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       t = %{
         t
         | recruitment_ctx: ctx,
-          snapshot: %{shard_layout: %{}, materializer_refs: %{0 => %{"wkr_adopt" => node_string}}},
+          snapshot: %{shard_layout: %{}, materializer_members: %{0 => %{"wkr_adopt" => node_string}}},
           deps: Map.put(t.deps, :commit_fn, fn _p, _e, _t, _o -> {:error, :timeout} end)
       }
 
@@ -582,10 +582,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       node_string = Atom.to_string(node())
       adopted = spawn(fn -> Process.sleep(:infinity) end)
 
-      refs_entries = [{SystemKeys.materializer_key(0, "wkr_adopt"), Values.encode_materializer_node(node_string)}]
+      member_entries = [{SystemKeys.materializer_key(0, "wkr_adopt"), Values.encode_materializer_node(node_string)}]
 
       t =
-        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
+        verified_sweep_state(member_entries, test_pid, fn _w, [:epoch, :mode], _o ->
           {:ok, %{epoch: 3, mode: :running}}
         end)
 
@@ -604,7 +604,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         t
         | recruitment_ctx: ctx,
           deps: superseding_deps,
-          snapshot: %{shard_layout: %{}, materializer_refs: %{0 => %{"wkr_adopt" => node_string}}}
+          snapshot: %{shard_layout: %{}, materializer_members: %{0 => %{"wkr_adopt" => node_string}}}
       }
 
       ExUnit.CaptureLog.capture_log(fn ->
@@ -620,17 +620,17 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       test_pid = self()
       node_string = Atom.to_string(node())
 
-      refs_entries = [{SystemKeys.materializer_key(0, "wkr_back"), Values.encode_materializer_node(node_string)}]
+      member_entries = [{SystemKeys.materializer_key(0, "wkr_back"), Values.encode_materializer_node(node_string)}]
 
       t =
-        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
+        verified_sweep_state(member_entries, test_pid, fn _w, [:epoch, :mode], _o ->
           send(test_pid, :probed)
           {:ok, %{epoch: 3, mode: :running}}
         end)
 
       t = %{
         t
-        | snapshot: %{shard_layout: %{}, materializer_refs: %{0 => %{"wkr_back" => node_string}}},
+        | snapshot: %{shard_layout: %{}, materializer_members: %{0 => %{"wkr_back" => node_string}}},
           unreachable_counts: %{{0, "wkr_back"} => 1}
       }
 
@@ -650,13 +650,13 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       Process.put(:my_owner, lock.my_owner)
       node_string = Atom.to_string(node())
 
-      refs_entries = [
+      member_entries = [
         {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(node_string)},
         {SystemKeys.materializer_key(1, "wkr_gone"), Values.encode_materializer_node(node_string)}
       ]
 
       t =
-        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
+        verified_sweep_state(member_entries, test_pid, fn _w, [:epoch, :mode], _o ->
           {:ok, %{epoch: 3, mode: :running}}
         end)
 
@@ -664,8 +664,8 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       # Death healing re-owned tag 1 meanwhile: the ref now names the
       # placeholder. A late error verdict must not double-heal...
-      healed_refs = Map.put(t2.snapshot.materializer_refs, 1, %{Placeholder.worker_id() => node_string})
-      t2 = %{t2 | snapshot: %{t2.snapshot | materializer_refs: healed_refs}}
+      healed_members = Map.put(t2.snapshot.materializer_members, 1, %{Placeholder.worker_id() => node_string})
+      t2 = %{t2 | snapshot: %{t2.snapshot | materializer_members: healed_members}}
 
       assert {:noreply, t3} =
                Server.handle_info({:assignment_verified, 1, "wkr_gone", {:error, :noproc}}, t2)
@@ -682,14 +682,14 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
                  t3
                )
 
-      assert t4.snapshot.materializer_refs[1] == %{Placeholder.worker_id() => node_string}
+      assert t4.snapshot.materializer_members[1] == %{Placeholder.worker_id() => node_string}
     end
 
-    defp verified_sweep_state(refs_entries, test_pid, info_fn) do
+    defp verified_sweep_state(member_entries, test_pid, info_fn) do
       {lock, _} = Lock.take(nil, nil)
       Process.put(:my_owner, lock.my_owner)
 
-      state(two_shard_snapshot_deps(refs_entries, test_pid),
+      state(two_shard_snapshot_deps(member_entries, test_pid),
         lock: lock,
         placeholder_start_fn: fn _opts -> {:ok, spawn(fn -> Process.sleep(:infinity) end)} end,
         recruitment_ctx: %{
@@ -739,7 +739,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       t =
         state(%{},
           placeholder: placeholder,
-          snapshot: %{shard_layout: %{}, materializer_refs: %{7 => %{"wkr_a" => Atom.to_string(node())}}}
+          snapshot: %{shard_layout: %{}, materializer_members: %{7 => %{"wkr_a" => Atom.to_string(node())}}}
         )
 
       assert {:noreply, _t} = Server.handle_cast({:coverage_demand, 7}, t)
@@ -747,7 +747,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
     end
 
     test "an uncovered tag is recorded as pending demand for recruitment" do
-      t = state(%{}, snapshot: %{shard_layout: %{}, materializer_refs: %{}})
+      t = state(%{}, snapshot: %{shard_layout: %{}, materializer_members: %{}})
 
       assert {:noreply, t} = Server.handle_cast({:coverage_demand, 9}, t)
       assert MapSet.member?(t.pending_demands, 9)
@@ -758,7 +758,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         state(%{},
           snapshot: %{
             shard_layout: %{},
-            materializer_refs: %{9 => %{Placeholder.worker_id() => Atom.to_string(node())}}
+            materializer_members: %{9 => %{Placeholder.worker_id() => Atom.to_string(node())}}
           }
         )
 
@@ -774,7 +774,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       t =
         state(%{},
           placeholder: dead,
-          snapshot: %{shard_layout: %{}, materializer_refs: %{}},
+          snapshot: %{shard_layout: %{}, materializer_members: %{}},
           placeholder_start_fn: fn _opts -> {:error, :nope} end
         )
 
@@ -792,7 +792,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       t =
         state(%{},
           placeholder: dead,
-          snapshot: %{shard_layout: %{"m" => {1, <<>>}}, materializer_refs: %{}},
+          snapshot: %{shard_layout: %{"m" => {1, <<>>}}, materializer_members: %{}},
           placeholder_start_fn: fn opts ->
             send(test_pid, {:restarted_with, opts[:shard_layout]})
             {:ok, fresh}
@@ -827,7 +827,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           [
             lock: lock,
             placeholder: Keyword.get(overrides, :placeholder, self()),
-            snapshot: %{shard_layout: %{}, materializer_refs: %{}},
+            snapshot: %{shard_layout: %{}, materializer_members: %{}},
             recruitment_ctx: %{
               cluster: __MODULE__,
               epoch: 3,
@@ -891,7 +891,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
              end)
 
       assert_receive {:placeholder_got, {:covered, 9, {_otp, _node}}}, 5_000
-      assert t2.snapshot.materializer_refs[9] == %{"wkr_new" => Atom.to_string(node())}
+      assert t2.snapshot.materializer_members[9] == %{"wkr_new" => Atom.to_string(node())}
       refute MapSet.member?(t2.recruiting, 9)
 
       # The published assignment is monitored from this moment — healing
@@ -1012,7 +1012,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         spreading_state(test_pid, [:node_a@host, :node_b@host, :node_c@host],
           snapshot: %{
             shard_layout: %{},
-            materializer_refs: %{
+            materializer_members: %{
               1 => %{"wkr_1" => "node_a@host"},
               2 => %{"wkr_2" => "node_a@host"},
               3 => %{"wkr_3" => "node_b@host"},
@@ -1051,7 +1051,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       # same load in its place — so the next recruit still sees this
       # node as taken and goes elsewhere.
       assert t3.pending_placements == %{}
-      assert t3.snapshot.materializer_refs[7] == %{"wkr_7" => Atom.to_string(node())}
+      assert t3.snapshot.materializer_members[7] == %{"wkr_7" => Atom.to_string(node())}
 
       assert {:noreply, t4} = Server.handle_cast({:coverage_demand, 8}, t3)
       assert t4.pending_placements == %{8 => "node_b@host"}
@@ -1066,7 +1066,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           placeholder: relaying_placeholder(test_pid),
           snapshot: %{
             shard_layout: %{},
-            materializer_refs: %{
+            materializer_members: %{
               7 => %{"wkr_7" => "node_a@host"},
               8 => %{"wkr_8" => "node_b@host"}
             }
@@ -1128,7 +1128,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         state(%{},
           lock: lock,
           placeholder: placeholder,
-          snapshot: %{shard_layout: %{}, materializer_refs: %{}},
+          snapshot: %{shard_layout: %{}, materializer_members: %{}},
           recruitment_ctx: %{
             cluster: __MODULE__,
             epoch: 3,
@@ -1183,7 +1183,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         state(base_deps,
           lock: lock,
           placeholder: spawn(fn -> Process.sleep(:infinity) end),
-          snapshot: %{shard_layout: %{}, materializer_refs: %{}},
+          snapshot: %{shard_layout: %{}, materializer_members: %{}},
           recruitment_ctx: ctx
         )
 
@@ -1243,7 +1243,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
             placeholder: placeholder,
             snapshot: %{
               shard_layout: %{},
-              materializer_refs: %{7 => %{"wkr_dead" => Atom.to_string(node())}}
+              materializer_members: %{7 => %{"wkr_dead" => Atom.to_string(node())}}
             },
             recruitment_ctx: %{
               cluster: __MODULE__,
@@ -1283,7 +1283,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           # stub forwards a cast: wait, don't demand prior arrival.)
           assert_receive {:placeholder_got, {:uncovered, 7}}, 5_000
           assert MapSet.member?(t2.recruiting, 7)
-          assert t2.snapshot.materializer_refs[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
+          assert t2.snapshot.materializer_members[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
           assert t2.assignment_monitors == %{}
         end)
 
@@ -1324,7 +1324,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           assert_received {:committed, _}
           assert_receive {:placeholder_got, {:uncovered, 7}}, 5_000
           refute MapSet.member?(t2.recruiting, 7)
-          assert t2.snapshot.materializer_refs[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
+          assert t2.snapshot.materializer_members[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
 
           # The next read's demand is what revives the shard.
           assert {:noreply, t3} = Server.handle_cast({:coverage_demand, 7}, t2)
@@ -1350,14 +1350,14 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           # The clear did not land, so the local view still names the
           # worker the keyspace still names — lying to ourselves would
           # only hide the corpse from the retry.
-          assert t2.snapshot.materializer_refs[7] == %{"wkr_dead" => Atom.to_string(node())}
+          assert t2.snapshot.materializer_members[7] == %{"wkr_dead" => Atom.to_string(node())}
           assert_receive {:retire_member, 7, "wkr_dead"}, 200
 
           # The retry re-attempts the same retirement; once it commits,
           # the member is gone and the placeholder covers the gap.
           t3 = %{t2 | deps: good_deps}
           assert {:noreply, t4} = Server.handle_info({:retire_member, 7, "wkr_dead"}, t3)
-          assert t4.snapshot.materializer_refs[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
+          assert t4.snapshot.materializer_members[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
         end)
 
       assert log =~ "retiring wkr_dead"
@@ -1376,7 +1376,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         |> healing_state(
           snapshot: %{
             shard_layout: %{},
-            materializer_refs: %{
+            materializer_members: %{
               7 => %{"wkr_dead" => Atom.to_string(node()), Placeholder.worker_id() => "gone@elsewhere"}
             }
           }
@@ -1398,7 +1398,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
                    false
                end)
 
-        assert t2.snapshot.materializer_refs[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
+        assert t2.snapshot.materializer_members[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
       end)
     end
 
@@ -1428,7 +1428,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         |> healing_state(
           snapshot: %{
             shard_layout: %{},
-            materializer_refs: %{7 => %{"wkr_dead" => node_string, "wkr_live" => node_string}}
+            materializer_members: %{7 => %{"wkr_dead" => node_string, "wkr_live" => node_string}}
           },
           placeholder: relaying_placeholder(test_pid)
         )
@@ -1457,7 +1457,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         assert_receive {:placeholder_got, {:covered, 7, _survivor_ref}}, 5_000
         refute_received {:placeholder_got, {:uncovered, 7}}
 
-        assert t2.snapshot.materializer_refs[7] == %{"wkr_live" => node_string}
+        assert t2.snapshot.materializer_members[7] == %{"wkr_live" => node_string}
       end)
     end
 
@@ -1471,7 +1471,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         |> healing_state(
           snapshot: %{
             shard_layout: %{},
-            materializer_refs: %{7 => %{"wkr_dead" => node_string, "wkr_live" => node_string}}
+            materializer_members: %{7 => %{"wkr_dead" => node_string, "wkr_live" => node_string}}
           },
           placeholder: relaying_placeholder(test_pid)
         )
@@ -1484,7 +1484,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
                  Server.handle_info({:assignment_verified, 7, "wkr_dead", {:error, :wrong_epoch}}, t)
 
         assert_received {:committed, _}
-        refute Map.has_key?(t2.snapshot.materializer_refs[7], "wkr_dead")
+        refute Map.has_key?(t2.snapshot.materializer_members[7], "wkr_dead")
 
         # The monitor for the retired member must be gone; otherwise its
         # eventual death recruits a redundant replica, unboundedly.
@@ -1501,7 +1501,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       t =
         test_pid
         |> healing_state(
-          snapshot: %{shard_layout: %{}, materializer_refs: %{7 => %{"wkr_live" => Atom.to_string(node())}}}
+          snapshot: %{shard_layout: %{}, materializer_members: %{7 => %{"wkr_live" => Atom.to_string(node())}}}
         )
         |> Map.put(:assignment_monitors, %{ref => {7, "wkr_gone"}})
 
@@ -1540,7 +1540,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
         # The stale retry must not retire the freshly adopted worker.
         assert {:noreply, t5} = Server.handle_info({:retire_member, 7, "wkr_dead"}, t4)
-        assert t5.snapshot.materializer_refs[7] == %{"wkr_dead" => node_string}
+        assert t5.snapshot.materializer_members[7] == %{"wkr_dead" => node_string}
       end)
     end
 
@@ -1571,7 +1571,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
     test "a retirement retry for a member already gone is a no-op" do
       test_pid = self()
-      t = healing_state(test_pid, snapshot: %{shard_layout: %{}, materializer_refs: %{}})
+      t = healing_state(test_pid, snapshot: %{shard_layout: %{}, materializer_members: %{}})
 
       assert {:noreply, _t} = Server.handle_info({:retire_member, 7, "wkr_dead"}, t)
       refute_received {:committed, _}
@@ -1615,7 +1615,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           refute_received {:committed, _}
           refute_received {:placeholder_got, _}
           refute MapSet.member?(t2.recruiting, 7)
-          assert t2.snapshot.materializer_refs[7] == %{"wkr_dead" => Atom.to_string(node())}
+          assert t2.snapshot.materializer_members[7] == %{"wkr_dead" => Atom.to_string(node())}
 
           # ...and verification is armed instead.
           assert_receive {:reverify_assignment, 7, "wkr_dead"}, 100
@@ -1629,7 +1629,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       t =
         healing_state(test_pid,
-          snapshot: %{shard_layout: %{}, materializer_refs: %{7 => %{"wkr_gone" => "gone@nowhere"}}}
+          snapshot: %{shard_layout: %{}, materializer_members: %{7 => %{"wkr_gone" => "gone@nowhere"}}}
         )
 
       t = %{t | reverify_interval_ms: 5}
@@ -1661,7 +1661,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       t =
         healing_state(test_pid,
-          snapshot: %{shard_layout: %{}, materializer_refs: %{7 => %{"wkr_alive" => Atom.to_string(node())}}}
+          snapshot: %{shard_layout: %{}, materializer_members: %{7 => %{"wkr_alive" => Atom.to_string(node())}}}
         )
 
       ctx = Map.put(t.recruitment_ctx, :info_fn, fn _w, [:epoch, :mode], _o -> {:ok, %{epoch: 3, mode: :running}} end)
@@ -1683,7 +1683,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       # healing: verification just stands down.
       t3 = %{
         t
-        | snapshot: %{t.snapshot | materializer_refs: %{7 => %{Placeholder.worker_id() => Atom.to_string(node())}}}
+        | snapshot: %{t.snapshot | materializer_members: %{7 => %{Placeholder.worker_id() => Atom.to_string(node())}}}
       }
 
       assert {:noreply, t4} = Server.handle_info({:reverify_assignment, 7, "wkr_alive"}, t3)
@@ -1712,16 +1712,16 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       end)
     end
 
-    test "the startup sweep monitors live assignments but never the placeholder's own refs" do
+    test "the startup sweep monitors live assignments but never the placeholder's own membership entry" do
       test_pid = self()
       node_string = Atom.to_string(node())
 
-      refs_entries = [
+      member_entries = [
         {HealKeys.materializer_key(0, "wkr_sys"), HealValues.encode_materializer_node(node_string)},
         {HealKeys.materializer_key(1, Placeholder.worker_id()), HealValues.encode_materializer_node(node_string)}
       ]
 
-      assert {:noreply, t} = Server.handle_continue(:startup_sweep, swept_state(refs_entries, test_pid))
+      assert {:noreply, t} = Server.handle_continue(:startup_sweep, swept_state(member_entries, test_pid))
 
       assert map_size(t.assignment_monitors) == 1
       assert t.assignment_monitors |> Map.values() |> Enum.sort() == [{0, "wkr_sys"}]

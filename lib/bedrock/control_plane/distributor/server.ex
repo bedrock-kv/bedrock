@@ -110,7 +110,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
 
   # Lock, then snapshot, then work (FDB's DD startup order): read both
   # durable families at one pinned version, start the placeholder over
-  # the read layout, and publish placeholder refs for every uncovered
+  # the read layout, and publish placeholder members for every uncovered
   # tag in ONE check-fenced commit — coverage gaps become visible in the
   # keyspace, addressed to a ref that parks reads instead of failing
   # them. Supersession at the publish cedes; transient failures stop
@@ -329,7 +329,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   end
 
   # A crashed placeholder restarts under the SAME registered name on the
-  # same node, so the committed placeholder refs stay valid — no
+  # same node, so the committed placeholder members stay valid — no
   # republication (the option-2 addressing dividend). Parked requests
   # died with it; their callers time out and retry, which re-parks.
   def handle_info({:EXIT, pid, reason}, %State{placeholder: pid} = t) do
@@ -347,12 +347,12 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # The placeholder is an ordinary member of that set — it parks reads
   # rather than serving them — so its presence is not coverage, and
   # adding it never displaces a live worker.
-  defp uncovered_tags(%{shard_layout: shard_layout, materializer_refs: refs}) do
+  defp uncovered_tags(%{shard_layout: shard_layout, materializer_members: members_by_tag}) do
     shard_layout
     |> Map.values()
     |> Enum.map(fn {tag, _start_key} -> tag end)
     |> Enum.uniq()
-    |> Enum.filter(fn tag -> refs |> Map.get(tag, %{}) |> Map.delete(@placeholder_worker_id) == %{} end)
+    |> Enum.filter(fn tag -> members_by_tag |> Map.get(tag, %{}) |> Map.delete(@placeholder_worker_id) == %{} end)
   end
 
   defp publish_placeholders(%State{} = t, []), do: {:ok, t}
@@ -390,7 +390,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     {:set, SystemKeys.materializer_key(tag, @placeholder_worker_id), Values.encode_materializer_node(our_node_string())}
   end
 
-  defp members(%State{} = t, tag), do: Map.get(t.snapshot.materializer_refs, tag, %{})
+  defp members(%State{} = t, tag), do: Map.get(t.snapshot.materializer_members, tag, %{})
 
   defp real_members(%State{} = t, tag), do: t |> members(tag) |> Map.delete(@placeholder_worker_id)
 
@@ -405,20 +405,25 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   end
 
   defp put_member(%State{} = t, tag, worker_id, node_string) do
-    refs =
-      Map.update(t.snapshot.materializer_refs, tag, %{worker_id => node_string}, &Map.put(&1, worker_id, node_string))
+    updated =
+      Map.update(
+        t.snapshot.materializer_members,
+        tag,
+        %{worker_id => node_string},
+        &Map.put(&1, worker_id, node_string)
+      )
 
-    %{t | snapshot: %{t.snapshot | materializer_refs: refs}}
+    %{t | snapshot: %{t.snapshot | materializer_members: updated}}
   end
 
   defp drop_member(%State{} = t, tag, worker_id) do
-    refs =
+    updated =
       case t |> members(tag) |> Map.delete(worker_id) do
-        empty when empty == %{} -> Map.delete(t.snapshot.materializer_refs, tag)
-        remaining -> Map.put(t.snapshot.materializer_refs, tag, remaining)
+        empty when empty == %{} -> Map.delete(t.snapshot.materializer_members, tag)
+        remaining -> Map.put(t.snapshot.materializer_members, tag, remaining)
       end
 
-    %{t | snapshot: %{t.snapshot | materializer_refs: refs}}
+    %{t | snapshot: %{t.snapshot | materializer_members: updated}}
   end
 
   defp start_placeholder(%State{} = t, shard_layout) do
@@ -774,7 +779,7 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # Every committed member of every tag except the placeholders, which
   # this distributor owns directly and never verifies or monitors.
   defp each_real_member(%State{} = t) do
-    for {tag, members} <- t.snapshot.materializer_refs,
+    for {tag, members} <- t.snapshot.materializer_members,
         {worker_id, node_string} <- Map.delete(members, @placeholder_worker_id),
         do: {tag, worker_id, node_string}
   end

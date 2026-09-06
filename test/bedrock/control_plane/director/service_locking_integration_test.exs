@@ -12,10 +12,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
+  alias Bedrock.ControlPlane.Director.Recovery.CoreStateValidationPhase
   alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
-  alias Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase
 
   describe "Selective Service Locking" do
     test "epoch 1: no services locked initially, services locked during recruitment" do
@@ -37,10 +37,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
       context = create_full_mocked_context(available_services, prior_core_state)
 
-      # Execute TSL validation phase first (this comes before LockingPhase now)
-      # Should proceed to LockingPhase since TSL validation passed
+      # Execute core state validation phase first (this comes before LockingPhase now)
+      # Should proceed to LockingPhase since core state validation passed
       assert {_validated_attempt, LockingPhase} =
-               TSLValidationPhase.execute(recovery_attempt, context)
+               CoreStateValidationPhase.execute(recovery_attempt, context)
     end
 
     test "epoch 2: only old system services locked initially" do
@@ -77,10 +77,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         |> create_basic_context(prior_core_state)
         |> with_mocked_service_locking()
 
-      # Execute TSL validation phase first (this comes before LockingPhase now)
-      # Should proceed to LockingPhase since TSL validation passed
+      # Execute core state validation phase first (this comes before LockingPhase now)
+      # Should proceed to LockingPhase since core state validation passed
       assert {_validated_attempt, LockingPhase} =
-               TSLValidationPhase.execute(recovery_attempt, context)
+               CoreStateValidationPhase.execute(recovery_attempt, context)
     end
 
     test "log recruitment phase should lock newly assigned services" do

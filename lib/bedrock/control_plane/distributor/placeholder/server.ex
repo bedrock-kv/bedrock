@@ -79,7 +79,7 @@ defmodule Bedrock.ControlPlane.Distributor.Placeholder.Server do
   # lock/info/recovery shapes, and a future or operational caller
   # reaching this ref with one must get a refusal, not a
   # FunctionClauseError that kills every parked request. (Recovery never
-  # targets placeholder refs — locking draws from the old TSL and
+  # targets placeholder members — locking draws from the old TSL and
   # re-adoption filters by locked recovery info — so this clause serves
   # foreign callers, not a precluded internal path.)
   def handle_call(_unsupported, _from, %State{} = t), do: reply(t, {:error, :unsupported})

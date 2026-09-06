@@ -15,12 +15,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   ## What recovery commits
 
   Every key in the transaction has a named purpose: `shard_keys/` feeds
-  both RoutingData and the next recovery's materializer bootstrap,
-  `materializers/` refs feed the client-facing routing projection (FDB's
+  both RoutingData and the next recovery's system shard bootstrap,
+  `materializers/` members feed the client-facing routing projection (FDB's
   serverList analogue — runtime hints, never recovery input) and worker
   rejoin validation, and `logs/<generation>/` names where each generation's
   logs sit for exclusion safety. Each family is contributed by the phase
-  that decides it — the first two by the materializer bootstrap, the third
+  that decides it — the first two by the system shard bootstrap, the third
   by log recruitment. Nothing else is written: config and policy travel via
   the object-storage cluster bootstrap, which the coordinator actually
   reads, and services are rebuilt each recovery from foreman discovery.
@@ -188,8 +188,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # healthy committed replica sitting right there.
   defp build_system_materializer_entries(recovery_attempt) do
     system_shard = RecoveryAttempt.system_shard_id()
-    adopted = Map.get(recovery_attempt.shard_materializers, system_shard, %{})
-    committed = recovery_attempt |> Map.get(:prior_materializer_refs) |> Kernel.||(%{}) |> Map.get(system_shard, %{})
+    adopted = Map.get(recovery_attempt.seated_materializer_members, system_shard, %{})
+    committed = recovery_attempt |> Map.get(:prior_materializer_members) |> Kernel.||(%{}) |> Map.get(system_shard, %{})
 
     committed
     |> Map.merge(adopted)

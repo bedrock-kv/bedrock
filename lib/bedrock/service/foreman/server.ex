@@ -77,11 +77,18 @@ defmodule Bedrock.Service.Foreman.Server do
   def handle_call(_, _from, t), do: reply(t, {:error, :unknown_command})
 
   @impl true
-  def handle_cast({:worker_health, worker_id, health}, t), do: t |> do_worker_health(worker_id, health) |> noreply()
+  def handle_cast({:worker_health, worker_id, reporter, health}, t),
+    do: t |> do_worker_health(worker_id, reporter, health) |> noreply()
+
+  # The PID-bearing legacy form still establishes registration authority.
+  # Unattributed nonhealthy reports and retirement fall through unchanged.
+  def handle_cast({:worker_health, worker_id, {:ok, pid}}, t),
+    do: t |> do_worker_health(worker_id, pid, {:ok, pid}) |> noreply()
 
   # A hosted worker decided its own retirement; the foreman only janitors.
   @impl true
-  def handle_cast({:worker_retired, worker_id}, t), do: t |> do_worker_retired(worker_id) |> noreply()
+  def handle_cast({:worker_retired, worker_id, reporter}, t),
+    do: t |> do_worker_retired(worker_id, reporter) |> noreply()
 
   @impl true
   def handle_cast(_, t), do: noreply(t)

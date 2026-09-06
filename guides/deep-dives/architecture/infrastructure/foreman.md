@@ -112,6 +112,12 @@ Foremanprocesses coordinate with cluster service discovery:
 :ok = Foreman.report_health(foreman, worker_id, {:error, :unavailable})
 ```
 
+Health reports and retirement calls must originate in the worker process. The
+Foreman checks the calling PID against the current registered worker, so delayed
+messages from an older incarnation cannot change its replacement. Internal legacy
+health messages are accepted only when they carry the current registered PID;
+unattributed health and retirement messages are ignored.
+
 ### Service Registration Support
 
 ```elixir
@@ -135,6 +141,12 @@ Foremanprocesses coordinate with cluster service discovery:
 results = Foreman.remove_workers(foreman, ["materializer_1", "materializer_2", "log_1"])
 # Returns: %{"materializer_1" => :ok, "materializer_2" => :ok, "log_1" => :ok}
 ```
+
+Removal returns `{:error, :worker_shutdown_unresolved}` if bounded termination
+attempts cannot prove the DynamicSupervisor has released the worker's restart
+ownership. Membership and disk are retained for a later retry. A filesystem
+cleanup failure after successful shutdown retains stopped membership for retry.
+Single removal, batch removal, and accepted worker retirement share this policy.
 
 ## Working Directory Management
 

@@ -47,6 +47,10 @@ defmodule Bedrock.Service.Foreman do
   @doc """
   Remove a worker and clean up its resources.
 
+  Returns `{:error, :worker_shutdown_unresolved}` and preserves membership and
+  disk when supervisor ownership cannot be conclusively removed. Retry after
+  the worker supervisor settles. Filesystem errors retain stopped membership.
+
   This will:
   1. Terminate the worker process
   2. Remove it from the supervisor
@@ -59,7 +63,7 @@ defmodule Bedrock.Service.Foreman do
           opts :: [{:timeout, timeout()}]
         ) ::
           :ok
-          | {:error, :worker_not_found}
+          | {:error, :worker_not_found | :worker_shutdown_unresolved}
           | {:error, {:failed_to_remove_directory, File.posix(), Path.t()}}
           | {:error, :unavailable | :timeout | :unknown}
   def remove_worker(foreman, worker_id, opts \\ []),
@@ -85,14 +89,18 @@ defmodule Bedrock.Service.Foreman do
     do: call(foreman, {:remove_workers, worker_ids}, opts[:timeout] || 30_000)
 
   @doc """
-  Called by a worker to report it's health to the foreman.
+  Called by a worker to report its own health to the foreman.
+
+  The internal message carries the calling PID. Reports from an absent or
+  superseded incarnation are ignored. Legacy successful reports are checked
+  against the current registered PID; legacy reports without a PID are ignored.
   """
   @spec report_health(
           foreman :: ref(),
           Worker.id(),
           Worker.health()
         ) :: :ok
-  def report_health(foreman, worker_id, health), do: cast(foreman, {:worker_health, worker_id, health})
+  def report_health(foreman, worker_id, health), do: cast(foreman, {:worker_health, worker_id, self(), health})
 
   @doc """
   Called by a hosted worker that has decided its own retirement (it found
@@ -102,7 +110,7 @@ defmodule Bedrock.Service.Foreman do
   component decides another process's retirement.
   """
   @spec worker_retired(foreman :: ref(), Worker.id()) :: :ok
-  def worker_retired(foreman, worker_id), do: cast(foreman, {:worker_retired, worker_id})
+  def worker_retired(foreman, worker_id), do: cast(foreman, {:worker_retired, worker_id, self()})
 
   @doc """
   Return a list of all running services with information needed for coordinator registration.

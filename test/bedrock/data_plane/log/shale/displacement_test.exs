@@ -27,7 +27,8 @@ defmodule Bedrock.DataPlane.Log.Shale.DisplacementTest do
       assert {:stop, {:shutdown, :displaced}, _t} =
                Server.handle_info({:tsl_updated, tsl(5, %{"log-2" => []})}, state([]))
 
-      assert_received {:"$gen_cast", {:worker_retired, "log-1"}}
+      assert_received {:"$gen_cast", {:worker_retired, "log-1", reporter}}
+      assert reporter == self()
     end)
   end
 
@@ -36,13 +37,14 @@ defmodule Bedrock.DataPlane.Log.Shale.DisplacementTest do
       assert {:stop, {:shutdown, :displaced}, _t} =
                Server.handle_info({:tsl_updated, tsl(6, %{"log-2" => []})}, state([]))
 
-      assert_received {:"$gen_cast", {:worker_retired, "log-1"}}
+      assert_received {:"$gen_cast", {:worker_retired, "log-1", reporter}}
+      assert reporter == self()
     end)
   end
 
   test "membership in the pushed epoch keeps the worker" do
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(6, %{"log-1" => []})}, state([]))
-    refute_received {:"$gen_cast", {:worker_retired, _}}
+    refute_received {:"$gen_cast", {:worker_retired, _, _}}
   end
 
   test "a push older than our lock is not displacement" do
@@ -51,7 +53,7 @@ defmodule Bedrock.DataPlane.Log.Shale.DisplacementTest do
     # chance to include us and must never retire us.
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(4, %{"log-2" => []})}, state([]))
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(3, %{})}, state([]))
-    refute_received {:"$gen_cast", {:worker_retired, _}}
+    refute_received {:"$gen_cast", {:worker_retired, _, _}}
   end
 
   test "a never-locked resurrection is judged by any completed layout" do
@@ -62,7 +64,8 @@ defmodule Bedrock.DataPlane.Log.Shale.DisplacementTest do
       assert {:stop, {:shutdown, :displaced}, _t} =
                Server.handle_info({:tsl_updated, tsl(2, %{"log-2" => []})}, state(epoch: nil))
 
-      assert_received {:"$gen_cast", {:worker_retired, "log-1"}}
+      assert_received {:"$gen_cast", {:worker_retired, "log-1", reporter}}
+      assert reporter == self()
     end)
   end
 

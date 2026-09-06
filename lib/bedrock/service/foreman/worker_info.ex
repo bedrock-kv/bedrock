@@ -17,10 +17,13 @@ defmodule Bedrock.Service.Foreman.WorkerInfo do
     :health,
     :manifest,
     :otp_name,
-    :monitor_ref
+    :monitor_ref,
+    :incarnation_pid
   ]
 
   @spec put_health(t(), health()) :: t()
+  def put_health(t, {:ok, pid}) when is_pid(pid), do: %{t | health: {:ok, pid}, incarnation_pid: pid}
+
   def put_health(t, health), do: %{t | health: health}
 
   @spec put_monitor_ref(t(), reference() | nil) :: t()

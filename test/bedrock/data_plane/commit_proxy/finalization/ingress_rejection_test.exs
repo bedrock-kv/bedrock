@@ -344,10 +344,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
     assert_receive {:tx, {:ok, _version, _index}}
   end
 
-  test "a conflict range ending exactly at the mode's bound is legal" do
+  test "a conflict range ending exactly at its bound is legal" do
+    # Each section against its own ceiling. The read conflict ending at
+    # end_of_keyspace/0 is the exact shape a read_system_keys range read of
+    # the system shard produces: a > that slipped to >= would silently break
+    # that feature.
     boundary = Bedrock.end_of_user_keyspace()
+    eok = Bedrock.end_of_keyspace()
 
-    batch = batch_of([{reply_to_self(:tx), encode_conflicts([{"a", boundary}], [{"a", boundary}]), :user}])
+    batch = batch_of([{reply_to_self(:tx), encode_conflicts([{boundary, eok}], [{"a", boundary}]), :user}])
 
     assert {:ok, 0, 1} = finalize(batch)
     assert_receive {:tx, {:ok, _version, _index}}

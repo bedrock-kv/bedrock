@@ -367,28 +367,32 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
 
   # The conflict sections are DECLARED, not derived from the mutations: an
   # encoded transaction can name ranges it never touches. FDB bounds them in
-  # the client (ReadYourWrites.actor.cpp:1951 addReadConflictRange, :2467
-  # addWriteConflictRange) and checks them again at the proxy, per
-  # transaction, before resolution (CommitProxyServer.actor.cpp:362-388).
-  # This is that second check; a transaction rejected here is replaced with
-  # an empty one, so its ranges never enter resolver history.
+  # the client and nowhere else - addReadConflictRange against
+  # getMaxReadKey (ReadYourWrites.actor.cpp:1951), addWriteConflictRange
+  # against getMaxWriteKey (:2467); its proxy-side per-transaction check
+  # (CommitProxyServer.actor.cpp:318-392 verifyTenantPrefix) is a TENANT
+  # prefix check, not a keyspace one. Bedrock puts the bound at ingress
+  # instead, where the commit mode is known and the reply is per
+  # transaction: a transaction rejected here is replaced with an empty one,
+  # so its ranges never enter resolver history.
   #
-  # The two sections get DIFFERENT bounds, as they do in FDB
-  # (getMaxWriteKey vs getMaxReadKey), because they do different damage. A
-  # write conflict is ADDED to resolver history and aborts everyone who read
-  # that range, so a user commit naming a system range would abort the
-  # system transactions writing there - that one is gated by who is
-  # committing. A read conflict is only CHECKED against history and can
-  # abort nothing but its own transaction, so it is gated only by the end of
-  # the legal keyspace. Gating it by the commit mode instead would make
-  # read_system_keys unusable: every non-snapshot system read registers its
-  # conflict, and a client commit is always :user. The narrower read bound
-  # is the client's, enforced in the transaction builder - FDB's
-  # READ_SYSTEM_KEYS, same trust model.
+  # The two sections get DIFFERENT bounds, as they do in FDB, because they
+  # do different damage. A write conflict is ADDED to resolver history
+  # (Resolver.TransactionConflicts:59) and aborts everyone who read that
+  # range, so a user commit naming a system range would abort the system
+  # transactions reading there - that one is gated by who is committing. A
+  # read conflict is only CHECKED against history
+  # (Resolver.TransactionConflicts:63) and can abort nothing but its own
+  # transaction, so it is gated only by the end of the legal keyspace.
+  # Gating it by the commit mode instead would make read_system_keys
+  # unusable: every non-snapshot system read registers its conflict, and a
+  # client commit is always :user. The narrower READ bound is the client's,
+  # enforced in the transaction builder - FDB's READ_SYSTEM_KEYS, same trust
+  # model.
   #
   # Both endpoints are bounds rather than addressed keys, so either may sit
-  # AT the bound: an exclusive end there covers the whole legal range, and a
-  # degenerate range starting there is empty.
+  # AT the applicable bound: an exclusive end there is how a range covers
+  # the whole legal keyspace.
   defp first_rejected_conflict_range(transaction, write_bound) do
     case Transaction.read_write_conflicts(transaction) do
       {:ok, {{_read_version, read_conflicts}, write_conflicts}} ->

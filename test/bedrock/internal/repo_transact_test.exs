@@ -315,9 +315,10 @@ defmodule Bedrock.Internal.RepoTransactTest do
 
     test "select and get_range surface the bound the same way get does" do
       # Three entry points, one classification. `{:key_out_of_range, key}` has
-      # a TUPLE reason, so without its own clause each of these would have
-      # taken a different wrong path: get/select fall through to the
-      # is_atom(reason) arm, and the range stream raises "Range query failed".
+      # a TUPLE reason, so without its own clause each of these takes a
+      # different wrong path: get/select match no arm at all (CaseClauseError,
+      # since the catch-all requires is_atom(reason)), and the range stream
+      # raises "Range query failed".
       selector_result =
         Repo.transact(
           NoCluster,

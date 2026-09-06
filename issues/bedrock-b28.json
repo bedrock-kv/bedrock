@@ -14,11 +14,15 @@
     {
       "text": "238 red baseline1property8tests3failures pins exact old unit/property omitted READ_CONFLICTS and missing encoder rejection. Worktree238 based235d8ae2513/PR245 for genuine range-point fix. Plan /tmp/bedrock-issue-team-20260905/238-plan.md awaiting cold review; no production edits. Proposed independent multi-batch interval oracle with full abort-list equality and narrowly rejecting nonempty flat read lists while preserving empty/nil/integer-version compatibility.",
       "timestamp": "2026-09-06T00:41:13Z"
+    },
+    {
+      "text": "Independent oracle uncovered actual missed conflict on235base: writes[a,c),[a,b) then stale readb incorrectly commits (seed500675, /tmp/issue238-oracle-baseline.log). Tree matches only start and loses extent; second red shows long left subtree interval[a,z) missed for queryp under root[m,n). Root authorized scoped repair; amended plan adds full interval identity + subtree max_end augmentation, preserves versions/filtering. Tree red /tmp/issue238-tree-red.log; awaiting amended cold review.",
+      "timestamp": "2026-09-06T00:45:05Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Resolver conflict tests encode read conflicts in a shape Transaction.encode ignores, making read-abort assertions vacuous",
   "type": "bug",
-  "updated_at": "2026-09-06T00:41:13Z"
+  "updated_at": "2026-09-06T00:45:05Z"
 }

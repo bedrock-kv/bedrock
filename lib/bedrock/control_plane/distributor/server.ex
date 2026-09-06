@@ -166,7 +166,15 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # family; commit abort is the orphan-cleanup trigger).
   @impl true
   def handle_info({:recruitment_complete, tag, result}, %State{} = t) do
-    t = %{t | recruiting: MapSet.delete(t.recruiting, tag)}
+    # The reservation is released here and, on success, replaced by the
+    # published member below — the node's load is never double-counted
+    # and never forgotten.
+    t = %{
+      t
+      | recruiting: MapSet.delete(t.recruiting, tag),
+        pending_placements: Map.delete(t.pending_placements, tag)
+    }
+
     # The task's DOWN (normal) follows; the ref entry is cleaned there.
 
     case result do
@@ -439,20 +447,61 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     end
   end
 
+  # Placement happens HERE, in the server, and not in the recruit task:
+  # the server is this distributor's serialization point, so it is the
+  # only place that can decide a node and reserve it against the same
+  # view in one step. A task that placed its own would see the committed
+  # view alone, and the sweep starts a recruit for every uncovered tag
+  # before any of them has committed anything — every shard onto the
+  # first capable node.
+  defp start_recruitment(%State{} = t, tag) do
+    case Recruitment.place(t.recruitment_ctx.node_capabilities, placements(t)) do
+      {:ok, node} ->
+        spawn_recruitment(t, tag, node)
+
+      # Nowhere to put it is a failed recruitment like any other, and
+      # takes the same completion path: the placeholder sheds the tag
+      # and the backoff damps the retry.
+      {:error, reason} ->
+        send(self(), {:recruitment_complete, tag, {:error, reason}})
+        %{t | recruiting: MapSet.put(t.recruiting, tag)}
+    end
+  end
+
+  # What placement sees: every node this distributor knows to be
+  # carrying a materializer — the committed members of every tag, plus
+  # the recruits it has in flight. Nothing accumulates: a retired
+  # member leaves the snapshot, a completed recruit hands its
+  # reservation to the snapshot in the same handler, so a heal places
+  # its replacement against what is actually left. Counting what is
+  # in flight is FDB's too: `getLoadBytes` scores a team as
+  # `physicalBytes + inflightPenalty * inFlightBytes`
+  # (`TCInfo.actor.cpp:465-483`), so a team already receiving a move is
+  # not handed the next one.
+  defp placements(%State{} = t) do
+    Enum.map(each_real_member(t), fn {_tag, _worker_id, node_string} -> node_string end) ++
+      Map.values(t.pending_placements)
+  end
+
   # spawn_monitor, not a bare task: a crashed recruit task that never
   # sends its completion would otherwise leave the tag in the in-flight
   # set forever — unrecruitable for the rest of the epoch. The DOWN
   # handler converts an abnormal exit into a synthetic failed completion.
-  defp start_recruitment(%State{} = t, tag) do
+  defp spawn_recruitment(%State{} = t, tag, node) do
     server = self()
     ctx = t.recruitment_ctx
 
     {_pid, ref} =
       spawn_monitor(fn ->
-        send(server, {:recruitment_complete, tag, Recruitment.recruit(tag, ctx)})
+        send(server, {:recruitment_complete, tag, Recruitment.recruit(tag, node, ctx)})
       end)
 
-    %{t | recruiting: MapSet.put(t.recruiting, tag), recruit_task_refs: Map.put(t.recruit_task_refs, ref, tag)}
+    %{
+      t
+      | recruiting: MapSet.put(t.recruiting, tag),
+        recruit_task_refs: Map.put(t.recruit_task_refs, ref, tag),
+        pending_placements: Map.put(t.pending_placements, tag, Atom.to_string(node))
+    }
   end
 
   # Publishes an assignment under the CHECK fence. Provenance decides

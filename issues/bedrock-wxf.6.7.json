@@ -3,7 +3,6 @@
   "blocked_by": [
     "bedrock-wxf.6.1",
     "bedrock-wxf.6.2",
-    "bedrock-wxf.6.3",
     "bedrock-wxf.6.6"
   ],
   "blocks": [
@@ -18,5 +17,5 @@
   "status": "open",
   "title": "Consolidator: write packs for one shard (no deletion)",
   "type": "task",
-  "updated_at": "2026-08-27T01:07:40Z"
+  "updated_at": "2026-09-06T22:51:27Z"
 }

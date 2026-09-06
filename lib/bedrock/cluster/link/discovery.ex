@@ -9,10 +9,19 @@ defmodule Bedrock.Cluster.Link.Discovery do
   alias Bedrock.ControlPlane.Coordinator
 
   @doc """
-  Find the leader coordinator. This implements enhanced two-phase discovery:
-  - If we have a known leader, try direct call first
-  - If direct call fails or no known leader, use multi_call discovery
-  - Select leader with highest epoch and non-nil leader pid
+  Find the leader coordinator: ping EVERY coordinator named in the
+  descriptor and take the one reporting the highest epoch.
+
+  The whole set is polled on every pass, including when we are already
+  pinned to a leader that still answers. A leader that is partitioned
+  from its peers but alive keeps answering as leader of its own, now
+  superseded, epoch — only the set can tell us a newer one exists, and
+  the wiring push (epoch, sequencer, proxies) rides this link, so a Link
+  left pinned to it never learns the new epoch.
+
+  This is what FDB's clients do: `monitorLeaderOneGeneration` keeps a
+  `monitorNominee` loop against every coordinator and re-picks the leader
+  whenever any nominee changes (`fdbclient/MonitorLeader.actor.cpp`).
   """
   @spec find_a_live_coordinator(State.t()) ::
           {State.t(), :ok}
@@ -20,93 +29,35 @@ defmodule Bedrock.Cluster.Link.Discovery do
   def find_a_live_coordinator(t) do
     trace_searching_for_coordinator(t.cluster)
 
-    t
-    |> search_for_coordinator()
+    t.cluster
+    |> multi_call_coordinator_discovery(t.descriptor.coordinator_nodes)
     |> handle_coordinator_discovery_result(t)
   end
-
-  defp search_for_coordinator(t) do
-    t.known_coordinator
-    |> try_known_coordinator_first(t)
-    |> fallback_to_discovery_if_needed(t)
-  end
-
-  defp try_known_coordinator_first(:unavailable, _t), do: :fallback_needed
-
-  defp try_known_coordinator_first(coordinator_ref, t) do
-    coordinator_ref
-    |> try_direct_coordinator_call(t.cluster)
-    |> case do
-      {:ok, _} = success -> success
-      {:error, _} -> :fallback_needed
-    end
-  end
-
-  defp fallback_to_discovery_if_needed(
-         :fallback_needed,
-         %{descriptor: %Bedrock.Cluster.Descriptor{coordinator_nodes: nodes}} = t
-       ), do: discover_leader_coordinator(t.cluster, nodes)
-
-  defp fallback_to_discovery_if_needed(result, _t), do: result
 
   defp handle_coordinator_discovery_result({:ok, {coordinator_ref, _epoch}}, t) do
     trace_found_coordinator(t.cluster, coordinator_ref)
 
     t
-    |> cancel_timer(:find_a_live_coordinator)
+    |> rearm_discovery_timer()
     |> change_coordinator(coordinator_ref)
     |> then(&{&1, :ok})
   end
 
+  # Silence is not evidence of a newer leader: FDB abandons the leader it
+  # holds only when the set nominates a different one, never because the
+  # old one stopped answering. Keep whatever we are pinned to (an actual
+  # death still arrives as a DOWN) and poll again.
   defp handle_coordinator_discovery_result({:error, _reason} = error, t) do
     t
-    |> cancel_timer(:find_a_live_coordinator)
-    |> set_timer(:find_a_live_coordinator, t.cluster.gateway_ping_timeout_in_ms())
-    |> change_coordinator(:unavailable)
+    |> rearm_discovery_timer()
     |> then(&{&1, error})
   end
 
-  @spec try_direct_coordinator_call(Coordinator.ref(), module()) ::
-          {:ok, {Coordinator.ref(), Bedrock.epoch()}} | {:error, :unavailable}
-  defp try_direct_coordinator_call(coordinator_ref, cluster) do
-    coordinator_ref
-    |> GenServer.call(:ping, cluster.coordinator_ping_timeout_in_ms())
-    |> case do
-      {:pong, _epoch, nil} ->
-        {:error, :unavailable}
-
-      {:pong, epoch, leader_pid} ->
-        {:ok, {leader_pid, epoch}}
-
-      _ ->
-        {:error, :unavailable}
-    end
-  catch
-    :exit, _ -> {:error, :unavailable}
-  end
-
-  @spec discover_leader_coordinator(module(), [node()]) ::
-          {:ok, {Coordinator.ref(), Bedrock.epoch()}} | {:error, :unavailable}
-  defp discover_leader_coordinator(cluster, coordinator_nodes) do
-    coordinator_nodes
-    |> try_local_coordinator_first(cluster)
-    |> case do
-      {:ok, _} = success ->
-        success
-
-      {:error, _reason} ->
-        multi_call_coordinator_discovery(cluster, coordinator_nodes)
-    end
-  end
-
-  defp try_local_coordinator_first(coordinator_nodes, cluster) do
-    if Node.self() in coordinator_nodes do
-      :coordinator
-      |> cluster.otp_name()
-      |> try_direct_coordinator_call(cluster)
-    else
-      {:error, :not_local}
-    end
+  @spec rearm_discovery_timer(State.t()) :: State.t()
+  defp rearm_discovery_timer(t) do
+    t
+    |> cancel_timer(:find_a_live_coordinator)
+    |> set_timer(:find_a_live_coordinator, t.cluster.gateway_ping_timeout_in_ms())
   end
 
   @spec multi_call_coordinator_discovery(module(), [node()]) ::

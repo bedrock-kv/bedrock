@@ -148,7 +148,14 @@ defmodule Bedrock.Cluster.Link.Server do
           {:noreply, State.t(), {:continue, :find_a_live_coordinator}}
   def handle_info({:timeout, :find_a_live_coordinator}, t), do: noreply(t, continue: :find_a_live_coordinator)
 
+  # A coordinator we have abandoned still holds us in its subscriber set,
+  # so a partitioned-but-alive old leader can push the wiring of its own
+  # epoch after we have moved on. Wiring only ever moves forward: a push
+  # carrying an epoch we have already passed is dropped, not installed.
   @spec handle_info({:tsl_updated, term()}, State.t()) :: {:noreply, State.t()}
+  def handle_info({:tsl_updated, %{epoch: epoch}}, %{transaction_system_layout: %{epoch: current}} = t)
+      when epoch < current, do: noreply(t)
+
   def handle_info({:tsl_updated, new_tsl}, t) do
     # Update cached TSL when coordinator broadcasts updates, and forward to
     # this node's foreman (if any), which relays it to hosted workers: a

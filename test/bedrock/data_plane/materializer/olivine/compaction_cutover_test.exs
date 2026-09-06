@@ -214,7 +214,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
   describe "window advancement while a compaction is open" do
     # start_compaction/1 labels its output with the durable version at the
     # moment it starts, and the cutover looks exactly that version up in
-    # `versions` to recover the index's paging parameters (server.ex:479).
+    # `versions` to recover the index's paging parameters.
     # A window advance evicts every entry below the new eviction point and
     # carries index_db.durable_version up with it, so an advance while a
     # compaction is open takes the cutover's anchor away.

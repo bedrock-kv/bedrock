@@ -4,6 +4,8 @@
     "bedrock-wxf.1"
   ],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:35Z",
+  "close_reason": "Delivered in PR #298 (audited 2026-09-06: DiskCache decorator backend with LRU eviction and telemetry, :disk_cache config; 24 tests; CI green). Inline sweep cost tracked in bedrock-k9k; guide doc in bedrock-5tq.7.",
   "created": "2026-01-16T17:31:54.365198-05:00",
   "description": "[DEFERRED] LRU cache for frequently read objects.",
   "id": "bedrock-wxf.7",
@@ -16,8 +18,8 @@
     }
   ],
   "priority": 4,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Disk caching",
   "type": "task",
-  "updated_at": "2026-09-06T03:07:18Z"
+  "updated_at": "2026-09-06T14:05:35Z"
 }

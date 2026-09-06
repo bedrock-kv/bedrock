@@ -10,11 +10,15 @@
     {
       "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/233. Published the 2026-09-05 implementation evaluation, pinned to 8f962e09, with evidence and acceptance criteria. Reproduced findings are distinguished from source-level risks. No implementation fix is included.",
       "timestamp": "2026-09-05T23:58:09Z"
+    },
+    {
+      "text": "Pinned #233 with four real regressions before implementation: both compaction and spin-down cold replacement expose future at 100; replaying committed atomic 200 produces 20 instead of 15. Cold-review plan: /tmp/bedrock-issue-team-20260905/233-plan.md. Implementation paused pending independent review.",
+      "timestamp": "2026-09-06T00:07:17Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Olivine compaction persists future state under an older durable version",
   "type": "bug",
-  "updated_at": "2026-09-06T00:04:06Z"
+  "updated_at": "2026-09-06T00:07:17Z"
 }

@@ -694,11 +694,15 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
   # The membership check the committed family demands (FDB's DD verifies
   # every serverList entry the same way; membership is never assumed
   # from liveness): each named assignment is asked, bounded, which epoch
-  # it was last locked into. Current answers verify silently. A stale or
-  # never-locked answer means the epoch never embraced this worker — its
-  # node missed recovery's roll call — and it is ADOPTED: locked at the
-  # epoch, unlocked at its own durable version, its entry re-asserted
-  # under the fence. Anything else (wedged, dead, unreachable beyond the
+  # it was last locked into AND whether it is serving that epoch. Only
+  # in-epoch-and-running verifies silently. Anything else demonstrably
+  # alive is ADOPTED: locked at the epoch, unlocked at its own durable
+  # version, its entry re-asserted under the fence. That covers the
+  # worker whose node missed recovery's roll call (a stale or absent
+  # epoch) and, since bedrock-q67.21.13, the ordinary case — recovery
+  # locks every advertised materializer into its epoch and unlocks only
+  # tag 0's, so a data-tag member is in the current epoch and still
+  # locked. Anything else (wedged, dead, unreachable beyond the
   # monitor's damping) is healed; the worker itself is never removed —
   # it retires in-band when its OWN key is cleared — membership is a set,
   # so another member appearing is not displacement. One shot,
@@ -734,9 +738,19 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       spawn_monitor(fn ->
         verdict =
           try do
-            case info_fn.({name, node_atom}, [:epoch], timeout_in_ms: @verification_timeout_ms) do
-              {:ok, %{epoch: ^epoch}} -> :current
-              {:ok, %{epoch: _stale_or_nil}} -> Recruitment.adopt(tag, worker_id, node_atom, ctx)
+            case info_fn.({name, node_atom}, [:epoch, :mode], timeout_in_ms: @verification_timeout_ms) do
+              # In the epoch AND serving it. Both halves are load-bearing:
+              # recovery locks every advertised materializer into its
+              # epoch and unlocks only tag 0's, so a data-tag materializer
+              # is normally in the current epoch and NOT pulling. Reads
+              # carry no mode guard, so left alone it would go on
+              # answering at a frozen version for the whole epoch —
+              # silent staleness rather than a stall. Anything not
+              # demonstrably running is adopted; adopting a healthy worker
+              # costs a lock/unlock round trip and it resumes from its own
+              # durable version.
+              {:ok, %{epoch: ^epoch, mode: :running}} -> :current
+              {:ok, %{epoch: _epoch, mode: _not_running}} -> Recruitment.adopt(tag, worker_id, node_atom, ctx)
               {:error, reason} -> {:error, reason}
             end
           catch

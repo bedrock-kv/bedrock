@@ -78,4 +78,31 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.ServerTest do
       end
     end
   end
+
+  describe "a worker locked into an epoch does not serve reads" do
+    alias Bedrock.DataPlane.Materializer.Olivine.State
+    alias Bedrock.DataPlane.Version
+
+    test "reads are fenced with ingest, until an unlock rolls the worker back" do
+      # The lock stops the puller and freezes the applied position; only
+      # the unlock rolls back the suffix above the version the cluster
+      # settled on. Answering a read in between serves state the cluster
+      # discarded — silent staleness, worse than a stall. Recovery now
+      # leaves every data-tag member locked for the distributor to adopt
+      # (bedrock-q67.21.13), and the committed keyspace routes clients to
+      # it, so this is the ordinary window, not an exotic one.
+      locked = %State{id: "mat-1", shard_num: 3, epoch: 2, mode: :locked}
+      from = {self(), make_ref()}
+      version = Version.from_integer(10)
+
+      assert {:reply, {:error, :locked}, _t} = Server.handle_call({:get, "k", version, []}, from, locked)
+      assert {:reply, {:error, :locked}, _t} = Server.handle_call({:get_range, "a", "z", version, []}, from, locked)
+
+      # A worker no recovery has locked is a different animal: it loads
+      # only durable state, clamped to the known-committed version, so it
+      # has nothing semi-committed to discard and keeps serving. That
+      # half is pinned live by the GenServer integration tests, which
+      # read from workers that were never unlocked.
+    end
+  end
 end

@@ -532,4 +532,25 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.LogicTest do
       Logic.shutdown(locked)
     end
   end
+
+  describe "the :mode info fact" do
+    test "a locked worker reports :locked; unlocking reports :running", %{test_dir: test_dir} do
+      # The epoch says which generation embraced this worker. It does not
+      # say whether the worker is SERVING that generation — locking fences
+      # ingest and transaction application, and only an unlock lifts it.
+      # The distributor's assignment verification needs the second
+      # question, so the worker answers it: it is the only process that
+      # knows.
+      {:ok, state} = Logic.startup(:mode_fact_test, self(), "mode_wkr", test_dir)
+
+      {:ok, locked} = Logic.lock_for_recovery(state, self(), 7)
+      assert {:ok, %{mode: :locked}} = Logic.info(locked, [:mode])
+      assert :mode in elem(Logic.info(locked, [:supported_info]), 1).supported_info
+
+      {:ok, running} = Logic.unlock_after_recovery(locked, Version.zero(), [])
+      assert {:ok, %{epoch: 7, mode: :running}} = Logic.info(running, [:epoch, :mode])
+
+      Logic.shutdown(running)
+    end
+  end
 end

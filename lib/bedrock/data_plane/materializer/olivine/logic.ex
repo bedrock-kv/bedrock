@@ -295,6 +295,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
       path
       key_ranges
       kind
+      mode
       n_keys
       otp_name
       shard_id
@@ -315,6 +316,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   # worker that is IN the epoch from one the epoch never embraced — a
   # node that missed recovery's roll call and rejoined later.
   defp gather_info(:epoch, t), do: t.epoch
+  # Whether the worker is SERVING that epoch. Locking fences :ingest and
+  # :apply_transactions; only an unlock lifts it, and reads are never
+  # fenced at all — so a locked worker keeps answering, frozen at the
+  # version it last applied. The epoch alone cannot tell those apart, and
+  # the worker is the only process that knows.
+  defp gather_info(:mode, t), do: t.mode
   defp gather_info(:id, t), do: t.id
   defp gather_info(:key_ranges, t), do: IndexManager.info(t.index_manager, :key_ranges)
   defp gather_info(:kind, _t), do: :materializer

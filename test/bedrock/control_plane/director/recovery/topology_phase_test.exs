@@ -132,6 +132,64 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhaseTest do
       assert {:ok, {"", "z", 0, {"wkr_sys", ^node_string}}} = RoutingData.covering_entry(routing, "a")
     end
 
+    test "the seed carries the committed family for the tags recovery did not seat" do
+      # Recovery seats tag 0 and leaves every data tag to the distributor
+      # (bedrock-q67.21.13). Seeding from what it seated would leave the
+      # data tags unroutable for the epoch and — worse — make every
+      # data-tag materializer fail rejoin validation against a proxy that
+      # believes the keyspace names nobody for its shard, so it disposes
+      # of its own store.
+      #
+      # The tag recovery DID seat is the other way round: the committed
+      # family names members recovery could not put in service, and the
+      # pick is by worker id — "aaa" here sorts below the seated member,
+      # and it is dead. Routing tag 0 at it stops the distributor's own
+      # startup snapshot read, which is the one read that would heal it.
+      test_pid = self()
+      mat_sys = spawn(fn -> Process.sleep(:infinity) end)
+      node_string = Atom.to_string(node())
+
+      recovery_attempt =
+        base_recovery_attempt()
+        |> with_logs(%{"log_1" => [1, 2]})
+        |> with_transaction_services(%{
+          "log_1" => %{status: {:up, self()}, kind: :log, last_seen: {:log_1, :node1}},
+          "wkr_sys" => %{status: {:up, mat_sys}, kind: :materializer, last_seen: {:wkr_sys_name, node()}}
+        })
+        |> Map.put(:shard_materializers, %{0 => %{"wkr_sys" => node_string}})
+        |> Map.put(:prior_materializer_refs, %{
+          0 => %{"aaa_wkr_gone" => "dead@nowhere"},
+          1 => %{"wkr_data" => node_string}
+        })
+
+      context =
+        recovery_context()
+        |> with_lock_token("test_token")
+        |> Map.put(:unlock_commit_proxy_fn, fn _proxy, _token, _sequencer, _resolver_layout, snapshot ->
+          send(test_pid, {:routing_snapshot, snapshot})
+          :ok
+        end)
+
+      {_result, _next_phase} = TopologyPhase.execute(recovery_attempt, context)
+
+      assert_received {:routing_snapshot, snapshot}
+
+      assert snapshot.materializers == %{
+               0 => %{"wkr_sys" => node_string},
+               1 => %{"wkr_data" => node_string}
+             }
+
+      # Cross the seam: the member clients are routed to for tag 0 is the
+      # member recovery unlocked, not the lower-sorting corpse.
+      routing =
+        snapshot
+        |> RoutingData.from_snapshot()
+        |> RoutingData.insert_shard(<<0xFF, 0xFF>>, 0, <<0xFF>>)
+
+      assert {:ok, {_start, _end, 0, {"wkr_sys", ^node_string}}} =
+               RoutingData.covering_entry(routing, <<0xFF, "system/x">>)
+    end
+
     test "fails when commit proxy unlocking fails" do
       recovery_attempt =
         base_recovery_attempt()

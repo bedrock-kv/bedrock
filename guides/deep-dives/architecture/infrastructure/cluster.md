@@ -68,6 +68,22 @@ end
 
 This approach provides flexibility for different deployment scenarios while maintaining consistent interface patterns.
 
+### Configuration Precedence
+
+When both options are given, the static `config:` supplies compile-time defaults and the `otp_app` application environment overrides them key by key, so `config/runtime.exs` takes effect without recompiling. A cluster module may also implement the optional `init/1` callback for the last mile:
+
+```elixir
+defmodule MyApp.Cluster do
+  use Bedrock.Cluster,
+    otp_app: :my_app,
+    name: "production_cluster",
+    config: [capabilities: [:coordination, :materializer, :log]]
+
+  @impl true
+  def init(config), do: {:ok, Keyword.put(config, :path_to_descriptor, System.fetch_env!("BEDROCK_DESCRIPTOR"))}
+end
+```
+
 ## Key Operations
 
 ### Configuration Access

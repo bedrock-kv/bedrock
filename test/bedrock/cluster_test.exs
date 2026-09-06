@@ -108,18 +108,90 @@ defmodule Bedrock.ClusterTest do
   end
 
   describe "__using__/1 precedence rules" do
-    test "config takes precedence over otp_app when both provided" do
+    test "otp_app environment overrides static config, key by key" do
       defmodule TestClusterPrecedence do
         @moduledoc false
         use Cluster,
           name: "test_precedence",
           otp_app: :test_app,
-          config: [capabilities: [:materializer]]
+          config: [capabilities: [:materializer], coordinator_ping_timeout_in_ms: 500]
       end
 
       Application.put_env(:test_app, TestClusterPrecedence, capabilities: [:coordination])
 
-      assert [:materializer] = TestClusterPrecedence.node_capabilities()
+      assert [:coordination] = TestClusterPrecedence.node_capabilities()
+      assert 500 = TestClusterPrecedence.coordinator_ping_timeout_in_ms()
+    end
+
+    test "static config stands when the otp_app environment is unset" do
+      defmodule TestClusterNoEnv do
+        @moduledoc false
+        use Cluster,
+          name: "test_no_env",
+          otp_app: :test_app,
+          config: [capabilities: [:materializer]]
+      end
+
+      assert [:materializer] = TestClusterNoEnv.node_capabilities()
+    end
+
+    test "otp_app environment set after compilation is picked up without recompiling" do
+      defmodule TestClusterRuntimeEnv do
+        @moduledoc false
+        use Cluster,
+          name: "test_runtime_env",
+          otp_app: :test_app,
+          config: [coordinator_ping_timeout_in_ms: 500]
+      end
+
+      assert 500 = TestClusterRuntimeEnv.coordinator_ping_timeout_in_ms()
+
+      Application.put_env(:test_app, TestClusterRuntimeEnv, coordinator_ping_timeout_in_ms: 1000)
+
+      assert 1000 = TestClusterRuntimeEnv.coordinator_ping_timeout_in_ms()
+    end
+
+    test "otp_app environment can inject a descriptor path for an otp_app that isn't loaded" do
+      defmodule TestClusterInjectedPath do
+        @moduledoc false
+        use Cluster,
+          name: "test_injected_path",
+          otp_app: :test_app,
+          config: [path_to_descriptor: "/static/bedrock.cluster"]
+      end
+
+      assert "/static/bedrock.cluster" = TestClusterInjectedPath.path_to_descriptor()
+
+      Application.put_env(:test_app, TestClusterInjectedPath, path_to_descriptor: "/per-run/bedrock.cluster")
+
+      assert "/per-run/bedrock.cluster" = TestClusterInjectedPath.path_to_descriptor()
+    end
+
+    test "falls back to the bare descriptor file name when the otp_app isn't loaded" do
+      defmodule TestClusterUnloadedApp do
+        @moduledoc false
+        use Cluster, name: "test_unloaded_app", otp_app: :test_app
+      end
+
+      assert "bedrock.cluster" = TestClusterUnloadedApp.path_to_descriptor()
+    end
+
+    test "init/1 has the last word over both static config and the otp_app environment" do
+      defmodule TestClusterInit do
+        @moduledoc false
+        use Cluster,
+          name: "test_init",
+          otp_app: :test_app,
+          config: [coordinator_ping_timeout_in_ms: 500, capabilities: [:materializer]]
+
+        @impl true
+        def init(config), do: {:ok, Keyword.put(config, :coordinator_ping_timeout_in_ms, 42)}
+      end
+
+      Application.put_env(:test_app, TestClusterInit, coordinator_ping_timeout_in_ms: 1000)
+
+      assert 42 = TestClusterInit.coordinator_ping_timeout_in_ms()
+      assert [:materializer] = TestClusterInit.node_capabilities()
     end
   end
 

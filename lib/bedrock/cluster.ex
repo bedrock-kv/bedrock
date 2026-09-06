@@ -37,10 +37,27 @@ defmodule Bedrock.Cluster do
   @callback gateway_ping_timeout_in_ms() :: non_neg_integer()
   @callback name() :: String.t()
   @callback node_config() :: Keyword.t()
+
+  @doc """
+  A callback invoked whenever the node configuration is read, giving the
+  cluster module the last word over the resolved configuration.
+
+  The argument is the node configuration after the static `use` config has
+  been overridden by the `otp_app` application environment. It must return
+  `{:ok, keyword}` with the configuration to use.
+
+  Most runtime configuration belongs in `config/runtime.exs`; this callback
+  is for the last mile (secrets, per-run paths, values that can only be
+  computed on the node itself).
+  """
+  @callback init(config :: Keyword.t()) :: {:ok, Keyword.t()}
+
   @callback otp_name() :: atom()
   @callback otp_name(service :: atom()) :: atom()
   @callback path_to_descriptor() :: Path.t()
   @callback transaction_system_layout!() :: TransactionSystemLayout.t()
+
+  @optional_callbacks init: 1
 
   @doc false
   defmacro __using__(opts) do

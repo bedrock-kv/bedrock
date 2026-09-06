@@ -369,18 +369,35 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
+  @doc """
+  Resolve the node configuration for a cluster module.
+
+  The static `use` config supplies compile-time defaults, the `otp_app`
+  application environment overrides them key by key (so `config/runtime.exs`
+  takes effect without recompiling), and the module's optional `init/1`
+  callback gets the last word.
+  """
   @spec node_config(Cluster.t(), otp_app :: atom() | nil, static_config :: Keyword.t() | nil) ::
           Keyword.t()
   def node_config(module, otp_app, static_config) do
-    case static_config do
-      nil when otp_app != nil ->
-        Application.get_env(otp_app, module, [])
+    (static_config || [])
+    |> Keyword.merge(app_env_config(module, otp_app))
+    |> apply_cluster_init(module)
+  end
 
-      nil ->
-        []
+  @spec app_env_config(Cluster.t(), otp_app :: atom() | nil) :: Keyword.t()
+  defp app_env_config(_module, nil), do: []
+  defp app_env_config(module, otp_app), do: Application.get_env(otp_app, module, [])
 
-      config ->
-        config
+  @spec apply_cluster_init(Keyword.t(), Cluster.t()) :: Keyword.t()
+  defp apply_cluster_init(config, module) do
+    # Every caller reaches us through the cluster module itself, so it is
+    # always loaded here; unlike Ecto we don't need a Code.ensure_loaded?/1.
+    if function_exported?(module, :init, 1) do
+      {:ok, config} = module.init(config)
+      config
+    else
+      config
     end
   end
 
@@ -426,20 +443,17 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   def path_to_descriptor(module, otp_app, static_config) do
     module
     |> node_config(otp_app, static_config)
-    |> Keyword.get(
-      :path_to_descriptor,
-      case otp_app do
-        nil ->
-          Cluster.default_descriptor_file_name()
+    |> Keyword.get_lazy(:path_to_descriptor, fn -> default_path_to_descriptor(otp_app) end)
+  end
 
-        app ->
-          Path.join(
-            Application.app_dir(app, "priv"),
-            Cluster.default_descriptor_file_name()
-          )
-      end
-    )
+  @spec default_path_to_descriptor(otp_app :: atom() | nil) :: Path.t()
+  defp default_path_to_descriptor(nil), do: Cluster.default_descriptor_file_name()
+
+  defp default_path_to_descriptor(otp_app) do
+    Path.join(Application.app_dir(otp_app, "priv"), Cluster.default_descriptor_file_name())
   rescue
-    _ -> Cluster.default_descriptor_file_name()
+    # app_dir/2 raises when the application isn't loaded, which is routine for
+    # the synthetic otp_apps used by tests, scripts and livebooks.
+    ArgumentError -> Cluster.default_descriptor_file_name()
   end
 end

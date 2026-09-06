@@ -627,7 +627,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
       ]
 
       clear_transaction = test_transaction(clear_mutations, Version.from_integer(1100))
-      {vm_after_clear, _database} = IndexManager.apply_transaction(vm_with_data, clear_transaction, database)
+      {vm_after_clear, database} = IndexManager.apply_transaction(vm_with_data, clear_transaction, database)
 
       # Keys outside the range should still be accessible
       assert {:ok, _page} = IndexManager.page_for_key(vm_after_clear, <<"key_01">>, Version.from_integer(1100))
@@ -641,9 +641,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
       assert {:ok, page} = IndexManager.page_for_key(vm_after_clear, <<"key_10">>, Version.from_integer(1100))
       assert {:error, :not_found} = Page.locator_for_key(page, <<"key_10">>)
 
-      # key_15 is the exclusive end of the range and survives
+      # key_15 is the exclusive end of the range and keeps its value
       assert {:ok, page} = IndexManager.page_for_key(vm_after_clear, <<"key_15">>, Version.from_integer(1100))
-      assert {:ok, _locator} = Page.locator_for_key(page, <<"key_15">>)
+      assert {:ok, locator} = Page.locator_for_key(page, <<"key_15">>)
+      assert {:ok, <<"value_15">>} = Database.load_value(database, locator)
 
       Database.close(database)
     end

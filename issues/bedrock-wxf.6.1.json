@@ -9,9 +9,15 @@
   "id": "bedrock-wxf.6.1",
   "labels": [],
   "parent": "bedrock-wxf.6",
+  "comments": [
+    {
+      "text": "Note 2026-09-06: PR #272 (bedrock-ljh) adds a non-monotonic-version refusal to IndexManager.apply_transaction/3, so a re-delivered version now crashes the materializer instead of silently corrupting its index. That softens this ticket's stated consequence but does not do its work: the ChunkReader still has no monotonic filter, which is what overlapping consolidated chunks require. Deployment gate paragraph should be reworded once #272 lands.",
+      "timestamp": "2026-09-06T22:51:44Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "ChunkReader: drop re-delivered versions so overlapping chunks read correctly",
   "type": "task",
-  "updated_at": "2026-08-27T01:07:40Z"
+  "updated_at": "2026-09-06T22:51:44Z"
 }

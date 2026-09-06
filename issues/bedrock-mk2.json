@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:35:17Z",
+  "description": "handle_info({:compaction_ready, ...}) (server.ex:427-543) has no mode guard and unconditionally calls Logic.resume_pulling_from/2 (server.ex:542). lock_for_recovery does not clear compaction_task, so a compaction that completes while mode == :locked starts a puller from the previous epoch's pull_sources.\n\nProbed: mode=:locked with a live pull_task after a cutover.\n\nEvery other path guards this — handle_call({:ingest, ...}, _, %State{mode: :locked}) (server.ex:143), handle_info(:idle_check, %State{mode: :locked}) (server.ex:353). Blast radius is bounded today (locked ingests are ack-and-dropped, and a later unlock_after_recovery calls stop_pulling first), but a worker that is displaced rather than unlocked runs a stale-epoch puller until it exits.\n\nOne clause on the completion handler fixes it. Found by the cold audit on bedrock-zi44.",
+  "id": "bedrock-mk2",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Compaction cutover resumes pulling on a locked worker",
+  "type": "bug",
+  "updated_at": "2026-09-06T01:35:17Z"
+}

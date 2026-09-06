@@ -182,4 +182,61 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemAtomicityTest do
              "a failed overwrite must not destroy the object it was replacing"
     end
   end
+
+  describe "reclaiming scratch files left by a killed writer" do
+    # A process killed between the scratch write and the publish leaves
+    # its scratch file behind at full payload size. list/3 already hides
+    # it (tested above), but hiding it is not reclaiming it — nothing
+    # freed the disk space. bedrock-ck3.
+
+    # Plants a scratch file using the writer's exact naming scheme
+    # (see open_scratch/2 in local_filesystem.ex), backdated to `age`
+    # seconds old.
+    defp plant_scratch(root, key, age_seconds) do
+      dir = Path.join(root, Path.dirname(key))
+      File.mkdir_p!(dir)
+
+      scratch =
+        Path.join(
+          dir,
+          ".bedrock-tmp.#{Path.basename(key)}.#{node()}.#{System.pid()}.#{:erlang.unique_integer([:positive])}"
+        )
+
+      File.write!(scratch, :binary.copy(<<0>>, 1024))
+      File.touch!(scratch, System.os_time(:second) - age_seconds)
+      scratch
+    end
+
+    test "a scratch file older than the reap window is deleted by the next write into its directory", %{
+      backend: backend,
+      root: root
+    } do
+      stale = plant_scratch(root, "c/0/obj", 7_200)
+
+      assert File.exists?(stale), "the wreckage must exist before the fix can be judged"
+
+      :ok = ObjectStorage.put(backend, "c/0/other", "payload")
+
+      refute File.exists?(stale),
+             "a scratch file old enough to predate any plausible in-flight write must be reclaimed"
+    end
+
+    test "a fresh scratch file is left alone by a write into its directory", %{backend: backend, root: root} do
+      fresh = plant_scratch(root, "c/0/obj", 5)
+
+      :ok = ObjectStorage.put(backend, "c/0/other", "payload")
+
+      assert File.exists?(fresh), "a scratch file young enough to be a live writer's must not be touched"
+    end
+
+    test "reclaiming stale scratch files never removes a real object", %{backend: backend, root: root} do
+      :ok = ObjectStorage.put(backend, "c/0/obj", "payload")
+      stale = plant_scratch(root, "c/0/obj", 7_200)
+
+      :ok = ObjectStorage.put(backend, "c/0/other", "payload")
+
+      refute File.exists?(stale)
+      assert {:ok, "payload"} = ObjectStorage.get(backend, "c/0/obj")
+    end
+  end
 end

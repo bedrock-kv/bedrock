@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:24:41Z",
+  "description": "Found during bedrock-q67.21.13 (PR #263). Both of PR #204's blocking defects and both of #263's cold-audit FAILs (a committed tag-0 member recovery could not seat winning pick_member and restart-looping the distributor; a locked un-rolled-back data-tag member becoming client-routable) are failures of recovery AND the distributor acting on the same keyspace families — the unit suites for each were green throughout. Add an integration test that runs a real recovery to unlock, lets the distributor take the lock and sweep, then asserts: (1) routing for every tag resolves to a member that is unlocked and running; (2) a member recovery locked but did not seat is never routable until its own epoch unlocks it; (3) the distributor's startup snapshot read from tag 0 succeeds on the first attempt. Use the ReportingLog/DynamicSupervisor harness from #261's recovery_generation_test.exs as the starting point.",
+  "id": "bedrock-q67.49",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 2,
+  "status": "open",
+  "title": "No test composes recovery with the distributor: every blocking defect in #204/#263 was a composition failure invisible to the unit suite",
+  "type": "task",
+  "updated_at": "2026-09-06T01:24:41Z"
+}

@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:35Z",
+  "close_reason": "Delivered in PR #299 (audited 2026-09-06: RecoveryAttempt.pending_tx accumulated by phases, PersistencePhase reduces to Tx.commit, retry resets; golden-literal equivalence test; stacked on #290, no CI run)",
   "created": "2026-01-19T20:38:09.83293-05:00",
   "description": "",
   "id": "bedrock-qb0g",
@@ -22,8 +24,8 @@
     }
   ],
   "priority": 3,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Refactor: Thread Tx through recovery phases instead of building in PersistencePhase",
   "type": "task",
-  "updated_at": "2026-09-06T03:08:56Z"
+  "updated_at": "2026-09-06T14:05:35Z"
 }

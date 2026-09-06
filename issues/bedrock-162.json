@@ -18,5 +18,5 @@
   "status": "in_progress",
   "title": "Make LocalFilesystem version-matched writes atomic",
   "type": "bug",
-  "updated_at": "2026-09-06T03:26:51Z"
+  "updated_at": "2026-09-06T03:27:24Z"
 }

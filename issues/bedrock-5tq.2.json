@@ -3,7 +3,7 @@
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-15T17:18:22Z",
-  "description": "The storage-\u003ematerializer rename left dead paths: storage.md's Location is lib/bedrock/data_plane/storage.ex (does not exist; actual: materializer.ex); basalt paths were removed in qzr.6 but other guides still cite lib/bedrock/data_plane/storage/... and line-numbered refs that have drifted (deep-dives/transactions.md: 'Storage fetch: storage.ex:33', 'Local write storage: lib/bedrock/cluster/gateway/transaction_builder/state.ex:16' — the transaction_builder now lives under lib/bedrock/internal/). Sweep every backtick code path and :line reference in guides/ against the tree; prefer module names over line numbers so refs do not rot.",
+  "description": "The storage-\u003ematerializer rename left dead paths: storage.md's Location is lib/bedrock/data_plane/storage.ex (does not exist; actual: materializer.ex); basalt paths were removed in qzr.6 but other guides still cite lib/bedrock/data_plane/storage/... and line-numbered refs that have drifted (deep-dives/transactions.md: 'Storage fetch: storage.ex:33', 'Local write storage: lib/bedrock/cluster/gateway/transaction_builder/state.ex:16' — the transaction_builder now lives under lib/bedrock/internal/). Sweep every backtick code path and :line reference in guides/ against the tree; prefer module names over line numbers so refs do not rot.\n\n## Merged from bedrock-5tq.1 (closed as duplicate, 2026-09-06)\n\nbedrock-5tq.1 was filed for gateway.md, which 8+ guides linked to and which never existed. That headline is now moot: no guide links gateway.md any more, and the component was renamed rather than documented, so the answer is repointing, not writing a new deep-dive. Its surviving clause, \"also sweep for other targets that do not exist\", is the same sweep this ticket asks for, so the two are one job.\n\nVerified state of guides/ at a8886156:\n\n- 7 broken doc-to-doc links. Two quick-reads point at deep-dives/architecture/infrastructure/README.md, which does not exist. Three in deep-dives/architecture.md use ../ where the sibling is in the same directory. Two in deep-dives/cluster-startup.md use ../../../ and escape the repository entirely.\n- 8 broken code-path links, all relative links into lib/ that are one directory level off, e.g. the Source line at the top of resolver.md, log.md, sequencer.md, commit-proxy.md, director.md, coordinator.md and transaction-builder.md.\n- 9 surviving .ex:\u003cline\u003e references, all in deep-dives/transactions.md. Two of them now land on blank lines.\n\nDoing this once should cover all three classes: resolve every relative link against the tree, and replace line-numbered references with function names so they stop rotting.",
   "id": "bedrock-5tq.2",
   "labels": [],
   "parent": "bedrock-5tq",
@@ -21,5 +21,5 @@
   "status": "open",
   "title": "Dead code paths and stale line-number references across guides",
   "type": "bug",
-  "updated_at": "2026-09-06T14:06:01Z"
+  "updated_at": "2026-09-06T22:51:10Z"
 }

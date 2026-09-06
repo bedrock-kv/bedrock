@@ -19,6 +19,13 @@ defmodule Bedrock.Repo do
   - `:retry_limit` - Maximum number of retries on transaction conflicts (default: nil for unlimited)
   - `:timeout_in_ms` - End-to-end transaction timeout, including retries
     (default: 5000; use `:infinity` to disable)
+  - `:read_system_keys` - Allow the transaction to read the `\\xFF` system
+    keyspace (default: false). Without it, any read addressed at or above
+    `Bedrock.end_of_user_keyspace/0` fails the transaction immediately with
+    `{:error, {:key_out_of_range, key}}` rather than being attempted; with
+    it the bound moves to `Bedrock.end_of_keyspace/0`. FDB parity:
+    `READ_SYSTEM_KEYS`, checked client-side. It does not grant system
+    WRITES - those are reserved to system-mode commits.
 
   ## Examples
 
@@ -47,7 +54,8 @@ defmodule Bedrock.Repo do
               | (module() -> :ok | {:ok, result} | {:error, reason}),
               opts :: [
                 retry_limit: non_neg_integer() | nil,
-                timeout_in_ms: Bedrock.timeout_in_ms()
+                timeout_in_ms: Bedrock.timeout_in_ms(),
+                read_system_keys: boolean()
               ]
             ) :: :ok | {:ok, result} | {:error, reason}
             when result: term(), reason: any()
@@ -129,7 +137,14 @@ defmodule Bedrock.Repo do
   @doc """
   Gets a value for the given key, returning the value or `nil` if not found.
 
-  Keys must be binary and no larger than 16KiB.
+  Keys must be binary and no larger than 16KiB. Reads are bounded below
+  `Bedrock.end_of_user_keyspace/0` (`0xFF`) unless the transaction was opened
+  with `read_system_keys: true`; a read at or above the bound fails the
+  transaction with `{:error, {:key_out_of_range, key}}` instead of being
+  attempted. The same bound applies to `select/1` and `get_range/1` — note
+  that a range built with the `:end` sentinel ends at
+  `Bedrock.end_of_keyspace/0` and is therefore out of range for an ordinary
+  read; use `Bedrock.end_of_user_keyspace/0` as the widest legal end.
 
   ## Options
 

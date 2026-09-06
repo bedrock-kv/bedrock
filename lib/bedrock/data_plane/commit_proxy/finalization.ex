@@ -285,13 +285,15 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # own reply and is replaced with an empty transaction, so its conflict
   # ranges never enter resolver history and its mutations never reach a log.
   #
-  # The legal write range depends on who is committing - the mode rides each
+  # The legal range depends on who is committing - the mode rides each
   # buffer entry: user commits end at the system boundary, system commits at
   # the end of the keyspace. Keys past the commit's bound belong to no shard
   # the caller may touch; before validation existed, single-key mutations
   # were silently routed into the LAST shard and a clear_range past the
   # boundary failed the whole batch. clear_range ends are exclusive, so an
-  # end AT the bound is legal.
+  # end AT the bound is legal. The mutation AND conflict sections are both
+  # checked - see first_rejected_conflict_range/2 for why the declared
+  # ranges need their own gate, and why the read conflicts get a wider one.
   #
   # Atomics are bounded like any other mutation, nothing more - FDB parity.
   # The metadata views cannot diverge from an atomic because atomics never
@@ -304,7 +306,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     {transactions, replied, n_rejected} =
       Enum.reduce(plan.transactions, {plan.transactions, plan.replied_indices, 0}, fn
         {idx, {idx, reply_fn, transaction, commit_mode}}, {transactions, replied, n_rejected} = acc ->
-          case first_rejected_mutation(transaction, commit_mode) do
+          case first_rejection(transaction, commit_mode) do
             nil ->
               acc
 
@@ -323,23 +325,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
     %{plan | transactions: transactions, replied_indices: replied, aborted_count: plan.aborted_count + n_rejected}
   end
 
-  # Returns nil when valid, {reason, key} for the offending mutation, or
-  # :invalid_transaction when the mutation section decodes but its payload is
-  # corrupt (the decode stream raises lazily; unguarded, that would crash the
-  # finalization task and with it the proxy). No catch-all clause: a mutation
-  # shape this validator does not know is caught by the rescue and rejected
-  # as :invalid_transaction, so a future mutation type fails closed instead
-  # of bypassing the gate.
-  @spec first_rejected_mutation(Transaction.encoded(), Batch.commit_mode()) ::
+  # Returns nil when valid, {reason, key} for the offending mutation or
+  # conflict range, or :invalid_transaction when a section decodes but its
+  # payload is corrupt (the mutation decode stream raises lazily; unguarded,
+  # that would crash the finalization task and with it the proxy).
+  @spec first_rejection(Transaction.encoded(), Batch.commit_mode()) ::
           {:key_out_of_range, Bedrock.key()} | :invalid_transaction | nil
-  defp first_rejected_mutation(transaction, commit_mode) do
-    bound = keyspace_bound(commit_mode)
+  defp first_rejection(transaction, commit_mode) do
+    write_bound = keyspace_bound(commit_mode)
 
-    case Transaction.mutations(transaction) do
-      {:ok, mutations} -> Enum.find_value(mutations, &rejected_mutation(&1, bound))
-      {:error, :section_not_found} -> nil
-      {:error, _} -> :invalid_transaction
-    end
+    first_rejected_mutation(transaction, write_bound) || first_rejected_conflict_range(transaction, write_bound)
   rescue
     error ->
       trace_ingress_validation_failed(error)
@@ -349,16 +344,72 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   defp keyspace_bound(:user), do: Bedrock.end_of_user_keyspace()
   defp keyspace_bound(:system), do: Bedrock.end_of_keyspace()
 
+  # No catch-all clause for the mutation shapes: a mutation this validator
+  # does not know is caught by first_rejection/2's rescue and rejected as
+  # :invalid_transaction, so a future mutation type fails closed instead of
+  # bypassing the gate.
+  defp first_rejected_mutation(transaction, bound) do
+    case Transaction.mutations(transaction) do
+      {:ok, mutations} -> Enum.find_value(mutations, &rejected_mutation(&1, bound))
+      {:error, :section_not_found} -> nil
+      {:error, _} -> :invalid_transaction
+    end
+  end
+
   defp rejected_mutation({:set, key, _value}, bound), do: key_past_bound(key, bound)
   defp rejected_mutation({:clear, key}, bound), do: key_past_bound(key, bound)
 
   defp rejected_mutation({:atomic, _op, key, _value}, bound), do: key_past_bound(key, bound)
 
   defp rejected_mutation({:clear_range, start_key, end_key}, bound) do
-    key_past_bound(start_key, bound) || if end_key > bound, do: {:key_out_of_range, end_key}
+    key_past_bound(start_key, bound) || range_key_past_bound(end_key, bound)
   end
 
+  # The conflict sections are DECLARED, not derived from the mutations: an
+  # encoded transaction can name ranges it never touches. FDB bounds them in
+  # the client and nowhere else - addReadConflictRange against
+  # getMaxReadKey (ReadYourWrites.actor.cpp:1951), addWriteConflictRange
+  # against getMaxWriteKey (:2467); its proxy-side per-transaction check
+  # (CommitProxyServer.actor.cpp:318-392 verifyTenantPrefix) is a TENANT
+  # prefix check, not a keyspace one. Bedrock puts the bound at ingress
+  # instead, where the commit mode is known and the reply is per
+  # transaction: a transaction rejected here is replaced with an empty one,
+  # so its ranges never enter resolver history.
+  #
+  # The two sections get DIFFERENT bounds, as they do in FDB, because they
+  # do different damage. A write conflict is ADDED to resolver history
+  # (Resolver.TransactionConflicts:59) and aborts everyone who read that
+  # range, so a user commit naming a system range would abort the system
+  # transactions reading there - that one is gated by who is committing. A
+  # read conflict is only CHECKED against history
+  # (Resolver.TransactionConflicts:63) and can abort nothing but its own
+  # transaction, so it is gated only by the end of the legal keyspace.
+  # Gating it by the commit mode instead would make read_system_keys
+  # unusable: every non-snapshot system read registers its conflict, and a
+  # client commit is always :user. The narrower READ bound is the client's,
+  # enforced in the transaction builder - FDB's READ_SYSTEM_KEYS, same trust
+  # model.
+  #
+  # Both endpoints are bounds rather than addressed keys, so either may sit
+  # AT the applicable bound: an exclusive end there is how a range covers
+  # the whole legal keyspace.
+  defp first_rejected_conflict_range(transaction, write_bound) do
+    case Transaction.read_write_conflicts(transaction) do
+      {:ok, {{_read_version, read_conflicts}, write_conflicts}} ->
+        Enum.find_value(read_conflicts, &rejected_range(&1, Bedrock.end_of_keyspace())) ||
+          Enum.find_value(write_conflicts, &rejected_range(&1, write_bound))
+
+      {:error, _} ->
+        :invalid_transaction
+    end
+  end
+
+  defp rejected_range({start_key, end_key}, bound),
+    do: range_key_past_bound(start_key, bound) || range_key_past_bound(end_key, bound)
+
   defp key_past_bound(key, bound), do: if(key >= bound, do: {:key_out_of_range, key})
+
+  defp range_key_past_bound(key, bound), do: if(key > bound, do: {:key_out_of_range, key})
 
   # ============================================================================
   # Conflict Resolution

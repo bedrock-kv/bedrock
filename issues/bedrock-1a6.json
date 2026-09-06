@@ -9,9 +9,15 @@
   "id": "bedrock-1a6",
   "labels": [],
   "parent": "bedrock-gu0",
+  "comments": [
+    {
+      "text": "Accuracy note 2026-09-06: the mechanism still holds, foreman/server.ex has no reference to health and recompute_health/1 writes a value nothing reads, but the two :ok-matching call sites this ticket names (impl.ex:236 do_wait_for_healthy/2 and impl.ex:309 notify_waiting_for_healthy/1) no longer exist; bedrock-gu0.4 deleted wait_for_healthy. The single funnel to log from is now recompute_health/1. The dependency on bedrock-n5h is satisfied.",
+      "timestamp": "2026-09-06T22:51:44Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "Foreman health is computed but never exposed, so no operator or supervisor can read it",
   "type": "task",
-  "updated_at": "2026-08-25T19:48:15Z"
+  "updated_at": "2026-09-06T22:51:44Z"
 }

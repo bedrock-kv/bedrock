@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:34Z",
+  "close_reason": "Delivered in PR #280 (audited 2026-09-06: materializer_idle_timeout_ms parameter wired through bootstrap and recruitment, tag 0 exempt, default 15m; stacked on #263, no CI run)",
   "created": "2026-08-24T15:24:23Z",
   "description": "The idle spin-down mechanism (bedrock-q67.21.5, PRs #193/#194) is fully built but dormant: nothing in production sets the \"idle_timeout\" worker param (PR #193 audit F4, deferred deliberately). Decide and wire the config source: a cluster-config knob handed through the director's recruitment_ctx as worker_params (the plumbing already exists — Recruitment.create_materializer_worker merges worker_params and always overrides shard_id), plus a default policy. The opt-in shape keeps the system shard exempt by construction (bootstrap never sets params). Options: ship off-by-default with the knob documented, or pick a conservative default (e.g. 15m) for data shards.\n\nAlso carries the q67.21.4/.5 observability residuals, neither blocking:\n- N2: covered-before-caught-up telemetry breadcrumb — a freshly recruited materializer is published as covered while still drinking its stream suffix.\n- Placeholder fit: repo traffic parks ~50ms per attempt (builder fetch timeout) with the repo backoff loop doing the waiting; consider a hold-aware fetch timeout for known-placeholder routes; decide with measurements.",
   "id": "bedrock-q67.21.8",
@@ -14,8 +16,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Production wiring for materializer idle_timeout",
   "type": "task",
-  "updated_at": "2026-09-06T02:14:34Z"
+  "updated_at": "2026-09-06T14:05:34Z"
 }

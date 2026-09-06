@@ -6,9 +6,15 @@
   "description": "Identified during the bedrock-n5h audit: reproduced once in 20 full-suite runs, 0 failures in 10 isolated runs of the file alone. Distinct from bedrock-s9x (TransactionBuilderTest / 100ms DOWN window) — different test, different mechanism.\n\ntest/bedrock/data_plane/demux/shard_server_test.exs:490 — 'persistence telemetry emits retry telemetry for transient object write failures'.\n\nThree `assert_receive {:telemetry, ...}, 1_500` calls (lines 532, 535, 542) await error -\u003e retry_scheduled -\u003e ok from a real ShardServer performing real filesystem writes through a deliberately flaky backend, configured with `persistence_retry_backoff_ms: 1` and `persistence_retry_tick_ms: 1` (lines 520-521).\n\nThe 1.5s budget is wall-clock. Under `max_cases: 28` the scheduler occasionally does not deliver all three within it. That it never fails in isolation is consistent with a load-dependent timeout rather than a logic race.\n\n## Fix\n\nPrefer determinism over a bigger number: drive the retry clock from the test rather than sleeping on real backoff ticks, so the assertions do not race the scheduler at all. If the timing must stay real, the budget should scale with load rather than being a bare 1_500.\n\n## Test\n\nThe test already exists; the change is to make it not depend on wall-clock delivery under load. Verify by running the full suite repeatedly (20+ runs) with no failures.",
   "id": "bedrock-uvk",
   "labels": [],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/277 — fix lands, injects the retry :drain tick from the test instead of waiting on the worker's real backoff timer; full suite green, cold audit PASS-WITH-NOTES.",
+      "timestamp": "2026-09-06T02:11:16Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "[BUG] Flaky: ShardServer retry-telemetry test misses its 1.5s assert_receive under full-suite load",
   "type": "bug",
-  "updated_at": "2026-09-06T01:49:11Z"
+  "updated_at": "2026-09-06T02:11:16Z"
 }

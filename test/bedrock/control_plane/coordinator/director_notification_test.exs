@@ -12,12 +12,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorNotificationTest do
   setup do
     owner = self()
 
-    director =
-      spawn(fn ->
-        receive do
-          message -> send(owner, {:director_message, message})
-        end
-      end)
+    director = spawn(fn -> relay_director_messages(owner) end)
 
     on_exit(fn -> Process.exit(director, :kill) end)
 
@@ -27,6 +22,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorNotificationTest do
       raft: leader_raft(),
       leader_node: node(),
       my_node: node(),
+      bootstrap_reservation: %{generation: 7, recovery_id: "publication-7"},
       transaction_system_layout: %{epoch: 7, logs: %{current: []}},
       prior_core_state: %{logs: %{current: []}},
       config: %{value: :current},
@@ -89,13 +85,32 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorNotificationTest do
     assert_received {:tsl_updated, _}
   end
 
+  test "an exact layout duplicate is re-acknowledged while a conflicting duplicate is not", %{
+    state: state,
+    director: director
+  } do
+    publication = message(:layout, {director, 7, 3})
+    assert {:noreply, accepted} = Server.handle_cast(publication, state)
+
+    assert_receive {:director_message, {:"$gen_cast", {:publication_ack, coordinator, "publication-7", 3}}}
+
+    assert coordinator == self()
+    assert {:noreply, ^accepted} = Server.handle_cast(publication, accepted)
+
+    assert_receive {:director_message, {:"$gen_cast", {:publication_ack, ^coordinator, "publication-7", 3}}}
+
+    assert {:noreply, ^accepted} = Server.handle_cast(message(:layout, {director, 7, 3}, :conflict), accepted)
+    refute_receive {:director_message, {:"$gen_cast", {:publication_ack, _, _, _}}}, 50
+  end
+
   test "current Director cannot change epoch through attributed layout", %{state: state, director: director} do
     for epoch <- [6, 8] do
       assert {:noreply, ^state} = Server.handle_cast(message(:layout, {director, epoch, 1}), state)
 
       assert {:noreply, ^state} =
                Server.handle_cast(
-                 {:notify_transaction_system_layout, {director, 7, 1}, %{epoch: epoch, logs: %{}}, %{logs: %{}}},
+                 {:notify_transaction_system_layout, {director, 7, 1}, "publication-7", %{epoch: epoch, logs: %{}},
+                  %{logs: %{}}},
                  state
                )
     end
@@ -207,7 +222,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorNotificationTest do
     def otp_name(_), do: :notification_lifecycle_test
   end
 
-  test "new term retires supervised old Director before registering a new instance", %{state: state} do
+  test "new term retires supervised old Director before its recovery barrier commits", %{state: state} do
     sup = start_supervised!({DynamicSupervisor, strategy: :one_for_one})
     {:ok, old} = DynamicSupervisor.start_child(sup, {Agent, fn -> :old_director end})
     down = Process.monitor(old)
@@ -224,24 +239,26 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorNotificationTest do
     assert {:noreply, replaced} = Server.handle_info({:raft, :leadership_changed, {node(), 3}}, state)
     assert_receive {:DOWN, ^down, :process, ^old, :shutdown}
     assert_received {:tsl_updated, nil}
-    assert is_pid(replaced.director)
-    assert replaced.director != old
-    assert replaced.director_raft_term == 3
+    assert replaced.director == :unavailable
+    assert replaced.director_raft_term == nil
     assert replaced.raft_term == 3
     assert replaced.transaction_system_layout == nil
     assert replaced.prior_core_state == state.prior_core_state
+    assert replaced.recovery_generation.phase == :barrier
+    assert replaced.recovery_generation.owner_term == 3
     assert {:noreply, ^replaced} = Server.handle_info({:raft, :leadership_changed, {node(), 3}}, replaced)
     refute_received {:tsl_updated, _}
   end
 
-  test "failed startup still clears routing and preserves prior core", %{state: state} do
+  test "recovery request waits for its barrier and preserves prior core", %{state: state} do
     sup = start_supervised!({DynamicSupervisor, strategy: :one_for_one, max_children: 0})
     state = %{state | director: :unavailable, supervisor_otp_name: sup, cluster: TestCluster}
-    failed = DirectorManagement.try_to_start_director(state)
-    assert failed.director == :unavailable
-    assert failed.transaction_system_layout == nil
-    assert failed.prior_core_state == state.prior_core_state
-    assert_received {:tsl_updated, nil}
+    pending = DirectorManagement.try_to_start_director(state)
+    assert pending.director == :unavailable
+    assert pending.transaction_system_layout == state.transaction_system_layout
+    assert pending.prior_core_state == state.prior_core_state
+    assert pending.recovery_generation.phase == :barrier
+    refute_received {:tsl_updated, nil}
   end
 
   for ending <- [:leadership_loss, :epoch_end] do
@@ -301,7 +318,17 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorNotificationTest do
   defp message(kind, identity, value \\ :new)
 
   defp message(:layout, identity, value),
-    do: {:notify_transaction_system_layout, identity, %{epoch: 7, logs: %{value => []}}, %{logs: %{value => []}}}
+    do:
+      {:notify_transaction_system_layout, identity, "publication-7", %{epoch: 7, logs: %{value => []}},
+       %{logs: %{value => []}}}
 
   defp message(:config, identity, value), do: {:notify_config, identity, %{value: value}}
+
+  defp relay_director_messages(owner) do
+    receive do
+      message ->
+        send(owner, {:director_message, message})
+        relay_director_messages(owner)
+    end
+  end
 end

@@ -7,11 +7,17 @@ defmodule Bedrock.ControlPlane.Coordinator.Commands do
   """
 
   @type command ::
-          end_epoch_command()
+          recovery_barrier_command()
+          | begin_recovery_command()
+          | end_epoch_command()
           | set_node_resources_command()
           | merge_node_resources_command()
           | register_services_command()
           | deregister_services_command()
+
+  @type recovery_barrier_command :: {:recovery_barrier, %{owner_term: pos_integer(), request_id: binary()}}
+  @type begin_recovery_command ::
+          {:begin_recovery, %{generation: pos_integer(), owner_term: pos_integer(), request_id: binary()}}
 
   @type end_epoch_command :: {:end_epoch, Bedrock.epoch() | nil}
 

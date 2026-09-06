@@ -32,6 +32,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director.Publication
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Distributor
   alias Bedrock.Internal.Time.Interval
@@ -42,6 +43,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @type recovery_context :: %{
           cluster_config: Config.t(),
           prior_core_state: CoreState.t() | nil,
+          bootstrap_reservation: map() | nil,
           node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
           lock_token: binary(),
           available_services: %{Worker.id() => {atom(), {atom(), node()}}},
@@ -111,7 +113,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
       node_capabilities: t.node_capabilities,
       lock_token: t.lock_token,
       available_services: t.services,
-      coordinator: t.coordinator
+      coordinator: t.coordinator,
+      bootstrap_reservation: t.bootstrap_reservation
     }
 
     t.recovery_attempt
@@ -147,6 +150,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           Map.put(config, :recovery_attempt, stalled)
         end)
         |> persist_config()
+
+      {{:fatal, reason}, _failed_attempt} ->
+        exit({:shutdown, {:recovery_publication_failed, reason}})
 
       {{:error, reason}, _failed_attempt} ->
         # Errors are fatal - this director should stop trying to recover
@@ -322,16 +328,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     # materializers and stall.
     core_state = CoreState.from_layout(t.transaction_system_layout, system_materializers(completed))
 
-    t = %{t | publication_sequence: t.publication_sequence + 1}
-
-    Coordinator.notify_transaction_system_layout(
-      t.coordinator,
-      t.epoch,
-      t.publication_sequence,
-      t.transaction_system_layout,
-      core_state
-    )
-
+    t = Publication.start(t, core_state)
     trace_recovery_layout_persisted(:notified)
     t
   end
@@ -349,10 +346,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
           {:ok, RecoveryAttempt.t()}
           | {{:stalled, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
           | {{:error, RecoveryAttempt.reason_for_stall()}, RecoveryAttempt.t()}
+          | {{:fatal, term()}, RecoveryAttempt.t()}
   def run_recovery_attempt(t, context, next_phase_module \\ __MODULE__.TSLValidationPhase) do
     case next_phase_module.execute(t, context) do
       {completed_attempt, :completed} ->
         {:ok, completed_attempt}
+
+      {failed_attempt, {:fatal, _reason} = fatal} ->
+        {fatal, failed_attempt}
 
       {stalled_attempt, {:error, _reason} = error} ->
         {error, stalled_attempt}

@@ -20,109 +20,55 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
-  alias Bedrock.ClusterBootstrap.Discovery
+  alias Bedrock.ClusterBootstrap.Publication
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.Internal.Id
   alias Bedrock.Internal.TransactionBuilder.Tx
-  alias Bedrock.ObjectStorage
-  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.SystemKeys
-  alias Bedrock.SystemKeys.ClusterBootstrap
   alias Bedrock.SystemKeys.Values
 
   @impl true
   def execute(recovery_attempt, context) do
     trace_recovery_persisting_system_state()
 
-    transaction_system_layout = recovery_attempt.transaction_system_layout
-
-    system_transaction = build_system_transaction(recovery_attempt)
-
-    case submit_system_transaction(system_transaction, recovery_attempt.proxies, recovery_attempt.epoch, context) do
-      {:ok, _version, _sequence} ->
-        trace_recovery_system_state_persisted()
-
-        case write_state_to_object_storage(recovery_attempt, context.cluster_config, transaction_system_layout) do
-          :ok ->
-            {recovery_attempt, :completed}
-
-          {:error, :version_mismatch} ->
-            {recovery_attempt, {:stalled, {:recovery_system_failed, :bootstrap_version_mismatch}}}
-
-          {:error, reason} ->
-            {recovery_attempt, {:stalled, {:recovery_system_failed, {:bootstrap_write_failed, reason}}}}
+    case Map.get(context, :bootstrap_reservation) do
+      %{generation: generation, recovery_id: id} = reservation when generation == recovery_attempt.epoch ->
+        if is_binary(id) and byte_size(id) > 0 do
+          persist_reserved(recovery_attempt, context, reservation)
+        else
+          {recovery_attempt, {:fatal, {:bootstrap_publication_failed, :invalid_reservation}}}
         end
 
+      _ ->
+        {recovery_attempt, {:fatal, {:bootstrap_publication_failed, :missing_reservation}}}
+    end
+  end
+
+  defp persist_reserved(attempt, context, reservation) do
+    bootstrap =
+      reservation.prior_bootstrap
+      |> build_updated_bootstrap(attempt, context.cluster_config, attempt.transaction_system_layout)
+      |> Map.merge(%{
+        protocol_version: 1,
+        recovery_generation: reservation.generation,
+        recovery_id: reservation.recovery_id,
+        publication_id: reservation.recovery_id
+      })
+
+    with :ok <- Publication.validate(bootstrap),
+         {:ok, _version, _sequence} <-
+           submit_system_transaction(build_system_transaction(attempt), attempt.proxies, attempt.epoch, context) do
+      trace_recovery_system_state_persisted()
+
+      case Publication.publish(reservation, bootstrap) do
+        :ok -> {attempt, :completed}
+        {:error, reason} -> {attempt, {:fatal, {:bootstrap_publication_failed, reason}}}
+      end
+    else
       {:error, reason} ->
         trace_recovery_system_transaction_failed(reason)
-        {recovery_attempt, {:stalled, {:recovery_system_failed, reason}}}
-    end
-  end
-
-  defp write_state_to_object_storage(recovery_attempt, config, transaction_system_layout) do
-    cluster = recovery_attempt.cluster
-
-    case get_object_storage_backend(cluster) do
-      {:ok, backend} ->
-        # ClusterBootstrap is the sole source of truth for coordinator cold boot
-        do_write_bootstrap(backend, "bootstrap", recovery_attempt, config, transaction_system_layout)
-
-      {:error, :no_object_storage} ->
-        # No object storage configured - skip bootstrap write
-        :ok
-    end
-  end
-
-  # Get object_storage backend from cluster's node config
-  defp get_object_storage_backend(cluster) do
-    node_config = cluster.node_config()
-
-    # Check for explicit object_storage config
-    case Keyword.fetch(node_config, :object_storage) do
-      {:ok, backend} ->
-        {:ok, backend}
-
-      :error ->
-        # Derive from path config (same logic as cluster_supervisor)
-        derive_object_storage_from_path(node_config)
-    end
-  end
-
-  defp derive_object_storage_from_path(node_config) do
-    # Try to find a path from any capability config
-    path =
-      Enum.find_value([:log, :storage, :materializer, :coordination], fn capability ->
-        node_config
-        |> Keyword.get(capability, [])
-        |> Keyword.get(:path)
-      end)
-
-    if path do
-      object_storage_root = Path.join(path, "object_storage")
-      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
-      {:ok, backend}
-    else
-      {:error, :no_object_storage}
-    end
-  end
-
-  defp do_write_bootstrap(backend, bootstrap_key, recovery_attempt, config, transaction_system_layout) do
-    case ObjectStorage.get_with_version(backend, bootstrap_key) do
-      {:ok, data, version_token} ->
-        {:ok, current_bootstrap} = ClusterBootstrap.read(data)
-
-        updated_bootstrap =
-          build_updated_bootstrap(current_bootstrap, recovery_attempt, config, transaction_system_layout)
-
-        Discovery.write_bootstrap(backend, bootstrap_key, version_token, updated_bootstrap)
-
-      {:error, :not_found} ->
-        # First boot - create new bootstrap
-        bootstrap = build_initial_bootstrap(recovery_attempt, config, transaction_system_layout)
-        data = ClusterBootstrap.to_binary(bootstrap)
-        ObjectStorage.put_if_not_exists(backend, bootstrap_key, data)
+        {attempt, {:fatal, {:bootstrap_publication_failed, reason}}}
     end
   end
 
@@ -164,19 +110,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     committed
     |> Map.merge(adopted)
+    |> Enum.sort()
     |> Enum.map(fn {worker_id, node} -> %{id: worker_id, node: node} end)
-  end
-
-  defp build_initial_bootstrap(recovery_attempt, config, transaction_system_layout) do
-    %{
-      cluster_id: Id.random(),
-      epoch: recovery_attempt.epoch,
-      logs: build_log_entries(transaction_system_layout),
-      system_materializers: build_system_materializer_entries(recovery_attempt),
-      coordinators: [%{node: Atom.to_string(node())}],
-      parameters: build_parameters(config),
-      policies: build_policies(config)
-    }
   end
 
   defp build_parameters(config) do
@@ -204,7 +139,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   end
 
   defp build_log_entries(transaction_system_layout) do
-    Enum.map(transaction_system_layout.logs, fn {log_id, _descriptor} ->
+    Enum.map(Enum.sort(transaction_system_layout.logs), fn {log_id, _descriptor} ->
       # With consistent hashing, shard→log mapping is computed at runtime via ShardRouter.
       # The shard_tags field is kept for backward compatibility but is always empty.
       %{id: log_id, otp_ref: nil, shard_tags: []}

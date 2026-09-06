@@ -39,6 +39,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
               {RecoveryAttempt.t(), module()}
               | {RecoveryAttempt.t(), :completed}
               | {RecoveryAttempt.t(), {:stalled, term()}}
+              | {RecoveryAttempt.t(), {:fatal, term()}}
               | {RecoveryAttempt.t(), :newer_epoch_exists}
 
   defmacro __using__(_) do

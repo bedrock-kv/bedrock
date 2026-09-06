@@ -105,15 +105,24 @@ defmodule Bedrock.ControlPlane.Coordinator do
           coordinator_ref :: ref(),
           epoch :: Bedrock.epoch(),
           sequence :: publication_sequence(),
+          publication_id :: String.t(),
           transaction_system_layout :: TransactionSystemLayout.t(),
           core_state :: CoreState.t()
         ) :: :ok
-  def notify_transaction_system_layout(coordinator, epoch, sequence, transaction_system_layout, core_state),
-    do:
-      GenServer.cast(
+  def notify_transaction_system_layout(
         coordinator,
-        {:notify_transaction_system_layout, {self(), epoch, sequence}, transaction_system_layout, core_state}
-      )
+        epoch,
+        sequence,
+        publication_id,
+        transaction_system_layout,
+        core_state
+      ),
+      do:
+        GenServer.cast(
+          coordinator,
+          {:notify_transaction_system_layout, {self(), epoch, sequence}, publication_id, transaction_system_layout,
+           core_state}
+        )
 
   @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
   @type compact_service_info :: {service_id :: String.t(), kind :: atom(), name :: atom()}

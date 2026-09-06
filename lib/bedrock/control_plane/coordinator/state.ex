@@ -15,6 +15,11 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
 
   @type t :: %__MODULE__{
           cluster: module(),
+          cluster_id: String.t() | nil,
+          generation_floor: non_neg_integer(),
+          last_allocation: map() | nil,
+          recovery_generation: map() | nil,
+          bootstrap_reservation: map() | nil,
           leader_node: node() | :undecided,
           my_node: node(),
           epoch: Bedrock.epoch(),
@@ -37,6 +42,11 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
           recovery_tracker: RecoveryCapabilityTracker.t()
         }
   defstruct cluster: nil,
+            cluster_id: nil,
+            generation_floor: 0,
+            last_allocation: nil,
+            recovery_generation: nil,
+            bootstrap_reservation: nil,
             leader_node: :undecided,
             my_node: nil,
             epoch: nil,

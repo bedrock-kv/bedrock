@@ -1,6 +1,8 @@
 defmodule Bedrock.Distributed.DirectorNotificationRecoveryTest do
   use ExUnit.Case, async: false
 
+  alias Bedrock.ClusterBootstrap.Publication
+
   defmodule Cluster do
     @moduledoc false
     use Bedrock.Cluster, otp_app: :bedrock, name: "director_notification_recovery"
@@ -41,11 +43,23 @@ defmodule Bedrock.Distributed.DirectorNotificationRecoveryTest do
     assert "acknowledged" = Repo.transact(fn -> Repo.get("notification/prefix") end, timeout_in_ms: 15_000)
     coordinator = Process.whereis(Cluster.otp_name(:coordinator))
     initial = :sys.get_state(coordinator)
-    down = Process.monitor(initial.director)
-    Process.exit(initial.director, :kill)
-    assert_receive {:DOWN, ^down, :process, _, :killed}, 5_000
-    recovered = wait_for_replacement(coordinator, initial, System.monotonic_time(:millisecond) + 15_000)
-    assert "acknowledged" = Repo.transact(fn -> Repo.get("notification/prefix") end, timeout_in_ms: 15_000)
+
+    recovered =
+      Enum.reduce(1..2, initial, fn _failure, prior ->
+        down = Process.monitor(prior.director)
+        Process.exit(prior.director, :kill)
+        assert_receive {:DOWN, ^down, :process, _, :killed}, 5_000
+        next = wait_for_replacement(coordinator, prior, System.monotonic_time(:millisecond) + 15_000)
+        assert next.epoch > prior.epoch
+        assert next.raft_term == prior.raft_term
+        assert next.bootstrap_reservation.recovery_id != prior.bootstrap_reservation.recovery_id
+        assert next.last_allocation.generation == next.epoch
+        assert {:ok, durable} = Publication.read(backend, "bootstrap")
+        assert durable.bootstrap.epoch == next.epoch
+        assert durable.bootstrap.publication_id == next.bootstrap_reservation.recovery_id
+        assert "acknowledged" = Repo.transact(fn -> Repo.get("notification/prefix") end, timeout_in_ms: 15_000)
+        next
+      end)
 
     GenServer.cast(
       coordinator,

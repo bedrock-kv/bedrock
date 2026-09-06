@@ -19,7 +19,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   import Bedrock.ControlPlane.Coordinator.State.Changes,
     only: [
       put_leader_node: 2,
-      put_epoch: 2,
       put_leader_startup_state: 2,
       put_config: 2,
       put_transaction_system_layout: 3,
@@ -44,25 +43,20 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   import Bedrock.Internal.GenServer.Replies
 
+  alias Bedrock.ClusterBootstrap.Publication
   alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Coordinator.Commands
   alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
+  alias Bedrock.ControlPlane.Coordinator.Durability
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
+  alias Bedrock.ControlPlane.Coordinator.RecoveryGeneration
   alias Bedrock.ControlPlane.Coordinator.State
-  alias Bedrock.ObjectStorage
-  alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
   alias Bedrock.Raft.Log.TupleInMemoryLog
-  alias Bedrock.SystemKeys.ClusterBootstrap
 
   require Logger
-
-  # The FlatBuffer-generated ClusterBootstrap.read/1 can return errors per the library spec,
-  # but Dialyzer doesn't see this because the generated wrapper lacks a @spec.
-  # Suppress the false positive since defensive error handling is appropriate here.
-  @dialyzer {:no_match, parse_bootstrap_data: 2}
 
   @spec child_spec(opts :: [cluster: module()]) :: Supervisor.child_spec()
   def child_spec(opts) do
@@ -91,29 +85,33 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     with {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          {:ok, raft_log} <- init_raft_log(cluster) do
-      # Load config and the prior core state from object storage (the
-      # durable record; FDB reads its cstate at the same point)
-      {loaded_epoch, loaded_config, loaded_core_state} = load_state_from_object_storage(cluster)
+      case Publication.load(cluster) do
+        {:ok, loaded} ->
+          bootstrap = loaded.bootstrap
 
-      {:ok,
-       %State{
-         cluster: cluster,
-         my_node: my_node,
-         otp_name: otp_name,
-         supervisor_otp_name: cluster.otp_name(:sup),
-         epoch: loaded_epoch,
-         config: loaded_config,
-         prior_core_state: loaded_core_state,
-         transaction_system_layout: nil,
-         raft:
-           Raft.new(
-             my_node,
-             Enum.reject(coordinator_nodes, &(&1 == my_node)),
-             raft_log,
-             RaftAdapter
-           ),
-         last_durable_txn_id: Log.initial_transaction_id(raft_log)
-       }, {:continue, :check_recovery_consensus}}
+          restored =
+            Durability.restore(
+              %State{
+                cluster: cluster,
+                cluster_id: bootstrap.cluster_id,
+                my_node: my_node,
+                otp_name: otp_name,
+                supervisor_otp_name: cluster.otp_name(:sup),
+                epoch: bootstrap.epoch,
+                config: Publication.config(bootstrap, cluster),
+                prior_core_state: CoreState.from_bootstrap(bootstrap),
+                last_durable_txn_id: Log.initial_transaction_id(raft_log)
+              },
+              raft_log
+            )
+
+          raft = Raft.new(my_node, Enum.reject(coordinator_nodes, &(&1 == my_node)), raft_log, RaftAdapter)
+          {:ok, %{restored | raft: raft}, {:continue, :check_recovery_consensus}}
+
+        {:error, reason} ->
+          if is_struct(raft_log, DiskRaftLog), do: DiskRaftLog.close(raft_log)
+          {:stop, {:bootstrap_unavailable, reason}}
+      end
     else
       {:error, :unavailable} -> :ignore
       {:error, :not_a_coordinator} -> :ignore
@@ -230,10 +228,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
         # Retire the old instance even when this node won a newer term.
         updated_t =
           t
+          |> RecoveryGeneration.cancel()
           |> cleanup_director_on_leadership_loss()
           |> put_leader_node(new_leader)
           |> Map.put(:raft_term, raft_term)
-          |> put_epoch(raft_term)
 
         if new_leader == t.my_node and Raft.am_i_the_leader?(t.raft) do
           trace_leader_ready_starting_director(map_size(updated_t.service_directory))
@@ -260,21 +258,25 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     noreply(t)
   end
 
-  def handle_info({:raft, :consensus_reached, _log, _durable_txn_id, :behind}, t), do: noreply(t)
-
-  def handle_info({:raft, :consensus_reached, log, durable_txn_id, :latest}, t) do
+  def handle_info({:raft, :consensus_reached, log, durable_txn_id, consistency}, t)
+      when consistency in [:behind, :latest] do
     trace_consensus_reached(durable_txn_id)
 
     updated_t = durable_write_completed(t, log, durable_txn_id)
 
     # Check if capability changes should trigger recovery retry
     updated_t
+    |> RecoveryGeneration.advance()
     |> maybe_retry_recovery_on_capability_change()
     |> noreply()
   end
 
-  def handle_info({:DOWN, _monitor_ref, :process, pid, reason}, t) do
+  def handle_info({:recovery_io_result, id, result}, t), do: noreply(RecoveryGeneration.result(t, id, result))
+  def handle_info({:recovery_io_timeout, id}, t), do: noreply(RecoveryGeneration.timeout(t, id))
+
+  def handle_info({:DOWN, monitor_ref, :process, pid, reason}, t) do
     t
+    |> RecoveryGeneration.down(monitor_ref, reason)
     |> handle_director_failure(pid, reason)
     |> remove_tsl_subscriber(pid)
     |> noreply()
@@ -288,16 +290,28 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   def handle_cast({:ping, _}, t), do: noreply(t)
 
-  def handle_cast({:notify_transaction_system_layout, {director, epoch, sequence}, layout, core_state}, t) do
-    if current_publication?(t, director, epoch, sequence, :layout) and layout.epoch == epoch do
-      t
-      |> accept_publication(sequence, :layout)
-      |> put_transaction_system_layout(layout, core_state)
-      |> noreply()
-    else
-      noreply(t)
+  def handle_cast(
+        {:notify_transaction_system_layout, {director, epoch, sequence}, publication_id, layout, core_state},
+        t
+      ) do
+    authorized = reserved_publication?(t, director, epoch, publication_id, layout)
+
+    cond do
+      authorized and current_publication?(t, director, epoch, sequence, :layout) ->
+        updated = t |> accept_publication(sequence, :layout) |> put_transaction_system_layout(layout, core_state)
+        GenServer.cast(director, {:publication_ack, self(), publication_id, sequence})
+        noreply(updated)
+
+      authorized and duplicate_layout?(t, sequence, layout, core_state) ->
+        GenServer.cast(director, {:publication_ack, self(), publication_id, sequence})
+        noreply(t)
+
+      true ->
+        noreply(t)
     end
   end
+
+  def handle_cast({:notify_transaction_system_layout, _identity, _layout, _core_state}, t), do: noreply(t)
 
   def handle_cast({:notify_config, {director, epoch, sequence}, config}, t) do
     if current_publication?(t, director, epoch, sequence, :config) do
@@ -333,6 +347,20 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     |> noreply()
   end
 
+  defp reserved_publication?(t, director, epoch, publication_id, %{epoch: epoch}) do
+    case t.bootstrap_reservation do
+      %{generation: ^epoch, recovery_id: ^publication_id} -> current_director?(t, director, epoch)
+      _ -> false
+    end
+  end
+
+  defp reserved_publication?(_t, _director, _epoch, _id, _layout), do: false
+
+  defp duplicate_layout?(t, sequence, layout, core_state),
+    do:
+      sequence == t.publication_sequences.layout and t.transaction_system_layout == layout and
+        t.prior_core_state == core_state
+
   defp current_publication?(t, director, epoch, sequence, kind) do
     is_integer(sequence) and sequence > t.publication_sequences[kind] and
       current_director?(t, director, epoch)
@@ -342,6 +370,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     %{t | publication_sequences: Map.put(t.publication_sequences, kind, sequence)}
   end
 
+  # Private helper functions
   @spec ack_fn(GenServer.from()) :: (term() -> :ok)
   defp ack_fn(from), do: fn result -> GenServer.reply(from, result) end
 
@@ -365,8 +394,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
         DiskRaftLog.open(raft_log)
     end
   end
-
-  # Private helper functions
 
   @spec send_recovery_consensus_for_committed_transactions(
           State.t(),
@@ -404,6 +431,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
         trace_recovery_retry_attempt(reason)
 
         case try_to_start_director(t) do
+          %{recovery_generation: %{phase: phase}} = pending
+          when phase in [:barrier, :reading, :allocation, :reserving] ->
+            pending
+
           %{director: :unavailable} = failed_state ->
             # Recovery failed - mark as such and don't retry automatically
             trace_recovery_failed(:director_start_failed)
@@ -455,132 +486,5 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     Enum.map(compact_services, fn {service_id, kind, name} ->
       {service_id, kind, {name, caller_node}}
     end)
-  end
-
-  # Object Storage loading functions
-
-  @spec load_state_from_object_storage(module()) ::
-          {Bedrock.epoch() | nil, map() | nil, map() | nil}
-  defp load_state_from_object_storage(cluster) do
-    with {:ok, backend} <- get_object_storage_backend(cluster),
-         {:ok, data} <- fetch_bootstrap_data(backend, cluster),
-         {:ok, bootstrap} <- parse_bootstrap_data(data, cluster) do
-      epoch = bootstrap.epoch
-      config = build_config_from_bootstrap(bootstrap, cluster)
-      core_state = CoreState.from_bootstrap(bootstrap)
-
-      Logger.info("Bedrock [#{cluster}]: Loaded cluster bootstrap from object storage (epoch: #{epoch})")
-      {epoch, config, core_state}
-    else
-      {:error, :no_object_storage} -> {nil, nil, nil}
-      {:error, :not_found} -> {nil, nil, nil}
-      {:error, _reason} -> {nil, nil, nil}
-    end
-  end
-
-  defp fetch_bootstrap_data(backend, cluster) do
-    case ObjectStorage.get(backend, "bootstrap") do
-      {:ok, data} ->
-        {:ok, data}
-
-      {:error, :not_found} ->
-        Logger.info("Bedrock [#{cluster}]: No cluster bootstrap in object storage, starting fresh")
-        {:error, :not_found}
-
-      {:error, reason} ->
-        Logger.warning("Bedrock [#{cluster}]: Failed to load cluster bootstrap from object storage: #{inspect(reason)}")
-
-        {:error, reason}
-    end
-  end
-
-  defp parse_bootstrap_data(data, cluster) do
-    case ClusterBootstrap.read(data) do
-      {:ok, bootstrap} ->
-        {:ok, bootstrap}
-
-      {:error, reason} ->
-        Logger.warning("Bedrock [#{cluster}]: Failed to parse cluster bootstrap: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
-  # Build a Config struct from ClusterBootstrap data
-  defp build_config_from_bootstrap(bootstrap, cluster) do
-    {:ok, coordinator_nodes} = cluster.fetch_coordinator_nodes()
-
-    %{
-      coordinators: coordinator_nodes,
-      parameters: build_parameters(bootstrap[:parameters], coordinator_nodes),
-      policies: build_policies(bootstrap[:policies])
-    }
-  end
-
-  defp build_parameters(nil, coordinator_nodes), do: default_parameters(coordinator_nodes)
-
-  defp build_parameters(params, coordinator_nodes) do
-    defaults = default_parameters(coordinator_nodes)
-
-    %{
-      nodes: coordinator_nodes,
-      desired_coordinators: params[:desired_coordinators] || defaults.desired_coordinators,
-      desired_logs: params[:desired_logs] || defaults.desired_logs,
-      desired_replication_factor: params[:desired_replication_factor] || defaults.desired_replication_factor,
-      desired_commit_proxies: params[:desired_commit_proxies] || defaults.desired_commit_proxies,
-      desired_read_version_proxies: params[:desired_read_version_proxies] || defaults.desired_read_version_proxies,
-      ping_rate_in_hz: params[:ping_rate_in_hz] || defaults.ping_rate_in_hz,
-      retransmission_rate_in_hz: params[:retransmission_rate_in_hz] || defaults.retransmission_rate_in_hz,
-      transaction_window_in_ms: params[:transaction_window_in_ms] || defaults.transaction_window_in_ms
-    }
-  end
-
-  defp default_parameters(coordinator_nodes) do
-    %{
-      nodes: coordinator_nodes,
-      desired_coordinators: length(coordinator_nodes),
-      desired_logs: 1,
-      desired_replication_factor: 1,
-      desired_commit_proxies: 1,
-      desired_read_version_proxies: 1,
-      ping_rate_in_hz: 10,
-      retransmission_rate_in_hz: 20,
-      transaction_window_in_ms: 5_000
-    }
-  end
-
-  defp build_policies(nil), do: %{allow_volunteer_nodes_to_join: true}
-  defp build_policies(p), do: %{allow_volunteer_nodes_to_join: p[:allow_volunteer_nodes_to_join] || false}
-
-  @spec get_object_storage_backend(module()) :: {:ok, ObjectStorage.backend()} | {:error, :no_object_storage}
-  defp get_object_storage_backend(cluster) do
-    node_config = cluster.node_config()
-
-    # Check for explicit object_storage config
-    case Keyword.fetch(node_config, :object_storage) do
-      {:ok, backend} ->
-        {:ok, backend}
-
-      :error ->
-        # Derive from path config (same logic as cluster_supervisor and persistence_phase)
-        derive_object_storage_from_path(node_config)
-    end
-  end
-
-  defp derive_object_storage_from_path(node_config) do
-    # Try to find a path from any capability config
-    path =
-      Enum.find_value([:coordinator, :log, :storage, :materializer, :coordination], fn capability ->
-        node_config
-        |> Keyword.get(capability, [])
-        |> Keyword.get(:path)
-      end)
-
-    if path do
-      object_storage_root = Path.join(path, "object_storage")
-      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
-      {:ok, backend}
-    else
-      {:error, :no_object_storage}
-    end
   end
 end

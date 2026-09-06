@@ -8,9 +8,15 @@
   "description": "LocalFilesystem put_if_version_matches performs a non-atomic read/compare followed by put, allowing multiple concurrent writers with one token to return :ok and overwrite each other. See linked GitHub issue for reproduction and success criteria.",
   "id": "bedrock-162",
   "labels": [],
+  "comments": [
+    {
+      "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/302. Blocks bedrock-7i1 / #296 because recovery generation reservation requires a true single-winner CAS primitive. Independent reproduction: eight same-token writers produced six :ok results.",
+      "timestamp": "2026-09-06T03:26:51Z"
+    }
+  ],
   "priority": 1,
   "status": "in_progress",
   "title": "Make LocalFilesystem version-matched writes atomic",
   "type": "bug",
-  "updated_at": "2026-09-06T03:26:44Z"
+  "updated_at": "2026-09-06T03:26:51Z"
 }

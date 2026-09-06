@@ -28,11 +28,15 @@
     {
       "text": "Resumed on exact0c2e2524 reviewed295+302. Strengthened REDs cover ignored behind, absent reopened checkpoint, before-quorum launch, refreshed token stale overwrite, lost CAS reply, schema fields, S3 incoherent GET/HEAD token, and future format admission.296-plan.md now complete executable protocol plan with pure persisted reducer/controller/reservation/ack semantics and quiescent fail-closed migration. No production edits; requesting cold review.",
       "timestamp": "2026-09-06T04:40:25Z"
+    },
+    {
+      "text": "Cold amendments done: replay starts replicated floor0 and installs explicit committed G; new actual Server.init/DiskRaftLog A8/B10 test varies bootstrap7/9/14 and checkpoint/no-checkpoint. Plan specifies actual fatal Director exit, finite task/conflict/deadline policy,3-send ack exhaustion, bootstrap accepted-state table with migrated legacy completion lacking publication_id.296-amended-red.log captures baseline. No production edits; renewed cold review requested.",
+      "timestamp": "2026-09-06T04:56:04Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Allocate recovery generations through consensus and reserve bootstrap publication",
   "type": "task",
-  "updated_at": "2026-09-06T04:40:25Z"
+  "updated_at": "2026-09-06T04:56:04Z"
 }

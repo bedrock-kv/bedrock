@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Snapshots follow a policy instead of a coincidence.** A materializer
+  uploaded a snapshot whenever a compaction happened to finish — the moment
+  the bundle-shaped files exist, and the only moment one was ever taken.
+  Three new manifest params arm a policy instead: `snapshot_interval_ms`,
+  `snapshot_after_bytes`, and `snapshot_after_transactions`, a disjunction
+  over the time and the work since the last upload. An armed worker checks
+  on a timer and starts the compaction that produces the snapshot; at any
+  compaction the same policy decides whether the free opportunity is worth
+  an upload. A worker with none of the params set is unchanged: no timer,
+  and an upload at every compaction. The spin-down snapshot stays
+  unconditional — it is the only artifact bridging spin-down to revival.
+
 - **Olivine keeps append-only workloads readable after page splits.** Keys
   above every stored page boundary now extend the actual rightmost page
   instead of returning to page 0 and overlapping later ranges. Recovery

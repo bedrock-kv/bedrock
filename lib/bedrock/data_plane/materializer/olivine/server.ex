@@ -303,6 +303,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
       {:ok, state} ->
         Telemetry.trace_startup_complete()
         schedule_idle_check(state)
+        schedule_snapshot_check(state)
         noreply(state, continue: :report_health_to_foreman)
 
       {:error, reason} ->
@@ -364,6 +365,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
       noreply(t, continue: :maybe_process_transactions)
     end
   end
+
+  # Periodic snapshot check (bedrock-zi44), armed only when the worker
+  # was configured with a trigger. Olivine's snapshot IS a compaction
+  # output — the bundle the materializer restores from is exactly what
+  # Database.compact/4 writes — so a scheduled snapshot starts the same
+  # background compaction the :compact call does, and the upload rides
+  # its completion, where the policy is consulted a second time.
+  def handle_info(:snapshot_check, %State{} = t),
+    do: t |> maybe_start_snapshot_compaction() |> schedule_snapshot_check() |> noreply()
 
   # Discard transactions when locked
   def handle_info({:apply_transactions, _encoded_transactions}, %State{mode: :locked} = t), do: noreply(t)
@@ -625,6 +635,41 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   defp schedule_idle_check(%State{idle_timeout: idle_timeout} = t) do
     Process.send_after(self(), :idle_check, max(div(idle_timeout, 4), 10))
     t
+  end
+
+  # An unarmed policy schedules nothing at all: a materializer that was
+  # never configured with a trigger keeps exactly the behaviour it had
+  # before bedrock-zi44 — no timer, no scheduled compaction, and an
+  # upload at every compaction someone else starts.
+  @spec schedule_snapshot_check(State.t()) :: State.t()
+  defp schedule_snapshot_check(%State{} = t) do
+    case SnapshotPolicy.check_interval_ms(t.snapshot_policy) do
+      :never ->
+        t
+
+      after_ms ->
+        Process.send_after(self(), :snapshot_check, after_ms)
+        t
+    end
+  end
+
+  # Making a snapshot costs a compaction, so the reasons NOT to start one
+  # are the same ones that defer a spin-down: no snapshot handle means
+  # nowhere to put it, a locked worker is mid-recovery, and a compaction
+  # already running would be the one this tick wanted anyway.
+  @spec maybe_start_snapshot_compaction(State.t()) :: State.t()
+  defp maybe_start_snapshot_compaction(%State{snapshot: nil} = t), do: t
+  defp maybe_start_snapshot_compaction(%State{mode: :locked} = t), do: t
+  defp maybe_start_snapshot_compaction(%State{compaction_task: task} = t) when not is_nil(task), do: t
+
+  defp maybe_start_snapshot_compaction(%State{} = t) do
+    if SnapshotPolicy.armed?(t.snapshot_policy) and
+         SnapshotPolicy.decide(t.snapshot_policy, System.monotonic_time(:millisecond)) == :upload do
+      {:ok, task} = Logic.start_compaction(t)
+      %{t | compaction_task: task, allow_window_advancement: false}
+    else
+      t
+    end
   end
 
   # The snapshot upload gates the spin-down: it is the only durable

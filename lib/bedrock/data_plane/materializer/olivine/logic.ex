@@ -33,7 +33,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     cluster = Keyword.get(opts, :cluster)
     {shard_tag, shard_num} = normalize_shard(Keyword.get(opts, :shard_id))
     idle_timeout = Keyword.get(opts, :idle_timeout, :infinity)
-    snapshot_policy = Keyword.get(opts, :snapshot_policy, %SnapshotPolicy{})
+
+    snapshot_policy =
+      opts
+      |> Keyword.get(:snapshot_policy, %SnapshotPolicy{})
+      |> SnapshotPolicy.started(System.monotonic_time(:millisecond))
+
     snapshot = build_snapshot_handle(cluster, shard_tag)
 
     with :ok <- ensure_directory_exists(path),

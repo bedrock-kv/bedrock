@@ -137,7 +137,14 @@ defmodule Bedrock.Repo do
   @doc """
   Gets a value for the given key, returning the value or `nil` if not found.
 
-  Keys must be binary and no larger than 16KiB.
+  Keys must be binary and no larger than 16KiB. Reads are bounded below
+  `Bedrock.end_of_user_keyspace/0` (`0xFF`) unless the transaction was opened
+  with `read_system_keys: true`; a read at or above the bound fails the
+  transaction with `{:error, {:key_out_of_range, key}}` instead of being
+  attempted. The same bound applies to `select/1` and `get_range/1` — note
+  that a range built with the `:end` sentinel ends at
+  `Bedrock.end_of_keyspace/0` and is therefore out of range for an ordinary
+  read; use `Bedrock.end_of_user_keyspace/0` as the widest legal end.
 
   ## Options
 

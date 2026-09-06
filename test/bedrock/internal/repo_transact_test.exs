@@ -23,6 +23,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.Repo
   alias Bedrock.Internal.Repo.TransactionContext
+  alias Bedrock.KeySelector
 
   defmodule TestRepo do
     use Bedrock.Repo, cluster: MockCluster
@@ -310,6 +311,32 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert result == {:error, {:key_out_of_range, key}}
       assert :counters.get(attempts, 1) == 1
       assert TransactionContext.builder(TestRepo) == nil
+    end
+
+    test "select and get_range surface the bound the same way get does" do
+      # Three entry points, one classification. `{:key_out_of_range, key}` has
+      # a TUPLE reason, so without its own clause each of these would have
+      # taken a different wrong path: get/select fall through to the
+      # is_atom(reason) arm, and the range stream raises "Range query failed".
+      selector_result =
+        Repo.transact(
+          NoCluster,
+          TestRepo,
+          fn -> Repo.select(TestRepo, KeySelector.first_greater_or_equal(<<0xFF, "/system/x">>)) end,
+          transaction_system_layout: @minimal_tsl
+        )
+
+      assert selector_result == {:error, {:key_out_of_range, <<0xFF, "/system/x">>}}
+
+      range_result =
+        Repo.transact(
+          NoCluster,
+          TestRepo,
+          fn -> TestRepo |> Repo.get_range("a", <<0xFF, 0x00>>) |> Enum.to_list() end,
+          transaction_system_layout: @minimal_tsl
+        )
+
+      assert range_result == {:error, {:key_out_of_range, <<0xFF, 0x00>>}}
     end
 
     test "read_system_keys: true lets the same read through to routing" do

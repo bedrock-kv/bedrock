@@ -19,11 +19,16 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
   only sets and clears, exactly FDB's isMetadataMutation), so no view can
   diverge from one.
 
-  The conflict sections are bounded by the same rule (bedrock-q67.26). They
-  are DECLARED, not derived: an encoded transaction can name ranges it never
-  mutates, and a user commit naming a system range would abort every system
-  transaction that touches it. Range endpoints may sit AT the bound, because
-  an exclusive end there covers the whole legal range.
+  The conflict sections are bounded too (bedrock-q67.26). They are DECLARED,
+  not derived: an encoded transaction can name ranges it never mutates. The
+  two sections get different bounds, as they do in FDB (getMaxWriteKey vs
+  getMaxReadKey): a WRITE conflict enters resolver history and aborts
+  everyone who read that range, so it is bounded by the commit's mode; a READ
+  conflict is only checked against history and can abort nothing but its own
+  transaction, so it is bounded only by the end of the keyspace - which is
+  also what makes a legitimate read_system_keys transaction committable in
+  :user mode. Range endpoints may sit AT the bound, because an exclusive end
+  there covers the whole legal range.
   """
   use ExUnit.Case, async: true
 
@@ -32,6 +37,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Internal.TransactionBuilder.Tx
   alias Bedrock.Test.DataPlane.FinalizationTestSupport, as: Support
 
   defp encode(mutations, conflict_key) do
@@ -266,33 +272,36 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
     end
   end
 
-  test "a user commit cannot declare a read conflict over the system keyspace" do
-    # The mutations are unimpeachable; the read-conflict range is the whole
-    # attack. Left unchecked it enters resolver history and aborts the next
-    # system transaction that writes there.
+  test "a user commit cannot declare a write conflict over the system keyspace" do
+    # The mutations are unimpeachable; the write-conflict range is the whole
+    # attack. Left unchecked it enters resolver history and aborts every
+    # system transaction that read there.
     system_range = {<<0xFF, "/system/shard/">>, <<0xFF, "/system/shard0">>}
     {system_start, _} = system_range
 
-    batch = batch_of([{reply_to_self(:tx), encode_conflicts([system_range], [{"a", "a\0"}]), :user}])
+    batch = batch_of([{reply_to_self(:tx), encode_conflicts([], [{"a", "a\0"}, system_range]), :user}])
 
     assert {:ok, 1, 0} = finalize(batch)
     assert_receive {:tx, {:error, {:key_out_of_range, ^system_start}}}
   end
 
-  test "a user commit cannot declare a write conflict over the system keyspace" do
-    eok = Bedrock.end_of_keyspace()
+  test "a user commit MAY declare a read conflict over the system keyspace" do
+    # A read conflict is only checked against history - it can abort nothing
+    # but its own transaction - and it is exactly what a legitimate
+    # read_system_keys transaction produces for every non-snapshot system
+    # read. Rejecting it here would make that option unusable, since a client
+    # commit is always :user. The narrower read bound is the client's.
+    system_range = {<<0xFF, "/system/config/">>, <<0xFF, "/system/config0">>}
 
-    batch =
-      batch_of([
-        {reply_to_self(:tx), encode_conflicts([], [{"a", "a\0"}, {Bedrock.end_of_user_keyspace(), eok}]), :user}
-      ])
+    batch = batch_of([{reply_to_self(:tx), encode_conflicts([system_range], [{"a", "a\0"}]), :user}])
 
-    assert {:ok, 1, 0} = finalize(batch)
-    assert_receive {:tx, {:error, {:key_out_of_range, ^eok}}}
+    assert {:ok, 0, 1} = finalize(batch)
+    assert_receive {:tx, {:ok, _version, _index}}
   end
 
-  test "a system commit may declare the conflict ranges a user commit may not" do
+  test "a system commit may declare the write conflicts a user commit may not" do
     system_range = {<<0xFF, "/system/shard/">>, <<0xFF, "/system/shard0">>}
+    {system_start, _} = system_range
 
     batch =
       batch_of([
@@ -303,16 +312,36 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
     assert {:ok, 1, 1} = finalize(batch)
 
     assert_receive {:system_tx, {:ok, _version, _index}}
-    assert_receive {:user_tx, {:error, {:key_out_of_range, _}}}
+    assert_receive {:user_tx, {:error, {:key_out_of_range, ^system_start}}}
   end
 
-  test "even a system commit cannot declare a conflict range past the end of the keyspace" do
+  test "no commit may declare a conflict range past the end of the keyspace" do
     past = Bedrock.end_of_keyspace() <> <<0x01>>
 
-    batch = batch_of([{reply_to_self(:tx), encode_conflicts([], [{<<0xFF, "/system/x">>, past}]), :system}])
+    for {name, mode, tx} <- [
+          {:write_tx, :system, encode_conflicts([], [{<<0xFF, "/system/x">>, past}])},
+          {:read_tx, :user, encode_conflicts([{<<0xFF, "/system/x">>, past}], [{"a", "a\0"}])}
+        ] do
+      assert {:ok, 1, 0} = finalize(batch_of([{reply_to_self(name), tx, mode}]))
+      assert_receive {^name, {:error, {:key_out_of_range, ^past}}}
+    end
+  end
 
-    assert {:ok, 1, 0} = finalize(batch)
-    assert_receive {:tx, {:error, {:key_out_of_range, ^past}}}
+  test "a real read_system_keys transaction commits in user mode" do
+    # The shape the client actually produces: a non-snapshot system read
+    # registers its read-conflict key, and the transaction still commits as
+    # :user because read_system_keys widens reads only. Built through Tx
+    # rather than hand-encoded so the two gates are tested against each
+    # other, not against a fixture.
+    tx =
+      Tx.new()
+      |> Tx.add_read_conflict_key(<<0xFF, "/system/config/desired_commit_proxies">>)
+      |> Tx.set("user/a", "1", [])
+
+    batch = batch_of([{reply_to_self(:tx), Tx.commit(tx, Version.from_integer(1)), :user}])
+
+    assert {:ok, 0, 1} = finalize(batch)
+    assert_receive {:tx, {:ok, _version, _index}}
   end
 
   test "a conflict range ending exactly at the mode's bound is legal" do
@@ -330,7 +359,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization.IngressRejectionTest do
     batch =
       batch_of([
         {reply_to_self(:ok_tx), encode([{:set, "a", "1"}], "a"), :user},
-        {reply_to_self(:bad_tx), encode_conflicts([system_range], [system_range]), :user}
+        {reply_to_self(:bad_tx), encode_conflicts([], [system_range]), :user}
       ])
 
     assert {:ok, 1, 1} = finalize(batch)

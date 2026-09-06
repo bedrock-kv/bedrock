@@ -293,7 +293,7 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   # boundary failed the whole batch. clear_range ends are exclusive, so an
   # end AT the bound is legal. The mutation AND conflict sections are both
   # checked - see first_rejected_conflict_range/2 for why the declared
-  # ranges need their own gate.
+  # ranges need their own gate, and why the read conflicts get a wider one.
   #
   # Atomics are bounded like any other mutation, nothing more - FDB parity.
   # The metadata views cannot diverge from an atomic because atomics never
@@ -332,9 +332,9 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   @spec first_rejection(Transaction.encoded(), Batch.commit_mode()) ::
           {:key_out_of_range, Bedrock.key()} | :invalid_transaction | nil
   defp first_rejection(transaction, commit_mode) do
-    bound = keyspace_bound(commit_mode)
+    write_bound = keyspace_bound(commit_mode)
 
-    first_rejected_mutation(transaction, bound) || first_rejected_conflict_range(transaction, bound)
+    first_rejected_mutation(transaction, write_bound) || first_rejected_conflict_range(transaction, write_bound)
   rescue
     error ->
       trace_ingress_validation_failed(error)
@@ -366,24 +366,34 @@ defmodule Bedrock.DataPlane.CommitProxy.Finalization do
   end
 
   # The conflict sections are DECLARED, not derived from the mutations: an
-  # encoded transaction can name ranges it never touches, and a user commit
-  # naming a system range would abort every system transaction that writes
-  # there - the resolver has no idea who asked. FDB bounds them in the
-  # client (ReadYourWrites.actor.cpp:1951 addReadConflictRange, :2467
-  # addWriteConflictRange, both against getMaxRead/WriteKey) and checks them
-  # again at the proxy, per transaction, before resolution
-  # (CommitProxyServer.actor.cpp:362-388). This is that second check; a
-  # transaction rejected here is replaced with an empty one, so its ranges
-  # never enter resolver history.
+  # encoded transaction can name ranges it never touches. FDB bounds them in
+  # the client (ReadYourWrites.actor.cpp:1951 addReadConflictRange, :2467
+  # addWriteConflictRange) and checks them again at the proxy, per
+  # transaction, before resolution (CommitProxyServer.actor.cpp:362-388).
+  # This is that second check; a transaction rejected here is replaced with
+  # an empty one, so its ranges never enter resolver history.
+  #
+  # The two sections get DIFFERENT bounds, as they do in FDB
+  # (getMaxWriteKey vs getMaxReadKey), because they do different damage. A
+  # write conflict is ADDED to resolver history and aborts everyone who read
+  # that range, so a user commit naming a system range would abort the
+  # system transactions writing there - that one is gated by who is
+  # committing. A read conflict is only CHECKED against history and can
+  # abort nothing but its own transaction, so it is gated only by the end of
+  # the legal keyspace. Gating it by the commit mode instead would make
+  # read_system_keys unusable: every non-snapshot system read registers its
+  # conflict, and a client commit is always :user. The narrower read bound
+  # is the client's, enforced in the transaction builder - FDB's
+  # READ_SYSTEM_KEYS, same trust model.
   #
   # Both endpoints are bounds rather than addressed keys, so either may sit
   # AT the bound: an exclusive end there covers the whole legal range, and a
   # degenerate range starting there is empty.
-  defp first_rejected_conflict_range(transaction, bound) do
+  defp first_rejected_conflict_range(transaction, write_bound) do
     case Transaction.read_write_conflicts(transaction) do
       {:ok, {{_read_version, read_conflicts}, write_conflicts}} ->
-        Enum.find_value(read_conflicts, &rejected_range(&1, bound)) ||
-          Enum.find_value(write_conflicts, &rejected_range(&1, bound))
+        Enum.find_value(read_conflicts, &rejected_range(&1, Bedrock.end_of_keyspace())) ||
+          Enum.find_value(write_conflicts, &rejected_range(&1, write_bound))
 
       {:error, _} ->
         :invalid_transaction

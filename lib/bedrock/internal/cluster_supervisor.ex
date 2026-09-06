@@ -369,18 +369,33 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     end
   end
 
+  @doc """
+  Resolve the node configuration for a cluster module.
+
+  The static `use` config supplies compile-time defaults, the `otp_app`
+  application environment overrides them key by key (so `config/runtime.exs`
+  takes effect without recompiling), and the module's optional `init/1`
+  callback gets the last word.
+  """
   @spec node_config(Cluster.t(), otp_app :: atom() | nil, static_config :: Keyword.t() | nil) ::
           Keyword.t()
   def node_config(module, otp_app, static_config) do
-    case static_config do
-      nil when otp_app != nil ->
-        Application.get_env(otp_app, module, [])
+    (static_config || [])
+    |> Keyword.merge(app_env_config(module, otp_app))
+    |> apply_cluster_init(module)
+  end
 
-      nil ->
-        []
+  @spec app_env_config(Cluster.t(), otp_app :: atom() | nil) :: Keyword.t()
+  defp app_env_config(_module, nil), do: []
+  defp app_env_config(module, otp_app), do: Application.get_env(otp_app, module, [])
 
-      config ->
-        config
+  @spec apply_cluster_init(Keyword.t(), Cluster.t()) :: Keyword.t()
+  defp apply_cluster_init(config, module) do
+    if function_exported?(module, :init, 1) do
+      {:ok, config} = module.init(config)
+      config
+    else
+      config
     end
   end
 

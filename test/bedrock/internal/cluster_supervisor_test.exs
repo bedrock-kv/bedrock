@@ -11,6 +11,13 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
 
   defmock(Bedrock.MockCluster, for: Bedrock.Cluster)
 
+  # `init/1` is an optional callback, but Mox defines it on the mock anyway.
+  # Stub the pass-through that a cluster module without an override provides.
+  setup do
+    stub(Bedrock.MockCluster, :init, &{:ok, &1})
+    :ok
+  end
+
   # Test helpers
   defp expect_cluster_name(cluster, name) do
     expect(cluster, :name, fn -> name end)

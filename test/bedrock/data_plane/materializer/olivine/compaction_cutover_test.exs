@@ -109,6 +109,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
     Transaction.encode(%{mutations: [{:set, "key", value}], commit_version: version})
   end
 
+  # One new key per version, so a version applied twice is visible in the count.
+  defp distinct_slice(version, key) do
+    Transaction.encode(%{mutations: [{:set, key, "v"}], commit_version: version})
+  end
+
+  defp await_key(pid, version, key) do
+    assert {:ok, "v"} = GenServer.call(pid, {:get, key, version, [wait_ms: 15_000]}, 20_000)
+  end
+
   # Generous waits: under full-suite parallelism the stream round-trips
   # (discovery, pull, apply, read wake-up) share cores with everything else.
   defp await_value(pid, version, expected) do
@@ -175,6 +184,43 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
     resumed_from = Version.increment(durable_version)
     assert_receive {:pulled, ^resumed_from}, 15_000
     assert_pulls_monotonic(resumed_from)
+  end
+
+  # The rewind is the whole point of the cutover, so the key count has to
+  # rewind with it: the replayed suffix adds its keys a second time, and a
+  # count carried over from the live index would count them twice.
+  test "the key count rewinds with the index and is rebuilt by the replay",
+       %{tmp_dir: tmp_dir} do
+    {:ok, shard_server} = ReplayShardServer.start_link(self())
+    {:ok, log_stub} = StubLog.start_link(shard_server)
+
+    pid = start_worker(tmp_dir)
+    unlock_with_stream(pid, log_stub)
+
+    v1000 = Version.from_integer(1_000)
+    v2000 = Version.from_integer(2_000)
+    v3000 = Version.from_integer(3_000)
+
+    :ok = ReplayShardServer.append(shard_server, v1000, distinct_slice(v1000, "k1"))
+    await_key(pid, v1000, "k1")
+
+    state = :sys.get_state(pid)
+    {:ok, task} = Logic.start_compaction(state)
+    assert_receive {:compaction_ready, _, _, _, _, _, _, _, _, _, _, _} = cutover_msg, 10_000
+    Task.await(task)
+
+    :ok = ReplayShardServer.append(shard_server, v2000, distinct_slice(v2000, "k2"))
+    :ok = ReplayShardServer.append(shard_server, v3000, distinct_slice(v3000, "k3"))
+    await_key(pid, v3000, "k3")
+
+    assert {:ok, %{n_keys: 3}} = GenServer.call(pid, {:info, [:n_keys]})
+
+    send(pid, cutover_msg)
+
+    # After the replay all three keys are back — and counted exactly once.
+    await_key(pid, v3000, "k3")
+    assert {:ok, %{n_keys: 3}} = GenServer.call(pid, {:info, [:n_keys]})
+    assert {:ok, %{key_ranges: [{"k1", "k3"}]}} = GenServer.call(pid, {:info, [:key_ranges]})
   end
 
   test "a superseded puller's queued ingest is acknowledged and discarded",

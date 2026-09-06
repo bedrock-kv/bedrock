@@ -196,8 +196,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
 
     {new_index, new_database, new_id_allocator, modified_pages} = IndexUpdate.finish(update)
 
-    %{keys_added: keys_added, keys_removed: keys_removed, keys_changed: keys_changed} = update
-    new_n_keys = index_manager.n_keys + keys_added - keys_removed
+    %{key_count_delta: key_count_delta} = update
+    new_n_keys = index_manager.n_keys + key_count_delta
 
     {updated_data_db, _} = new_database
     this_version_ended_at_offset = updated_data_db.file_offset
@@ -211,7 +211,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
         index_manager.output_queue
       )
 
-    Telemetry.trace_index_update_complete(keys_added, keys_removed, keys_changed, new_n_keys)
+    Telemetry.trace_index_update_complete(key_count_delta, new_n_keys)
 
     {%{
        index_manager
@@ -257,7 +257,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
   end
 
   @spec get_key_ranges(t()) :: [{Bedrock.key(), Bedrock.key()}]
-  defp get_key_ranges(%{versions: [{_, {current_index, _}} | _]}), do: [{current_index.min_key, current_index.max_key}]
+  defp get_key_ranges(%{versions: [{_, {current_index, _}} | _]}), do: [Index.key_bounds(current_index)]
   defp get_key_ranges(%{versions: []}), do: []
 
   @doc """

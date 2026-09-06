@@ -43,10 +43,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
           id_allocator: IdAllocator.t(),
           modified_page_ids: MapSet.t(Page.id()),
           pending_operations: %{Page.id() => %{Bedrock.key() => {:set, Bedrock.version()} | :clear}},
-          keys_added: non_neg_integer(),
-          keys_removed: non_neg_integer(),
-          keys_changed: non_neg_integer(),
-          track_statistics: boolean()
+          key_count_delta: integer()
         }
 
   defstruct [
@@ -56,15 +53,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
     :id_allocator,
     :modified_page_ids,
     :pending_operations,
-    keys_added: 0,
-    keys_removed: 0,
-    keys_changed: 0,
-    track_statistics: false
+    key_count_delta: 0
   ]
 
   @doc """
   Creates an IndexUpdate for mutation tracking from an Index, version, and id allocator.
-  Statistics tracking is disabled by default for maximum performance.
   """
   @spec new(Index.t(), Bedrock.version(), IdAllocator.t(), Database.t()) :: t()
   def new(%Index{} = index, version, id_allocator, database) do
@@ -75,25 +68,21 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
       id_allocator: id_allocator,
       modified_page_ids: MapSet.new(),
       pending_operations: %{},
-      keys_added: 0,
-      keys_removed: 0,
-      keys_changed: 0,
-      # Default to false for maximum performance
-      track_statistics: false
+      key_count_delta: 0
     }
   end
 
   @doc """
-  Finishes the IndexUpdate, returning the final Index, Database, IdAllocator, and key change counts.
+  Finishes the IndexUpdate, returning the final Index, Database, IdAllocator, and modified pages.
+
+  The net change in live keys is read from the `key_count_delta` field, which
+  is only complete once `process_pending_operations/1` has run.
   """
   @spec finish(t()) :: {Index.t(), Database.t(), IdAllocator.t(), %{Page.id() => {Page.t(), Page.id()}}}
   def finish(%__MODULE__{
         index: index,
         id_allocator: id_allocator,
         database: database,
-        keys_added: _keys_added,
-        keys_removed: _keys_removed,
-        keys_changed: _keys_changed,
         modified_page_ids: modified_page_ids
       }) do
     modified_pages = Map.new(modified_page_ids, &{&1, Index.get_page_with_next_id!(index, &1)})
@@ -177,11 +166,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
         page = Index.get_page!(index_update.index, single_page_id)
         keys_to_clear = extract_keys_in_range(page, start_key, end_key)
 
+        # The cleared keys become pending clears on a page that survives, so
+        # the key count they cost is picked up when that page is processed.
         %{
           index_update
           | pending_operations:
-              add_clear_operations_for_keys(index_update.pending_operations, single_page_id, keys_to_clear),
-            keys_removed: index_update.keys_removed + length(keys_to_clear)
+              add_clear_operations_for_keys(index_update.pending_operations, single_page_id, keys_to_clear)
         }
 
       [first_page_id | remaining_page_ids] ->
@@ -211,39 +201,32 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
           |> Enum.map(&Page.key_count/1)
           |> Enum.sum()
 
-        {page_0_keys_to_clear, final_operations} =
+        final_operations =
           if 0 in middle_page_ids do
             page_0 = Index.get_page!(index_update.index, 0)
             page_0_keys = extract_keys_in_range(page_0, start_key, end_key)
 
-            operations =
-              index_update.pending_operations
-              |> Map.drop(middle_page_ids_excluding_page_zero)
-              |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
-              |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
-              |> add_clear_operations_for_keys(0, page_0_keys)
-
-            {page_0_keys, operations}
+            index_update.pending_operations
+            |> Map.drop(middle_page_ids_excluding_page_zero)
+            |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
+            |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
+            |> add_clear_operations_for_keys(0, page_0_keys)
           else
-            operations =
-              index_update.pending_operations
-              |> Map.drop(middle_page_ids_excluding_page_zero)
-              |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
-              |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
-
-            {[], operations}
+            index_update.pending_operations
+            |> Map.drop(middle_page_ids_excluding_page_zero)
+            |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
+            |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
           end
 
-        total_keys_removed =
-          length(first_keys_to_clear) + length(last_keys_to_clear) +
-            middle_keys_count + length(page_0_keys_to_clear)
-
+        # Only the wholesale-deleted middle pages are accounted for here: the
+        # boundary (and page 0) keys become pending clears on pages that
+        # survive, and are counted when those pages are processed.
         %{
           index_update
           | index: Index.delete_pages(index_update.index, middle_page_ids_excluding_page_zero),
             id_allocator: IdAllocator.recycle_ids(index_update.id_allocator, middle_page_ids_excluding_page_zero),
             pending_operations: final_operations,
-            keys_removed: index_update.keys_removed + total_keys_removed
+            key_count_delta: index_update.key_count_delta - middle_keys_count
         }
     end
   end
@@ -265,12 +248,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
           Map.put(index_update.pending_operations, insertion_page, %{key => set_operation})
       end
 
-    # Atomics are always treated as changes (even if the key didn't exist before)
     %{
       index_update
       | pending_operations: updated_pending_operations,
-        database: database,
-        keys_changed: index_update.keys_changed + 1
+        database: database
     }
   end
 
@@ -353,24 +334,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
   defp apply_mutations_to_page(%__MODULE__{} = index_update, page_id, page_mutations) do
     page = Index.get_page!(index_update.index, page_id)
 
-    # Only calculate statistics if tracking is enabled
-    updated_index_update =
-      if index_update.track_statistics do
-        stats = calculate_mutation_stats(page, page_mutations)
-
-        %{
-          index_update
-          | keys_added: index_update.keys_added + stats.added,
-            keys_changed: index_update.keys_changed + stats.changed,
-            keys_removed: index_update.keys_removed + stats.removed
-        }
-      else
-        index_update
-      end
-
     # Get segments without building final binary yet
     {segments, key_count, rightmost_key} =
       Page.apply_operations_as_segments(page, page_mutations)
+
+    # The merge already knows how many keys the page ends up holding, so the
+    # index-wide key count follows from the before/after page counts — exactly,
+    # and without a second pass over the keys. Splits preserve the total, so a
+    # page that splits still contributes only its own delta.
+    updated_index_update = %{
+      index_update
+      | key_count_delta: index_update.key_count_delta + key_count - Page.key_count(page)
+    }
 
     cond do
       key_count == 0 ->
@@ -470,54 +445,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
     end
   rescue
     _ -> <<>>
-  end
-
-  # Calculate mutation statistics using a more efficient approach
-  # Instead of building a MapSet, scan the page directly for each key
-  defp calculate_mutation_stats(page, page_mutations) do
-    # For small mutation batches, checking keys individually is faster than building a MapSet
-    if map_size(page_mutations) <= 10 do
-      calculate_mutation_stats_direct(page, page_mutations)
-    else
-      # For larger batches, MapSet is worth the overhead
-      calculate_mutation_stats_with_mapset(page, page_mutations)
-    end
-  end
-
-  defp calculate_mutation_stats_direct(page, page_mutations) do
-    Enum.reduce(page_mutations, %{added: 0, changed: 0, removed: 0}, fn {key, op}, stats ->
-      key_exists = page_contains_key?(page, key)
-
-      case {op, key_exists} do
-        {{:set, _}, true} -> %{stats | changed: stats.changed + 1}
-        {{:set, _}, false} -> %{stats | added: stats.added + 1}
-        {:clear, true} -> %{stats | removed: stats.removed + 1}
-        {:clear, false} -> stats
-      end
-    end)
-  end
-
-  defp calculate_mutation_stats_with_mapset(page, page_mutations) do
-    existing_keys = page |> Page.keys() |> MapSet.new()
-
-    Enum.reduce(page_mutations, %{added: 0, changed: 0, removed: 0}, fn {key, op}, stats ->
-      key_exists = MapSet.member?(existing_keys, key)
-
-      case {op, key_exists} do
-        {{:set, _}, true} -> %{stats | changed: stats.changed + 1}
-        {{:set, _}, false} -> %{stats | added: stats.added + 1}
-        {:clear, true} -> %{stats | removed: stats.removed + 1}
-        {:clear, false} -> stats
-      end
-    end)
-  end
-
-  # Fast binary scan to check if a key exists in a page
-  defp page_contains_key?(page, target_key) do
-    case Page.locator_for_key(page, target_key) do
-      {:ok, _locator} -> true
-      {:error, :not_found} -> false
-    end
   end
 
   # Check if page boundaries (first_key/last_key) changed

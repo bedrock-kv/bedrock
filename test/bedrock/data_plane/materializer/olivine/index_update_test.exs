@@ -2,7 +2,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
   @moduledoc """
   Behavioral tests for IndexUpdate mutation processing: pending-operation
   merging, multi-page range clears, page 0 protection, chain-following edge
-  cases, empty-page handling, statistics tracking, and atomic mutations.
+  cases, empty-page handling, key-count accounting, and atomic mutations.
   """
   use ExUnit.Case, async: true
 
@@ -62,13 +62,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
   defp new_update(index, allocator, database, opts \\ []) do
     version = Keyword.get(opts, :version, Version.from_bytes(<<1::64>>))
-    update = IndexUpdate.new(index, version, allocator, database)
-
-    if Keyword.get(opts, :track_statistics, false) do
-      %{update | track_statistics: true}
-    else
-      update
-    end
+    IndexUpdate.new(index, version, allocator, database)
   end
 
   defp run_mutations(index, allocator, database, mutations, opts \\ []) do
@@ -148,8 +142,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       {_page, next_id} = Index.get_page_with_next_id!(final_index, 1)
       assert next_id == 3
 
-      # keys_removed counts first-page (b, c), middle-page (d, e, f) and last-page (g, h) keys
-      assert update.keys_removed == 7
+      # The delta covers first-page (b, c), middle-page (d, e, f) and last-page (g, h) keys
+      assert update.key_count_delta == -7
     end
 
     test "clear_range followed by sets of in-range keys in the same batch keeps only the re-set keys", %{
@@ -207,7 +201,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       assert all_keys(final_index) == ["f"]
 
       # a, b from page 0 + c, d from the middle page + e from the last page
-      assert update.keys_removed == 5
+      assert update.key_count_delta == -5
     end
   end
 
@@ -225,7 +219,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       {final_index, _db, final_allocator, _modified} = IndexUpdate.finish(update)
 
       assert all_keys(final_index) == ["a", "b", "d", "e"]
-      assert update.keys_removed == 0
+      assert update.key_count_delta == 0
       assert final_allocator.free_ids == []
       assert final_index.page_map |> Map.keys() |> Enum.sort() == [0, 1, 2]
     end
@@ -242,7 +236,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       {final_index, _db, final_allocator, _modified} = IndexUpdate.finish(update)
 
       assert all_keys(final_index) == ["a", "b"]
-      assert update.keys_removed == 2
+      assert update.key_count_delta == -2
 
       # Page 2 became empty, was deleted, and its id recycled
       refute Map.has_key?(final_index.page_map, 2)
@@ -261,7 +255,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       {final_index, _db, final_allocator, _modified} = IndexUpdate.finish(update)
 
       assert all_keys(final_index) == []
-      assert update.keys_removed == 6
+      assert update.key_count_delta == -6
 
       # All non-zero pages are gone and recycled; page 0 survives
       assert Map.keys(final_index.page_map) == [0]
@@ -297,70 +291,78 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     end
   end
 
-  describe "statistics tracking" do
-    test "small mutation batch (direct path) counts added, changed, and removed keys", %{database: database} do
+  describe "key-count accounting" do
+    test "only sets that introduce a key raise the count", %{database: database} do
       {index, allocator} = build_index([{0, ["k1", "k2", "k3"]}])
 
       update =
-        run_mutations(
-          index,
-          allocator,
-          database,
-          [
-            # set on existing key -> changed
-            {:set, "k1", "new-value"},
-            # set on new key -> added
-            {:set, "k9", "fresh"},
-            # clear on existing key -> removed
-            {:clear, "k2"},
-            # clear on missing key -> no count
-            {:clear, "missing"}
-          ],
-          track_statistics: true
-        )
+        run_mutations(index, allocator, database, [
+          # set on an existing key -> no change
+          {:set, "k1", "new-value"},
+          # sets on new keys -> two more keys
+          {:set, "k8", "fresh"},
+          {:set, "k9", "fresh"}
+        ])
 
-      assert update.keys_added == 1
-      assert update.keys_changed == 1
-      assert update.keys_removed == 1
+      assert update.key_count_delta == 2
+
+      {final_index, _db, _allocator, _modified} = IndexUpdate.finish(update)
+      assert all_keys(final_index) == ["k1", "k2", "k3", "k8", "k9"]
+    end
+
+    test "a clear of a key that was never there costs nothing", %{database: database} do
+      {index, allocator} = build_index([{0, ["k1", "k2", "k3"]}])
+
+      update =
+        run_mutations(index, allocator, database, [
+          {:clear, "k1"},
+          {:clear, "k2"},
+          {:clear, "zzz-missing"}
+        ])
+
+      assert update.key_count_delta == -2
+
+      {final_index, _db, _allocator, _modified} = IndexUpdate.finish(update)
+      assert all_keys(final_index) == ["k3"]
+    end
+
+    test "sets and clears in the same batch net out", %{database: database} do
+      {index, allocator} = build_index([{0, ["k1", "k2", "k3"]}])
+
+      update =
+        run_mutations(index, allocator, database, [
+          {:set, "k9", "fresh"},
+          {:clear, "k2"}
+        ])
+
+      assert update.key_count_delta == 0
 
       {final_index, _db, _allocator, _modified} = IndexUpdate.finish(update)
       assert all_keys(final_index) == ["k1", "k3", "k9"]
     end
 
-    test "large mutation batch (MapSet path) counts added, changed, and removed keys", %{database: database} do
-      existing = for i <- 1..8, do: "k#{i}"
+    # A split turns one page into several; the keys move, they do not multiply,
+    # so the delta must still be the number of keys the batch introduced.
+    test "a batch that splits a page counts the added keys once", %{database: database} do
+      existing = for i <- 1..200, do: "k#{String.pad_leading(to_string(i), 4, "0")}"
       {index, allocator} = build_index([{0, existing}])
 
-      # 4 sets on existing keys -> changed
-      # 4 sets on new keys -> added
-      # 3 clears on existing keys -> removed
-      # 1 clear on a missing key -> no count
-      mutations =
-        Enum.map(1..4, fn i -> {:set, "k#{i}", "updated-#{i}"} end) ++
-          Enum.map(1..4, fn i -> {:set, "n#{i}", "new-#{i}"} end) ++
-          Enum.map(5..7, fn i -> {:clear, "k#{i}"} end) ++
-          [{:clear, "zzz-missing"}]
+      new_keys = for i <- 1..100, do: "n#{String.pad_leading(to_string(i), 4, "0")}"
+      update = run_mutations(index, allocator, database, Enum.map(new_keys, &{:set, &1, "v"}))
 
-      assert length(mutations) == 12
-
-      update = run_mutations(index, allocator, database, mutations, track_statistics: true)
-
-      assert update.keys_added == 4
-      assert update.keys_changed == 4
-      assert update.keys_removed == 3
+      assert update.key_count_delta == 100
 
       {final_index, _db, _allocator, _modified} = IndexUpdate.finish(update)
-      assert all_keys(final_index) == Enum.sort(["k1", "k2", "k3", "k4", "k8", "n1", "n2", "n3", "n4"])
+      assert map_size(final_index.page_map) > 1
+      assert length(all_keys(final_index)) == 300
     end
 
-    test "statistics are not accumulated when tracking is disabled", %{database: database} do
-      {index, allocator} = build_index([{0, ["k1", "k2"]}])
+    test "emptying a non-zero page counts every key it held", %{database: database} do
+      {index, allocator} = build_index([{1, ["a", "b"]}])
 
-      update = run_mutations(index, allocator, database, [{:set, "k1", "v"}, {:clear, "k2"}])
+      update = run_mutations(index, allocator, database, [{:clear, "a"}, {:clear, "b"}])
 
-      assert update.keys_added == 0
-      assert update.keys_changed == 0
-      assert update.keys_removed == 0
+      assert update.key_count_delta == -2
     end
   end
 
@@ -370,8 +372,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
       update = run_mutations(index, allocator, database, [{:atomic, :add, "counter", <<5>>}])
 
-      # Atomics are always counted as changes, even for previously-missing keys
-      assert update.keys_changed == 1
+      # An atomic on a missing key materializes it, so the count grows
+      assert update.key_count_delta == 1
 
       {final_index, final_db, _allocator, _modified} = IndexUpdate.finish(update)
 

@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-24T19:56:13Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "Exclusion safety needs a keyspace log record: addresses and OLD generations, not tag lists",
   "type": "task",
-  "updated_at": "2026-08-24T23:06:49Z"
+  "updated_at": "2026-09-06T03:29:58Z"
 }

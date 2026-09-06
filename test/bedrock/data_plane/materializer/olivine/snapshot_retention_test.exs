@@ -50,9 +50,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotRetentionTest do
     end
 
     test "keep_last: 1 floors at the newest, which is never strictly below itself" do
-      versions = [40, 30, 20, 10]
-      assert {:ok, 40} = SnapshotRetention.oldest_to_keep(%SnapshotRetention{keep_last: 1}, versions)
-      assert Enum.reject(versions, &(&1 < 40)) == [40]
+      assert {:ok, 40} = SnapshotRetention.oldest_to_keep(%SnapshotRetention{keep_last: 1}, [40, 30, 20, 10])
     end
   end
 end

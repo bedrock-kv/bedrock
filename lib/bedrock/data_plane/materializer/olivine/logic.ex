@@ -627,28 +627,31 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     end
   end
 
+  # The rescue covers the WHOLE prune, not just the listing it starts
+  # with: `Snapshot.delete_older_than/2` lists again to walk the
+  # deletions, and on the spin-down path this all runs in the worker, so
+  # an exception escaping from either listing would take down a
+  # materializer that had already written its snapshot successfully.
+  #
+  # It is deliberately broad. `Snapshot.list/2` raises when the listing
+  # failed, and once bedrock-q67.21.19 lands it raises again — a
+  # different exception this branch cannot yet name — for an object under
+  # the shard's prefix whose name will not parse. Neither is an empty
+  # history: deciding retention on a listing known to be short would
+  # delete a snapshot the shard still wants, and reporting "nothing to
+  # delete" would hide a prefix growing without bound. The exception
+  # itself goes into the reason, so a genuine bug caught here is still
+  # named for what it is rather than blending into a backend outage.
   @spec delete_below_retention(Snapshot.t(), SnapshotRetention.t()) :: {:ok, non_neg_integer()} | {:error, term()}
   defp delete_below_retention(snapshot, retention) do
-    with {:ok, versions} <- snapshot_versions(snapshot),
-         {:ok, oldest_to_keep} <- SnapshotRetention.oldest_to_keep(retention, versions) do
-      Snapshot.delete_older_than(snapshot, oldest_to_keep)
-    else
-      :keep_all -> {:ok, 0}
-      {:error, reason} -> {:error, reason}
-    end
-  end
+    versions = snapshot |> Snapshot.list() |> Enum.map(fn {version, _key} -> version end)
 
-  @spec snapshot_versions(Snapshot.t()) :: {:ok, [non_neg_integer()]} | {:error, term()}
-  defp snapshot_versions(snapshot) do
-    {:ok, snapshot |> Snapshot.list() |> Enum.map(fn {version, _key} -> version end)}
+    case SnapshotRetention.oldest_to_keep(retention, versions) do
+      :keep_all -> {:ok, 0}
+      {:ok, oldest_to_keep} -> Snapshot.delete_older_than(snapshot, oldest_to_keep)
+    end
   rescue
-    # `Snapshot.list/2` raises when the listing itself failed, and (once
-    # bedrock-q67.21.19 lands) when an object under the shard's prefix
-    # carries a name it cannot parse. Neither is an empty history:
-    # deciding retention on a listing we know is short would delete a
-    # snapshot the shard still keeps, and reporting "nothing to delete"
-    # would hide a prefix growing without bound. Both say so instead.
-    e -> {:error, {:snapshot_listing_failed, Exception.message(e)}}
+    e -> {:error, {:snapshot_prune_failed, e}}
   end
 
   @spec log_prune_outcome({:ok, non_neg_integer()} | {:error, term()}) :: :ok

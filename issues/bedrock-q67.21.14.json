@@ -7,9 +7,15 @@
   "id": "bedrock-q67.21.14",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/304 — pure rename, stacked on #303; full suite 2933 tests 0 failures (identical to base), format/credo/dialyzer clean, cold audit PASS-WITH-NOTES (all substantive notes addressed). Deviations from the ticket's proposed names, both justified in the PR: TSLTypeValidator -\u003e TypeSafetyValidator (not CoreStateValidator: it also asserts a real TransactionSystemLayout at topology_phase.ex:107), and shard_materializers -\u003e seated_materializer_members (not system_shard_members: the field is tag-keyed and every reader iterates tags). prior_materializer_refs was NOT deleted (PR #299 kept it with two readers) — only renamed to prior_materializer_members. ClusterBootstrap keeps its name as the wire format, with the CoreState relationship written into its moduledoc. Guides left for a follow-up ticket: only the three module/path mentions were updated; the guide filenames, titles and bodies still describe the pre-#263 phase.",
+      "timestamp": "2026-09-06T04:16:28Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "Rename components to match their clarified purposes",
   "type": "task",
-  "updated_at": "2026-09-06T03:50:35Z"
+  "updated_at": "2026-09-06T04:16:28Z"
 }

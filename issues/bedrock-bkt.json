@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-05T13:19:13Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-bkt",
   "labels": [],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "CI: PLT cache key omits resolved OTP patch version, so runner image updates poison dialyzer PLTs",
   "type": "task",
-  "updated_at": "2026-09-05T13:19:13Z"
+  "updated_at": "2026-09-06T00:15:42Z"
 }

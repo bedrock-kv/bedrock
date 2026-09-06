@@ -188,16 +188,17 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
       ) do
     commit_version = Transaction.commit_version!(transaction)
 
-    # The applied position only ever advances. Every rewind rejoins the
-    # stream strictly above it — recovery unlock resumes at
-    # `Version.increment(current_version)` and so does the compaction
-    # cutover (`streaming.ex:65`, `logic.ex:238`, `server.ex:528`) — so
-    # neither a re-delivered nor an out-of-order commit version can reach
-    # here. This is an assertion, not a guard: `versions` is descending by
-    # construction and `find_target/2`, `rollback_to/2` and the eviction
-    # queue all read it that way, so prepending a version at or below the
-    # head corrupts the MVCC window silently rather than crashing. FDB
-    # asserts the same thing on the same edge —
+    # The applied position only ever advances. Every rewind — recovery
+    # unlock and the compaction cutover alike — hands the applied version
+    # to `Streaming.start_pulling/4`, which joins at
+    # `Version.increment/1` of it, and `ShardServer.pull/3` is inclusive
+    # of its `from_version`; so neither a re-delivered nor an
+    # out-of-order commit version can reach here. This is an assertion,
+    # not a guard: `versions` is descending by construction and
+    # `find_target/2`, `rollback_to/2` and the eviction queue all read it
+    # that way, so prepending a version at or below the head corrupts the
+    # MVCC window silently rather than crashing. FDB asserts the same
+    # thing on the same edge —
     # `ASSERT(cloneCursor2->version().version > data->version.get())`,
     # `storageserver.actor.cpp:12318`.
     if commit_version <= index_manager.current_version do

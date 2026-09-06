@@ -702,7 +702,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
       end
     end
 
-    test "a batch stops at the offending transaction, leaving the chain intact" do
+    test "a batch stops at the offending transaction" do
       db = create_test_database()
 
       try do

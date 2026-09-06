@@ -7,9 +7,15 @@
   "id": "bedrock-q67.21.15",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/303 — \\xFF/system/logs/\u003cgeneration\u003e/\u003clog_id\u003e -\u003e node written by LogRecruitmentPhase into pending_tx (current + survivors), read by Bedrock.ControlPlane.Exclusion.check_logs/2. Stacked on #299. Cold audit PASS-WITH-NOTES, all findings addressed. Follow-ups worth tickets: (1) logs/old/ is never pruned (FDB's updateLogsValue) — needs a durability watcher clearing it once the object-storage durable version passes the recovery version; over-refuses in the safe direction until then. (2) The storage half of FDB's exclusion check (materializers/) is deliberately absent — it needs data movement (q67.46) to have a path to safety, which is why the verdict is :no_log_blockers and not :safe. (3) The operator surface (\\xff/conf/excluded/ + command) is unbuilt; the reader's only caller today is the test suite. The ticket's second half — whether Bedrock has FDB's stale-master hazard at all (updateLogsValue's fence) — was NOT settled here; it still wants the falsifiable spike the ticket describes.",
+      "timestamp": "2026-09-06T03:49:02Z"
+    }
+  ],
   "priority": 3,
   "status": "in_progress",
   "title": "Exclusion safety needs a keyspace log record: addresses and OLD generations, not tag lists",
   "type": "task",
-  "updated_at": "2026-09-06T03:29:58Z"
+  "updated_at": "2026-09-06T03:49:02Z"
 }

@@ -261,12 +261,28 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
   defp get_key_ranges(%{versions: []}), do: []
 
   @doc """
-  Extracts the complete page_map from the current version's index.
-  Used during compaction to get all current pages.
+  Extracts the complete page_map AT `version`. Used during compaction.
+
+  Compaction labels its output with the durable version, so it must be
+  handed the page map at that version and not the live one: a page
+  carrying an effect from above the durable boundary would be stamped
+  durable at a version below its own contents, and the cutover's replay —
+  which rejoins the stream above the boundary — would apply that
+  transaction a second time.
+
+  The match is exact, not `index_for_version/2`'s nearest-at-or-below:
+  the whole point is that the label and the contents agree, and an older
+  page map silently substituted would label the files ABOVE their
+  contents and make the replay skip transactions instead.
   """
-  @spec get_complete_page_map(t()) :: %{Page.id() => {Page.t(), Page.id()}}
-  def get_complete_page_map(%{versions: [{_, {current_index, _}} | _]}), do: current_index.page_map
-  def get_complete_page_map(%{versions: []}), do: %{}
+  @spec page_map_at(t(), Bedrock.version()) :: %{Page.id() => {Page.t(), Page.id()}}
+  def page_map_at(%{versions: versions}, version) do
+    # Only ever asked for the durable version, which is the oldest entry
+    # in the list: eviction advances the entry and the database's durable
+    # version together, and no rollback goes below it.
+    {_version, {%Index{page_map: page_map}, _modified}} = Enum.find(versions, &match?({^version, _}, &1))
+    page_map
+  end
 
   @spec index_for_version(version_list(), Bedrock.version()) :: Index.t() | nil
   defp index_for_version(versions, target), do: find_target(versions, target)

@@ -7,7 +7,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase
+  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Internal.TransactionBuilder.Tx
+  alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   describe "execute/2" do
     test "for fresh cluster, creates default shard layout and materializers" do
@@ -683,7 +687,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
 
         assert updated_attempt.prior_materializer_refs == committed
         assert updated_attempt.shard_materializers == %{0 => %{"mat_sys" => node_string}}
-        refute updated_attempt.seeded_layout?
+        # The layout was READ, so the phase contributes nothing under
+        # shard_keys, and tag 0's member is unchanged: nothing at all.
+        assert contributed_mutations(recovery_attempt, updated_attempt) == []
       end)
     end
 
@@ -704,7 +710,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
                MaterializerBootstrapPhase.execute(recovery_attempt, context)
     end
 
-    test "the fresh path marks the layout seeded with an empty prior family" do
+    test "the fresh path seeds the layout against an empty prior family" do
       recovery_attempt =
         recovery_attempt()
         |> Map.put(:shard_layout, nil)
@@ -728,15 +734,149 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
         assert {updated_attempt, CommitProxyStartupPhase} =
                  MaterializerBootstrapPhase.execute(recovery_attempt, context)
 
-        assert updated_attempt.seeded_layout?
         assert updated_attempt.prior_materializer_refs == %{}
+
+        # The layout was INVENTED here, so this is the one path that seeds
+        # the durable shard_keys family.
+        shard_sets =
+          for {:set, key, _} <- contributed_mutations(recovery_attempt, updated_attempt),
+              String.starts_with?(key, SystemKeys.shard_keys_prefix()),
+              do: key
+
+        assert length(shard_sets) == 2
       end)
     end
   end
 
+  # The mutations the phase ADDED to the attempt's Tx. Accumulation is
+  # additive — a phase contributes, it never rebuilds — so what this phase
+  # wrote is what appears past the end of what it was handed.
+  defp contributed_mutations(before_attempt, after_attempt) do
+    prior = mutations_of(before_attempt.pending_tx)
+    all = mutations_of(after_attempt.pending_tx)
+
+    assert Enum.take(all, length(prior)) == prior, "the phase disturbed mutations an earlier phase contributed"
+
+    Enum.drop(all, length(prior))
+  end
+
+  defp mutations_of(tx), do: tx |> Tx.commit(nil) |> Transaction.mutations!() |> Enum.to_list()
+
+  # Apply set/clear/clear_range mutations, in order, to a flat key -> value map
+  # (a stand-in for the materializer's durable key space).
+  defp apply_to_store(store, mutations) do
+    Enum.reduce(mutations, store, fn
+      {:set, key, value}, store ->
+        Map.put(store, key, value)
+
+      {:clear, key}, store ->
+        Map.delete(store, key)
+
+      {:clear_range, start_key, end_key}, store ->
+        Map.reject(store, fn {key, _} -> key >= start_key and key < end_key end)
+    end)
+  end
+
+  describe "the keyspace families this phase contributes to the system transaction" do
+    defp node_string, do: Atom.to_string(node())
+
+    defp seeded_tx do
+      Tx.new()
+      |> MaterializerBootstrapPhase.put_shard_keys(%{<<0xFF>> => {1, <<>>}, <<0xFF, 0xFF>> => {0, <<0xFF>>}})
+      |> MaterializerBootstrapPhase.put_materializer_members(
+        %{0 => %{"wkr_sys" => node_string()}, 1 => %{"wkr_user" => node_string()}},
+        %{}
+      )
+    end
+
+    test "every system-key value it writes decodes through Values.decode_for/2" do
+      sets = for {:set, key, value} <- mutations_of(seeded_tx()), do: {key, value}
+
+      refute sets == []
+
+      # Every written value must decode via the family dispatched from its key;
+      # this is the writer/reader contract that masked the pre-fix shard_key bug.
+      decoded =
+        Map.new(sets, fn {key, value} ->
+          parsed = SystemKeys.parse_key(key)
+          refute parsed in [:unknown, :error], "wrote unparseable system key: #{inspect(key)}"
+          assert {:ok, decoded} = Values.decode_for(parsed, value), "value for #{inspect(key)} failed to decode"
+          {parsed, decoded}
+        end)
+
+      # Shard keys must decode to the exact {tag, start_key} the layout holds --
+      # the shape the cross-epoch read in this same phase depends on.
+      assert decoded[{:shard_key, <<0xFF>>}] == {1, <<>>}
+      assert decoded[{:shard_key, <<0xFF, 0xFF>>}] == {0, <<0xFF>>}
+
+      # Membership: the worker id is in the KEY and the value carries the
+      # node (FDB serverKeys analogue), projected from the seated refs.
+      assert decoded[{:materializer_key, 0, "wkr_sys"}] == node_string()
+      assert decoded[{:materializer_key, 1, "wkr_user"}] == node_string()
+    end
+
+    test "recovery clears nothing: every family it writes is read-and-healed" do
+      mutations = mutations_of(seeded_tx())
+
+      # The epoch-scoped layout/logs family was the only thing recovery
+      # ever blanket-cleared, and it had no reader (bedrock-q67.21.10).
+      # What remains is durable, distributor-era state: recovery may seed
+      # or update entries, never erase a family wholesale.
+      refute Enum.any?(mutations, &match?({:clear_range, _, _}, &1)),
+             "recovery emitted a blanket clear: #{inspect(Enum.filter(mutations, &match?({:clear_range, _, _}, &1)))}"
+
+      refute Enum.any?(mutations, &match?({:clear, _}, &1))
+    end
+
+    test "an empty member set writes nothing at all" do
+      assert mutations_of(MaterializerBootstrapPhase.put_materializer_members(Tx.new(), %{}, %{})) == []
+    end
+
+    test "materializer writes are a diff against the prior family; unnamed entries are not recovery's to clean" do
+      # tag 0's assignment is unchanged (not rewritten); tag 1's changed
+      # (rewritten); tag 9's entry names a tag this recovery did not decide
+      # and is left alone — read-and-heal means stale entries are the
+      # distributor's to reconcile, never recovery's to erase.
+      #
+      # The refs are the ONLY input: there is no services map to invert, so
+      # an assignment can no longer be silently dropped for want of a
+      # matching service record.
+      prior = %{
+        0 => %{"wkr_sys" => node_string()},
+        1 => %{"wkr_departed" => node_string()},
+        9 => %{"wkr_stray" => node_string()}
+      }
+
+      refs = %{0 => %{"wkr_sys" => node_string()}, 1 => %{"wkr_user" => node_string()}}
+
+      stale_store =
+        Map.new(prior, fn {tag, members} ->
+          [{id, node}] = Map.to_list(members)
+          {SystemKeys.materializer_key(tag, id), Values.encode_materializer_node(node)}
+        end)
+
+      mutations = mutations_of(MaterializerBootstrapPhase.put_materializer_members(Tx.new(), refs, prior))
+      store = apply_to_store(stale_store, mutations)
+
+      # tag 1's member changed, so its NEW member's key is written; the
+      # departed member's key is left alone — recovery writes what it
+      # decided and never removes members it did not place (a set may
+      # legitimately hold replicas recovery knows nothing about).
+      assert mutations == [
+               {:set, SystemKeys.materializer_key(1, "wkr_user"), Values.encode_materializer_node(node_string())}
+             ]
+
+      assert {:ok, _node} =
+               Values.decode_materializer_node(Map.fetch!(store, SystemKeys.materializer_key(0, "wkr_sys")))
+
+      assert {:ok, _node} =
+               Values.decode_materializer_node(Map.fetch!(store, SystemKeys.materializer_key(9, "wkr_stray")))
+    end
+  end
+
   describe "decode_prior_refs/1" do
-    alias Bedrock.SystemKeys, as: SK
-    alias Bedrock.SystemKeys.Values, as: V
+    alias SystemKeys, as: SK
+    alias Values, as: V
 
     test "decodes members into per-tag sets and rejects foreign or undecodable entries" do
       entries = [
@@ -763,7 +903,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   end
 
   describe "read_all_shard_entries/1" do
-    alias Bedrock.SystemKeys, as: Keys
+    alias SystemKeys, as: Keys
 
     # A scripted range read keyed by the start key it expects: paging must
     # resume each page exactly after the last returned key.
@@ -818,9 +958,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
   end
 
   describe "shard_layout_from_entries/1" do
-    alias Bedrock.SystemKeys
-    alias Bedrock.SystemKeys.Values
-
     test "decodes tuple-encoded shard values, consuming the carried start keys" do
       entries = [
         {SystemKeys.shard_key(<<0xFF, 0xFF>>), Values.encode_shard_key_entry(0, "m")},

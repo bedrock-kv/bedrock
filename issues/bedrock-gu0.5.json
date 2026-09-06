@@ -19,11 +19,15 @@
     {
       "text": "Cold-review removal blocker pinned: 292-removal-red.log14tests12failures. Forwarding supervisor gate pauses after PID selection, actual backing DynamicSupervisor restarts child then returns genuine not_found; existing Foreman deletes live replacement disk/membership. Also pins repeated real churn requiring retained retryable state and absent-name retirement with queued abnormal restart. Plan292-plan.md amended with max3 re-resolution attempts and conservative ownership-proof/error contract; no production changes.",
       "timestamp": "2026-09-06T02:59:08Z"
+    },
+    {
+      "text": "Delivered draft PR https://github.com/bedrock-kv/bedrock/pull/300 after cold plan and final audit. RED14tests12failures plus two sensitivity amendments; final focused101tests0fail, ordinary17doctests158properties2900tests0fail17configured exclusions, format/Credo/Dialyzer clean. Reviewer required and verified real lookup-to-terminate restart gate, unknown supervised child ownership proof, and non-vacuous legacy healthy acceptance. Audit /tmp/bedrock-followups-20260905.zKTZxP/292-final-audit.md.",
+      "timestamp": "2026-09-06T03:15:14Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Late restarted worker health crashes Foreman after explicit worker removal",
   "type": "bug",
-  "updated_at": "2026-09-06T02:59:08Z"
+  "updated_at": "2026-09-06T03:15:14Z"
 }

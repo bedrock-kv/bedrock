@@ -6,9 +6,15 @@
   "description": "Rediscovery only triggers on DOWN/ping failure; a partitioned old leader that stays alive retains its links indefinitely. Pre-existing liveness question surfaced in bedrock-q67.4 audit. Consider periodic leader re-verification or coordinator-side epoch fencing on link traffic.",
   "id": "bedrock-v65",
   "labels": [],
+  "comments": [
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/282 — Link now re-polls the whole coordinator set on a jittered 5s interval (highest epoch wins) instead of trusting the leader it is pinned to, and fences {:tsl_updated, _} pushes against a wiring_epoch high-water mark. Cold audit PASS-WITH-NOTES; all three notes addressed.",
+      "timestamp": "2026-09-06T02:17:18Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "Link discovery: partitioned-but-alive old coordinator leader is never abandoned",
   "type": "task",
-  "updated_at": "2026-07-14T22:18:54Z"
+  "updated_at": "2026-09-06T02:17:18Z"
 }

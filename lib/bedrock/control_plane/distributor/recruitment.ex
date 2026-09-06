@@ -1,7 +1,7 @@
 defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   @moduledoc """
-  On-demand materializer recruitment for the distributor: node
-  selection, worker creation via the node's Foreman, epoch lock, and
+  On-demand materializer recruitment for the distributor: placement
+  (`place/2`), worker creation via the node's Foreman, epoch lock, and
   unlock with the shard's typed pull sources — the same replica set the
   commit proxies route with, resolved through `ShardRouter`, exactly as
   recovery's bootstrap seeds its unlocks.
@@ -47,16 +47,47 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
         }
 
   @doc """
-  Recruits a materializer for the given shard tag. Returns the live pid,
-  the node it was placed on, and the worker id it was created under (so
-  the caller can remove the worker if fencing the recruit into the
-  family fails).
+  Placement: of the materializer-capable nodes, the one carrying the
+  fewest materializers already, ties broken by the capability
+  directory's order. `placements` are the nodes already carrying one,
+  named as the committed `materializers/` family names them (strings) —
+  a node absent from the list carries nothing.
+
+  A pure function of those two inputs, and deliberately nothing else:
+  the caller decides an assignment and reserves it against the same
+  view in one step, and a heal places its replacement against what the
+  view holds AFTER the retirement — there is no counter to survive the
+  death and re-pile.
+
+  FDB's data distribution reaches for the same floor in
+  `getTeam`/`bestTeam`: of the eligible teams, prefer the least loaded.
+  Load here is a count of assignments, not observed demand; placement
+  by real load and locality is bedrock-q67.46's, and this is only the
+  floor that stops every shard piling onto the first capable node.
   """
-  @spec recruit(Bedrock.range_tag(), context()) ::
+  @spec place(%{Bedrock.Cluster.capability() => [node()]}, [String.t()]) ::
+          {:ok, node()} | {:error, :no_materializer_capable_nodes}
+  def place(node_capabilities, placements) do
+    case Map.get(node_capabilities, :materializer, []) do
+      [] ->
+        {:error, :no_materializer_capable_nodes}
+
+      capable ->
+        counts = Enum.frequencies(placements)
+        {:ok, Enum.min_by(capable, &Map.get(counts, Atom.to_string(&1), 0))}
+    end
+  end
+
+  @doc """
+  Recruits a materializer for the given shard tag on the placed node.
+  Returns the live pid, that node, and the worker id it was created
+  under (so the caller can remove the worker if fencing the recruit
+  into the family fails).
+  """
+  @spec recruit(Bedrock.range_tag(), node(), context()) ::
           {:ok, pid(), node(), Worker.id()} | {:error, term()}
-  def recruit(tag, context) do
+  def recruit(tag, node, context) do
     with {:ok, sources} <- pull_sources_for_shard(tag, context),
-         {:ok, node} <- find_materializer_capable_node(context.node_capabilities),
          {:ok, worker_ref, worker_id} <- create_materializer_worker(node, tag, context) do
       with {:ok, pid, recovery_info} <- lock_materializer({worker_ref, node}, node, context),
            :ok <- unlock_and_start_pulling(pid, node, recovery_info, sources, context) do
@@ -119,15 +150,6 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
     end
 
     :ok
-  end
-
-  # Placement: same convention as the recovery bootstrap phase — the
-  # first materializer-capable node from the capability directory.
-  defp find_materializer_capable_node(node_capabilities) do
-    case Map.get(node_capabilities, :materializer, []) do
-      [node | _] -> {:ok, node}
-      [] -> {:error, :no_materializer_capable_nodes}
-    end
   end
 
   # Worker params (persisted in the manifest) always record the shard

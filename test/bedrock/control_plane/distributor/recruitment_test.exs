@@ -54,7 +54,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         end
       })
 
-    assert {:ok, _pid, :node_a@host, worker_id} = Recruitment.recruit(7, ctx)
+    assert {:ok, _pid, :node_a@host, worker_id} = Recruitment.recruit(7, :node_a@host, ctx)
 
     assert_received {:created, {:recruitment_test_foreman, :node_a@host}, ^worker_id, params}
     assert params["shard_id"] == 7
@@ -86,7 +86,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         end
       })
 
-    assert {:ok, _pid, :node_a@host, _worker_id} = Recruitment.recruit(7, ctx)
+    assert {:ok, _pid, :node_a@host, _worker_id} = Recruitment.recruit(7, :node_a@host, ctx)
     assert_received {:created, params}
     assert params == %{"idle_timeout" => 900_000, "shard_id" => 7}
   end
@@ -109,7 +109,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         end
       })
 
-    assert {:ok, _pid, :node_a@host, _worker_id} = Recruitment.recruit(0, ctx)
+    assert {:ok, _pid, :node_a@host, _worker_id} = Recruitment.recruit(0, :node_a@host, ctx)
     assert_received {:created, params}
     assert params == %{"shard_id" => 0}
   end
@@ -126,7 +126,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         end
       })
 
-    assert {:error, {:materializer_lock_failed, :nope, :node_a@host}} = Recruitment.recruit(7, ctx)
+    assert {:error, {:materializer_lock_failed, :nope, :node_a@host}} = Recruitment.recruit(7, :node_a@host, ctx)
     assert_received {:removed, {:recruitment_test_foreman, :node_a@host}, _worker_id}
   end
 
@@ -142,18 +142,8 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         end
       })
 
-    assert {:error, {:unlock_failed, :timeout, :node_a@host}} = Recruitment.recruit(7, ctx)
+    assert {:error, {:unlock_failed, :timeout, :node_a@host}} = Recruitment.recruit(7, :node_a@host, ctx)
     assert_received {:removed, _worker_id}
-  end
-
-  test "no capable node fails before any worker is created" do
-    ctx =
-      ctx(%{
-        node_capabilities: %{},
-        create_worker_fn: fn _f, _i, _k, _o -> flunk("must not create without a node") end
-      })
-
-    assert {:error, :no_materializer_capable_nodes} = Recruitment.recruit(7, ctx)
   end
 
   test "orphan removal never masks the original error, even when the foreman is unreachable" do
@@ -165,7 +155,7 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        assert {:error, {:materializer_lock_failed, :original, _node}} = Recruitment.recruit(7, ctx)
+        assert {:error, {:materializer_lock_failed, :original, _node}} = Recruitment.recruit(7, :node_a@host, ctx)
       end)
 
     assert log =~ "Failed to remove orphaned materializer worker"
@@ -178,7 +168,48 @@ defmodule Bedrock.ControlPlane.Distributor.RecruitmentTest do
         create_worker_fn: fn _f, _i, _k, _o -> flunk("must not create a worker with no pull sources") end
       })
 
-    assert {:error, {:no_pull_sources, 7}} = Recruitment.recruit(7, ctx)
+    assert {:error, {:no_pull_sources, 7}} = Recruitment.recruit(7, :node_a@host, ctx)
+  end
+
+  # bedrock-22g: the minimal spread — least loaded wins, ties by the
+  # directory's order. Placement by observed load and locality is
+  # bedrock-q67.46's; this only stops every shard piling onto the first
+  # capable node.
+  describe "placement" do
+    @capable %{materializer: [:node_a@host, :node_b@host, :node_c@host]}
+
+    test "no capable node has nowhere to place" do
+      assert {:error, :no_materializer_capable_nodes} = Recruitment.place(%{}, [])
+      assert {:error, :no_materializer_capable_nodes} = Recruitment.place(%{materializer: []}, ["node_a@host"])
+    end
+
+    test "successive placements against an accumulating view go round the capable nodes" do
+      assert {:ok, :node_a@host} = Recruitment.place(@capable, [])
+      assert {:ok, :node_b@host} = Recruitment.place(@capable, ["node_a@host"])
+      assert {:ok, :node_c@host} = Recruitment.place(@capable, ["node_a@host", "node_b@host"])
+
+      # A full turn wraps: every node carries one, so the directory's
+      # order decides again.
+      assert {:ok, :node_a@host} =
+               Recruitment.place(@capable, ["node_a@host", "node_b@host", "node_c@host"])
+    end
+
+    test "the least loaded wins outright, whatever the directory's order" do
+      assert {:ok, :node_c@host} =
+               Recruitment.place(@capable, ["node_a@host", "node_a@host", "node_b@host", "node_b@host"])
+    end
+
+    test "a node the directory does not name carries no weight" do
+      assert {:ok, :node_a@host} = Recruitment.place(@capable, ["node_z@host", "node_z@host"])
+    end
+
+    # The heal case: the dead member has already left the view, so its
+    # node is placed against as the empty node it now is — no counter
+    # survived the death to send the replacement elsewhere, and none
+    # sent a second shard to the survivor.
+    test "a replacement is placed against what is left after the retirement" do
+      assert {:ok, :node_b@host} = Recruitment.place(@capable, ["node_a@host", "node_c@host"])
+    end
   end
 
   describe "adoption: recruitment minus creation, minus destruction" do

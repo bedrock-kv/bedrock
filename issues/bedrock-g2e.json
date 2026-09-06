@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T01:33:55Z",
+  "close_reason": "All seven draft PR deliverables published and independently audited.",
   "created": "2026-09-06T00:03:36Z",
   "description": "User-authorized campaign: each issue gets an isolated temporary worktree, failing reproduction, thorough diagnosis, written plan reviewed by an independent cold agent, TDD implementation, acceptance-criteria audit, and draft PR with long-form rationale/examples. Existing tickets: #233 bedrock-wjt; #234 bedrock-8cx; #235 bedrock-oep; #236 bedrock-q67.19; #237 bedrock-q67.21.20; #238 bedrock-b28; #239 bedrock-tux. Do not merge PRs. Reuse tickets; no code edits in primary develop checkout. Two implementation agents concurrently with a reserved independent review slot; root coordinates and handles a third isolated task. Mutation endpoint work follows mutation-order work if overlap requires stacking. End-to-end history harness follows semantic fixes and must state PR dependencies.",
   "id": "bedrock-g2e",
@@ -17,7 +19,7 @@
     }
   ],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Investigate, cold-review, and deliver fixes for GitHub issues #233–#239",
   "type": "epic",
   "updated_at": "2026-09-06T01:33:55Z"

@@ -277,7 +277,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
             node_capabilities: %{materializer: [node()]},
             logs: %{"log_1" => []},
             log_refs: %{"log_1" => :ref},
-            info_fn: fn _worker, [:epoch], _opts -> {:ok, %{epoch: 3}} end,
+            info_fn: fn _worker, [:epoch, :mode], _opts -> {:ok, %{epoch: 3, mode: :running}} end,
             create_worker_fn: fn _f, _i, _k, _o -> {:error, :scripted} end
           }
         )
@@ -303,7 +303,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         {SystemKeys.materializer_key(1, "wkr_a"), Values.encode_materializer_node(Atom.to_string(node()))}
       ]
 
-      t = verified_sweep_state(refs_entries, test_pid, fn _worker, [:epoch], _opts -> {:ok, %{epoch: 3}} end)
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _worker, [:epoch, :mode], _opts ->
+          {:ok, %{epoch: 3, mode: :running}}
+        end)
 
       assert {:noreply, t2} = Server.handle_continue(:startup_sweep, t)
 
@@ -326,6 +329,55 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       refute_received {:committed, _}
     end
 
+    test "a member IN this epoch but still LOCKED is adopted — being in the epoch is not being in service" do
+      # Recovery locks every advertised materializer into its epoch and
+      # unlocks only tag 0's (bedrock-q67.21.13). So the data-tag
+      # materializers the sweep meets are in the CURRENT epoch and not
+      # pulling: locking fences :ingest and :apply_transactions, and
+      # nothing else will lift it.
+      #
+      # Asking only "which epoch are you in?" answers a question that
+      # stopped being the right one. Left as :current, the worker stays
+      # locked for the whole epoch — still answering reads, since reads
+      # carry no mode guard, at a version frozen where the last epoch
+      # left it. Silent staleness, not a stall.
+      test_pid = self()
+      node_string = Atom.to_string(node())
+
+      refs_entries = [
+        {SystemKeys.materializer_key(0, "wkr_sys"), Values.encode_materializer_node(node_string)},
+        {SystemKeys.materializer_key(1, "wkr_locked"), Values.encode_materializer_node(node_string)}
+      ]
+
+      adopted = spawn(fn -> Process.sleep(:infinity) end)
+
+      info_fn = fn {name, _node}, [:epoch, :mode], _opts ->
+        if name == otp_name_for_worker("wkr_locked"),
+          do: {:ok, %{epoch: 3, mode: :locked}},
+          else: {:ok, %{epoch: 3, mode: :running}}
+      end
+
+      t = verified_sweep_state(refs_entries, test_pid, info_fn)
+
+      ctx =
+        Map.merge(t.recruitment_ctx, %{
+          lock_materializer_fn: fn _worker, _epoch -> {:ok, adopted, %{durable_version: Version.from_integer(9)}} end,
+          unlock_materializer_fn: fn _pid, version, _sources ->
+            send(test_pid, {:adopt_unlocked, version})
+            :ok
+          end
+        })
+
+      assert {:noreply, _t2} = Server.handle_continue(:startup_sweep, %{t | recruitment_ctx: ctx})
+
+      assert_receive {:assignment_verified, 1, "wkr_locked", {:adopted, ^adopted, _node, "wkr_locked"}}, 5_000
+      assert_receive {:adopt_unlocked, version}, 5_000
+      assert version == Version.from_integer(9)
+
+      # Tag 0 is running, and recovery already unlocked it: no adoption.
+      assert_receive {:assignment_verified, 0, "wkr_sys", :current}, 5_000
+    end
+
     test "a stale-epoch assignment is adopted: locked, unlocked at its own version, re-asserted under the fence" do
       test_pid = self()
       {lock, _} = Lock.take(nil, nil)
@@ -340,8 +392,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       adopted = spawn(fn -> Process.sleep(:infinity) end)
 
       info_fn = fn
-        {name, _node}, [:epoch], _opts ->
-          if name == otp_name_for_worker("wkr_stale"), do: {:ok, %{epoch: 2}}, else: {:ok, %{epoch: 3}}
+        {name, _node}, [:epoch, :mode], _opts ->
+          if name == otp_name_for_worker("wkr_stale"),
+            do: {:ok, %{epoch: 2, mode: :running}},
+            else: {:ok, %{epoch: 3, mode: :running}}
       end
 
       t = verified_sweep_state(refs_entries, test_pid, info_fn)
@@ -397,8 +451,10 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       # A stale answer whose adoption then definitively fails: wedged
       # mid-adopt, alive — heal, never remove.
       info_fn = fn
-        {name, _node}, [:epoch], _opts ->
-          if name == otp_name_for_worker("wkr_wedged"), do: {:ok, %{epoch: 2}}, else: {:ok, %{epoch: 3}}
+        {name, _node}, [:epoch, :mode], _opts ->
+          if name == otp_name_for_worker("wkr_wedged"),
+            do: {:ok, %{epoch: 2, mode: :running}},
+            else: {:ok, %{epoch: 3, mode: :running}}
       end
 
       t = verified_sweep_state(refs_entries, test_pid, info_fn)
@@ -442,7 +498,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       node_string = Atom.to_string(node())
 
       refs_entries = [{SystemKeys.materializer_key(0, "wkr_far"), Values.encode_materializer_node(node_string)}]
-      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
+          {:ok, %{epoch: 3, mode: :running}}
+        end)
 
       t = %{
         t
@@ -482,7 +542,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       adopted = spawn(fn -> Process.sleep(:infinity) end)
 
       refs_entries = [{SystemKeys.materializer_key(0, "wkr_adopt"), Values.encode_materializer_node(node_string)}]
-      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
+          {:ok, %{epoch: 3, mode: :running}}
+        end)
 
       ctx =
         Map.put(t.recruitment_ctx, :remove_worker_fn, fn _f, _i, _o ->
@@ -519,7 +583,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       adopted = spawn(fn -> Process.sleep(:infinity) end)
 
       refs_entries = [{SystemKeys.materializer_key(0, "wkr_adopt"), Values.encode_materializer_node(node_string)}]
-      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
+          {:ok, %{epoch: 3, mode: :running}}
+        end)
 
       ctx =
         Map.put(t.recruitment_ctx, :remove_worker_fn, fn _f, _i, _o ->
@@ -555,9 +623,9 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       refs_entries = [{SystemKeys.materializer_key(0, "wkr_back"), Values.encode_materializer_node(node_string)}]
 
       t =
-        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o ->
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
           send(test_pid, :probed)
-          {:ok, %{epoch: 3}}
+          {:ok, %{epoch: 3, mode: :running}}
         end)
 
       t = %{
@@ -587,7 +655,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         {SystemKeys.materializer_key(1, "wkr_gone"), Values.encode_materializer_node(node_string)}
       ]
 
-      t = verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+      t =
+        verified_sweep_state(refs_entries, test_pid, fn _w, [:epoch, :mode], _o ->
+          {:ok, %{epoch: 3, mode: :running}}
+        end)
+
       assert {:noreply, t2} = Server.handle_continue(:startup_sweep, t)
 
       # Death healing re-owned tag 1 meanwhile: the ref now names the
@@ -1438,7 +1510,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           snapshot: %{shard_layout: %{}, materializer_refs: %{7 => %{"wkr_alive" => Atom.to_string(node())}}}
         )
 
-      ctx = Map.put(t.recruitment_ctx, :info_fn, fn _w, [:epoch], _o -> {:ok, %{epoch: 3}} end)
+      ctx = Map.put(t.recruitment_ctx, :info_fn, fn _w, [:epoch, :mode], _o -> {:ok, %{epoch: 3, mode: :running}} end)
       t = %{t | recruitment_ctx: ctx, unreachable_counts: %{{7, "wkr_alive"} => 2}}
 
       assert {:noreply, t2} = Server.handle_info({:reverify_assignment, 7, "wkr_alive"}, t)

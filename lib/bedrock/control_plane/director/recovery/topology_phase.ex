@@ -210,9 +210,32 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TopologyPhase do
       shard_layout: shard_layout || %{},
       log_map: log_map,
       log_services: log_services,
-      materializers: Map.get(recovery_attempt, :shard_materializers) || %{},
+      materializers: committed_materializers(recovery_attempt),
       replication_factor: max(1, map_size(logs))
     }
+  end
+
+  # The materializer half of the seed is the COMMITTED family as recovery
+  # read it, plus the tag-0 member recovery seated — which is exactly what
+  # the family says once the persistence commit lands, so the seed and the
+  # keyspace are one view read twice, and the in-band mutation stream
+  # (RoutingData.apply_mutations/2) carries it forward from there.
+  #
+  # It cannot be "what recovery seated" alone: recovery seats only tag 0
+  # (bedrock-q67.21.13), and every data tag would then be unroutable for
+  # the epoch and — worse — every data-tag materializer would ask a proxy
+  # at rejoin validation, be told the keyspace names nobody for its shard,
+  # and dispose of its own store. FDB seeds its proxies the same way, from
+  # the log-replayed txnStateStore, not from what recovery started.
+  @spec committed_materializers(RecoveryAttempt.t()) ::
+          %{Bedrock.range_tag() => %{Worker.id() => String.t()}}
+  defp committed_materializers(recovery_attempt) do
+    committed = Map.get(recovery_attempt, :prior_materializer_refs) || %{}
+    seated = Map.get(recovery_attempt, :shard_materializers) || %{}
+
+    Map.merge(committed, seated, fn _tag, committed_members, seated_members ->
+      Map.merge(committed_members, seated_members)
+    end)
   end
 
   # Validate that recovery state is ready for system transaction

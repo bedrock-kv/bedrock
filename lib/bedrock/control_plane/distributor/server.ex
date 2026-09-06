@@ -734,9 +734,19 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
       spawn_monitor(fn ->
         verdict =
           try do
-            case info_fn.({name, node_atom}, [:epoch], timeout_in_ms: @verification_timeout_ms) do
-              {:ok, %{epoch: ^epoch}} -> :current
-              {:ok, %{epoch: _stale_or_nil}} -> Recruitment.adopt(tag, worker_id, node_atom, ctx)
+            case info_fn.({name, node_atom}, [:epoch, :mode], timeout_in_ms: @verification_timeout_ms) do
+              # In the epoch AND serving it. Both halves are load-bearing:
+              # recovery locks every advertised materializer into its
+              # epoch and unlocks only tag 0's, so a data-tag materializer
+              # is normally in the current epoch and NOT pulling. Reads
+              # carry no mode guard, so left alone it would go on
+              # answering at a frozen version for the whole epoch —
+              # silent staleness rather than a stall. Anything not
+              # demonstrably running is adopted; adopting a healthy worker
+              # costs a lock/unlock round trip and it resumes from its own
+              # durable version.
+              {:ok, %{epoch: ^epoch, mode: :running}} -> :current
+              {:ok, %{epoch: _epoch, mode: _not_running}} -> Recruitment.adopt(tag, worker_id, node_atom, ctx)
               {:error, reason} -> {:error, reason}
             end
           catch

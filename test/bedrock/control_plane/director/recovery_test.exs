@@ -170,8 +170,6 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
   describe "ghost_directory_ids/2" do
     test "selects exactly the directory entries the completed recovery does not reference" do
-      live_mat_pid = spawn(fn -> Process.sleep(:infinity) end)
-
       services = %{
         "live_log" => {:log, {:a, :node1}},
         "live_mat" => {:materializer, {:b, :node1}},
@@ -181,10 +179,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       completed = %{
         logs: %{"live_log" => []},
         shard_materializers: %{0 => %{"live_mat" => Atom.to_string(node())}},
-        transaction_services: %{
-          "live_log" => %{kind: :log, status: {:up, self()}},
-          "live_mat" => %{kind: :materializer, status: {:up, live_mat_pid}}
-        }
+        materializer_recovery_info_by_id: %{"live_mat" => %{kind: :materializer, shard_id: 0}}
       }
 
       assert Recovery.ghost_directory_ids(services, completed) == ["ghost"]
@@ -200,10 +195,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       completed = %{
         logs: %{"old_log" => [], "brand_new_log" => []},
         shard_materializers: %{},
-        transaction_services: %{
-          "old_log" => %{kind: :log, status: {:up, self()}},
-          "brand_new_log" => %{kind: :log, status: {:up, self()}}
-        }
+        materializer_recovery_info_by_id: %{}
       }
 
       assert Recovery.ghost_directory_ids(services, completed) == []
@@ -218,31 +210,52 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       completed = %{
         logs: %{},
         shard_materializers: %{0 => %{"assigned_mat" => Atom.to_string(node())}},
-        transaction_services: %{}
+        materializer_recovery_info_by_id: %{}
       }
 
       assert Recovery.ghost_directory_ids(services, completed) == []
     end
 
-    test "a locked-but-inactive materializer is not referenced — it is a ghost candidate" do
-      active_pid = spawn(fn -> Process.sleep(:infinity) end)
-      inactive_pid = spawn(fn -> Process.sleep(:infinity) end)
-
+    test "a materializer that answered this epoch's lock is referenced, even though recovery never seats it" do
+      # A ghost is a registration nothing answered for — a worker on a node
+      # that no longer exists under that name, which cannot deregister
+      # itself. Answering the lock is proof of the opposite, and the
+      # locking phase already computed exactly that set.
+      #
+      # Recovery seats only tag 0 now (bedrock-q67.21.13), so "not seated"
+      # describes EVERY data-tag materializer in a healthy cluster.
+      # Reading absence from shard_materializers as death would deregister
+      # the entire data plane on every recovery.
       services = %{
-        "active_mat" => {:materializer, {:a, :node1}},
-        "inactive_mat" => {:materializer, {:b, :node1}}
+        "sys_mat" => {:materializer, {:a, :node1}},
+        "data_mat" => {:materializer, {:b, :node1}}
       }
 
       completed = %{
         logs: %{},
-        shard_materializers: %{0 => %{"active_mat" => Atom.to_string(node())}},
-        transaction_services: %{
-          "active_mat" => %{kind: :materializer, status: {:up, active_pid}},
-          "inactive_mat" => %{kind: :materializer, status: {:up, inactive_pid}}
+        shard_materializers: %{0 => %{"sys_mat" => Atom.to_string(node())}},
+        materializer_recovery_info_by_id: %{
+          "sys_mat" => %{kind: :materializer, shard_id: 0},
+          "data_mat" => %{kind: :materializer, shard_id: 1}
         }
       }
 
-      assert Recovery.ghost_directory_ids(services, completed) == ["inactive_mat"]
+      assert Recovery.ghost_directory_ids(services, completed) == []
+    end
+
+    test "a materializer that did NOT answer the lock is a ghost candidate" do
+      services = %{
+        "sys_mat" => {:materializer, {:a, :node1}},
+        "silent_mat" => {:materializer, {:b, :dead@nowhere}}
+      }
+
+      completed = %{
+        logs: %{},
+        shard_materializers: %{0 => %{"sys_mat" => Atom.to_string(node())}},
+        materializer_recovery_info_by_id: %{"sys_mat" => %{kind: :materializer, shard_id: 0}}
+      }
+
+      assert Recovery.ghost_directory_ids(services, completed) == ["silent_mat"]
     end
   end
 

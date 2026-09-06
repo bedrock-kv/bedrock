@@ -21,6 +21,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   3. Unlock it with its replica set of pull sources to start pulling
   4. Wait for it to catch up (60s timeout)
   5. Query the shard layout from `\\xff/system/shard_keys/*`
+  6. Query the committed cluster configuration from `\\xff/system/config/*`
+     (FDB's `\\xff/conf/` read at recovery, `ClusterRecovery.actor.cpp:1191`)
 
   Stalls if the named members are unavailable, if catchup times out, or if
   the recovered layout reads empty. Records written before the core state
@@ -256,6 +258,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
          {:ok, shard_layout} <- get_shard_layout(materializer_pid, recovery_version, context),
          :ok <- reject_empty_layout(shard_layout),
          {:ok, prior_refs} <- read_prior_refs(materializer_pid, recovery_version, context),
+         {:ok, committed_parameters} <- read_committed_parameters(materializer_pid, recovery_version, context),
          {:ok, shard_materializers, created_services} <-
            ensure_materializers_for_shards(
              shard_layout,
@@ -281,6 +284,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         # the diff base for materializer writes.
         |> Map.put(:seeded_layout?, false)
         |> Map.put(:prior_materializer_refs, prior_refs)
+        # The committed cluster configuration, read at the same version
+        # from the same materializer as the other two families. Later
+        # phases size the transaction system from it; the coordinator's
+        # copy is only the anchor for what the family does not carry. A
+        # STALLED attempt is stashed into the coordinator's config (as
+        # shard_layout already is), so the read transits coordinator
+        # state — as scratch, never as authority: the next attempt
+        # re-reads before any phase consumes it.
+        |> Map.put(:committed_parameters, committed_parameters)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
         |> Map.update!(:transaction_services, &Map.merge(&1, created_services))
 
@@ -552,6 +564,33 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
 
     case Reader.read_family(range_read_fn, prefix, :prior_refs_query_failed) do
       {:ok, entries} -> decode_prior_refs(entries)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  # Read the durable config/ family at the recovery version: the cluster
+  # configuration the later phases size the transaction system from. FDB
+  # does exactly this and nowhere else — the cluster controller builds
+  # its DatabaseConfiguration from a read of the \xff/conf/ range out of
+  # the txnStateStore (ClusterRecovery.actor.cpp:1191-1193), never from
+  # the coordinators, whose coordinated state carries only the anchor.
+  # Same materializer, same version as the other two families, so the
+  # three cannot be read torn.
+  defp read_committed_parameters(materializer_pid, read_version, context) do
+    read_fn = Map.get(context, :read_committed_parameters_fn, &default_read_committed_parameters/2)
+    read_fn.(materializer_pid, read_version)
+  end
+
+  defp default_read_committed_parameters(materializer_pid, read_version) do
+    prefix = Bedrock.SystemKeys.config_prefix()
+    {_range_start, range_end} = Bedrock.KeyRange.from_prefix(prefix)
+
+    range_read_fn = fn start_key ->
+      Materializer.get_range(materializer_pid, start_key, range_end, read_version, limit: 1000)
+    end
+
+    case Reader.read_family(range_read_fn, prefix, :config_query_failed) do
+      {:ok, entries} -> Reader.decode_config_parameters(entries)
       {:error, _reason} = error -> error
     end
   end

@@ -50,6 +50,9 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       # Deterministic default for the bootstrap's durable-family read;
       # tests exercising the read path override it.
       read_prior_refs_fn: fn _materializer_pid, _read_version -> {:ok, %{}} end,
+      # Likewise for the committed config family: absent by default, so
+      # the coordinator's anchor answers unless a test commits one.
+      read_committed_parameters_fn: fn _materializer_pid, _read_version -> {:ok, %{}} end,
       cluster_config: %{
         coordinators: [],
         parameters: %{

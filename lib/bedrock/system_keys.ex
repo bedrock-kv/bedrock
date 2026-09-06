@@ -14,11 +14,14 @@ defmodule Bedrock.SystemKeys do
   write}` is the distributor's write fence (FDB's MoveKeys lock,
   bedrock-q67.21): opaque UIDs read-checked-written inside every
   mutating distributor transaction, so ownership is enforced by the
-  commit pipeline itself. A system key without a
+  commit pipeline itself. `config/<name>` carries the cluster's
+  configuration (FDB's `\\xff/conf/`, `SystemData.cpp:1005`): recovery
+  READS it to size the transaction system, and recovery seeds it exactly
+  once - only `desired_commit_proxies` lives here so far, the rest
+  following their own readers (bedrock-q67.50). A system key without a
   reader is inventory, not communication - unread MACHINERY is deleted,
   while durable observability keys stay by decision, named as such;
-  families return here when their readers do (config authority with
-  bedrock-q67.25).
+  families return here when their readers do.
   """
 
   alias Bedrock.Service.Worker
@@ -32,6 +35,37 @@ defmodule Bedrock.SystemKeys do
   @doc "Distributor write-fence write UID: `distributor_lock/write` (FDB's moveKeysLockWriteKey)"
   @spec distributor_lock_write() :: Bedrock.key()
   def distributor_lock_write, do: "#{@system_prefix}/distributor_lock/write"
+
+  @doc """
+  Cluster configuration parameter: `config/<name>` -> the parameter's value.
+
+  FDB's `configKeys` (`\\xff/conf/`, `SystemData.cpp:1005`), and the same
+  authority: the cluster controller builds its `DatabaseConfiguration` by
+  reading this range out of the txnStateStore during recovery
+  (`ClusterRecovery.actor.cpp:1191-1193`), never from the coordinators,
+  and configuration changes are ordinary transactions over the range
+  (`changeConfig`, `GenericManagementAPI.actor.h:256`). Recovery only
+  seeds a parameter the family does not carry yet; Bedrock has no
+  operator-facing writer for the range yet (bedrock-q67.51), so a seeded
+  parameter is currently fixed until one lands.
+  """
+  @spec config_key(name :: binary()) :: Bedrock.key()
+  def config_key(name) when is_binary(name), do: "#{@system_prefix}/config/#{name}"
+
+  @doc "Prefix covering every cluster configuration parameter"
+  @spec config_prefix() :: Bedrock.key()
+  def config_prefix, do: "#{@system_prefix}/config/"
+
+  @doc """
+  The parameter naming the desired number of commit proxies (FDB's
+  `\\xff/conf/commit_proxies`, `DatabaseConfiguration.cpp:607-610`).
+
+  The name is the family's vocabulary, shared by recovery's seed writer
+  and the commit-proxy startup phase that reads it, so neither can spell
+  it alone.
+  """
+  @spec desired_commit_proxies() :: binary()
+  def desired_commit_proxies, do: "desired_commit_proxies"
 
   @doc "Shard boundary entry: `shard_keys/<end_key>` -> `{tag, start_key}` (ceiling search)"
   @spec shard_key(Bedrock.key()) :: Bedrock.key()
@@ -89,11 +123,13 @@ defmodule Bedrock.SystemKeys do
           {:shard_key, Bedrock.key()}
           | {:materializer_key, Bedrock.range_tag(), Worker.id()}
           | {:distributor_lock, :owner | :write}
+          | {:config, name :: binary()}
           | :unknown
           | :error
   def parse_key(<<@system_prefix, "/distributor_lock/owner">>), do: {:distributor_lock, :owner}
   def parse_key(<<@system_prefix, "/distributor_lock/write">>), do: {:distributor_lock, :write}
   def parse_key(<<@system_prefix, "/shard_keys/", rest::binary>>), do: {:shard_key, rest}
+  def parse_key(<<@system_prefix, "/config/", rest::binary>>) when rest != "", do: {:config, rest}
 
   def parse_key(<<@system_prefix, "/materializers/", rest::binary>>) do
     case String.split(rest, "/", parts: 2) do

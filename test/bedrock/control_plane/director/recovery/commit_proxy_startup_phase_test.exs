@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.DataPlane.CommitProxy.Server
+  alias Bedrock.SystemKeys
 
   # Mock cluster module for testing
   defmodule TestCluster do
@@ -51,6 +52,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhaseTest do
                CommitProxyStartupPhase.execute(recovery_attempt, context)
 
       assert is_pid(pid1) and is_pid(pid2)
+    end
+
+    test "the committed keyspace parameter governs the proxy count, not the coordinator's anchor" do
+      # \xff/system/config/desired_commit_proxies says three; the
+      # coordinator's bootstrap anchor still says one. An operator changed
+      # the configuration with an ordinary transaction, and nothing wrote
+      # it back to the coordinator — the keyspace is the authority
+      # (FDB: configuration.getDesiredCommitProxies(), built from the
+      # \xff/conf/ range, ClusterRecovery.actor.cpp:1191).
+      recovery_attempt =
+        Map.put(base_recovery_attempt(), :committed_parameters, %{SystemKeys.desired_commit_proxies() => 3})
+
+      context = base_context(1, [node()], successful_start_fn())
+
+      assert {%{proxies: [_, _, _]}, _next_phase} =
+               CommitProxyStartupPhase.execute(recovery_attempt, context)
     end
 
     test "stalls when no coordination capable nodes available" do

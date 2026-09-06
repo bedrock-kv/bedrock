@@ -2,6 +2,7 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T00:50:48Z",
   "created": "2026-07-14T22:35:49Z",
   "description": "Narrow StorageRacing's blanket rescue: storage_racing.ex:54-55 rescues RuntimeError and labels it {:failure, %{layout_lookup_failed: []}}, which also swallows operation_fn RuntimeErrors raised on the in-process cached-fastest path (line 65) and mislabels them as layout failures. Rescue only the specific raise from LayoutIndex lookup (or convert that lookup to a tagged return) so operation errors propagate honestly.\n\nScoped down 2026-08-15: the original ticket bundled placeholder/distributor hardening items (restart intensity limit, healthy-TSL invariant, lookup_key! doc nit, hold_ms threading) from the q67.1/q67.3 audits. Those target code that exists only on feature/q67-phase-a, and the doc nit is moot in current LayoutIndex (empty-pid segments filtered at build; storage_racing raises on []). If phase-a merges, re-raise those items under the q67 epic.",
   "id": "bedrock-h8c",
@@ -13,8 +14,8 @@
     }
   ],
   "priority": 3,
-  "status": "open",
+  "status": "closed",
   "title": "Narrow StorageRacing blanket rescue: operation_fn RuntimeErrors mislabeled as layout_lookup_failed",
   "type": "task",
-  "updated_at": "2026-09-06T00:50:47Z"
+  "updated_at": "2026-09-06T00:50:48Z"
 }

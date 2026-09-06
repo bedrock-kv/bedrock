@@ -8,7 +8,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Materializer.Olivine.DataDatabase
   alias Bedrock.DataPlane.Materializer.Olivine.Index
-  alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
   alias Bedrock.DataPlane.Materializer.Olivine.IndexDatabase
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
@@ -473,7 +472,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
     # Build index structures from in-memory compacted pages
     new_tree = Index.Tree.from_page_map(compacted_pages)
-    {min_key, max_key} = calculate_key_bounds_from_pages(compacted_pages)
 
     # Get max_keys_per_page from the durable version's index
     {^durable_version, {durable_index, _modified}} =
@@ -482,11 +480,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     new_index = %Index{
       tree: new_tree,
       page_map: compacted_pages,
-      min_key: min_key,
-      max_key: max_key,
       max_keys_per_page: durable_index.max_keys_per_page,
       target_keys_per_page: durable_index.target_keys_per_page
     }
+
+    compacted_key_count = Index.key_count(new_index)
 
     new_index_manager = %IndexManager{
       versions: [{durable_version, {new_index, %{}}}],
@@ -496,7 +494,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
       output_queue: :queue.new(),
       last_version_ended_at_offset: 0,
       window_lag_time_μs: 5_000_000,
-      n_keys: IndexManager.info(t.index_manager, :n_keys)
+      # The cutover rewinds to the durable snapshot and the stream re-delivers
+      # everything ingested since, so the count must rewind with it: carrying
+      # the live count forward would double every replayed transaction.
+      n_keys: compacted_key_count
     }
 
     # Reset state for replay
@@ -510,15 +511,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     }
 
     # Emit completion telemetry
-    values_compacted = Enum.sum(Enum.map(compacted_pages, fn {_, {page, _}} -> Page.key_count(page) end))
-
     OlivineTelemetry.trace_compaction_complete(durable_version,
       duration_μs: duration,
       data_size_before: data_size_before,
       data_size_after: new_data_offset,
       index_size_before: index_size_before,
       index_size_after: index_offset,
-      values_compacted: values_compacted
+      values_compacted: compacted_key_count
     )
 
     # Optionally upload snapshot to ObjectStorage (async, fire-and-forget)
@@ -702,29 +701,4 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   end
 
   defp schedule_waiter_expiration(_previous_manager, _updated_manager, _wait_ms), do: :ok
-
-  # Calculate min/max key bounds from page_map
-  defp calculate_key_bounds_from_pages(page_map) when map_size(page_map) == 0, do: {<<0xFF, 0xFF>>, <<>>}
-
-  defp calculate_key_bounds_from_pages(page_map) do
-    min_key =
-      page_map
-      |> Enum.map(fn {_id, {page, _next}} -> Page.left_key(page) end)
-      |> Enum.reject(&is_nil/1)
-      |> case do
-        [] -> <<0xFF, 0xFF>>
-        keys -> Enum.min(keys)
-      end
-
-    max_key =
-      page_map
-      |> Enum.map(fn {_id, {page, _next}} -> Page.right_key(page) end)
-      |> Enum.reject(&is_nil/1)
-      |> case do
-        [] -> <<>>
-        keys -> Enum.max(keys)
-      end
-
-    {min_key, max_key}
-  end
 end

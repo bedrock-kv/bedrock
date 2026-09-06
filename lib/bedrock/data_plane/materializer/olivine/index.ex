@@ -71,8 +71,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
   @type t :: %__MODULE__{
           tree: :gb_trees.tree(),
           page_map: map(),
-          min_key: Bedrock.key(),
-          max_key: Bedrock.key(),
           max_keys_per_page: pos_integer(),
           target_keys_per_page: pos_integer()
         }
@@ -80,8 +78,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
   defstruct [
     :tree,
     :page_map,
-    :min_key,
-    :max_key,
     max_keys_per_page: @default_max_keys_per_page,
     target_keys_per_page: div(@default_max_keys_per_page * 9, 10)
   ]
@@ -104,8 +100,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
     %__MODULE__{
       tree: initial_tree,
       page_map: initial_page_map,
-      min_key: <<0xFF, 0xFF>>,
-      max_key: <<>>,
       max_keys_per_page: max_keys,
       target_keys_per_page: target_keys
     }
@@ -119,6 +113,39 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
     case Page.locator_for_key(page, key) do
       {:ok, locator} -> {:ok, page, locator}
       {:error, :not_found} -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  The number of keys the index currently holds, counted from the page headers.
+  """
+  @spec key_count(t()) :: non_neg_integer()
+  def key_count(%__MODULE__{page_map: page_map}),
+    do: Enum.reduce(page_map, 0, fn {_page_id, {page, _next_id}}, total -> total + Page.key_count(page) end)
+
+  @doc """
+  The smallest and largest keys the index currently holds, computed from the
+  pages rather than cached: nothing on the mutation path is cheap enough to
+  maintain a running minimum, and a cached bound that mutations do not update
+  is a stale bound. Callers are info/telemetry paths, not the hot path.
+
+  An index with no keys reports the inverted sentinel `{<<0xFF, 0xFF>>, <<>>}`
+  — an empty range, distinguishable from any real one.
+  """
+  @spec key_bounds(t()) :: {Bedrock.key(), Bedrock.key()}
+  def key_bounds(%__MODULE__{page_map: page_map}) do
+    page_map
+    |> Enum.flat_map(fn {_page_id, {page, _next_id}} ->
+      # A page holds no keys or holds at least one, so the bounds are both
+      # nil or neither is: a half-nil pair has no shape here.
+      case {Page.left_key(page), Page.right_key(page)} do
+        {nil, nil} -> []
+        {left_key, right_key} -> [left_key, right_key]
+      end
+    end)
+    |> case do
+      [] -> {<<0xFF, 0xFF>>, <<>>}
+      keys -> Enum.min_max(keys)
     end
   end
 
@@ -408,23 +435,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
         page_map
       end
 
-    {min_key, max_key} = calculate_key_bounds(tree, initial_page_map)
-
-    total_key_count =
-      initial_page_map
-      |> Enum.map(fn {_, {page, _next_id}} -> Page.key_count(page) end)
-      |> Enum.sum()
-
     index = %__MODULE__{
       tree: tree,
       page_map: initial_page_map,
-      min_key: min_key,
-      max_key: max_key,
       max_keys_per_page: max_keys_per_page,
       target_keys_per_page: target_keys_per_page
     }
 
-    {:ok, index, max_id, free_ids, total_key_count}
+    {:ok, index, max_id, free_ids, key_count(index)}
   end
 
   defp calculate_free_ids(0, _all_existing_page_ids), do: []
@@ -787,35 +805,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
       :none ->
         # Reached end without finding target page
         nil
-    end
-  end
-
-  # Helper function to calculate min/max keys efficiently
-  defp calculate_key_bounds(tree, page_map) do
-    if :gb_trees.is_empty(tree) do
-      {<<0xFF, 0xFF>>, <<>>}
-    else
-      # Get max from tree structure (O(log n) operation)
-      {max_tree_key, _max_id} = :gb_trees.largest(tree)
-
-      # For min_key, we need to find the actual smallest first_key across all pages
-      # This is a one-time calculation during load
-      min_key = find_minimum_first_key(page_map)
-
-      {min_key, max_tree_key}
-    end
-  end
-
-  # Find the minimum first_key across all pages (only used during load)
-  defp find_minimum_first_key(page_map) when map_size(page_map) == 0, do: <<0xFF, 0xFF>>
-
-  defp find_minimum_first_key(page_map) do
-    page_map
-    |> Enum.map(fn {_page_id, {page, _next_id}} -> Page.left_key(page) end)
-    |> Enum.reject(&is_nil/1)
-    |> case do
-      [] -> <<0xFF, 0xFF>>
-      keys -> Enum.min(keys)
     end
   end
 end

@@ -72,7 +72,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationPrivateMutationTest do
 
       batch = %Batch{
         started_at: 0,
-        finalized_at: 0,
         last_commit_version: Version.from_integer(99),
         commit_version: Version.from_integer(100),
         n_transactions: 1,

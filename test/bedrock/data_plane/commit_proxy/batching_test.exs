@@ -100,7 +100,6 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       assert batch.n_transactions == 1
       assert batch.last_commit_version == Version.from_integer(100)
       assert batch.commit_version == Version.from_integer(101)
-      assert batch.finalized_at
     end
 
     test "returns error when sequencer is nil" do
@@ -288,7 +287,6 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
       assert updated_state.batch == nil
       assert finalized_batch
       assert finalized_batch.n_transactions == 5
-      assert finalized_batch.finalized_at
     end
 
     test "triggers finalization when max_latency exceeded" do
@@ -309,7 +307,6 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchingTest do
 
       assert updated_state.batch == nil
       assert finalized_batch
-      assert finalized_batch.finalized_at
     end
 
     test "does not trigger finalization when neither policy is met" do

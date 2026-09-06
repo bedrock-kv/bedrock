@@ -16,7 +16,6 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchTest do
       assert batch.commit_version == commit_version
       assert batch.n_transactions == 0
       assert batch.buffer == []
-      assert batch.finalized_at == nil
     end
   end
 
@@ -97,16 +96,6 @@ defmodule Bedrock.DataPlane.CommitProxy.BatchTest do
 
       batch = Batch.add_transaction(batch, <<2>>, fn _ -> :ok end, :user)
       assert Batch.transaction_count(batch) == 2
-    end
-  end
-
-  describe "set_finalized_at/2" do
-    test "sets the finalized timestamp" do
-      batch = Batch.new_batch(1000, <<1::64>>, <<2::64>>)
-      assert batch.finalized_at == nil
-
-      batch = Batch.set_finalized_at(batch, 2000)
-      assert batch.finalized_at == 2000
     end
   end
 end

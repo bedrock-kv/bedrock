@@ -3,11 +3,26 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
+  alias Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase
   alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
   alias Bedrock.DataPlane.Transaction
-  alias Bedrock.KeyRange
-  alias Bedrock.SystemKeys
-  alias Bedrock.SystemKeys.Values
+  alias Bedrock.Internal.TransactionBuilder.Tx
+
+  # The exact bytes PersistencePhase committed for the fixture below,
+  # captured before the Tx was threaded through the phases (bedrock-qb0g).
+  @golden_system_transaction Base.decode16!(
+                               "4252445401000002030000F0781393A0000000040020FF2F73797374656D2F6D6174657269616C69" <>
+                                 "7A6572732F302F776B725F7379730021FF2F73797374656D2F6D6174657269616C697A6572732F" <>
+                                 "302F776B725F737973000021FF2F73797374656D2F6D6174657269616C697A6572732F312F776B" <>
+                                 "725F757365720022FF2F73797374656D2F6D6174657269616C697A6572732F312F776B725F7573" <>
+                                 "6572000015FF2F73797374656D2F73686172645F6B6579732FFF0016FF2F73797374656D2F7368" <>
+                                 "6172645F6B6579732FFF000016FF2F73797374656D2F73686172645F6B6579732FFFFF0017FF2F" <>
+                                 "73797374656D2F73686172645F6B6579732FFFFF00010000A62928E57400C614FF2F7379737465" <>
+                                 "6D2F73686172645F6B6579732FFF05150101000000C615FF2F73797374656D2F73686172645F6B" <>
+                                 "6579732FFFFF051401FF000000CC1FFF2F73797374656D2F6D6174657269616C697A6572732F30" <>
+                                 "2F776B725F7379730F01676F6C64656E40666978747572650000CC20FF2F73797374656D2F6D61" <>
+                                 "74657269616C697A6572732F312F776B725F757365720F01676F6C64656E406669787475726500"
+                             )
 
   # Shared test data setup: the TSL is wiring only (no membership map);
   # shard topology and service records ride the recovery attempt (and
@@ -43,9 +58,21 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       <<0xFF, 0xFF>> => {0, <<0xFF>>}
     })
     |> Map.put(:shard_materializers, %{0 => %{"wkr_sys" => node_string()}, 1 => %{"wkr_user" => node_string()}})
-    |> Map.put(:seeded_layout?, true)
     |> Map.put(:prior_materializer_refs, %{})
+    |> Map.put(:pending_tx, accumulated_tx(node_string()))
     |> Map.put(:transaction_system_layout, mock_transaction_system_layout())
+  end
+
+  # What the phases ahead of persistence put in the attempt's Tx: the
+  # materializer bootstrap phase's fresh-cluster contribution — the layout
+  # it seeded, and the membership it decided against an empty prior.
+  defp accumulated_tx(node_string) do
+    Tx.new()
+    |> MaterializerBootstrapPhase.put_shard_keys(%{<<0xFF>> => {1, <<>>}, <<0xFF, 0xFF>> => {0, <<0xFF>>}})
+    |> MaterializerBootstrapPhase.put_materializer_members(
+      %{0 => %{"wkr_sys" => node_string}, 1 => %{"wkr_user" => node_string}},
+      %{}
+    )
   end
 
   describe "execute/2" do
@@ -69,7 +96,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
                PersistencePhase.execute(recovery_attempt, context)
     end
 
-    test "every system-key value it writes decodes through Values.decode_for/2" do
+    test "commits exactly the Tx the phases accumulated, and contributes nothing of its own" do
       recovery_attempt = base_recovery_attempt()
       test_pid = self()
 
@@ -82,74 +109,38 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       assert {_, :completed} = PersistencePhase.execute(recovery_attempt, context)
       assert_received {:committed, encoded_transaction}
 
-      sets =
-        encoded_transaction
-        |> Transaction.mutations!()
-        |> Enum.flat_map(fn
-          {:set, key, value} -> [{key, value}]
-          _ -> []
-        end)
-
-      refute sets == []
-
-      # Every written value must decode via the family dispatched from its key;
-      # this is the writer/reader contract that masked the pre-fix shard_key bug.
-      decoded =
-        Map.new(sets, fn {key, value} ->
-          parsed = SystemKeys.parse_key(key)
-          refute parsed in [:unknown, :error], "wrote unparseable system key: #{inspect(key)}"
-          assert {:ok, decoded} = Values.decode_for(parsed, value), "value for #{inspect(key)} failed to decode"
-          {parsed, decoded}
-        end)
-
-      # Shard keys must decode to the exact {tag, start_key} the layout holds --
-      # the shape the materializer bootstrap cross-epoch read depends on.
-      assert decoded[{:shard_key, <<0xFF>>}] == {1, <<>>}
-      assert decoded[{:shard_key, <<0xFF, 0xFF>>}] == {0, <<0xFF>>}
-
-      # Membership: the worker id is in the KEY and the value carries the
-      # node (FDB serverKeys analogue), projected from the carried
-      # shard_materializers refs.
-      node_string = Atom.to_string(node())
-      assert decoded[{:materializer_key, 0, "wkr_sys"}] == node_string
-      assert decoded[{:materializer_key, 1, "wkr_user"}] == node_string
+      assert encoded_transaction == Tx.commit(recovery_attempt.pending_tx, nil)
     end
 
-    test "materializer family is skipped entirely when shard_materializers is absent" do
-      recovery_attempt = Map.put(base_recovery_attempt(), :shard_materializers, %{})
-      mutations = captured_system_mutations(recovery_attempt)
+    test "an attempt whose phases wrote nothing commits an empty transaction" do
+      # Nothing is synthesized here. A phase with no keyspace writes to make
+      # leaves the Tx alone, and the commit then carries no mutations --
+      # this phase has no state of its own left to rebuild them from.
+      recovery_attempt = Map.put(base_recovery_attempt(), :pending_tx, Tx.new())
 
-      prefix = SystemKeys.materializers_prefix()
-      {clear_start, clear_end} = KeyRange.from_prefix(prefix)
-
-      refute Enum.any?(mutations, fn
-               {:set, key, _} -> String.starts_with?(key, prefix)
-               {:clear_range, ^clear_start, ^clear_end} -> true
-               _ -> false
-             end)
+      assert recovery_attempt |> captured_system_mutations() |> Enum.to_list() == []
     end
 
-    test "assignments write from the carried refs — no services-map inversion, no skips" do
-      # Worker ids and nodes ride the assignment from creation, so the
-      # family is written even when the services map has no matching
-      # record: the keyspace names exactly what the attempt assigned.
-      # (Under the old inversion, a missing record silently dropped the
-      # entry — an orphan the seed and keyspace then disagreed about.)
-      recovery_attempt =
-        update_in(
-          base_recovery_attempt(),
-          [Access.key!(:transaction_services)],
-          &Map.drop(&1, ["wkr_sys", "wkr_user"])
-        )
+    test "the committed bytes are identical to the pre-refactor build on a fixed fixture" do
+      # Threading the Tx through the phases must not change one byte of what
+      # recovery commits. @golden_system_transaction was captured from
+      # PersistencePhase as it stood before this refactor (bedrock-qb0g),
+      # running this same fixture. Regenerate it only when the transaction
+      # ENCODING changes -- never to accommodate a change in what recovery
+      # writes.
+      recovery_attempt = Map.put(base_recovery_attempt(), :pending_tx, accumulated_tx("golden@fixture"))
+      test_pid = self()
 
-      mutations = captured_system_mutations(recovery_attempt)
-
-      for tag <- [0, 1] do
-        assert Enum.any?(mutations, fn
-                 {:set, key, _} -> String.starts_with?(key, SystemKeys.materializer_tag_prefix(tag))
-                 _ -> false
-               end)
+      commit_fn = fn _proxy, _epoch, encoded_transaction ->
+        send(test_pid, {:committed, encoded_transaction})
+        {:ok, 1, 0}
       end
+
+      context = Map.put(recovery_context(), :commit_transaction_fn, commit_fn)
+      assert {_, :completed} = PersistencePhase.execute(recovery_attempt, context)
+      assert_received {:committed, encoded_transaction}
+
+      assert encoded_transaction == @golden_system_transaction
     end
 
     test "commits the system transaction in system mode by default" do
@@ -194,121 +185,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
     assert {_, :completed} = PersistencePhase.execute(recovery_attempt, context)
     assert_received {:committed, encoded_transaction}
     Transaction.mutations!(encoded_transaction)
-  end
-
-  # Apply set/clear/clear_range mutations, in order, to a flat key -> value map
-  # (a stand-in for the materializer's durable key space).
-  defp apply_to_store(store, mutations) do
-    Enum.reduce(mutations, store, fn
-      {:set, key, value}, store ->
-        Map.put(store, key, value)
-
-      {:clear, key}, store ->
-        Map.delete(store, key)
-
-      {:clear_range, start_key, end_key}, store ->
-        Map.reject(store, fn {key, _} -> key >= start_key and key < end_key end)
-    end)
-  end
-
-  # Range read over [prefix, strinc(prefix)) -- the same semantics as the
-  # materializer bootstrap cross-epoch read (default_get_shard_layout).
-  defp range_read(store, prefix) do
-    {start_key, end_key} = KeyRange.from_prefix(prefix)
-
-    store
-    |> Enum.filter(fn {key, _} -> key >= start_key and key < end_key end)
-    |> Enum.sort()
-  end
-
-  describe "read-and-heal: recovery writes what it changed, never blanket-clears" do
-    test "recovery clears nothing: every family it writes is read-and-healed" do
-      mutations = captured_system_mutations(base_recovery_attempt())
-
-      # The epoch-scoped layout/logs family was the only thing recovery
-      # ever blanket-cleared, and it had no reader (bedrock-q67.21.10).
-      # What remains is durable, distributor-era state: recovery may seed
-      # or update entries, never erase a family wholesale.
-      refute Enum.any?(mutations, &match?({:clear_range, _, _}, &1)),
-             "recovery emitted a blanket clear: #{inspect(Enum.filter(mutations, &match?({:clear_range, _, _}, &1)))}"
-
-      refute Enum.any?(mutations, &match?({:clear, _}, &1))
-    end
-
-    test "a fresh cluster seeds shard_keys; the seed needs no clear (the family is definitionally empty)" do
-      mutations = captured_system_mutations(base_recovery_attempt())
-
-      shard_sets =
-        Enum.filter(mutations, fn
-          {:set, key, _} -> String.starts_with?(key, SystemKeys.shard_keys_prefix())
-          _ -> false
-        end)
-
-      assert length(shard_sets) == 2
-    end
-
-    test "an existing cluster's recovery leaves the durable shard_keys family untouched" do
-      # Boundaries never change without splits; the family was read, not
-      # invented, so recovery writes nothing under it.
-      recovery_attempt = Map.put(base_recovery_attempt(), :seeded_layout?, false)
-
-      stale_store = %{
-        SystemKeys.shard_key(<<0xFF>>) => Values.encode_shard_key_entry(1, <<>>),
-        SystemKeys.shard_key(<<0xFF, 0xFF>>) => Values.encode_shard_key_entry(0, <<0xFF>>)
-      }
-
-      mutations = captured_system_mutations(recovery_attempt)
-      store = apply_to_store(stale_store, mutations)
-
-      refute Enum.any?(mutations, fn
-               {:set, key, _} -> String.starts_with?(key, SystemKeys.shard_keys_prefix())
-               _ -> false
-             end)
-
-      assert range_read(store, SystemKeys.shard_keys_prefix()) == Enum.sort(stale_store)
-    end
-
-    test "materializer writes are a diff against the prior family; unnamed entries are not recovery's to clean" do
-      # tag 0's assignment is unchanged (not rewritten); tag 1's changed
-      # (rewritten); tag 9's entry names a tag outside this layout and is
-      # left alone — read-and-heal means stale entries are the
-      # distributor's to reconcile, never recovery's to erase.
-      prior = %{
-        0 => %{"wkr_sys" => node_string()},
-        1 => %{"wkr_departed" => node_string()},
-        9 => %{"wkr_stray" => node_string()}
-      }
-
-      recovery_attempt = Map.put(base_recovery_attempt(), :prior_materializer_refs, prior)
-
-      stale_store =
-        Map.new(prior, fn {tag, members} ->
-          [{id, node}] = Map.to_list(members)
-          {SystemKeys.materializer_key(tag, id), Values.encode_materializer_node(node)}
-        end)
-
-      mutations = captured_system_mutations(recovery_attempt)
-      store = apply_to_store(stale_store, mutations)
-
-      materializer_sets =
-        for {:set, key, value} <- mutations,
-            String.starts_with?(key, SystemKeys.materializers_prefix()),
-            do: {key, value}
-
-      # tag 1's member changed, so its NEW member's key is written; the
-      # departed member's key is left alone — recovery writes what it
-      # decided and never removes members it did not place (a set may
-      # legitimately hold replicas recovery knows nothing about).
-      assert materializer_sets == [
-               {SystemKeys.materializer_key(1, "wkr_user"), Values.encode_materializer_node(node_string())}
-             ]
-
-      assert {:ok, _node} =
-               Values.decode_materializer_node(Map.fetch!(store, SystemKeys.materializer_key(0, "wkr_sys")))
-
-      assert {:ok, _node} =
-               Values.decode_materializer_node(Map.fetch!(store, SystemKeys.materializer_key(9, "wkr_stray")))
-    end
   end
 
   describe "rewriting a bootstrap record that predates a field" do

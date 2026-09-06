@@ -1,6 +1,14 @@
 defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   @moduledoc """
   Represents an ongoing recovery attempt with its current state and progress.
+
+  `pending_tx` is the attempt's one system transaction, accumulated as the
+  phases run and committed once, by the persistence phase. A phase that has
+  keyspace writes to make adds them where it decides them — the shard layout
+  and the materializer family are written by the phase that reads or seeds
+  them — instead of stashing provenance for a later phase to reconstruct
+  them from. Keyspace is the channel, and the phase holding the data is the
+  one that knows what belongs on it.
   """
 
   alias Bedrock.ControlPlane.Config.LogDescriptor
@@ -9,6 +17,7 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
   alias Bedrock.DataPlane.Log
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Internal.TransactionBuilder.Tx
   alias Bedrock.Service.Worker
 
   @type reason_for_stall ::
@@ -55,9 +64,9 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
     :transaction_system_layout,
     :shard_layout,
     shard_materializers: %{},
-    seeded_layout?: false,
     prior_materializer_refs: nil,
-    lock_failed_service_ids: MapSet.new()
+    lock_failed_service_ids: MapSet.new(),
+    pending_tx: Tx.new()
   ]
 
   @type shard_layout :: %{Bedrock.key() => {Bedrock.range_tag(), Bedrock.key()}}
@@ -82,10 +91,10 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
           service_pids: %{Worker.id() => pid()},
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           shard_materializers: %{Bedrock.range_tag() => %{Worker.id() => node_name :: String.t()}},
-          seeded_layout?: boolean(),
           prior_materializer_refs: %{Bedrock.range_tag() => %{Worker.id() => String.t()}} | nil,
           lock_failed_service_ids: MapSet.t(Worker.id()),
-          shard_layout: shard_layout() | nil
+          shard_layout: shard_layout() | nil,
+          pending_tx: Tx.t()
         }
 
   @doc """
@@ -123,9 +132,21 @@ defmodule Bedrock.ControlPlane.Config.RecoveryAttempt do
       transaction_system_layout: nil,
       shard_layout: nil,
       shard_materializers: %{},
-      seeded_layout?: false,
       prior_materializer_refs: nil,
-      lock_failed_service_ids: MapSet.new()
+      lock_failed_service_ids: MapSet.new(),
+      pending_tx: Tx.new()
     }
   end
+
+  @doc """
+  Drops everything the previous attempt accumulated in the system transaction.
+
+  A retry re-runs every phase against the same struct (only `attempt` is
+  bumped), so the writes each phase contributed have to go: the retry may
+  take a different branch — a cluster that looked fresh once may read its
+  layout the next time — and mutations from the abandoned branch would
+  ride along into the commit.
+  """
+  @spec reset_pending_tx(t()) :: t()
+  def reset_pending_tx(t), do: %{t | pending_tx: Tx.new()}
 end

@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T03:12:21Z",
+  "description": "Successor to bedrock-q67.20.7 (closed invalid 2026-09-05). The legacy term_to_binary shard-tag encoding genuinely shipped in pre-Values clusters, and since bedrock-q67.21.2 recovery seeds shard_keys/ only-when-absent and never rewrites it, those entries are never re-encoded — so system_keys/reader.ex's decode_legacy_shard_tag fallback cannot be removed without a migration. Add one: the distributor's first ownership pass (startup_sweep in control_plane/distributor/server.ex) or a dedicated recovery step reads each shard_keys/ entry, and for any that decodes only via the legacy path, rewrites it with Values.encode_shard_key_entry/2 under the distributor lock (read-check-write, like every other keyspace mutation). Once a cluster has run one such pass its record is canonical; after a release with the migration in, retire the fallback with the test q67.20.7 asked for (a term_to_binary tag is rejected with a clear reason).",
+  "id": "bedrock-q67.52",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 4,
+  "status": "open",
+  "title": "Migrate legacy term_to_binary shard_key entries to the Values encoding, then retire decode_legacy_shard_tag",
+  "type": "task",
+  "updated_at": "2026-09-06T03:12:21Z"
+}

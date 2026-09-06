@@ -40,6 +40,23 @@ defmodule Bedrock.SystemKeys.ValuesTest do
     end
   end
 
+  describe "config parameters" do
+    test "round-trip" do
+      assert {:ok, 3} = Values.decode_config_integer(Values.encode_config_integer(3))
+    end
+
+    test "encoder rejects a value that is not a positive integer" do
+      assert_raise ArgumentError, fn -> Values.encode_config_integer(0) end
+      assert_raise ArgumentError, fn -> Values.encode_config_integer("3") end
+    end
+
+    test "decoder never raises on garbage or wrong shapes" do
+      assert {:error, :invalid_encoding} = Values.decode_config_integer(<<0xEE, 0xEE>>)
+      assert {:error, :invalid_type} = Values.decode_config_integer(Values.encode_materializer_node("3"))
+      assert {:error, :invalid_encoding} = Values.decode_config_integer(:not_binary)
+    end
+  end
+
   describe "decode_for/2 - the writer/reader contract" do
     test "dispatches by parsed key family" do
       shard_value = Values.encode_shard_key_entry(3, "a")
@@ -49,6 +66,12 @@ defmodule Bedrock.SystemKeys.ValuesTest do
 
       assert {:ok, "node@host"} =
                Values.decode_for(SystemKeys.parse_key(SystemKeys.materializer_key(7, "wkr_abc")), ref_value)
+
+      assert {:ok, 5} =
+               Values.decode_for(
+                 SystemKeys.parse_key(SystemKeys.config_key(SystemKeys.desired_commit_proxies())),
+                 Values.encode_config_integer(5)
+               )
     end
 
     test "unknown families decode as errors, never raise" do

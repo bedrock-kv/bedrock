@@ -113,6 +113,36 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       node_string = Atom.to_string(node())
       assert decoded[{:materializer_key, 0, "wkr_sys"}] == node_string
       assert decoded[{:materializer_key, 1, "wkr_user"}] == node_string
+
+      # The seeded configuration parameter, decoding to the anchor value
+      # the commit-proxy startup phase will read back next epoch.
+      assert decoded[{:config, SystemKeys.desired_commit_proxies()}] == 1
+    end
+
+    test "seeds the config family from the coordinator's anchor when the committed family has none" do
+      # A fresh cluster (or one that predates the family): the keyspace
+      # carries no desired_commit_proxies, so recovery writes the anchor
+      # once. recovery_context/0's anchor is 1.
+      mutations = captured_system_mutations(base_recovery_attempt())
+      key = SystemKeys.config_key(SystemKeys.desired_commit_proxies())
+
+      assert {:set, ^key, value} = Enum.find(mutations, &match?({:set, ^key, _}, &1))
+      assert Values.decode_config_integer(value) == {:ok, 1}
+    end
+
+    test "leaves a committed config parameter exactly as committed" do
+      # FDB's recovery reads \xff/conf and never rewrites it; a re-stamp
+      # from the coordinator's anchor would revert every configuration
+      # change at the next epoch.
+      recovery_attempt =
+        Map.put(base_recovery_attempt(), :committed_parameters, %{SystemKeys.desired_commit_proxies() => 7})
+
+      mutations = captured_system_mutations(recovery_attempt)
+
+      refute Enum.any?(mutations, fn
+               {:set, key, _} -> String.starts_with?(key, SystemKeys.config_prefix())
+               _ -> false
+             end)
     end
 
     test "materializer family is skipped entirely when shard_materializers is absent" do

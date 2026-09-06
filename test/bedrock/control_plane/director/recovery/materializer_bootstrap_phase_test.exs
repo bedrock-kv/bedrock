@@ -662,6 +662,54 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       end)
     end
 
+    test "the committed config family rides the attempt to the phases that size the system" do
+      # Read at the same version, from the same materializer, as the other
+      # two durable families — FDB builds its DatabaseConfiguration from
+      # exactly this read (ClusterRecovery.actor.cpp:1191), never from the
+      # coordinators.
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      named_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        existing_context(recovery_version, %{
+          read_committed_parameters_fn: fn _pid, version ->
+            assert version == recovery_version
+            {:ok, %{Bedrock.SystemKeys.desired_commit_proxies() => 4}}
+          end
+        })
+
+      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+
+        assert updated_attempt.committed_parameters == %{Bedrock.SystemKeys.desired_commit_proxies() => 4}
+      end)
+    end
+
+    test "a failed config read stalls the attempt — never a silent fall back to the anchor" do
+      # Reading the family as empty would mean "not configured", and the
+      # persistence phase would then seed the coordinator's anchor over a
+      # cluster that has a committed configuration it could not read.
+      recovery_version = Version.from_integer(500)
+      sys_pid = spawn(fn -> Process.sleep(:infinity) end)
+      named_pid = spawn(fn -> Process.sleep(:infinity) end)
+      stray_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      context =
+        existing_context(recovery_version, %{
+          read_committed_parameters_fn: fn _pid, _version -> {:error, {:config_query_failed, :timeout}} end
+        })
+
+      recovery_attempt = two_claimants_attempt(recovery_version, named_pid, stray_pid, sys_pid)
+
+      assert {_attempt, {:stalled, {:config_query_failed, :timeout}}} =
+               MaterializerBootstrapPhase.execute(recovery_attempt, context)
+    end
+
     test "a failed family read stalls the attempt — never a silently unnamed layout" do
       recovery_version = Version.from_integer(500)
       sys_pid = spawn(fn -> Process.sleep(:infinity) end)

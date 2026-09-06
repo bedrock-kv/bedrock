@@ -38,7 +38,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     transaction_system_layout = recovery_attempt.transaction_system_layout
 
-    system_transaction = build_system_transaction(recovery_attempt)
+    system_transaction = build_system_transaction(recovery_attempt, context.cluster_config)
 
     case submit_system_transaction(system_transaction, recovery_attempt.proxies, recovery_attempt.epoch, context) do
       {:ok, _version, _sequence} ->
@@ -179,6 +179,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     }
   end
 
+  # The cold-boot record. `desired_commit_proxies` is now the BOOTSTRAP
+  # ANCHOR only: it seeds `\xff/system/config/desired_commit_proxies` on a
+  # cluster that has none, and a cluster that has one ignores it (FDB's
+  # coordinated state carries the connection string, not the
+  # configuration). The rest are still authoritative here, and move to the
+  # keyspace as their readers move with them.
   defp build_parameters(config) do
     params = config.parameters
 
@@ -211,10 +217,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end)
   end
 
-  @spec build_system_transaction(RecoveryAttempt.t()) :: Transaction.encoded()
-  defp build_system_transaction(recovery_attempt) do
+  @spec build_system_transaction(RecoveryAttempt.t(), map()) :: Transaction.encoded()
+  defp build_system_transaction(recovery_attempt, cluster_config) do
     tx = Tx.new()
-    tx = build_readable_keys(tx, recovery_attempt)
+    tx = build_readable_keys(tx, recovery_attempt, cluster_config)
 
     Tx.commit(tx, nil)
   end
@@ -223,12 +229,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # RoutingData and the next recovery's materializer bootstrap, and
   # materializers/ refs feed the client-facing routing projection (FDB's
   # serverList analogue - runtime hints, never recovery input) and worker
-  # rejoin validation. Nothing else is written (config and policy travel
-  # via the object-storage cluster bootstrap, which the coordinator
-  # actually reads; services are rebuilt each recovery from foreman
-  # discovery). Families return to the keyspace when their readers do
-  # (bedrock-q67.9, q67.25) - and only then. FDB does keep a keyspace
-  # copy of its log set (`\xff/logs`, SystemData.cpp:1171, written by the
+  # rejoin validation, and config/ carries the cluster configuration the
+  # commit-proxy startup phase sizes itself from (seeded once, then the
+  # keyspace's to change). Nothing else is written (the remaining
+  # parameters and the policies still travel via the object-storage
+  # cluster bootstrap, which the coordinator actually reads; services are
+  # rebuilt each recovery from foreman discovery). Families return to the
+  # keyspace when their readers do (bedrock-q67.9) - and only then. FDB
+  # does keep a keyspace copy of its log set (`\xff/logs`,
+  # SystemData.cpp:1171, written by the
   # recovery transaction at ClusterRecovery.actor.cpp:1728), so the
   # deleted layout/logs family was its analogue - but FDB's copy has
   # three readers we have no equivalent of: recovery's stale-master
@@ -238,13 +247,46 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   # and the tag mapping it held survives in the cluster bootstrap the
   # coordinator actually loads. The family comes back when one of those
   # readers does (bedrock-q67.21.10).
-  @spec build_readable_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
-  defp build_readable_keys(tx, recovery_attempt) do
+  @spec build_readable_keys(Tx.t(), RecoveryAttempt.t(), map()) :: Tx.t()
+  defp build_readable_keys(tx, recovery_attempt, cluster_config) do
     # The mapping families are durable, distributor-era state: recovery
     # reads and heals, never blanket-clears (bedrock-q67.21.2).
     tx
     |> build_shard_keys(recovery_attempt)
     |> build_materializer_keys(recovery_attempt)
+    |> build_config_keys(recovery_attempt, cluster_config)
+  end
+
+  # Seeds `config/<name>` for a parameter the committed family does not
+  # carry — a fresh cluster, or one that predates the family — and writes
+  # nothing otherwise.
+  #
+  # The keyspace copy is the authority, so this must not be a rewrite:
+  # `\xff/conf/` is changed by an ordinary transaction (FDB's
+  # `changeConfig`, ManagementAPI.actor.cpp), and recovery's own commit
+  # only READS it (ClusterRecovery.actor.cpp:1191). Re-stamping the
+  # coordinator's bootstrap anchor over the committed value each epoch
+  # would make every configuration change last exactly until the next
+  # recovery. The coordinator keeps the anchor and nothing more: it
+  # answers the seed, and the family answers everything after it.
+  #
+  # Only `desired_commit_proxies` moves here for now — the parameter with
+  # a live keyspace-side reader (the commit-proxy startup phase). The
+  # rest of the parameters and the policies follow their own readers, one
+  # at a time; writing them ahead of a reader would be inventory.
+  @spec build_config_keys(Tx.t(), RecoveryAttempt.t(), map()) :: Tx.t()
+  defp build_config_keys(tx, recovery_attempt, cluster_config) do
+    name = SystemKeys.desired_commit_proxies()
+
+    if Map.has_key?(recovery_attempt.committed_parameters, name) do
+      tx
+    else
+      Tx.set(
+        tx,
+        SystemKeys.config_key(name),
+        Values.encode_config_integer(cluster_config.parameters.desired_commit_proxies)
+      )
+    end
   end
 
   # Creates materializer_key(tag, worker_id) -> node entries as a DIFF

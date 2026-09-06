@@ -82,6 +82,38 @@ defmodule Bedrock.SystemKeys.Reader do
   defp decode_member_entry(_not_a_member_key, _value), do: :error
 
   @doc """
+  Decodes `config/<name>` entries into `%{name => value}`, with the
+  parameter name as the binary it is in the key - decoding durable bytes
+  never creates atoms, so consumers look parameters up by the names
+  `Bedrock.SystemKeys` publishes.
+
+  A foreign key, or a parameter whose value does not decode, fails the
+  whole read. Skipping it would report the parameter as ABSENT, and
+  absent means "seed me from the coordinator's bootstrap anchor" - so a
+  single corrupt value would silently revert a configured cluster to its
+  cold-boot defaults and then rewrite them as committed.
+  """
+  @spec decode_config_parameters([{Bedrock.key(), binary()}]) ::
+          {:ok, %{binary() => pos_integer()}} | {:error, {:invalid_config_entry, Bedrock.key()}}
+  def decode_config_parameters(entries) do
+    Enum.reduce_while(entries, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
+      case decode_config_entry(SystemKeys.parse_key(key), value) do
+        {:ok, name, decoded} -> {:cont, {:ok, Map.put(acc, name, decoded)}}
+        :error -> {:halt, {:error, {:invalid_config_entry, key}}}
+      end
+    end)
+  end
+
+  defp decode_config_entry({:config, name}, value) do
+    case Values.decode_config_integer(value) do
+      {:ok, decoded} -> {:ok, name, decoded}
+      _ -> :error
+    end
+  end
+
+  defp decode_config_entry(_not_a_config_key, _value), do: :error
+
+  @doc """
   Decodes `shard_keys/<end_key>` entries into the boundary map
   `%{end_key => {tag, start_key}}`, consuming the carried start key
   verbatim — the same meaning `RoutingData.apply_mutation` gives the

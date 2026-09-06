@@ -52,7 +52,10 @@ defmodule Bedrock.SystemKeysTest do
         shard_key: {SystemKeys.shard_keys_prefix(), [SystemKeys.shard_key(<<>>), SystemKeys.shard_key(<<0xFF, 0xFF>>)]},
         materializer_key:
           {SystemKeys.materializers_prefix(),
-           [SystemKeys.materializer_key(0, "wkr_a"), SystemKeys.materializer_key(4200, "wkr_b")]}
+           [SystemKeys.materializer_key(0, "wkr_a"), SystemKeys.materializer_key(4200, "wkr_b")]},
+        config:
+          {SystemKeys.config_prefix(),
+           [SystemKeys.config_key(SystemKeys.desired_commit_proxies()), SystemKeys.config_key("z")]}
       }
 
       # Plausible future siblings that share leading bytes with a family.
@@ -83,6 +86,20 @@ defmodule Bedrock.SystemKeysTest do
       assert SystemKeys.parse_key(<<0xFF, "/system/future/feature">>) == :unknown
       assert SystemKeys.parse_key("user/key") == :error
       assert SystemKeys.parse_key(:not_a_key) == :error
+    end
+  end
+
+  describe "cluster configuration keys" do
+    test "config_key/1 round-trips through parse_key/1, carrying the parameter name" do
+      assert SystemKeys.config_key(SystemKeys.desired_commit_proxies()) ==
+               "\xff/system/config/desired_commit_proxies"
+
+      assert SystemKeys.parse_key(SystemKeys.config_key("desired_commit_proxies")) ==
+               {:config, "desired_commit_proxies"}
+    end
+
+    test "the bare prefix names no parameter" do
+      assert SystemKeys.parse_key(SystemKeys.config_prefix()) == :unknown
     end
   end
 

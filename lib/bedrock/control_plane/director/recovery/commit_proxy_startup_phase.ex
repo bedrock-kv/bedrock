@@ -13,6 +13,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
   proxies across different machines. Each proxy is configured with epoch and director
   information for recovery coordination.
 
+  How many proxies to start is the committed `\\xff/system/config/desired_commit_proxies`,
+  read from the keyspace by the materializer bootstrap phase; the coordinator's
+  configuration answers only for a cluster whose family does not carry the
+  parameter yet.
+
   Stalls if no coordination-capable nodes are available since at least one proxy
   must be operational for transaction processing. Proxies remain locked until
   Transaction System Layout phase transitions them to operational mode.
@@ -24,6 +29,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
   alias Bedrock.Cluster
   alias Bedrock.ControlPlane.Director.Recovery.Shared
   alias Bedrock.DataPlane.CommitProxy
+  alias Bedrock.SystemKeys
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -36,7 +42,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
 
     available_commit_proxy_nodes = Map.get(context.node_capabilities, :coordination, [])
 
-    context.cluster_config.parameters.desired_commit_proxies
+    recovery_attempt
+    |> desired_commit_proxies(context)
     |> define_commit_proxies(
       recovery_attempt.cluster,
       recovery_attempt.epoch,
@@ -54,6 +61,27 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase do
         updated_recovery_attempt = %{recovery_attempt | proxies: commit_proxies}
         {updated_recovery_attempt, Bedrock.ControlPlane.Director.Recovery.ResolverStartupPhase}
     end
+  end
+
+  # The keyspace is the authority. FDB recruits commit proxies from
+  # `configuration.getDesiredCommitProxies()` — a field of the
+  # DatabaseConfiguration the cluster controller built by reading
+  # `\xff/conf/` out of the txnStateStore (ClusterRecovery.actor.cpp:1191,
+  # DatabaseConfiguration.cpp:606-609), and `\xff/conf/commit_proxies` is
+  # changed by an ordinary transaction, not by touching the coordinators.
+  # The materializer bootstrap phase performed the equivalent read.
+  #
+  # The coordinator's value is the BOOTSTRAP ANCHOR: it answers only for
+  # a cluster whose committed family does not carry the parameter yet (a
+  # fresh cluster, or one that predates the family), and the persistence
+  # phase then seeds the family with it. Preferring it once the family
+  # carries a value would make every configuration change last exactly
+  # until the next recovery.
+  @spec desired_commit_proxies(RecoveryAttempt.t(), map()) :: pos_integer()
+  defp desired_commit_proxies(recovery_attempt, context) do
+    Map.get_lazy(recovery_attempt.committed_parameters, SystemKeys.desired_commit_proxies(), fn ->
+      context.cluster_config.parameters.desired_commit_proxies
+    end)
   end
 
   @spec define_commit_proxies(

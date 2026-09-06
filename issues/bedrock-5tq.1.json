@@ -2,6 +2,8 @@
   "assignee": "",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T22:51:27Z",
+  "close_reason": "Duplicate of bedrock-5tq.2, merged into it 2026-09-06. The gateway.md headline is moot: no guide links gateway.md any more (verified at a8886156), and the component was renamed rather than documented, so repointing is the answer. The surviving 'sweep for other targets that do not exist' clause is the same sweep 5tq.2 asks for; the verified inventory (7 broken doc links, 8 broken code-path links, 9 stale .ex:line refs) now lives in 5tq.2's description.",
   "created": "2026-08-15T17:18:22Z",
   "description": "guides/deep-dives/architecture/infrastructure/ contains cluster.md, foreman.md, link.md, transaction-builder.md — no gateway.md — yet at least 8 files link to it (glossary.md:127, quick-reads/{control-plane,data-plane,transactions}.md, quick-reads/recovery/{proxy-startup,transaction-system-layout,persistence,sequencer-startup,monitoring}.md, deep-dives/architecture.md, deep-dives/transactions.md 'Gateway Deep Dive'). Either write the gateway deep-dive (the Gateway/TransactionBuilder split is real and load-bearing) or repoint the links at transaction-builder.md/glossary. Also sweep for other targets that do not exist.",
   "id": "bedrock-5tq.1",
@@ -14,8 +16,8 @@
     }
   ],
   "priority": 2,
-  "status": "open",
+  "status": "closed",
   "title": "Broken links: gateway.md is referenced by 8+ guides but does not exist",
   "type": "bug",
-  "updated_at": "2026-09-06T14:06:01Z"
+  "updated_at": "2026-09-06T22:51:27Z"
 }

@@ -11,11 +11,15 @@
     {
       "text": "GitHub issue published: https://github.com/bedrock-kv/bedrock/issues/292. Starting isolated investigation in /tmp/bedrock-followups-20260905.zKTZxP/292; same cold-plan/TDD/final-audit workflow as campaign.",
       "timestamp": "2026-09-06T02:39:45Z"
+    },
+    {
+      "text": "RED complete: new actual Foreman/DynamicSupervisor gated tests 11tests9failures in /tmp/bedrock-followups-20260905.zKTZxP/292-red-complete.log. Pins absent crash, stale live/dead healthy/stopped/error, same-ID recreation, destructive stale retirement, and removal failing to terminate unreported automatic replacement. Existing lifecycle baseline21tests0fail. Concrete reporter-PID/registered-authority/incarnation-retention plan at /tmp/bedrock-followups-20260905.zKTZxP/292-plan.md. No production edits or commit; awaiting cold review.",
+      "timestamp": "2026-09-06T02:49:51Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Late restarted worker health crashes Foreman after explicit worker removal",
   "type": "bug",
-  "updated_at": "2026-09-06T02:40:10Z"
+  "updated_at": "2026-09-06T02:49:51Z"
 }

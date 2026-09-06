@@ -27,6 +27,7 @@ defmodule Bedrock.Cluster do
   @callback config!() :: Config.t()
   @callback coordinator_nodes!() :: [node()]
   @callback coordinator_ping_timeout_in_ms() :: non_neg_integer()
+  @callback coordinator_revalidation_interval_in_ms() :: pos_integer()
   @callback fetch_config() :: {:ok, Config.t()} | {:error, :unavailable}
   @callback fetch_coordinator() :: {:ok, Coordinator.ref()} | {:error, :unavailable}
   @callback fetch_coordinator_nodes() :: {:ok, [node()]} | {:error, :unavailable}
@@ -154,6 +155,17 @@ defmodule Bedrock.Cluster do
       @spec coordinator_ping_timeout_in_ms() :: non_neg_integer()
       def coordinator_ping_timeout_in_ms,
         do: ClusterSupervisor.coordinator_ping_timeout_in_ms(__MODULE__, @otp_app, @static_config)
+
+      @doc """
+      Get the interval (in milliseconds) at which a link re-asks the whole
+      coordinator set who the leader is. A leader partitioned from its peers
+      but still alive keeps answering as leader of its own, superseded,
+      epoch; only asking the set again reveals the newer one.
+      """
+      @impl true
+      @spec coordinator_revalidation_interval_in_ms() :: pos_integer()
+      def coordinator_revalidation_interval_in_ms,
+        do: ClusterSupervisor.coordinator_revalidation_interval_in_ms(__MODULE__, @otp_app, @static_config)
 
       @doc """
       Get the timeout (in milliseconds) for a gateway process waiting to

@@ -13,11 +13,15 @@
     {
       "text": "GitHub issue: https://github.com/bedrock-kv/bedrock/issues/295. Split from cold-rejected broad GH259 plan; bounded stale-notification protocol first.",
       "timestamp": "2026-09-06T02:56:13Z"
+    },
+    {
+      "text": "295 narrowed real-cluster RED restores retired routing after Director replacement; focused functional and new protocol-contract REDs added. Plan /tmp/bedrock-followups-20260905.zKTZxP/295-plan.md proposes PID/epoch/sequence attribution, separate config/layout high-water marks, retirement unavailability, no generation/schema edits. Awaiting cold approval.",
+      "timestamp": "2026-09-06T03:00:49Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Attribute Director layout and config notifications to the current instance",
   "type": "bug",
-  "updated_at": "2026-09-06T02:56:42Z"
+  "updated_at": "2026-09-06T03:00:49Z"
 }

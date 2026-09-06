@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:34Z",
+  "close_reason": "Delivered in PR #278 (audited 2026-09-06: keep-last-K SnapshotRetention after both snapshot writes; must land after #268; stacked on #269, no CI run)",
   "created": "2026-01-17T17:36:37.957248-05:00",
   "description": "",
   "id": "bedrock-s1zr",
@@ -15,8 +17,8 @@
     }
   ],
   "priority": 4,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Snapshot retention and cleanup in ObjectStorage",
   "type": "task",
-  "updated_at": "2026-09-06T02:11:37Z"
+  "updated_at": "2026-09-06T14:05:34Z"
 }

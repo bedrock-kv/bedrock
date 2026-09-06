@@ -8,7 +8,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.Materializer.Olivine.DataDatabase
   alias Bedrock.DataPlane.Materializer.Olivine.Index
-  alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
   alias Bedrock.DataPlane.Materializer.Olivine.IndexDatabase
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
@@ -473,7 +472,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
 
     # Build index structures from in-memory compacted pages
     new_tree = Index.Tree.from_page_map(compacted_pages)
-    compacted_key_count = Enum.sum(Enum.map(compacted_pages, fn {_, {page, _}} -> Page.key_count(page) end))
 
     # Get max_keys_per_page from the durable version's index
     {^durable_version, {durable_index, _modified}} =
@@ -485,6 +483,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
       max_keys_per_page: durable_index.max_keys_per_page,
       target_keys_per_page: durable_index.target_keys_per_page
     }
+
+    compacted_key_count = Index.key_count(new_index)
 
     new_index_manager = %IndexManager{
       versions: [{durable_version, {new_index, %{}}}],

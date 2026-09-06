@@ -92,6 +92,25 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
       assert rolled.current_version == v1
     end
 
+    # The resumed stream re-delivers the discarded suffix, so a count that
+    # did not rewind with the index would tally those transactions twice.
+    test "the key count rewinds with the index" do
+      db = create_test_database()
+      im = IndexManager.new()
+
+      v1 = Version.from_integer(1_000)
+      v2 = Version.from_integer(2_000)
+
+      {im, db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "a", "1"}], v1)], db)
+      {im, _db} = IndexManager.apply_transactions(im, [test_transaction([{:set, "b", "2"}, {:set, "c", "3"}], v2)], db)
+      assert IndexManager.info(im, :n_keys) == 3
+
+      rolled = IndexManager.rollback_to(im, v1)
+
+      assert IndexManager.info(rolled, :n_keys) == 1
+      assert IndexManager.info(rolled, :key_ranges) == [{"a", "a"}]
+    end
+
     test "a rollback at or above the current version is a no-op" do
       db = create_test_database()
       im = IndexManager.new()

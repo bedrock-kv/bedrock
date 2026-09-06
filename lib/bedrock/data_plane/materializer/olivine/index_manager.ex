@@ -496,9 +496,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
   Disk is untouched, and never needs to be: eviction is clamped to the
   known-committed version, and a recovery version is always at or above the
   known-committed version at the moment of the crash, so everything durable
-  survives every rollback. (Statistics such as `n_keys` are left as-is; the
-  data-file offset is not rewound, so orphaned bytes linger until the next
-  compaction.)
+  survives every rollback. (The data-file offset is not rewound, so orphaned
+  bytes linger until the next compaction.)
+
+  `n_keys` rewinds with the index: the resumed stream re-delivers the
+  discarded suffix, and a count carried across the rollback would tally
+  those transactions twice.
   """
   @spec rollback_to(t(), Bedrock.version()) :: t()
   def rollback_to(%{current_version: current} = index_manager, version) when current <= version, do: index_manager
@@ -507,11 +510,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManager do
     # Newest-first: drop entries above the target. The base (durable)
     # entry is always at or below any legitimate rollback target, so the
     # list can never empty — a crash here means corrupted state.
-    [{new_current, _} | _] = versions = Enum.drop_while(index_manager.versions, fn {v, _} -> v > version end)
+    [{new_current, {new_index, _}} | _] =
+      versions = Enum.drop_while(index_manager.versions, fn {v, _} -> v > version end)
 
     output_queue = :queue.filter(fn {v, _, _, _} -> v <= version end, index_manager.output_queue)
 
-    %{index_manager | versions: versions, current_version: new_current, output_queue: output_queue}
+    %{
+      index_manager
+      | versions: versions,
+        current_version: new_current,
+        output_queue: output_queue,
+        n_keys: Index.key_count(new_index)
+    }
   end
 
   defp split_versions([{version, _data} = entry | rest], target, kept_versions) when version >= target,

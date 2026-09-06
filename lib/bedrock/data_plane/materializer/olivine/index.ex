@@ -117,6 +117,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
   end
 
   @doc """
+  The number of keys the index currently holds, counted from the page headers.
+  """
+  @spec key_count(t()) :: non_neg_integer()
+  def key_count(%__MODULE__{page_map: page_map}),
+    do: Enum.reduce(page_map, 0, fn {_page_id, {page, _next_id}}, total -> total + Page.key_count(page) end)
+
+  @doc """
   The smallest and largest keys the index currently holds, computed from the
   pages rather than cached: nothing on the mutation path is cheap enough to
   maintain a running minimum, and a cached bound that mutations do not update
@@ -129,6 +136,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
   def key_bounds(%__MODULE__{page_map: page_map}) do
     page_map
     |> Enum.flat_map(fn {_page_id, {page, _next_id}} ->
+      # A page holds no keys or holds at least one, so the bounds are both
+      # nil or neither is: a half-nil pair has no shape here.
       case {Page.left_key(page), Page.right_key(page)} do
         {nil, nil} -> []
         {left_key, right_key} -> [left_key, right_key]
@@ -426,11 +435,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
         page_map
       end
 
-    total_key_count =
-      initial_page_map
-      |> Enum.map(fn {_, {page, _next_id}} -> Page.key_count(page) end)
-      |> Enum.sum()
-
     index = %__MODULE__{
       tree: tree,
       page_map: initial_page_map,
@@ -438,7 +442,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Index do
       target_keys_per_page: target_keys_per_page
     }
 
-    {:ok, index, max_id, free_ids, total_key_count}
+    {:ok, index, max_id, free_ids, key_count(index)}
   end
 
   defp calculate_free_ids(0, _all_existing_page_ids), do: []

@@ -331,14 +331,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
       update =
         run_mutations(index, allocator, database, [
+          {:set, "k8", "fresh"},
           {:set, "k9", "fresh"},
           {:clear, "k2"}
         ])
 
-      assert update.key_count_delta == 0
+      assert update.key_count_delta == 1
 
       {final_index, _db, _allocator, _modified} = IndexUpdate.finish(update)
-      assert all_keys(final_index) == ["k1", "k3", "k9"]
+      assert all_keys(final_index) == ["k1", "k3", "k8", "k9"]
     end
 
     # A split turns one page into several; the keys move, they do not multiply,

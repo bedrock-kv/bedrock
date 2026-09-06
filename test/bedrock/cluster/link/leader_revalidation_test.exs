@@ -12,6 +12,7 @@ defmodule Bedrock.Cluster.Link.LeaderRevalidationTest do
     def name, do: "v65"
     def otp_name(component), do: :"v65_#{component}"
     def coordinator_ping_timeout_in_ms, do: 100
+    def coordinator_revalidation_interval_in_ms, do: 200
     def gateway_ping_timeout_in_ms, do: 50
   end
 
@@ -49,14 +50,18 @@ defmodule Bedrock.Cluster.Link.LeaderRevalidationTest do
     )
   end
 
+  defp holding_epoch(state, epoch), do: %{state | transaction_system_layout: %{epoch: epoch}, wiring_epoch: epoch}
+
   describe "leader revalidation against the coordinator set" do
-    test "abandons a partitioned-but-alive leader once the set reports a newer epoch" do
-      # A: the leader we are pinned to. Partitioned from B but perfectly
-      # alive, and still answering as leader of its own (old) epoch.
+    test "abandons a partitioned-but-alive leader for the one the set nominates" do
+      # A: the leader we are pinned to. Alive, answering direct pings as
+      # leader of its own (old) epoch — but partitioned away from the set
+      # the descriptor names, so it is not among the coordinators polled.
       {:ok, old_leader} = start_supervised(Supervisor.child_spec({FakeCoordinator, epoch: 5}, id: :a))
 
-      # B: elected in a newer epoch, reachable through the coordinator set
-      # named in the descriptor.
+      # B: elected in a newer epoch, and reachable through that set.
+      # (Picking the highest epoch among several answers is covered by
+      # `select_leader_from_responses/1` in DiscoveryTest.)
       {:ok, new_leader} =
         start_supervised(
           Supervisor.child_spec({FakeCoordinator, [epoch: 7, name: Cluster.otp_name(:coordinator)]}, id: :b)
@@ -74,13 +79,29 @@ defmodule Bedrock.Cluster.Link.LeaderRevalidationTest do
                Discovery.find_a_live_coordinator(link_state([]))
     end
 
-    test "keeps the pinned leader when the set has nothing newer to say" do
+    test "keeps the pinned leader when the set is silent" do
       # No coordinator is registered, so every member of the set is silent.
-      # Silence is not evidence of a new leader.
+      # Silence is not evidence of a newer leader.
       {:ok, old_leader} = start_supervised({FakeCoordinator, epoch: 5})
 
       assert {%State{known_coordinator: ^old_leader}, {:error, :unavailable}} =
                Discovery.find_a_live_coordinator(link_state(known_coordinator: old_leader))
+    end
+
+    test "drops the monitor on the leader it leaves" do
+      {:ok, _leader} =
+        start_supervised({FakeCoordinator, [epoch: 7, name: Cluster.otp_name(:coordinator)]})
+
+      {:ok, abandoned} = start_supervised(Supervisor.child_spec({FakeCoordinator, epoch: 5}, id: :a))
+      abandoned_monitor = Process.monitor(abandoned)
+
+      {%State{coordinator_monitor: monitor}, :ok} =
+        Discovery.find_a_live_coordinator(
+          link_state(known_coordinator: abandoned, coordinator_monitor: abandoned_monitor)
+        )
+
+      refute monitor == abandoned_monitor
+      assert Process.demonitor(abandoned_monitor, [:info]) == false
     end
   end
 
@@ -90,7 +111,7 @@ defmodule Bedrock.Cluster.Link.LeaderRevalidationTest do
     end
 
     test "drops a push that carries an epoch we have already passed", %{state: state} do
-      state = %{state | transaction_system_layout: %{epoch: 7}}
+      state = holding_epoch(state, 7)
       RoutingCache.insert(state.routing_table, "a", "b", :materializer)
 
       assert {:noreply, %State{transaction_system_layout: %{epoch: 7}}} =
@@ -100,20 +121,25 @@ defmodule Bedrock.Cluster.Link.LeaderRevalidationTest do
     end
 
     test "installs a push that carries a newer epoch", %{state: state} do
-      state = %{state | transaction_system_layout: %{epoch: 7}}
+      state = holding_epoch(state, 7)
       RoutingCache.insert(state.routing_table, "a", "b", :materializer)
 
-      assert {:noreply, %State{transaction_system_layout: %{epoch: 9}}} =
+      assert {:noreply, %State{transaction_system_layout: %{epoch: 9}, wiring_epoch: 9}} =
                Server.handle_info({:tsl_updated, %{epoch: 9}}, state)
 
       assert :not_cached = RoutingCache.lookup(state.routing_table, "a")
     end
 
-    test "installs a clear, which carries no epoch to compare", %{state: state} do
-      state = %{state | transaction_system_layout: %{epoch: 7}}
+    test "applies a clear without lowering the high-water mark", %{state: state} do
+      # A clear carries no epoch, so it cannot be attributed to a
+      # coordinator and is applied. It must not re-open the door: the old
+      # leader that cleared us can otherwise follow it with its own layout.
+      {:noreply, cleared} = Server.handle_info({:tsl_updated, nil}, holding_epoch(state, 7))
+
+      assert %State{transaction_system_layout: nil, wiring_epoch: 7} = cleared
 
       assert {:noreply, %State{transaction_system_layout: nil}} =
-               Server.handle_info({:tsl_updated, nil}, state)
+               Server.handle_info({:tsl_updated, %{epoch: 5}}, cleared)
     end
   end
 end

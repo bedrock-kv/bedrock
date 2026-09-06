@@ -16,6 +16,7 @@ defmodule Bedrock.Cluster.Link.Server do
   alias Bedrock.Cluster.Descriptor
   alias Bedrock.Cluster.Link.RoutingCache
   alias Bedrock.Cluster.Link.State
+  alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @spec child_spec(
           opts :: [
@@ -148,13 +149,16 @@ defmodule Bedrock.Cluster.Link.Server do
           {:noreply, State.t(), {:continue, :find_a_live_coordinator}}
   def handle_info({:timeout, :find_a_live_coordinator}, t), do: noreply(t, continue: :find_a_live_coordinator)
 
-  # A coordinator we have abandoned still holds us in its subscriber set,
-  # so a partitioned-but-alive old leader can push the wiring of its own
-  # epoch after we have moved on. Wiring only ever moves forward: a push
-  # carrying an epoch we have already passed is dropped, not installed.
+  # A coordinator we have abandoned still holds us in its subscriber set —
+  # there is no unsubscribe — so a partitioned-but-alive old leader can
+  # push the wiring of its own epoch after we have moved on. Wiring only
+  # ever moves forward: a push carrying an epoch we have already passed is
+  # dropped, not installed. Compared against the high-water mark rather
+  # than the cached layout, so a clear can't be used to slip an old layout
+  # in behind it.
   @spec handle_info({:tsl_updated, term()}, State.t()) :: {:noreply, State.t()}
-  def handle_info({:tsl_updated, %{epoch: epoch}}, %{transaction_system_layout: %{epoch: current}} = t)
-      when epoch < current, do: noreply(t)
+  def handle_info({:tsl_updated, %{epoch: epoch}}, %{wiring_epoch: seen} = t) when is_integer(seen) and epoch < seen,
+    do: noreply(t)
 
   def handle_info({:tsl_updated, new_tsl}, t) do
     # Update cached TSL when coordinator broadcasts updates, and forward to
@@ -169,7 +173,7 @@ defmodule Bedrock.Cluster.Link.Server do
     # A wiring push means a recovery happened: drop the routing cache so
     # new-epoch wiring can never pair with old-epoch routing.
     RoutingCache.clear(t.routing_table)
-    noreply(%{t | transaction_system_layout: new_tsl})
+    noreply(%{t | transaction_system_layout: new_tsl, wiring_epoch: wiring_epoch(new_tsl, t.wiring_epoch)})
   end
 
   @spec handle_info({:DOWN, reference(), :process, term(), term()}, State.t()) ::
@@ -193,4 +197,10 @@ defmodule Bedrock.Cluster.Link.Server do
       noreply(t)
     end
   end
+
+  # A clear carries no epoch, so it can't be attributed to a coordinator:
+  # it drops the layout but never lowers the mark.
+  @spec wiring_epoch(TransactionSystemLayout.t() | nil, Bedrock.epoch() | nil) :: Bedrock.epoch() | nil
+  defp wiring_epoch(nil, seen), do: seen
+  defp wiring_epoch(%{epoch: epoch}, _seen), do: epoch
 end

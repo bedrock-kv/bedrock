@@ -19,9 +19,13 @@ defmodule Bedrock.Cluster.Link.Discovery do
   the wiring push (epoch, sequencer, proxies) rides this link, so a Link
   left pinned to it never learns the new epoch.
 
-  This is what FDB's clients do: `monitorLeaderOneGeneration` keeps a
-  `monitorNominee` loop against every coordinator and re-picks the leader
-  whenever any nominee changes (`fdbclient/MonitorLeader.actor.cpp`).
+  FDB's clients ask the same question of the same set:
+  `monitorLeaderOneGeneration` keeps a `monitorNominee` loop against every
+  coordinator and re-picks the leader whenever any nominee changes
+  (`fdbclient/MonitorLeader.actor.cpp`). The mechanism differs — FDB
+  long-polls (`GetLeaderRequest` carries the `changeID` it already knows
+  and the coordinator holds the reply until the nominee changes, breaking
+  only for a 600s jittered keepalive) where we re-ask on a timer.
   """
   @spec find_a_live_coordinator(State.t()) ::
           {State.t(), :ok}
@@ -38,7 +42,7 @@ defmodule Bedrock.Cluster.Link.Discovery do
     trace_found_coordinator(t.cluster, coordinator_ref)
 
     t
-    |> rearm_discovery_timer()
+    |> rearm_discovery_timer(t.cluster.coordinator_revalidation_interval_in_ms())
     |> change_coordinator(coordinator_ref)
     |> then(&{&1, :ok})
   end
@@ -49,15 +53,18 @@ defmodule Bedrock.Cluster.Link.Discovery do
   # death still arrives as a DOWN) and poll again.
   defp handle_coordinator_discovery_result({:error, _reason} = error, t) do
     t
-    |> rearm_discovery_timer()
+    |> rearm_discovery_timer(t.cluster.gateway_ping_timeout_in_ms())
     |> then(&{&1, error})
   end
 
-  @spec rearm_discovery_timer(State.t()) :: State.t()
-  defp rearm_discovery_timer(t) do
+  # Jittered: every node in the fleet polls every coordinator, and they
+  # must not do it in lockstep. FDB jitters the equivalent keepalive for
+  # the same reason (`delayJittered`, `fdbserver/Coordination.actor.cpp`).
+  @spec rearm_discovery_timer(State.t(), pos_integer()) :: State.t()
+  defp rearm_discovery_timer(t, interval_in_ms) do
     t
     |> cancel_timer(:find_a_live_coordinator)
-    |> set_timer(:find_a_live_coordinator, t.cluster.gateway_ping_timeout_in_ms())
+    |> set_timer(:find_a_live_coordinator, interval_in_ms + :rand.uniform(div(interval_in_ms, 4) + 1))
   end
 
   @spec multi_call_coordinator_discovery(module(), [node()]) ::
@@ -115,10 +122,12 @@ defmodule Bedrock.Cluster.Link.Discovery do
     |> register_node_capabilities()
   end
 
+  # Switching leaders is routine now that the set is re-polled, so the
+  # monitor on the coordinator we just left has to go with it.
   @spec monitor_known_coordinator(State.t()) :: State.t()
   defp monitor_known_coordinator(t) do
-    Process.monitor(t.known_coordinator)
-    t
+    t.coordinator_monitor && Process.demonitor(t.coordinator_monitor, [:flush])
+    %{t | coordinator_monitor: Process.monitor(t.known_coordinator)}
   end
 
   @spec register_node_capabilities(State.t()) :: State.t()

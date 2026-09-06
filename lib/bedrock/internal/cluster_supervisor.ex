@@ -407,6 +407,17 @@ defmodule Bedrock.Internal.ClusterSupervisor do
     |> Keyword.get(:coordinator_ping_timeout_in_ms, 300)
   end
 
+  @spec coordinator_revalidation_interval_in_ms(
+          Cluster.t(),
+          otp_app :: atom() | nil,
+          static_config :: Keyword.t() | nil
+        ) :: pos_integer()
+  def coordinator_revalidation_interval_in_ms(module, otp_app, static_config) do
+    module
+    |> node_config(otp_app, static_config)
+    |> Keyword.get(:coordinator_revalidation_interval_in_ms, 5_000)
+  end
+
   @spec gateway_ping_timeout_in_ms(
           Cluster.t(),
           otp_app :: atom() | nil,

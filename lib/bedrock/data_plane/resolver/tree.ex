@@ -12,7 +12,9 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
   Intervals are represented as tuples of a start and end key paired with a value.
   Operations are provided for both inserting new intervals into the tree and querying
   for existing intervals that overlap a given range. The tree is kept balanced
-  automatically to ensure operations perform optimally.
+  automatically to ensure operations perform optimally. Nodes are ordered by
+  the complete `{start, end}` interval and track the maximum endpoint in their
+  subtree so overlap searches can find intervals spanning a node's start key.
 
   Various utility functions are also provided, including converting the tree into
   a list of its intervals and filtering by a predicate.
@@ -39,7 +41,8 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
           value: Bedrock.version(),
           left: t() | nil,
           right: t() | nil,
-          height: non_neg_integer()
+          height: non_neg_integer(),
+          max_end: Bedrock.key()
         }
   defstruct [
     :start,
@@ -47,7 +50,8 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
     :value,
     :left,
     :right,
-    :height
+    :height,
+    :max_end
   ]
 
   @doc """
@@ -68,29 +72,17 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
 
   def overlap?(nil, _), do: false
 
+  def overlap?(_tree, {start, end_}) when start >= end_, do: false
+
+  def overlap?(%Tree{max_end: max_end}, {start, _end}) when max_end <= start, do: false
+
   def overlap?(%Tree{start: tree_start, end: tree_end} = tree, {start, end_} = range) do
-    if start < tree_end and tree_start < end_ do
-      true
-    else
-      if start < tree.start do
-        overlap?(tree.left, range)
-      else
-        overlap?(tree.right, range)
-      end
-    end
+    (start < tree_end and tree_start < end_) or
+      overlap?(tree.left, range) or
+      (tree_start < end_ and overlap?(tree.right, range))
   end
 
-  def overlap?(%Tree{start: tree_start, end: tree_end} = tree, key) when is_binary(key) do
-    if key >= tree_start and key < tree_end do
-      true
-    else
-      if key < tree_start do
-        overlap?(tree.left, key)
-      else
-        overlap?(tree.right, key)
-      end
-    end
-  end
+  def overlap?(%Tree{} = tree, key) when is_binary(key), do: overlap?(tree, {key, key <> <<0>>})
 
   @doc """
   Inserts a new interval into the tree, balancing it if necessary, and returns
@@ -108,20 +100,20 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
     - The updated interval tree containing the new interval.
   """
   @spec insert(nil | t(), Bedrock.key() | Bedrock.key_range(), Bedrock.version()) :: t()
-  def insert(nil, {start, end_}, value), do: %Tree{start: start, end: end_, value: value, height: 1}
+  def insert(nil, {start, end_}, value), do: %Tree{start: start, end: end_, value: value, height: 1, max_end: end_}
 
-  def insert(%Tree{} = tree, {start, _end} = range, value) do
+  def insert(%Tree{} = tree, {_start, _end} = range, value) do
     cond_result =
       cond do
         # If the range comes before the current tree
-        start < tree.start ->
+        range < {tree.start, tree.end} ->
           %{tree | left: insert(tree.left, range, value)}
 
         # If the range comes after the current tree
-        start > tree.start ->
+        range > {tree.start, tree.end} ->
           %{tree | right: insert(tree.right, range, value)}
 
-        # If the range overlaps or is the same, we can choose to overwrite or handle differently
+        # Only an identical interval replaces its associated value.
         true ->
           %{tree | value: value}
       end
@@ -172,14 +164,14 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
 
   @spec insert_no_balance(nil | t(), Bedrock.key() | Bedrock.key_range(), Bedrock.version()) :: t()
   defp insert_no_balance(nil, {start, end_}, value),
-    do: %Tree{start: start, end: end_, value: value, left: nil, right: nil, height: 1}
+    do: %Tree{start: start, end: end_, value: value, left: nil, right: nil, height: 1, max_end: end_}
 
-  defp insert_no_balance(%Tree{} = tree, {start, _end} = range, value) do
+  defp insert_no_balance(%Tree{} = tree, {_start, _end} = range, value) do
     cond do
-      start < tree.start ->
+      range < {tree.start, tree.end} ->
         %{tree | left: insert_no_balance(tree.left, range, value)}
 
-      start > tree.start ->
+      range > {tree.start, tree.end} ->
         %{tree | right: insert_no_balance(tree.right, range, value)}
 
       true ->
@@ -197,8 +189,16 @@ defmodule Bedrock.DataPlane.Resolver.Tree do
   defp update_height(%Tree{left: left, right: right} = tree) do
     left_height = if left, do: left.height, else: 0
     right_height = if right, do: right.height, else: 0
-    %{tree | height: 1 + max(left_height, right_height)}
+
+    %{
+      tree
+      | height: 1 + max(left_height, right_height),
+        max_end: max(tree.end, max(subtree_max_end(left), subtree_max_end(right)))
+    }
   end
+
+  defp subtree_max_end(nil), do: <<>>
+  defp subtree_max_end(%Tree{max_end: max_end}), do: max_end
 
   @spec balance_factor(t()) :: integer()
   defp balance_factor(%Tree{left: left, right: right}) do

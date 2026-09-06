@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-06T01:05:34Z",
@@ -14,8 +14,8 @@
     }
   ],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Late restarted worker health crashes Foreman after explicit worker removal",
   "type": "bug",
-  "updated_at": "2026-09-06T02:39:45Z"
+  "updated_at": "2026-09-06T02:40:10Z"
 }

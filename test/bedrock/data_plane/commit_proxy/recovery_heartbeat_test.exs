@@ -7,14 +7,16 @@ defmodule Bedrock.DataPlane.CommitProxy.RecoveryHeartbeatTest do
   batch when MAX_COMMIT_BATCH_INTERVAL elapses - empty or not), so versions
   advance smoothly from recovery onward.
 
-  Uses a real Sequencer.Server and Resolver.Server with only the log faked,
-  the established seam in this directory: the heartbeat is observable as the
-  push the empty transaction makes to the logs.
+  Pinned twice: once on the handler's return, the way the sibling cadence
+  tests do it, and once end to end on a live proxy - a real Sequencer.Server
+  and Resolver.Server with only the log faked, so the heartbeat is observable
+  as the push the empty transaction makes to the logs.
   """
   use ExUnit.Case, async: false
 
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.Server, as: CommitProxyServer
+  alias Bedrock.DataPlane.CommitProxy.State
   alias Bedrock.DataPlane.Resolver.Server, as: ResolverServer
   alias Bedrock.DataPlane.Sequencer.Server, as: SequencerServer
   alias Bedrock.DataPlane.Version
@@ -42,100 +44,116 @@ defmodule Bedrock.DataPlane.CommitProxy.RecoveryHeartbeatTest do
     end
   end
 
-  setup do
-    director = self()
-    epoch = 1
-    lock_token = :crypto.strong_rand_bytes(32)
+  test "the unlock reply arms the heartbeat timeout" do
+    t = %State{mode: :locked, lock_token: "tok", empty_transaction_timeout_ms: 1_234}
+    snapshot = %{shard_layout: %{}, log_map: %{}, log_services: %{}, replication_factor: 1}
 
-    sequencer =
-      start_supervised!(
-        {SequencerServer,
-         [
-           cluster: TestCluster,
-           otp_name: :recovery_heartbeat_test_sequencer,
-           director: director,
-           epoch: epoch,
-           last_committed_version: Version.zero()
-         ]}
-      )
+    assert {:noreply, %State{mode: :running}, 1_234} =
+             CommitProxyServer.handle_call(
+               {:recover_from, "tok", :sequencer, :resolver_layout, snapshot},
+               {self(), make_ref()},
+               t
+             )
 
-    resolver =
-      start_supervised!(
-        {ResolverServer,
-         [
-           lock_token: lock_token,
-           key_range: {"", <<0xFF, 0xFF>>},
-           epoch: epoch,
-           last_version: Version.zero(),
-           director: director,
-           cluster: TestCluster,
-           commit_proxy_count: 1
-         ]}
-      )
+    assert_received {_ref, :ok}
+  end
 
-    log = start_supervised!({ReportingLog, self()})
+  describe "a live proxy" do
+    setup do
+      director = self()
+      epoch = 1
+      lock_token = :crypto.strong_rand_bytes(32)
 
-    resolver_layout = ResolverLayout.from_layout(%{resolvers: [{"", resolver}]})
-
-    routing_snapshot = %{
-      shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
-      log_map: %{0 => "log_1"},
-      log_services: %{"log_1" => log},
-      materializers: %{0 => %{"wkr_sys" => "n1@host"}},
-      replication_factor: 1
-    }
-
-    proxy =
-      start_supervised!(
-        CommitProxyServer.child_spec(
-          cluster: TestCluster,
-          director: director,
-          epoch: epoch,
-          instance: 0,
-          max_latency_in_ms: 1,
-          max_per_batch: 10,
-          empty_transaction_timeout_ms: @heartbeat_ms,
-          lock_token: lock_token,
-          sequencer: sequencer,
-          resolver_layout: resolver_layout
+      sequencer =
+        start_supervised!(
+          {SequencerServer,
+           [
+             cluster: TestCluster,
+             otp_name: :recovery_heartbeat_test_sequencer,
+             director: director,
+             epoch: epoch,
+             last_committed_version: Version.zero()
+           ]}
         )
-      )
 
-    %{
-      proxy: proxy,
-      lock_token: lock_token,
-      sequencer: sequencer,
-      resolver_layout: resolver_layout,
-      routing_snapshot: routing_snapshot
-    }
-  end
+      resolver =
+        start_supervised!(
+          {ResolverServer,
+           [
+             lock_token: lock_token,
+             key_range: {"", <<0xFF, 0xFF>>},
+             epoch: epoch,
+             last_version: Version.zero(),
+             director: director,
+             cluster: TestCluster,
+             commit_proxy_count: 1
+           ]}
+        )
 
-  test "an unlocked proxy beats without any client traffic", ctx do
-    %{
-      proxy: proxy,
-      lock_token: lock_token,
-      sequencer: sequencer,
-      resolver_layout: resolver_layout,
-      routing_snapshot: routing_snapshot
-    } = ctx
+      log = start_supervised!({ReportingLog, self()})
 
-    :ok = GenServer.call(proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot})
+      resolver_layout = ResolverLayout.from_layout(%{resolvers: [{"", resolver}]})
 
-    # No commit, no fetch, nothing: the reply to recover_from is the only
-    # thing that has happened to this proxy.
-    assert_receive {:log_push, _transaction, _last_commit_version}, @heartbeat_ms * 5
-  end
+      routing_snapshot = %{
+        shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
+        log_map: %{0 => "log_1"},
+        log_services: %{"log_1" => log},
+        materializers: %{0 => %{"wkr_sys" => "n1@host"}},
+        replication_factor: 1
+      }
 
-  test "a proxy that never got unlocked stays quiet", %{proxy: _proxy} do
-    refute_receive {:log_push, _transaction, _last_commit_version}, @heartbeat_ms * 3
-  end
+      proxy =
+        start_supervised!(
+          CommitProxyServer.child_spec(
+            cluster: TestCluster,
+            director: director,
+            epoch: epoch,
+            instance: 0,
+            max_latency_in_ms: 1,
+            max_per_batch: 10,
+            empty_transaction_timeout_ms: @heartbeat_ms,
+            lock_token: lock_token,
+            sequencer: sequencer,
+            resolver_layout: resolver_layout
+          )
+        )
 
-  test "a refused unlock leaves the proxy locked and quiet", ctx do
-    %{proxy: proxy, sequencer: sequencer, resolver_layout: resolver_layout, routing_snapshot: routing_snapshot} = ctx
+      %{
+        proxy: proxy,
+        lock_token: lock_token,
+        sequencer: sequencer,
+        resolver_layout: resolver_layout,
+        routing_snapshot: routing_snapshot
+      }
+    end
 
-    assert {:error, :unauthorized} =
-             GenServer.call(proxy, {:recover_from, "wrong_token", sequencer, resolver_layout, routing_snapshot})
+    test "beats without any client traffic once unlocked", ctx do
+      %{
+        proxy: proxy,
+        lock_token: lock_token,
+        sequencer: sequencer,
+        resolver_layout: resolver_layout,
+        routing_snapshot: routing_snapshot
+      } = ctx
 
-    refute_receive {:log_push, _transaction, _last_commit_version}, @heartbeat_ms * 3
+      :ok = GenServer.call(proxy, {:recover_from, lock_token, sequencer, resolver_layout, routing_snapshot})
+
+      # No commit, no fetch, nothing: the reply to recover_from is the only
+      # thing that has happened to this proxy.
+      assert_receive {:log_push, _transaction, _last_commit_version}, @heartbeat_ms * 5
+    end
+
+    test "that never got unlocked stays quiet", %{proxy: _proxy} do
+      refute_receive {:log_push, _transaction, _last_commit_version}, @heartbeat_ms * 3
+    end
+
+    test "whose unlock was refused stays locked and quiet", ctx do
+      %{proxy: proxy, sequencer: sequencer, resolver_layout: resolver_layout, routing_snapshot: routing_snapshot} = ctx
+
+      assert {:error, :unauthorized} =
+               GenServer.call(proxy, {:recover_from, "wrong_token", sequencer, resolver_layout, routing_snapshot})
+
+      refute_receive {:log_push, _transaction, _last_commit_version}, @heartbeat_ms * 3
+    end
   end
 end

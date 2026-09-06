@@ -14,11 +14,15 @@
     {
       "text": "Pinned #233 with four real regressions before implementation: both compaction and spin-down cold replacement expose future at 100; replaying committed atomic 200 produces 20 instead of 15. Cold-review plan: /tmp/bedrock-issue-team-20260905/233-plan.md. Implementation paused pending independent review.",
       "timestamp": "2026-09-06T00:07:17Z"
+    },
+    {
+      "text": "Cold review approved with amendments recorded in /tmp/bedrock-issue-team-20260905/233-plan-review.md: exact durable lookup, capture immutable bytes before async post-cutover upload, close scratch writer on missing baseline, test real repeated window advancement. Core implementation green: 9 tests including live atomic replay; expanding error/retention and immutable-capture regressions before final audit.",
+      "timestamp": "2026-09-06T00:13:10Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Olivine compaction persists future state under an older durable version",
   "type": "bug",
-  "updated_at": "2026-09-06T00:07:17Z"
+  "updated_at": "2026-09-06T00:13:10Z"
 }

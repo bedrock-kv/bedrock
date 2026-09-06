@@ -114,8 +114,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
     Transaction.encode(%{mutations: [{:set, key, "v"}], commit_version: version})
   end
 
+  # A read-modify-write, unlike every other slice here: applying it twice
+  # lands on a different value than applying it once.
+  defp add_slice(version, key, amount) do
+    Transaction.encode(%{mutations: [{:atomic, :add, key, <<amount::little-64>>}], commit_version: version})
+  end
+
   defp await_key(pid, version, key) do
     assert {:ok, "v"} = GenServer.call(pid, {:get, key, version, [wait_ms: 15_000]}, 20_000)
+  end
+
+  defp await_counter(pid, version, expected) do
+    assert {:ok, <<^expected::little-64>>} =
+             GenServer.call(pid, {:get, "ctr", version, [wait_ms: 15_000]}, 20_000)
   end
 
   # Generous waits: under full-suite parallelism the stream round-trips
@@ -221,6 +232,41 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
     await_key(pid, v3000, "k3")
     assert {:ok, %{n_keys: 3}} = GenServer.call(pid, {:info, [:n_keys]})
     assert {:ok, %{key_ranges: [{"k1", "k3"}]}} = GenServer.call(pid, {:info, [:key_ranges]})
+  end
+
+  # The compacted files are labelled with the durable version, so they must
+  # hold the durable page map and nothing above it: the cutover rewinds to
+  # that boundary and the stream re-delivers everything after it. A page
+  # carrying an effect from above the boundary gets that effect applied a
+  # second time on top of itself — invisible for an idempotent set, a
+  # doubled increment for an atomic.
+  test "an atomic applied above the durable boundary is not applied twice by the replay",
+       %{tmp_dir: tmp_dir} do
+    {:ok, shard_server} = ReplayShardServer.start_link(self())
+    {:ok, log_stub} = StubLog.start_link(shard_server)
+
+    pid = start_worker(tmp_dir)
+    unlock_with_stream(pid, log_stub)
+
+    v1000 = Version.from_integer(1_000)
+    v2000 = Version.from_integer(2_000)
+
+    :ok = ReplayShardServer.append(shard_server, v1000, add_slice(v1000, "ctr", 1))
+    await_counter(pid, v1000, 1)
+
+    state = :sys.get_state(pid)
+    {:ok, task} = Logic.start_compaction(state)
+    assert_receive {:compaction_ready, _, _, _, _, _, _, _, _, _, _, _} = cutover_msg, 10_000
+    Task.await(task)
+
+    send(pid, cutover_msg)
+
+    # A marker below which the whole replayed suffix has landed: the stream
+    # is ordered, so v2000 being readable means v1000 was applied first.
+    :ok = ReplayShardServer.append(shard_server, v2000, distinct_slice(v2000, "marker"))
+    await_key(pid, v2000, "marker")
+
+    await_counter(pid, v2000, 1)
   end
 
   test "a superseded puller's queued ingest is acknowledged and discarded",

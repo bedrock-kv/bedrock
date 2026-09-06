@@ -122,6 +122,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Database do
   Accepts a writer module and writer state for pluggable output format.
   Returns the writer result, compacted pages, and durable version.
 
+  The output is labelled with the durable version, so `complete_page_map`
+  must be the page map AS OF that version (`IndexManager.page_map_at/2`).
+  A page map carrying effects from above the durable boundary would
+  produce files whose label undersells their contents, and everyone who
+  reads the label — the cutover's replay, a revival from the uploaded
+  snapshot — would re-apply those transactions on top of themselves.
+
   This is run in a background task and should not block normal operations.
   """
   @spec compact(

@@ -311,6 +311,41 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
       Logic.shutdown(restored)
     end
 
+    # The bundle is keyed by the durable version, so it must hold the
+    # durable page map and nothing above it. Revival resumes the stream
+    # above that key: an effect from above the boundary that rode into the
+    # bundle gets replayed on top of itself, which doubles an atomic.
+    test "the spin-down bundle holds the durable page map, not the live one",
+         %{tmp_dir: tmp_dir, test_id: test_id} do
+      {_root, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
+
+      {:ok, state} =
+        Logic.startup(:"idle_dur_a_#{test_id}", self(), "dur_wkr_a", dir_a, cluster: TestCluster, shard_id: 42)
+
+      # Two applies, so the second's window advance evicts the first: only
+      # k1 is durable.
+      state = apply_and_flush(state, "k1", "v1", 10_000_000)
+      state = apply_and_flush(state, "k2", "v2", 20_000_000)
+      durable = Database.durable_version(state.database)
+      assert Version.to_integer(durable) == 10_000_000
+
+      # Applied but never flushed: the atomic sits above the durable
+      # boundary alongside k2, in the live page map only.
+      state = apply_atomic_add(state, "ctr", 30_000_000)
+      assert state.index_manager.current_version > durable
+
+      assert :ok = Logic.upload_snapshot_before_spindown(state)
+      Logic.shutdown(state)
+
+      {:ok, restored} =
+        Logic.startup(:"idle_dur_b_#{test_id}", self(), "dur_wkr_b", dir_b, cluster: TestCluster, shard_id: 42)
+
+      assert Database.durable_version(restored.database) == durable
+      assert IndexManager.info(restored.index_manager, :n_keys) == 1
+      assert IndexManager.info(restored.index_manager, :key_ranges) == [{"k1", "k1"}]
+      Logic.shutdown(restored)
+    end
+
     test "a never-written shard's spin-down bundle does not poison revival", %{tmp_dir: tmp_dir, test_id: test_id} do
       {_root, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
 
@@ -362,6 +397,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     {:ok, state, _version} = Logic.apply_transactions(state, [with_version])
     state = %{state | known_committed_version: Version.from_integer(version_int)}
     {:ok, state} = Logic.advance_window(state)
+    state
+  end
+
+  defp apply_atomic_add(state, key, version_int) do
+    encoded =
+      Transaction.encode(%{
+        mutations: [{:atomic, :add, key, <<1::little-64>>}],
+        read_conflicts: {nil, []},
+        write_conflicts: []
+      })
+
+    {:ok, with_version} = Transaction.add_commit_version(encoded, Version.from_integer(version_int))
+    {:ok, state, _version} = Logic.apply_transactions(state, [with_version])
     state
   end
 

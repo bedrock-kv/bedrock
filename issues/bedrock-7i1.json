@@ -40,11 +40,15 @@
     {
       "text": "Author audit complete at /tmp/bedrock-followups-20260905.zKTZxP/296-author-audit.md. Final named all-inclusive test command elixir --sname generation_final_checked -S mix test --include distributed:2994 tests,158 properties,17 doctests,0 failures,0 exclusions in14s. Final mix quality clean (format/Credo strict/Dialyzer0 warnings). Five sensitivity mutants each fail and restored baseline green. All intended file hashes in296-final-manifest.txt. Ready for cold final; no commit/push.",
       "timestamp": "2026-09-06T05:48:21Z"
+    },
+    {
+      "text": "Cold final oracle amendment complete: concurrent lower reservation accepts precise superseded OR reservation_unverified/publication_mismatch outcomes; all G9 metadata/token assertions retained. Only publication_state_test changed. Sequential stress30 BEAM seeds0-29 =360 tests0fail; named focused85tests0fail6.4s. Formatter/diff-check clean; author audit/manifest updated; no commit.",
+      "timestamp": "2026-09-06T05:54:12Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Allocate recovery generations through consensus and reserve bootstrap publication",
   "type": "task",
-  "updated_at": "2026-09-06T05:48:21Z"
+  "updated_at": "2026-09-06T05:54:12Z"
 }

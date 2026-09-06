@@ -30,11 +30,15 @@
     {
       "text": "Cold review rejected one-PR implementation and required dependency decomposition. GH295/bedrock-ls9 notification attribution -\u003e GH296/bedrock-7i1 consensus generation+bootstrap reservation -\u003e GH297/bedrock-50n Shale ownership fencing -\u003e GH259 final full-core integration. Current develop restores public reads; corrected proven defects are same-generation reuse and stale old layout reinstallation.",
       "timestamp": "2026-09-06T02:56:13Z"
+    },
+    {
+      "text": "Final composed recovery history committed as e22517be. Draft PR: https://github.com/bedrock-kv/bedrock/pull/308 (base bedrock-t0k/integration-base). Test-only: develop RED; stacked five seeds green; focused 116/0; publication composition 9/0; full distributed 3075 tests +158 properties+17 doctests, 0 failures. Cold audit: /tmp/bedrock-followups-20260905.zKTZxP/259-final-audit.md.",
+      "timestamp": "2026-09-06T09:34:39Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Director failure restarts recovery with the same epoch and a single-log crash stalls service",
   "type": "bug",
-  "updated_at": "2026-09-06T02:56:13Z"
+  "updated_at": "2026-09-06T09:34:39Z"
 }

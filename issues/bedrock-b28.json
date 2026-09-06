@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-15T12:30:06Z",
@@ -13,8 +13,8 @@
     }
   ],
   "priority": 2,
-  "status": "open",
+  "status": "in_progress",
   "title": "Resolver conflict tests encode read conflicts in a shape Transaction.encode ignores, making read-abort assertions vacuous",
   "type": "bug",
-  "updated_at": "2026-09-05T23:58:16Z"
+  "updated_at": "2026-09-06T00:15:35Z"
 }

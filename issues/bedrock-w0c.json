@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:32Z",
+  "close_reason": "Delivered in PR #275 (audited 2026-09-06: info/2 returns bare {:error, :unsupported_info}; stacked on #274, no CI run)",
   "created": "2026-07-14T18:57:46Z",
   "description": "Olivine.Logic.info/2 (logic.ex:168) returns {:ok, {:error, :unsupported_info}} for unknown single facts; the @spec's top-level {:error, :unsupported_info} is unreachable for the single-atom path. Unwrap or fix spec; check callers in server.ex. Found during bedrock-eu4 audit (PR #80).",
   "id": "bedrock-w0c",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "info/2 double-wraps unsupported-fact errors; @spec unreachable",
   "type": "task",
-  "updated_at": "2026-09-06T02:06:10Z"
+  "updated_at": "2026-09-06T14:05:32Z"
 }

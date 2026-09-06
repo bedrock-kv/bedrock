@@ -191,7 +191,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       ping_rate_in_hz: params.ping_rate_in_hz,
       retransmission_rate_in_hz: params.retransmission_rate_in_hz,
       transaction_window_in_ms: params.transaction_window_in_ms,
-      empty_transaction_timeout_ms: Map.get(params, :empty_transaction_timeout_ms, 1_000)
+      empty_transaction_timeout_ms: Map.get(params, :empty_transaction_timeout_ms, 1_000),
+      materializer_idle_timeout_ms: params.materializer_idle_timeout_ms
     }
   end
 

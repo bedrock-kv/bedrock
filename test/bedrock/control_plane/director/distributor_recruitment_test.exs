@@ -7,6 +7,7 @@ defmodule Bedrock.ControlPlane.Director.DistributorRecruitmentTest do
   """
   use ExUnit.Case, async: true
 
+  alias Bedrock.ControlPlane.Config.Parameters
   alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
 
@@ -16,7 +17,7 @@ defmodule Bedrock.ControlPlane.Director.DistributorRecruitmentTest do
         state: :running,
         epoch: 5,
         cluster: __MODULE__,
-        config: %{},
+        config: %{parameters: Parameters.new([node()])},
         transaction_system_layout: %{
           epoch: 5,
           sequencer: self(),
@@ -59,6 +60,28 @@ defmodule Bedrock.ControlPlane.Director.DistributorRecruitmentTest do
       assert opts[:epoch] == 5
       assert opts[:proxies] == [self()]
       assert opts[:director] == self()
+    end
+
+    # bedrock-q67.21.8: idle spin-down is a per-worker policy param, and
+    # the distributor's recruits are the only materializers that carry
+    # it (Recruitment.worker_params/2 drops it again for tag 0).
+    test "hands the distributor the cluster's materializer idle timeout as a worker param" do
+      test_pid = self()
+      stub = spawn(fn -> Process.sleep(:infinity) end)
+
+      t =
+        running_state(
+          config: %{parameters: %{materializer_idle_timeout_ms: 60_000}},
+          distributor_start_fn: fn opts ->
+            send(test_pid, {:started_with, opts})
+            {:ok, stub}
+          end
+        )
+
+      Recovery.maybe_start_distributor(t)
+
+      assert_received {:started_with, opts}
+      assert opts[:recruitment_ctx].worker_params == %{"idle_timeout" => 60_000}
     end
 
     test "leaves an existing distributor alone" do

@@ -19,11 +19,15 @@
     {
       "text": "Cold design review approved (/tmp/bedrock-issue-team-20260905/237-plan-review.md). Amendments accepted: legacy empty/ambiguous hints reconstruct, warm cache must remain named at its node in recovered committed membership, publication tests must preserve actual old/new LOG identities. Two red cases now green with fresh epoch ShardServer durable=nil and only WAL suffix replayed; chunk prefix supplies nondefault layout. Implementing crash/publication and failure-cleanup validation next.",
       "timestamp": "2026-09-06T00:34:25Z"
+    },
+    {
+      "text": "Implemented cold-reviewed independent log/chunk reconstruction with named warm membership validation, legacy fresh rebuild, RV-preserving snapshot replay and cleanup of newly created unpublished failures. Eight real integration regressions cover nil-durable new epoch/chunk-only prefix, stale/displaced workers and actual persistence+failed bootstrap CAS/next-epoch LOG identity. Full mix test green: 17 doctests,158 properties,2904 tests,0 failures. Final audit handoff /tmp/bedrock-issue-team-20260905/237-final-audit.md; format and strict Credo pass, Dialyzer finishing.",
+      "timestamp": "2026-09-06T00:44:19Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Tag 0 has two membership owners: the distributor can retire the member the durable pointer names",
   "type": "task",
-  "updated_at": "2026-09-06T00:34:25Z"
+  "updated_at": "2026-09-06T00:44:19Z"
 }

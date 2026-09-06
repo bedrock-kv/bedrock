@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-06T01:28:44Z",
+  "description": "Surfaced by bedrock-q67.25. Now that \\xff/system/config/desired_commit_proxies is authoritative, editing the coordinator's value has no effect on a cluster past its first recovery - and there is no supported way to change the parameter at all.\n\nA client commit touching \\xff/... is rejected at ingress; only the director and the distributor commit mode: :system, and neither exposes a config-change API. FDB's equivalent is an ordinary transaction: changeConfig (fdbclient/include/fdbclient/GenericManagementAPI.actor.h:256) creates a transaction, sets the \\xff/conf/ keys and commits - clients reach system keys through the ACCESS_SYSTEM_KEYS option, which Bedrock's mode: :system is the analogue of.\n\nNeeded: an operator-facing way to commit a \\xff/system/config/ mutation (the analogue of ACCESS_SYSTEM_KEYS, or a narrow admin API on the coordinator/director that submits the system-mode transaction), so the keyspace copy is genuinely changeable and not merely authoritative-and-frozen. Until this lands, a committed parameter is fixed at seed time.\n\nBefore this, changing desired_commit_proxies meant editing the object-storage cluster bootstrap and waiting for the next recovery.",
+  "id": "bedrock-q67.51",
+  "labels": [],
+  "parent": "bedrock-q67",
+  "priority": 3,
+  "status": "open",
+  "title": "No operator path to change a committed cluster config parameter",
+  "type": "task",
+  "updated_at": "2026-09-06T01:28:44Z"
+}

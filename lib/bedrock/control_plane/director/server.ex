@@ -37,7 +37,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
             epoch: Bedrock.epoch(),
             coordinator: Coordinator.ref(),
             services: %{String.t() => {atom(), {atom(), node()}}} | nil,
-            node_capabilities: %{Bedrock.Cluster.capability() => [node()]} | nil
+            node_capabilities: %{(Bedrock.Cluster.capability() | :resolution) => [node()]} | nil
           ]
         ) :: Supervisor.child_spec()
   def child_spec(opts) do

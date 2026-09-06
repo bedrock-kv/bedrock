@@ -164,8 +164,11 @@ defmodule Bedrock.ControlPlane.Coordinator.State do
     def update_node_capabilities(t, node, capabilities),
       do: %{t | node_capabilities: Map.put(t.node_capabilities, node, capabilities)}
 
+    # The result carries `:resolution` in addition to `Cluster.capability()`:
+    # resolvers are placed on coordination nodes here, never advertised by a
+    # node, so `:resolution` never appears in the input map's capabilities.
     @spec convert_to_capability_map(%{node() => [Cluster.capability()]}) :: %{
-            Cluster.capability() => [node()]
+            (Cluster.capability() | :resolution) => [node()]
           }
     def convert_to_capability_map(node_capabilities) do
       capability_map =

@@ -12,7 +12,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.RecoveryPhase do
   @type context :: %{
           cluster_config: Config.t(),
           prior_core_state: Config.CoreState.t() | nil,
-          node_capabilities: %{Bedrock.Cluster.capability() => [node()]},
+          node_capabilities: %{(Bedrock.Cluster.capability() | :resolution) => [node()]},
           lock_token: binary(),
           available_services: %{String.t() => {atom(), {atom(), node()}}},
           coordinator: pid()

@@ -76,6 +76,27 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       # This would need integration testing to fully verify
       assert [:coordination, :log, :materializer] == capabilities
     end
+
+    # bedrock-0s9: resolvers are placed by the coordinator on coordination
+    # nodes (Coordinator.State.convert_to_capability_map/1) — a node never
+    # advertises :resolution itself. Before the fix, :resolution fell through
+    # the same catch-all as a genuine typo like :storage above, raising
+    # "Unknown capability: :resolution" with no hint that :resolution is
+    # special (documented, but never node-advertised) rather than unknown.
+    test "raises a specific, actionable error for :resolution instead of the generic catch-all" do
+      capabilities = [:coordination, :log, :resolution]
+
+      expect(Bedrock.MockCluster, :otp_name, fn :sup -> :test_sup end)
+      expect(Bedrock.MockCluster, :otp_name, fn :link -> :test_link end)
+
+      assert_raise RuntimeError, ~r/resolvers are placed by the coordinator/, fn ->
+        ClusterSupervisor.init(
+          {:test_node, Bedrock.MockCluster, nil,
+           [capabilities: capabilities, coordinator: [path: "/tmp"], worker: [path: "/tmp"], durability_mode: :relaxed],
+           "bedrock.cluster", %Descriptor{cluster_name: "test", coordinator_nodes: [:test_node]}}
+        )
+      end
+    end
   end
 
   describe "child_spec/1" do

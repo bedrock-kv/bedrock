@@ -25,7 +25,7 @@ defmodule Bedrock.ControlPlane.Director.State do
           transaction_system_layout: TransactionSystemLayout.t() | nil,
           prior_core_state: CoreState.t() | nil,
           coordinator: pid(),
-          node_capabilities: %{Cluster.capability() => [node()]},
+          node_capabilities: %{(Cluster.capability() | :resolution) => [node()]},
           timers: timer_registry() | nil,
           services: %{Worker.id() => {atom(), {atom(), node()}}},
           lock_token: binary(),

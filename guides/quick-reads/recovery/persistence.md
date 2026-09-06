@@ -16,15 +16,21 @@ Instead of running separate tests, Bedrock uses an elegant approach: the new sys
 
 Successful completion proves the system can process real transactions with full [ACID](../../glossary.md#acid) guarantees, not just exist as isolated components.
 
-## Dual Storage Format
+## Durable Publication
 
-The configuration gets stored in two complementary formats:
+The system transaction writes shard topology and materializer membership into the
+system keyspace. The separate bootstrap object records the completed log set and
+system materializer members needed by the next recovery; it never persists live
+process routing.
 
-**Consolidated**: Complete layout under a single key for atomic retrieval during coordinator handoffs and architectural analysis.
-
-**Decomposed**: Individual component configurations under separate keys for efficient targeted access during normal operations.
-
-This approach optimizes both system-wide operations and component-specific queries while maintaining data consistency.
+Before launching the Director, the Coordinator reserves the same bootstrap object
+with a committed recovery generation and request identity. Final persistence uses
+only the retained reservation token, after submitting the system transaction once.
+It never refreshes that token. If a newer reservation wins first, the old Director
+cannot publish. An ambiguous conditional-write result succeeds only when a coherent
+read returns the exact expected final bytes and identity; any other result ends the
+Director. Notification retries repeat only the same completed-layout message and
+never repeat the system transaction or obtain new write authority.
 
 ## Fail-Fast Error Handling
 

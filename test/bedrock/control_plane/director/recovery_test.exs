@@ -292,6 +292,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         %{
           coordinator: coordinator,
           lock_token: "test-lock-token",
+          prior_core_state: %{logs: %{"unavailable-log" => []}, system_materializers: %{}},
           # An advertised materializer: the locking phase locks it and
           # records it into the attempt — a genuine phase mutation that
           # must survive the later stall.
@@ -382,8 +383,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
     test "processes recovery attempt and stalls with insufficient resources" do
       recovery_attempt = create_test_recovery_attempt()
 
-      # Without sufficient nodes/services, recovery stalls with unable to meet log quorum
-      assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+      assert {{:stalled, {:insufficient_nodes, 2, 1}}, _} =
                Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
     end
 
@@ -391,7 +391,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       recovery_attempt = create_test_recovery_attempt()
 
       capture_log([level: :warning], fn ->
-        assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+        assert {{:stalled, {:insufficient_nodes, 2, 1}}, _} =
                  Recovery.run_recovery_attempt(recovery_attempt, create_test_context())
       end)
     end
@@ -402,7 +402,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       recovery_attempt = create_first_time_recovery_attempt()
       context = create_test_context()
 
-      assert {{:stalled, :unable_to_meet_log_quorum}, _stalled_attempt} =
+      assert {{:stalled, {:insufficient_nodes, 2, 1}}, _stalled_attempt} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
@@ -413,7 +413,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       # With no state-based pre-handling, all attempts go through the normal recovery flow
       # This test now verifies that stateless recovery attempts work correctly
-      assert {{:stalled, :unable_to_meet_log_quorum}, _returned_attempt} =
+      assert {{:stalled, {:insufficient_nodes, 2, 1}}, _returned_attempt} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
@@ -434,7 +434,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
-    test "with multiple nodes and services but partial mocking stalls at log quorum" do
+    test "with multiple nodes and services but no creation mock reports every failed worker" do
       recovery_attempt = create_first_time_recovery_attempt()
 
       context =
@@ -443,19 +443,18 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> with_available_log_services()
         |> with_available_storage_services()
 
-      # Without service locking or worker creation mocks, fails at log quorum
-      assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+      assert {{:stalled, {:all_workers_failed, failures}}, _} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
+
+      assert length(failures) == 2
+      assert Enum.all?(failures, fn {_id, _node, {:worker_creation_failed, :unavailable}} -> true end)
     end
 
-    test "first-time recovery with full mocking still stalls at log quorum" do
-      # This test documents that even with full mocking, recovery stalls at log quorum
-      # due to the test setup constraints
+    test "first-time recovery with full mocking reaches materializer creation" do
       recovery_attempt = create_first_time_recovery_attempt()
       context = create_full_recovery_context()
 
-      # Even with full mocking, still stalls at log quorum in test environment
-      assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+      assert {{:stalled, {:materializer_creation_failed, {0, {:materializer_lock_failed, :unknown}}}}, _} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
@@ -512,8 +511,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
 
       context = create_coordinator_format_context(coordinator_services)
 
-      # Should stall with unable to meet log quorum in test environment
-      assert {{:stalled, :unable_to_meet_log_quorum}, _} =
+      assert {{:stalled, {:materializer_creation_failed, {0, {:materializer_lock_failed, :unknown}}}}, _} =
                Recovery.run_recovery_attempt(recovery_attempt, context)
     end
 
@@ -561,6 +559,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         |> Map.put(:get_shard_layout_fn, fn _pid, _version ->
           {:ok, %{<<0xFF>> => {0, <<>>}, Bedrock.end_of_keyspace() => {1, <<0xFF>>}}}
         end)
+        |> Map.put(:bootstrap_reservation, reservation(2, old_layout))
 
       # With materializer reuse, generational log recruitment, and
       # resolver seeding, an existing-cluster recovery now runs to
@@ -869,6 +868,8 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
         coordinator: coordinator,
         epoch: 3,
         publication_sequence: 0,
+        pending_publication: nil,
+        bootstrap_reservation: %{recovery_id: "publication-3"},
         config: %{recovery_attempt: :stalled},
         transaction_system_layout: layout,
         # Deliberately EMPTY here, and populated only on `completed`.
@@ -895,7 +896,9 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
       state = Recovery.persist_new_transaction_system_layout(state, completed)
       assert state.publication_sequence == 3
 
-      assert_receive {:cast, {:notify_transaction_system_layout, {sender, 3, 3}, ^layout, core_state}}, 500
+      assert_receive {:cast, {:notify_transaction_system_layout, {sender, 3, 3}, "publication-3", ^layout, core_state}},
+                     500
+
       assert sender == self()
       assert core_state.system_materializers == adopted
     end
@@ -907,5 +910,28 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
           relay_casts(test_pid)
       end
     end
+  end
+
+  defmodule SuccessfulPublicationBackend do
+    @moduledoc false
+    def put_if_version_matches(_config, _key, _token, _bytes, _opts), do: :ok
+  end
+
+  defp reservation(generation, prior_core_state) do
+    %{
+      backend: {SuccessfulPublicationBackend, []},
+      key: "bootstrap",
+      generation: generation,
+      recovery_id: "recovery-#{generation}",
+      version_token: "retained-token",
+      prior_bootstrap: %{
+        cluster_id: "recovery-test",
+        epoch: generation - 1,
+        logs: Enum.map(prior_core_state.logs, fn {id, tags} -> %{id: id, shard_tags: tags} end),
+        system_materializers:
+          Enum.map(prior_core_state.system_materializers, fn {id, node} -> %{id: id, node: node} end),
+        coordinators: [%{node: "node1@host"}]
+      }
+    }
   end
 end

@@ -21,6 +21,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     ]
 
   alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Coordinator.RecoveryGeneration
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Director
   alias Bedrock.Raft
@@ -29,10 +30,17 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
   @spec try_to_start_director(State.t()) :: State.t()
   def try_to_start_director(t) when t.leader_node == t.my_node and t.director == :unavailable do
-    if authoritative_leader?(t), do: start_director(t), else: t
+    RecoveryGeneration.request(t)
   end
 
   def try_to_start_director(t), do: t
+
+  @spec launch_reserved(State.t()) :: State.t()
+  def launch_reserved(%{bootstrap_reservation: %{generation: generation}} = t) do
+    if authoritative_leader?(t) and t.epoch == generation and t.director == :unavailable, do: start_director(t), else: t
+  end
+
+  def launch_reserved(t), do: t
 
   @doc false
   @spec authoritative_leader?(State.t()) :: boolean()
@@ -87,6 +95,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
               config: t.config,
               prior_core_state: t.prior_core_state,
               epoch: t.epoch,
+              bootstrap_reservation: t.bootstrap_reservation,
               coordinator: self(),
               services: t.service_directory,
               node_capabilities: convert_to_capability_map(t.node_capabilities)

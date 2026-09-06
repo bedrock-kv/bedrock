@@ -56,21 +56,14 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
       # Simulate leadership election - this node becomes leader
       leadership_event = {:raft, :leadership_changed, {my_node, 1}}
 
-      # Upon leadership election, the coordinator should immediately proceed to director startup
-      # (no waiting for consensus - TSL is output of recovery, config loaded from object storage at init)
-
-      # The director startup will fail because there's no supervisor in the test environment,
-      # but we can verify that it ATTEMPTED to start the director
-      result = catch_exit(Server.handle_info(leadership_event, state))
-
-      # Verify it attempted director startup - the exit indicates it tried to call the supervisor
-      assert match?({:noproc, _}, result) or match?({:EXIT, :noproc}, result) or match?({:normal, _}, result),
-             "Expected director startup attempt, got: #{inspect(result)}"
+      assert {:noreply, pending} = Server.handle_info(leadership_event, state)
+      assert pending.director == :unavailable
+      assert pending.recovery_generation.phase == :barrier
+      assert pending.recovery_generation.log_id > state.last_durable_txn_id
     end
 
-    test "leader election with existing committed transactions starts director immediately" do
-      # With the new flow, the coordinator starts the director immediately on leadership
-      # election - it no longer waits for consensus first
+    test "leader election with existing committed transactions appends a new barrier" do
+      # Existing commits do not replace the new leader's current-term barrier.
 
       my_node = Node.self()
       raft_log = InMemoryLog.new(:tuple)
@@ -113,11 +106,10 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
       # Simulate leadership election
       leadership_event = {:raft, :leadership_changed, {my_node, 1}}
 
-      # Director startup will fail because no supervisor, but verify it attempted to start
-      result = catch_exit(Server.handle_info(leadership_event, state))
-
-      assert match?({:noproc, _}, result) or match?({:EXIT, :noproc}, result) or match?({:normal, _}, result),
-             "Expected director startup attempt, got: #{inspect(result)}"
+      assert {:noreply, pending} = Server.handle_info(leadership_event, state)
+      assert pending.director == :unavailable
+      assert pending.recovery_generation.phase == :barrier
+      assert pending.recovery_generation.log_id > {0, 1}
     end
   end
 

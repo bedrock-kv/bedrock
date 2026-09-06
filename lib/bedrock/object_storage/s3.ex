@@ -104,12 +104,10 @@ defmodule Bedrock.ObjectStorage.S3 do
     end
   end
 
-  defp with_etag(config, key, body, headers) do
+  defp with_etag(_config, _key, body, headers) do
     case extract_etag(headers) do
-      nil ->
-        with {:ok, etag} <- head_etag(config, key) do
-          {:ok, body, etag}
-        end
+      missing when missing in [nil, ""] ->
+        {:error, :missing_version_token}
 
       etag ->
         {:ok, body, etag}

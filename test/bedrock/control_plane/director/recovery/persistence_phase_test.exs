@@ -3,11 +3,23 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
+  alias Bedrock.ClusterBootstrap.Publication
   alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.KeyRange
   alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.ClusterBootstrap
   alias Bedrock.SystemKeys.Values
+
+  defp reserved_context do
+    root = Path.join(System.tmp_dir!(), "persistence-reservation-#{System.unique_integer([:positive])}")
+    backend = {Bedrock.ObjectStorage.LocalFilesystem, root: root}
+    on_exit(fn -> File.rm_rf!(root) end)
+    initial = %{cluster_id: "phase", epoch: 0, logs: [], coordinators: [%{node: Atom.to_string(node())}]}
+    :ok = Bedrock.ObjectStorage.put(backend, "bootstrap", ClusterBootstrap.to_binary(initial))
+    {:ok, reservation} = Publication.reserve(backend, "bootstrap", 1, "phase1", "phase")
+    Map.put(recovery_context(), :bootstrap_reservation, reservation)
+  end
 
   # Shared test data setup: the TSL is wiring only (no membership map);
   # shard topology and service records ride the recovery attempt (and
@@ -53,7 +65,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       recovery_attempt = base_recovery_attempt()
       expected_layout = recovery_attempt.transaction_system_layout
 
-      context = Map.put(recovery_context(), :commit_transaction_fn, fn _, _, _ -> {:ok, 1, 0} end)
+      context = Map.put(reserved_context(), :commit_transaction_fn, fn _, _, _ -> {:ok, 1, 0} end)
 
       # Pattern match both result and next phase in single assertion
       assert {%{transaction_system_layout: ^expected_layout}, :completed} =
@@ -62,10 +74,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
     test "fails when system transaction fails" do
       recovery_attempt = base_recovery_attempt()
-      context = Map.put(recovery_context(), :commit_transaction_fn, fn _, _, _ -> {:error, :timeout} end)
+      context = Map.put(reserved_context(), :commit_transaction_fn, fn _, _, _ -> {:error, :timeout} end)
 
       # Pattern match tuple destructuring with expected stall reason
-      assert {_, {:stalled, {:recovery_system_failed, :timeout}}} =
+      assert {_, {:fatal, {:bootstrap_publication_failed, :timeout}}} =
                PersistencePhase.execute(recovery_attempt, context)
     end
 
@@ -78,7 +90,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         {:ok, 1, 0}
       end
 
-      context = Map.put(recovery_context(), :commit_transaction_fn, commit_fn)
+      context = Map.put(reserved_context(), :commit_transaction_fn, commit_fn)
       assert {_, :completed} = PersistencePhase.execute(recovery_attempt, context)
       assert_received {:committed, encoded_transaction}
 
@@ -171,7 +183,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> with_proxies([stub_proxy])
         |> put_in([Access.key!(:transaction_system_layout), :proxies], [stub_proxy])
 
-      assert {_, :completed} = PersistencePhase.execute(recovery_attempt, recovery_context())
+      assert {_, :completed} = PersistencePhase.execute(recovery_attempt, reserved_context())
       assert_received {:committed, _epoch, encoded_transaction, :system}
 
       assert Enum.any?(Transaction.mutations!(encoded_transaction), fn
@@ -190,7 +202,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       {:ok, 1, 0}
     end
 
-    context = Map.put(recovery_context(), :commit_transaction_fn, commit_fn)
+    context = Map.put(reserved_context(), :commit_transaction_fn, commit_fn)
     assert {_, :completed} = PersistencePhase.execute(recovery_attempt, context)
     assert_received {:committed, encoded_transaction}
     Transaction.mutations!(encoded_transaction)
@@ -313,7 +325,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
   describe "rewriting a bootstrap record that predates a field" do
     alias Bedrock.ControlPlane.Config.RecoveryAttempt
-    alias Bedrock.SystemKeys.ClusterBootstrap
 
     test "a legacy record without system_materializers is rewritten, not crashed on" do
       # The real decoded shape, not a hand-built map: a record written

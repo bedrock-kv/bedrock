@@ -23,6 +23,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director.Publication
   alias Bedrock.ControlPlane.Director.Recovery
   alias Bedrock.ControlPlane.Director.State
 
@@ -48,6 +49,7 @@ defmodule Bedrock.ControlPlane.Director.Server do
     services = opts[:services] || %{}
     node_capabilities = opts[:node_capabilities] || %{}
     prior_core_state = opts[:prior_core_state] || nil
+    reservation = opts[:bootstrap_reservation]
 
     %{
       id: __MODULE__,
@@ -55,16 +57,20 @@ defmodule Bedrock.ControlPlane.Director.Server do
         {GenServer, :start_link,
          [
            __MODULE__,
-           {cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities}
+           {cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities, reservation}
          ]},
       restart: :temporary
     }
   end
 
   @impl true
-  def init({cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities}) do
+  def init({cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities}),
+    do: init({cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities, nil})
+
+  def init({cluster, config, prior_core_state, epoch, coordinator, services, node_capabilities, reservation}) do
     state = %State{
       epoch: epoch,
+      bootstrap_reservation: reservation,
       cluster: cluster,
       config: config,
       prior_core_state: prior_core_state,
@@ -85,6 +91,9 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> try_to_recover()
     |> noreply()
   end
+
+  @impl true
+  def handle_info({:publication_retry, id, sequence}, t), do: noreply(Publication.retry(t, id, sequence))
 
   @impl true
   def handle_info({:timeout, :ping_all_coordinators}, t) do
@@ -151,6 +160,9 @@ defmodule Bedrock.ControlPlane.Director.Server do
     |> update_minimum_read_version(node, minimum_read_version)
     |> noreply()
   end
+
+  def handle_cast({:publication_ack, coordinator, id, sequence}, t),
+    do: noreply(Publication.acknowledge(t, coordinator, id, sequence))
 
   def handle_cast({:pong, _from}, t), do: noreply(t)
 

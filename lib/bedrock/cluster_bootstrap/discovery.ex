@@ -17,6 +17,7 @@ defmodule Bedrock.ClusterBootstrap.Discovery do
   if the winner included them).
   """
 
+  alias Bedrock.ClusterBootstrap.Publication
   alias Bedrock.Internal.Id
   alias Bedrock.ObjectStorage
   alias Bedrock.SystemKeys.ClusterBootstrap
@@ -58,6 +59,9 @@ defmodule Bedrock.ClusterBootstrap.Discovery do
 
       {:error, :not_found} ->
         handle_first_boot(backend, bootstrap_key, self_node)
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -97,9 +101,10 @@ defmodule Bedrock.ClusterBootstrap.Discovery do
   # Private functions
 
   defp handle_existing_bootstrap(data, version_token, self_node) do
-    {:ok, bootstrap} = ClusterBootstrap.read(data)
-    role = determine_role(bootstrap, self_node)
-    {:ok, role, bootstrap, version_token}
+    with {:ok, bootstrap} <- Publication.decode(data) do
+      role = determine_role(bootstrap, self_node)
+      {:ok, role, bootstrap, version_token}
+    end
   end
 
   defp handle_first_boot(backend, bootstrap_key, self_node) do

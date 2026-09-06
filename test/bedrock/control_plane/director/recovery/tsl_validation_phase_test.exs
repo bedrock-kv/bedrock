@@ -11,7 +11,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
 
       # Valid TSL with correct types
       valid_tsl = %{
-        logs: %{},
+        logs: %{"retained-log" => [0, 1]},
         resolvers: []
       }
 

@@ -1,5 +1,5 @@
 // Bootstrap info stored in object storage
-namespace Bedrock.SystemKeys;
+namespace Bedrock.Test.FutureSystemKeys;
 
 table OtpRef {
   otp_name: string;

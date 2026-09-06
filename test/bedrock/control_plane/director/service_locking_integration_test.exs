@@ -38,8 +38,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
       context = create_full_mocked_context(available_services, prior_core_state)
 
       # Execute TSL validation phase first (this comes before LockingPhase now)
-      # Should proceed to LockingPhase since TSL validation passed
-      assert {_validated_attempt, LockingPhase} =
+      # No completed log set means initialization, independently of epoch.
+      assert {_validated_attempt, Bedrock.ControlPlane.Director.Recovery.InitializationPhase} =
                TSLValidationPhase.execute(recovery_attempt, context)
     end
 
@@ -78,7 +78,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
         |> with_mocked_service_locking()
 
       # Execute TSL validation phase first (this comes before LockingPhase now)
-      # Should proceed to LockingPhase since TSL validation passed
+      # No completed log set means initialization, independently of epoch.
       assert {_validated_attempt, LockingPhase} =
                TSLValidationPhase.execute(recovery_attempt, context)
     end

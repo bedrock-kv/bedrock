@@ -18,11 +18,15 @@
     {
       "text": "The isolated test at line319 passes with the same toolchain and seed346337; failure remains specific to the full-suite run.",
       "timestamp": "2026-09-05T18:48:54Z"
+    },
+    {
+      "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/286 — reproduced the exact flake mechanism with a sys.suspend/resume spike, widened 5 relay-class assert_receive DOWN sites to 5_000ms per PR #228's class rule (normalized the previously-hardened 1_000ms site too); full suite 2892/0, format/credo/dialyzer clean, cold audit PASS.",
+      "timestamp": "2026-09-06T02:31:27Z"
     }
   ],
   "priority": 3,
   "status": "open",
   "title": "Flaky test: TransactionBuilderTest unknown-info crash misses 100ms DOWN window on loaded CI",
   "type": "task",
-  "updated_at": "2026-09-05T18:48:54Z"
+  "updated_at": "2026-09-06T02:31:27Z"
 }

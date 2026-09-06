@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-06T14:05:36Z",
+  "close_reason": "Delivered in PR #258 (audited 2026-09-06: FDB anchor encodings for fgoe/lloe, position arithmetic rewritten, backward continuation restored; 7 tests plus 10,200-case differential check; CI green)",
   "created": "2026-07-17T02:23:20Z",
   "description": "Flagged by fresh-agent audit of bedrock-v2c: index_manager.ex calculate_target_position_found/not_found (lines ~342-360) look inconsistent with KeySelector constructor encodings — e.g. last_less_or_equal(k) resolves to k's predecessor when k exists (pos + (-1) with or_equal: true), and first_greater_than(k) when k is absent computes insertion_pos + 1, skipping one key. Also LayoutIndex.get_next_segment/get_previous_segment cross-shard continuation appears to be dead code (no callers). Needs falsifiable spike per spike-before-fixing before any fix.",
   "id": "bedrock-mi1",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Olivine selector position arithmetic inconsistent with KeySelector constructor encodings",
   "type": "bug",
-  "updated_at": "2026-09-06T00:59:42Z"
+  "updated_at": "2026-09-06T14:05:36Z"
 }

@@ -27,14 +27,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase do
   survivors recovery is copying from as `old`. This is where the
   generation is decided, so this is where it is written (bedrock-qb0g).
 
-  Both halves are what makes the record answerable. Exclusion safety asks
-  whether a machine still holds a log recovery needs, and the answer is
-  yes for a survivor even after replay has copied its window forward,
-  because this recovery is not durably complete until the persistence
-  phase commits and rewrites the bootstrap — until then the next recovery
-  still recovers from the survivors, not from these logs. FDB records
-  both vectors in `logsKey` for exactly that reader
-  (`ManagementAPI.actor.cpp:2393-2408` walks current AND old).
+  Both halves are what makes the record answerable. Replay copies
+  `(replay_after, last_inclusive]` into the new logs, but that window
+  lives only in WALs until Demux persists it: everything BELOW
+  `durable_version` is already in object storage, everything above it is
+  held by the new logs and the survivors and nowhere else. Lose the new
+  generation before durability catches up and the survivors are the only
+  copy, so their machines are not free to leave. FDB draws the line in
+  the same place — it keeps the old vector until recovery is complete and
+  the old generations are drained (`getLogsValue`,
+  `TagPartitionedLogSystem.actor.cpp:1843`) — and reads both vectors in
+  the safety check (`ManagementAPI.actor.cpp:2393-2408`).
+
+  What is missing is the other end of that line: FDB rewrites `logsKey`
+  without the old vector once the generations drain (`updateLogsValue`,
+  `ClusterRecovery.actor.cpp:765-805`), and we have no post-recovery
+  commit to do the same, so `logs/old/` survives until the next recovery
+  replaces it. That over-refuses, in the safe direction, for the rest of
+  the epoch.
 
   """
 

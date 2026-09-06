@@ -6,7 +6,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
 
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
+  alias Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase
   alias Bedrock.ControlPlane.Exclusion
+  alias Bedrock.DataPlane.ShardRouter
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.TransactionBuilder.Tx
   alias Bedrock.KeyRange
@@ -290,9 +292,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
     test "an address hosting only an old-generation log is refused by the exclusion check" do
       # node_a runs no log in this epoch — it serves no shard, and a record
       # of which tags a log carries would show it idle. It still holds the
-      # survivor this recovery copied from, and recovery is not durably
-      # finished with it until the persistence phase commits, so excluding
-      # it must be refused.
+      # survivor this recovery copied from, whose window is not durable in
+      # object storage yet, so excluding it must be refused.
       survivor_pid = spawn(fn -> Process.sleep(:infinity) end)
       recruit_pid = spawn(fn -> Process.sleep(:infinity) end)
 
@@ -304,12 +305,45 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       keyspace = apply_to_store(%{}, mutations_of(updated.pending_tx))
 
       assert {:unsafe, [{:old, "old_log", "node_a@host"}]} =
-               Exclusion.check(logs_range_read_fn(keyspace), ["node_a@host"])
+               Exclusion.check_logs(logs_range_read_fn(keyspace), ["node_a@host"])
 
       assert {:unsafe, [{:current, "new_log", "node_b@host"}]} =
-               Exclusion.check(logs_range_read_fn(keyspace), ["node_b@host"])
+               Exclusion.check_logs(logs_range_read_fn(keyspace), ["node_b@host"])
 
-      assert :safe = Exclusion.check(logs_range_read_fn(keyspace), ["node_c@host"])
+      assert :no_log_blockers = Exclusion.check_logs(logs_range_read_fn(keyspace), ["node_c@host"])
+    end
+
+    test "the clear takes the log family and nothing else" do
+      # The attempt arrives carrying an earlier phase's shard_keys write.
+      # A clear whose range were even slightly too broad would swallow it,
+      # and recovery would commit a layout it never meant to change.
+      survivor_pid = spawn(fn -> Process.sleep(:infinity) end)
+      recruit_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+      recovery_attempt = generational_attempt(survivor_pid)
+
+      assert {updated, LogReplayPhase} =
+               LogRecruitmentPhase.execute(recovery_attempt, generational_context(recruit_pid))
+
+      keyspace = apply_to_store(%{}, mutations_of(updated.pending_tx))
+
+      assert Map.fetch!(keyspace, SystemKeys.shard_key(<<0xFF>>)) == Values.encode_shard_key_entry(1, <<>>)
+    end
+
+    test "the clear routes to the system shard, never to no shard at all" do
+      # A clear_range that overlaps no shard halts the WHOLE commit batch
+      # (`Finalization.split_mutation_by_shards/2` returning [] is a
+      # :storage_team_coverage_error), so recovery's first range mutation
+      # has to land inside tag 0.
+      shards =
+        Enum.reduce(MaterializerBootstrapPhase.default_shard_layout(), :gb_trees.empty(), fn {end_key, {tag, start_key}},
+                                                                                             tree ->
+          :gb_trees.enter(end_key, {tag, start_key}, tree)
+        end)
+
+      {range_start, range_end} = KeyRange.from_prefix(SystemKeys.logs_prefix())
+
+      assert [{0, _shard_start, _shard_end}] = ShardRouter.lookup_shards_with_ranges(shards, range_start, range_end)
     end
   end
 
@@ -457,7 +491,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
       transaction_services: %{
         "old_log" => %{status: {:up, survivor_pid}, kind: :log, last_seen: {:old_log_otp, :node_a@host}}
       },
-      pending_tx: Tx.new()
+      # An earlier phase's write, so the family clear has a sibling family
+      # to leave alone and the accumulation check has something to check.
+      pending_tx: Tx.set(Tx.new(), SystemKeys.shard_key(<<0xFF>>), Values.encode_shard_key_entry(1, <<>>))
     }
   end
 

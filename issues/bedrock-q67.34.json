@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-20T16:43:14Z",
@@ -8,8 +8,8 @@
   "labels": [],
   "parent": "bedrock-q67",
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "Recovery lifecycle: stalled-attempt retry leaves the abandoned attempt's unlocked proxies running in the same epoch",
   "type": "task",
-  "updated_at": "2026-08-20T16:43:14Z"
+  "updated_at": "2026-09-06T00:47:05Z"
 }

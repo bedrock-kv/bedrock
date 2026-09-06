@@ -83,13 +83,42 @@ defmodule Bedrock.Internal.TransactionBuilder.StorageRacing do
     fastest_server
     |> operation_fn.(state.read_version, state.fetch_timeout_in_ms)
     |> case do
-      {:ok, result} -> {state, {:ok, {result, key_range}}}
-      {:error, :not_found} -> {state, {:ok, {nil, key_range}}}
-      {:error, :version_too_old} -> {state, {:failure, %{version_too_old: [fastest_server]}}}
-      _ -> race_all_servers(state, key_range, :lists.delete(fastest_server, all_servers), operation_fn)
+      {:ok, result} ->
+        {state, {:ok, {result, key_range}}}
+
+      {:error, :not_found} ->
+        {state, {:ok, {nil, key_range}}}
+
+      {:error, :version_too_old} ->
+        {state, {:failure, %{version_too_old: [fastest_server]}}}
+
+      {:error, reason} ->
+        race_remaining_servers(state, key_range, all_servers, fastest_server, reason, operation_fn)
+
+      {:failure, reason, _server} ->
+        race_remaining_servers(state, key_range, all_servers, fastest_server, reason, operation_fn)
     end
   end
 
+  # A failure on the cached-fastest server falls back to the shard's other
+  # servers. When it was the only one - today's singleton refs always - the
+  # read fails with that server's own reason rather than collapsing into
+  # :no_servers_to_race: the shard is routed, the server just didn't answer,
+  # and only a routing-shaped verdict may evict the node's routing cache.
+  # FDB's locationCache is invalidated by wrong_shard_server and by
+  # all_alternatives_failed (thrown only when every endpoint is known-failed,
+  # LoadBalance.actor.cpp), never by a slow reply - slow is not stale.
+  defp race_remaining_servers(state, key_range, all_servers, fastest_server, reason, operation_fn) do
+    case :lists.delete(fastest_server, all_servers) do
+      [] -> {state, {:failure, %{reason => [fastest_server]}}}
+      remaining -> race_all_servers(state, key_range, remaining, operation_fn)
+    end
+  end
+
+  # An empty ref list is unroutable, and routing-shaped by construction. No
+  # index the builder writes can hold one (insert above is [_ | _]-guarded),
+  # so this is a fallthrough that keeps an empty set out of run_race/3, which
+  # would otherwise reduce to a reasonless %{}.
   defp race_all_servers(state, _key_range, [], _operation_fn), do: {state, {:failure, %{no_servers_to_race: []}}}
 
   defp race_all_servers(state, key_range, servers, operation_fn) do

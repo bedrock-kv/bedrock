@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-08-25T20:15:45Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-uvk",
   "labels": [],
   "priority": 3,
-  "status": "open",
+  "status": "in_progress",
   "title": "[BUG] Flaky: ShardServer retry-telemetry test misses its 1.5s assert_receive under full-suite load",
   "type": "bug",
-  "updated_at": "2026-08-25T20:15:45Z"
+  "updated_at": "2026-09-06T01:49:11Z"
 }

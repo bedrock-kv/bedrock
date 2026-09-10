@@ -658,7 +658,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
       # traffic. A dead materializer surfaces as :unavailable, which does
       # evict.
       materializer = spawn(fn -> Process.sleep(:infinity) end)
-      on_exit(fn -> Process.exit(materializer, :kill) end)
+      stop_on_exit(materializer)
       Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
 
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}

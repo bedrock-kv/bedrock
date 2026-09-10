@@ -15,6 +15,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.Reading
   alias Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotRetention
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
   alias Bedrock.DataPlane.Materializer.Telemetry
@@ -63,10 +64,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   # explicit positive idle_timeout the worker never spins down, which is
   # what exempts the system shard (its bootstrap never sets the param).
   # The snapshot upload policy is opt-in the same way, one knob at a
-  # time (bedrock-zi44).
+  # time (bedrock-zi44), and so is snapshot retention (bedrock-s1zr).
   @spec startup_opts(cluster :: module() | nil, params :: map()) :: keyword()
   defp startup_opts(cluster, params) do
-    base = [cluster: cluster, shard_id: params["shard_id"], snapshot_policy: SnapshotPolicy.from_params(params)]
+    base = [
+      cluster: cluster,
+      shard_id: params["shard_id"],
+      snapshot_policy: SnapshotPolicy.from_params(params),
+      snapshot_retention: SnapshotRetention.from_params(params)
+    ]
 
     case params["idle_timeout"] do
       idle_timeout when is_integer(idle_timeout) and idle_timeout > 0 ->

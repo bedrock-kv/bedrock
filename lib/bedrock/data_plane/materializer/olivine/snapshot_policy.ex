@@ -38,8 +38,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy do
   floor, which is no sooner than `min_interval_ms` away.
 
   This policy is only about how often a snapshot is WRITTEN. Which of
-  the written snapshots survive is retention, and that lives on the
-  ObjectStorage side (bedrock-s1zr).
+  the written snapshots survive is retention, and that is
+  `SnapshotRetention` (bedrock-s1zr).
   """
 
   @type t :: %__MODULE__{

@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-10T12:24:26Z",
   "created": "2026-09-10T12:06:25Z",
   "description": "Amend PR #277 so RepoTransactTest waits for its registered stub materializer to terminate between tests; verify the failing job scenario and push the PR branch.",
   "id": "bedrock-puz",
@@ -13,8 +14,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Fix PR #277 CI registration race",
   "type": "task",
-  "updated_at": "2026-09-10T12:24:25Z"
+  "updated_at": "2026-09-10T12:24:26Z"
 }

@@ -6,9 +6,15 @@
   "description": "Amend PR #282 with the RepoTransactTest registered stub cleanup needed by its failing MinIO CI job; verify and push the PR branch.",
   "id": "bedrock-1g0",
   "labels": [],
+  "comments": [
+    {
+      "text": "PR #282 updated through 3f731ef7. Registered routing stubs now use monitored on_exit cleanup, including the slow-materializer path. RepoTransactTest passed 50 randomized repetitions; GitHub Actions run 34476316723 is fully green.",
+      "timestamp": "2026-09-10T12:24:26Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Fix PR #282 CI registration race",
   "type": "task",
-  "updated_at": "2026-09-10T12:06:53Z"
+  "updated_at": "2026-09-10T12:24:26Z"
 }

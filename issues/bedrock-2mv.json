@@ -6,9 +6,15 @@
   "description": "Amend PR #242 so MutationOrderTest applies the tmp_dir module tag before generated tests under Elixir 1.17/OTP 27; verify and push the PR branch.",
   "id": "bedrock-2mv",
   "labels": [],
+  "comments": [
+    {
+      "text": "PR #242 updated through c0ad2ed1. Moved @moduletag :tmp_dir ahead of generated tests; exact OTP 27 CI is green. Also carried the audited bedrock-s9x DOWN-timeout fix after S3 exposed that known flake. GitHub Actions run 34476317669 is fully green.",
+      "timestamp": "2026-09-10T12:24:27Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Fix PR #242 OTP 27 tmp_dir setup",
   "type": "task",
-  "updated_at": "2026-09-10T12:06:53Z"
+  "updated_at": "2026-09-10T12:24:27Z"
 }

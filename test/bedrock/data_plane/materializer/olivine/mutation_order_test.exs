@@ -13,6 +13,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.MutationOrderTest do
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.DataPlane.FinalizationTestSupport, as: Support
 
+  @moduletag :tmp_dir
+
   @cases [
     add_add: [{:atomic, :add, "key", <<1>>}, {:atomic, :add, "key", <<1>>}],
     set_atomic: [{:set, "key", <<5>>}, {:atomic, :add, "key", <<2>>}],
@@ -27,8 +29,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.MutationOrderTest do
       check_history(dir, [[{:set, "key", <<9>>}], unquote(Macro.escape(mutations))])
     end
   end
-
-  @moduletag :tmp_dir
 
   test "staged inserts and clears span existing pages and newly split pages", %{tmp_dir: dir} do
     seed = for n <- 1..800, do: {:set, key(n), <<9>>}

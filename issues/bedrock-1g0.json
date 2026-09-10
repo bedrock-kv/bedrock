@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-10T12:24:27Z",
   "created": "2026-09-10T12:06:26Z",
   "description": "Amend PR #282 with the RepoTransactTest registered stub cleanup needed by its failing MinIO CI job; verify and push the PR branch.",
   "id": "bedrock-1g0",
@@ -13,8 +14,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Fix PR #282 CI registration race",
   "type": "task",
-  "updated_at": "2026-09-10T12:24:26Z"
+  "updated_at": "2026-09-10T12:24:27Z"
 }

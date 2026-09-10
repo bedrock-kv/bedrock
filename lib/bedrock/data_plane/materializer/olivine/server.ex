@@ -14,6 +14,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   alias Bedrock.DataPlane.Materializer.Olivine.IntakeQueue
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.Reading
+  alias Bedrock.DataPlane.Materializer.Olivine.SnapshotPolicy
   alias Bedrock.DataPlane.Materializer.Olivine.State
   alias Bedrock.DataPlane.Materializer.Olivine.Telemetry, as: OlivineTelemetry
   alias Bedrock.DataPlane.Materializer.Telemetry
@@ -61,9 +62,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   # spin-down is opt-in per worker (bedrock-q67.21.5): without an
   # explicit positive idle_timeout the worker never spins down, which is
   # what exempts the system shard (its bootstrap never sets the param).
+  # The snapshot upload policy is opt-in the same way, one knob at a
+  # time (bedrock-zi44).
   @spec startup_opts(cluster :: module() | nil, params :: map()) :: keyword()
   defp startup_opts(cluster, params) do
-    base = [cluster: cluster, shard_id: params["shard_id"]]
+    base = [cluster: cluster, shard_id: params["shard_id"], snapshot_policy: SnapshotPolicy.from_params(params)]
 
     case params["idle_timeout"] do
       idle_timeout when is_integer(idle_timeout) and idle_timeout > 0 ->
@@ -522,7 +525,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     )
 
     # Optionally upload snapshot to ObjectStorage (async, fire-and-forget)
-    Logic.maybe_upload_snapshot(new_state, data_path, idx_path, durable_version)
+    new_state = Logic.maybe_upload_snapshot(new_state, data_path, idx_path, durable_version)
 
     # Resume: a fresh puller joins the stream at the durable boundary and
     # re-delivers everything after it through the normal apply path.

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Snapshot uploads answer to a policy.** A materializer uploaded a
+  snapshot whenever a compaction happened to finish, with no way to say how
+  much of that cadence was worth paying for. Three new manifest params say
+  it: `snapshot_min_interval_ms` is a floor on how often a snapshot may be
+  written, and `snapshot_after_bytes` / `snapshot_after_transactions`
+  require that enough work has accumulated since the last one. A worker
+  with none of them set behaves exactly as before, uploading at every
+  compaction. The spin-down snapshot stays unconditional — it is the only
+  artifact bridging spin-down to revival.
+
 - **Olivine keeps append-only workloads readable after page splits.** Keys
   above every stored page boundary now extend the actual rightmost page
   instead of returning to page 0 and overlapping later ranges. Recovery

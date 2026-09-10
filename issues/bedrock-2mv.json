@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-10T12:24:27Z",
   "created": "2026-09-10T12:06:26Z",
   "description": "Amend PR #242 so MutationOrderTest applies the tmp_dir module tag before generated tests under Elixir 1.17/OTP 27; verify and push the PR branch.",
   "id": "bedrock-2mv",
@@ -13,7 +14,7 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Fix PR #242 OTP 27 tmp_dir setup",
   "type": "task",
   "updated_at": "2026-09-10T12:24:27Z"

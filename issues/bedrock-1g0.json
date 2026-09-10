@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-10T12:06:26Z",
+  "description": "Amend PR #282 with the RepoTransactTest registered stub cleanup needed by its failing MinIO CI job; verify and push the PR branch.",
+  "id": "bedrock-1g0",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Fix PR #282 CI registration race",
+  "type": "task",
+  "updated_at": "2026-09-10T12:06:26Z"
+}

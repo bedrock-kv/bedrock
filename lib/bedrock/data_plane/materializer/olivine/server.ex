@@ -490,7 +490,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
       versions: [{durable_version, {new_index, %{}}}],
       current_version: durable_version,
       window_size_in_microseconds: 5_000_000,
-      id_allocator: t.index_manager.id_allocator,
+      # The allocator rewinds with the index for the same reason the count
+      # does: the compacted map brings back pages whose ids the live
+      # allocator has since recycled, and a split would write over one.
+      id_allocator: Index.id_allocator(new_index),
       output_queue: :queue.new(),
       last_version_ended_at_offset: 0,
       window_lag_time_μs: 5_000_000,

@@ -1,6 +1,7 @@
 defmodule Bedrock.DataPlane.Materializer.Olivine.IndexTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.Materializer.Olivine.IdAllocator
   alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Tree
@@ -27,6 +28,43 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexTest do
       tree: tree,
       page_map: page_map
     }
+  end
+
+  describe "id_allocator/1" do
+    test "the free list is the gaps below the largest page id in use" do
+      index =
+        build_index_with_pages([
+          {0, [], 3},
+          {3, [{"key3", locator(3)}], 5},
+          {5, [{"key5", locator(5)}], 0}
+        ])
+
+      assert Index.id_allocator(index) == IdAllocator.new(5, [1, 2, 4])
+    end
+
+    test "an index whose ids are contiguous has nothing free" do
+      index = build_index_with_pages([{0, [], 1}, {1, [{"key1", locator(1)}], 0}])
+
+      assert Index.id_allocator(index) == IdAllocator.new(1, [])
+    end
+
+    # No page can be handed an id the index is already using: that is the
+    # whole reason a rewind re-derives the allocator instead of carrying
+    # the live one across.
+    test "no id it hands out is already in the page map" do
+      index =
+        build_index_with_pages([
+          {0, [], 2},
+          {2, [{"key2", locator(2)}], 7},
+          {7, [{"key7", locator(7)}], 0}
+        ])
+
+      {ids, allocator} = IdAllocator.allocate_ids(Index.id_allocator(index), 8)
+
+      assert Enum.all?(ids, &(not Map.has_key?(index.page_map, &1)))
+      assert ids == Enum.uniq(ids)
+      assert allocator.free_ids == []
+    end
   end
 
   describe "delete_pages/2" do

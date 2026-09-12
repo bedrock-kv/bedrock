@@ -11,6 +11,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
   """
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.Materializer.Olivine.Database
+  alias Bedrock.DataPlane.Materializer.Olivine.Index
+  alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.Server
   alias Bedrock.DataPlane.Transaction
@@ -295,6 +298,67 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.CompactionCutoverTest do
     v2000 = Version.from_integer(2_000)
     :ok = ReplayShardServer.append(shard_server, v2000, slice(v2000, "b"))
     await_value(pid, v2000, "b")
+  end
+
+  # The cutover installs the DURABLE page map, and that map still holds
+  # pages the live allocator has since recycled. A carried-over allocator
+  # lists them as free; the replay then recycles the same ids a SECOND
+  # time, and a later multi-way split hands one id to two new pages —
+  # `add_pages_batch` keeps only the last, and the other page's keys are
+  # gone.
+  #
+  # Driven through Logic rather than a live server: the durable boundary
+  # has to advance past a recycling clear, which needs versions seconds
+  # apart and a known-committed version to uncap the window.
+  test "the id allocator rewinds with the compacted index", %{tmp_dir: tmp_dir} do
+    otp_name = :"olivine_cutover_alloc_#{System.unique_integer([:positive])}"
+    {:ok, state} = Logic.startup(otp_name, self(), "cutover-alloc-worker", tmp_dir)
+
+    # 300 keys overflow the 256-key page, splitting page 0 and allocating
+    # page 1. Nothing is evictable yet — the window edge underflows.
+    state = apply_and_flush(state, sets("k", 1..300), 10_000_000)
+
+    # Emptying page 1 recycles its id. This version's window advance makes
+    # the PREVIOUS one durable, so the durable page map still holds page 1.
+    state = apply_and_flush(state, [{:clear_range, "k0151", "l"}], 20_000_000)
+
+    durable = Database.durable_version(state.database)
+    assert Version.to_integer(durable) == 10_000_000
+    assert state.index_manager |> IndexManager.page_map_at(durable) |> Map.keys() |> Enum.sort() == [0, 1]
+    assert IndexManager.info(state.index_manager, :free_ids) == [1]
+
+    {:ok, task} = Logic.start_compaction(state)
+    assert_receive {:compaction_ready, _, _, _, _, _, _, _, ^durable, _, _, _} = cutover_msg, 10_000
+    Task.await(task)
+
+    {:noreply, state} = Server.handle_info(cutover_msg, state)
+    assert IndexManager.info(state.index_manager, :free_ids) == []
+
+    # The replay: the stream re-delivers the clear, and then a transaction
+    # whose split needs two new page ids at once.
+    state = apply_transaction(state, [{:clear_range, "k0151", "l"}], 20_000_000)
+    state = apply_transaction(state, sets("j", 1..400), 30_000_000)
+
+    [{_version, {index, _modified}} | _] = state.index_manager.versions
+    assert IndexManager.info(state.index_manager, :n_keys) == Index.key_count(index)
+    assert IndexManager.info(state.index_manager, :n_keys) == 550
+
+    Logic.shutdown(state)
+  end
+
+  defp sets(prefix, range),
+    do: Enum.map(range, &{:set, prefix <> String.pad_leading(Integer.to_string(&1), 4, "0"), "v"})
+
+  defp apply_transaction(state, mutations, version_int) do
+    encoded = Transaction.encode(%{mutations: mutations, commit_version: Version.from_integer(version_int)})
+    {:ok, state, _version} = Logic.apply_transactions(state, [encoded])
+    state
+  end
+
+  defp apply_and_flush(state, mutations, version_int) do
+    state = apply_transaction(state, mutations, version_int)
+    {:ok, state} = Logic.advance_window(%{state | known_committed_version: Version.from_integer(version_int)})
+    state
   end
 
   defp flush_pulls do

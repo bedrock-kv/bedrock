@@ -435,11 +435,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   @spec start_compaction(State.t()) :: {:ok, Task.t()}
   def start_compaction(%State{} = state) do
     database = state.database
-    # Get complete current page_map from index
-    complete_page_map = IndexManager.get_complete_page_map(state.index_manager)
     caller = self()
 
     durable_version = Database.durable_version(database)
+    # The DURABLE page map, not the live one: the compacted files are
+    # labelled with the durable version and the cutover rewinds to that
+    # boundary, so anything above it must be absent and left to the
+    # replay.
+    durable_page_map = IndexManager.page_map_at(state.index_manager, durable_version)
     {data_db, index_db} = database
 
     # Emit start telemetry
@@ -458,7 +461,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
         with {:ok, writer} <- SplitFileWriter.new(compact_data_path, compact_idx_path),
              {:ok, result, compacted_pages, durable_version} <-
-               Database.compact(database, complete_page_map, SplitFileWriter, writer) do
+               Database.compact(database, durable_page_map, SplitFileWriter, writer) do
           duration = System.monotonic_time(:microsecond) - start_time
 
           send(caller, {
@@ -517,14 +520,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
 
   def upload_snapshot_before_spindown(%State{snapshot: snapshot} = t) do
     {data_db, index_db} = t.database
-    complete_page_map = IndexManager.get_complete_page_map(t.index_manager)
+    durable_version = Database.durable_version(t.database)
+    durable_page_map = IndexManager.page_map_at(t.index_manager, durable_version)
     spindown_data_path = data_db.file_name ++ ~c".spindown"
     spindown_idx_path = index_db.file_name ++ ~c".spindown"
 
     result =
       with {:ok, writer} <- SplitFileWriter.new(spindown_data_path, spindown_idx_path),
-           {:ok, files, _compacted_pages, durable_version} <-
-             Database.compact(t.database, complete_page_map, SplitFileWriter, writer),
+           {:ok, files, _compacted_pages, _durable_version} <-
+             Database.compact(t.database, durable_page_map, SplitFileWriter, writer),
            _ = :file.close(files.data_fd),
            _ = :file.close(files.idx_fd),
            version_int = Version.to_integer(durable_version),

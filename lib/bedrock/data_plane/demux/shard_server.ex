@@ -90,6 +90,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   - `:persistence_max_retries` - Optional. Retry limit for flush failures (default: 5).
   - `:persistence_retry_backoff_ms` - Optional. Base retry backoff for flush retries (default: 25).
   - `:persistence_retry_tick_ms` - Optional. Retry polling tick for flush retries (default: 25).
+  - `:persistence_clock` - Optional zero-arity function returning monotonic milliseconds for persistence retries.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -172,7 +173,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
   @known_options ~w[
     shard_id demux cluster object_storage
     persistence_queue_capacity persistence_max_retries
-    persistence_retry_backoff_ms persistence_retry_tick_ms
+    persistence_retry_backoff_ms persistence_retry_tick_ms persistence_clock
   ]a
 
   @impl true
@@ -193,20 +194,27 @@ defmodule Bedrock.DataPlane.Demux.ShardServer do
     persistence_max_retries = Keyword.get(opts, :persistence_max_retries, 5)
     persistence_retry_backoff_ms = Keyword.get(opts, :persistence_retry_backoff_ms, 25)
     persistence_retry_tick_ms = Keyword.get(opts, :persistence_retry_tick_ms, 25)
+    persistence_clock = Keyword.get(opts, :persistence_clock)
 
     shard_tag = Keys.shard_tag(shard_id)
     chunk_reader = ChunkReader.new(object_storage, shard_tag)
     owner_pid = self()
 
-    {:ok, persistence_worker} =
-      PersistenceWorker.start_link(
-        perform: fn payload -> persist_flush_payload(owner_pid, payload, object_storage, shard_tag) end,
-        on_drop: fn payload, reason -> send(owner_pid, {:flush_dropped, payload, reason}) end,
-        capacity: persistence_queue_capacity,
-        max_retries: persistence_max_retries,
-        retry_base_backoff_ms: persistence_retry_backoff_ms,
-        retry_tick_ms: persistence_retry_tick_ms
-      )
+    persistence_worker_opts = [
+      perform: fn payload -> persist_flush_payload(owner_pid, payload, object_storage, shard_tag) end,
+      on_drop: fn payload, reason -> send(owner_pid, {:flush_dropped, payload, reason}) end,
+      capacity: persistence_queue_capacity,
+      max_retries: persistence_max_retries,
+      retry_base_backoff_ms: persistence_retry_backoff_ms,
+      retry_tick_ms: persistence_retry_tick_ms
+    ]
+
+    persistence_worker_opts =
+      if persistence_clock,
+        do: Keyword.put(persistence_worker_opts, :clock, persistence_clock),
+        else: persistence_worker_opts
+
+    {:ok, persistence_worker} = PersistenceWorker.start_link(persistence_worker_opts)
 
     state = %State{
       shard_id: shard_id,

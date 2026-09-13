@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-13T05:34:17Z",
+  "description": "Follow the local Bedrock release workflow to verify 0.7.1. Audit version/changelog/history and run required verification. Current 0.7.1 tag points at develop rather than main; do not retag, merge, or publish until evidence and intended final commit are established.",
+  "id": "bedrock-i5f",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Audit and complete release 0.7.1",
+  "type": "task",
+  "updated_at": "2026-09-13T05:34:17Z"
+}

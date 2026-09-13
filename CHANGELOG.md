@@ -10,6 +10,10 @@
   object, a complete replacement, or no object — never a partially-written
   target. Scratch files remain invisible to listings.
 
+- **Fix Livebook reevaluation.** A replacement distributor now removes the
+  previous run's registered placeholder before the next epoch starts, so a
+  second evaluation does not retry its startup sweep indefinitely.
+
 - **Snapshots can be pruned once they are written.** Every snapshot a
   materializer ever wrote stayed in object storage forever; nothing in
   `lib/` called `Snapshot.delete_older_than/2`. A new manifest param,

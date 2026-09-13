@@ -2,13 +2,14 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-13T06:05:35Z",
   "created": "2026-09-13T05:56:34Z",
   "description": "LocalFilesystem.list/3 filters current .bedrock-tmp scratch files but exposes legacy .bedrock-lock metadata as object keys. Snapshot.read_latest/1 asks for list(prefix, limit: 1), receives the lexically-first .bedrock-lock key, and fails Keys.extract_version/1 with :invalid_format even though the versioned snapshot beside it is valid. Keep snapshot key parsing strict. At the backend boundary, filter all LocalFilesystem-owned internal filenames, including legacy .bedrock-lock. Add a regression with .bedrock-lock beside a valid versioned snapshot proving limit: 1 returns the snapshot and read_latest succeeds.",
   "id": "bedrock-km1",
   "labels": [],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "LocalFilesystem listing exposes legacy internal lock files",
   "type": "bug",
-  "updated_at": "2026-09-13T06:04:51Z"
+  "updated_at": "2026-09-13T06:05:35Z"
 }

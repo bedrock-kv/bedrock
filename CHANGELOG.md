@@ -2,15 +2,16 @@
 
 ## Unreleased
 
-## 0.7.1 — 2026-09-12
+## 0.7.1 — 2026-09-13
 
-- **Fix LocalFilesystem startup after native locking.** The filesystem
+- **Fix LocalFilesystem startup and Livebook re-evaluation.** The filesystem
   backend's per-directory `.bedrock-lock` files were included in object
   listings, so a fresh local cluster treated one as a malformed snapshot
   version and never became available. Listings now hide those internal lock
-  files; the Livebook tutorial can start its single-node cluster and complete
-  its first transaction again. LocalFilesystem version-matched writes are
-  also now genuinely atomic across BEAMs sharing a root.
+  files, and version-matched writes are genuinely atomic across BEAMs sharing
+  a root. Re-evaluating the Livebook cluster cell now also tears down the old
+  distributor's placeholder before the replacement starts, preventing an
+  infinite `lock taken` retry loop.
 
 - **Snapshots can be pruned once they are written.** Every snapshot a
   materializer ever wrote stayed in object storage forever; nothing in

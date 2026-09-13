@@ -2,13 +2,14 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-13T06:25:20Z",
   "created": "2026-09-13T06:21:37Z",
   "description": "Fix pre-existing test-source compiler warnings so mix test --warnings-as-errors exits successfully, without changing production behavior.",
   "id": "bedrock-czn",
   "labels": [],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Eliminate warnings from strict test suite",
   "type": "task",
-  "updated_at": "2026-09-13T06:21:42Z"
+  "updated_at": "2026-09-13T06:25:20Z"
 }

@@ -63,12 +63,13 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
 
   alias Bedrock.ObjectStorage
 
+  # LocalFilesystem reserves this basename prefix for its own metadata.
   # Scratch files live in the target's own directory, so publishing is a
-  # rename or link within one filesystem — the only way it is atomic. The
-  # leading dot and the prefix keep them out of `list/3`. No key `Keys`
-  # builds can begin with this prefix (they are `c/`, `s/` and a
-  # base36 suffix), though the bootstrap key is free-form app-env text,
+  # rename or link within one filesystem — the only way it is atomic. No
+  # key `Keys` builds can begin with this prefix (they are `c/`, `s/` and
+  # a base36 suffix), though the bootstrap key is free-form app-env text,
   # so that remains a convention rather than something enforced here.
+  @internal_prefix ".bedrock-"
   @scratch_prefix ".bedrock-tmp."
 
   # Exhausting these means the same node, pid and unique-integer collided
@@ -272,7 +273,13 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
     {:error, reason}
   end
 
-  defp scratch_file?(path), do: path |> Path.basename() |> String.starts_with?(@scratch_prefix)
+  defp internal_file?(path) do
+    path
+    |> Path.basename()
+    |> String.normalize(:nfc)
+    |> String.downcase()
+    |> String.starts_with?(@internal_prefix)
+  end
 
   # List state: {root, dirs_to_visit, files_collected, prefix, remaining_limit}
   defp init_list_state(root, prefix_path, prefix, limit) do
@@ -316,9 +323,9 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
           |> Enum.map(&Path.join(dir, &1))
           |> Enum.split_with(&File.regular?/1)
 
-        # A scratch file is a write in progress or the wreckage of one.
-        # It is never an object, and must not be reported as a key.
-        sorted_files = files |> Enum.reject(&scratch_file?/1) |> Enum.sort()
+        # Scratch files and legacy lock metadata belong to the backend,
+        # not its object namespace, and must never be reported as keys.
+        sorted_files = files |> Enum.reject(&internal_file?/1) |> Enum.sort()
         sorted_subdirs = subdirs |> Enum.filter(&may_contain_prefix?(&1, root, prefix)) |> Enum.sort()
 
         list_next({root, sorted_subdirs ++ rest_dirs, sorted_files, prefix, limit})

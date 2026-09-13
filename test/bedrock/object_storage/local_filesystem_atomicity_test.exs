@@ -2,7 +2,9 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemAtomicityTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.ObjectStorage.Snapshot
 
   # Readers of this store are written against S3's contract: one atomic
   # PUT, so an object is complete or absent, and put-if-not-exists claims
@@ -64,6 +66,18 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemAtomicityTest do
       File.write!(Path.join(root, "c/0/.bedrock-tmp.obj.999"), "half a pay")
 
       assert backend |> ObjectStorage.list("c/") |> Enum.to_list() == ["c/0/obj"]
+    end
+
+    test "reserved internal files are never visible to snapshot discovery", %{backend: backend, root: root} do
+      snapshot = Snapshot.new(backend, "0")
+      snapshot_key = Keys.snapshot_path("0", 123)
+
+      :ok = Snapshot.write(snapshot, 123, "snapshot")
+      File.write!(Path.join([root, "s", "0", ".bedrock-lock"]), "")
+      File.write!(Path.join([root, "s", "0", ".bedrock-future-metadata"]), "")
+
+      assert backend |> ObjectStorage.list("s/0/", limit: 1) |> Enum.to_list() == [snapshot_key]
+      assert {:ok, 123, "snapshot"} = Snapshot.read_latest(snapshot)
     end
 
     test "scratch files are never visible to get/2", %{backend: backend, root: root} do

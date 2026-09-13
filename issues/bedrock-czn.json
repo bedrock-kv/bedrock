@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-13T06:21:37Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-czn",
   "labels": [],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "Eliminate warnings from strict test suite",
   "type": "task",
-  "updated_at": "2026-09-13T06:21:37Z"
+  "updated_at": "2026-09-13T06:21:42Z"
 }

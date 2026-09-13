@@ -2,13 +2,14 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-13T06:30:08Z",
   "created": "2026-09-13T06:14:07Z",
   "description": "Prepare, verify, merge, and tag Bedrock 0.7.2 with the LocalFilesystem internal-file listing fix. Do not publish to Hex without separate explicit approval.",
   "id": "bedrock-gmf",
   "labels": [],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Release 0.7.2",
   "type": "task",
-  "updated_at": "2026-09-13T06:14:12Z"
+  "updated_at": "2026-09-13T06:30:08Z"
 }

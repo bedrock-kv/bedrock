@@ -535,7 +535,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
       assert {:error, :not_found} = Page.locator_for_key(page, <<"key_10">>)
 
       assert {:ok, page} = IndexManager.page_for_key(vm_after_clear, <<"key_15">>, Version.from_integer(1100))
-      assert {:error, :not_found} = Page.locator_for_key(page, <<"key_15">>)
+      # The exclusive endpoint is outside the clear and its write-conflict range.
+      assert {:ok, locator} = Page.locator_for_key(page, <<"key_15">>)
+      assert {:ok, "value_15"} = Database.load_value(database, locator)
 
       Database.close(database)
     end

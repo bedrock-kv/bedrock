@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-13T05:22:52Z",
+  "close_reason": "Rewrote develop from pre-#305 parent with BEAM-only atomic replacement regression; retained independent Livebook and retry fixes; corrected release notes; native history/artifacts removed. Force-with-lease completed and protection restored.",
   "created": "2026-09-13T05:07:55Z",
   "description": "User directive: remove 0850df93b9ea4ea28180ff458bb454f490642e5f from develop history; no NIF/C source/build integration may remain. Do NOT add filesystem or cross-BEAM locking. Preserve the BEAM-only atomic replacement contract: write and fsync a scratch file in the target directory, then atomically rename it into place, so readers see the old complete object or new complete object. Rebuild develop from the pre-#305 parent and replay only desired subsequent changes, correcting the 0.7.1 changelog. Prove no NIF references remain before force-updating develop. Release/tagging remains paused; do not publish.",
   "id": "bedrock-m0v",
@@ -13,8 +15,8 @@
     }
   ],
   "priority": 0,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Replace LocalFilesystem native mutation path with BEAM-only atomic locking",
   "type": "bug",
-  "updated_at": "2026-09-13T05:20:40Z"
+  "updated_at": "2026-09-13T05:22:52Z"
 }

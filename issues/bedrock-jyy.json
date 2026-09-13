@@ -2,6 +2,8 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-13T05:25:29Z",
+  "close_reason": "0.7.1 tag corrected to the NIF-free develop tip; no publish requested.",
   "created": "2026-09-13T03:56:07Z",
   "description": "Merge PR #305 after verified current-develop integration, add 0.7.1 release notes/version, publish the Hex patch release, and tag the release.",
   "id": "bedrock-jyy",
@@ -21,7 +23,7 @@
     }
   ],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Release 0.7.1: fix LocalFilesystem lock entries breaking Livebook startup",
   "type": "task",
   "updated_at": "2026-09-13T05:25:29Z"

@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-13T05:07:55Z",
+  "description": "User directive: remove 0850df93b9ea4ea28180ff458bb454f490642e5f from develop history; no NIF/C source/build integration may remain. Reimplement the LocalFilesystem internal lock filtering and version-matched write atomicity using BEAM-only filesystem primitives, preserving cross-BEAM correctness and stale-lock recovery. Rebuild develop from the pre-#305 parent plus the replacement and replay only desired subsequent changes; prove no NIF references remain before force-updating develop. Release/tagging remains paused; do not publish.",
+  "id": "bedrock-m0v",
+  "labels": [],
+  "priority": 0,
+  "status": "open",
+  "title": "Replace LocalFilesystem native mutation path with BEAM-only atomic locking",
+  "type": "bug",
+  "updated_at": "2026-09-13T05:07:55Z"
+}

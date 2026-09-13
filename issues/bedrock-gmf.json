@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-13T06:14:07Z",
@@ -7,8 +7,8 @@
   "id": "bedrock-gmf",
   "labels": [],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "Release 0.7.2",
   "type": "task",
-  "updated_at": "2026-09-13T06:14:07Z"
+  "updated_at": "2026-09-13T06:14:12Z"
 }

@@ -38,15 +38,7 @@ bedrock-*.tar
 .vscode/
 
 # AI tools
-# Local agent state stays out of the repo, with one exception: skills that are
-# project tooling rather than personal configuration. Those are versioned so
-# everyone gets the same analysis, and so the knowledge in them survives a fresh
-# clone. Re-include has to be spelled out a level at a time -- git will not
-# descend into an excluded directory to find a negation.
-.claude/*
-!.claude/skills/
-.claude/skills/*
-!.claude/skills/hunt-dead-code/
+/.claude/
 CLAUDE.md
 AGENTS.md
 .gitattributes

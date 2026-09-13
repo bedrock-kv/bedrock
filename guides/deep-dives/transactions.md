@@ -17,7 +17,7 @@ Bedrock implements a distributed ACID transaction system based on FoundationDB's
 - **[Commit Proxy](architecture/data-plane/commit-proxy.md)**: Batches transactions for efficient processing and conflict resolution
 - **[Resolver](architecture/data-plane/resolver.md)**: Implements MVCC conflict detection across key ranges
 - **[Log System](architecture/data-plane/log.md)**: Provides durable transaction storage with strict ordering
-- **[Materializer (Olivine)](architecture/data-plane/storage.md)**: Serves versioned key-value data and applies committed transactions
+- **[Materializer (Olivine)](architecture/data-plane/materializer.md)**: Serves versioned key-value data and applies committed transactions
 
 > 💡 **Deep Dive Available**: Click on any component name above to access detailed technical documentation including APIs, implementation details, performance characteristics, and code references.
 
@@ -32,16 +32,16 @@ sequenceDiagram
     participant CommitProxy as Commit Proxy
     participant Resolver
     participant Log
-    participant Storage
+    participant Materializer
     
-    Note over Client, Storage: Phase 1: Transaction Initiation
+    Note over Client, Materializer: Phase 1: Transaction Initiation
     Client->>Link: fetch_transaction_system_layout()
     Link-->>Client: {:ok, layout}
     Client->>TransactionBuilder: start_link()
     activate TransactionBuilder
     TransactionBuilder-->>Client: {:ok, transaction_pid}
     
-    Note over Client, Storage: Phase 2: Read Operations
+    Note over Client, Materializer: Phase 2: Read Operations
     Client->>TransactionBuilder: fetch(key)
     TransactionBuilder->>TransactionBuilder: check local writes (read-your-writes)
     alt Read version not yet obtained
@@ -49,17 +49,17 @@ sequenceDiagram
         Sequencer-->>TransactionBuilder: {:ok, read_version}
     end
 
-    TransactionBuilder->>Storage: fetch(key, read_version)
-    Storage-->>TransactionBuilder: {:ok, value}
+    TransactionBuilder->>Materializer: fetch(key, read_version)
+    Materializer-->>TransactionBuilder: {:ok, value}
     TransactionBuilder->>TransactionBuilder: track read in transaction state
     TransactionBuilder-->>Client: {:ok, value}
     
-    Note over Client, Storage: Phase 3: Write Operations (Local Accumulation)
+    Note over Client, Materializer: Phase 3: Write Operations (Local Accumulation)
     Client->>TransactionBuilder: put(key, new_value)
     TransactionBuilder->>TransactionBuilder: accumulate write locally
     TransactionBuilder-->>Client: :ok
     
-    Note over Client, Storage: Phase 4: Commit Phase (Multi-Step Process)
+    Note over Client, Materializer: Phase 4: Commit Phase (Multi-Step Process)
     Client->>TransactionBuilder: commit()
     
     rect rgb(255, 245, 235)
@@ -102,16 +102,16 @@ sequenceDiagram
         CommitProxy-->>TransactionBuilder: {:ok, commit_version}
     end
     
-    Note over Client, Storage: Phase 5: Transaction Completion
+    Note over Client, Materializer: Phase 5: Transaction Completion
     TransactionBuilder-->>Client: {:ok, commit_version}
     deactivate TransactionBuilder
     
-    Note over Log, Storage: Background: Storage Streams from the Log's Demux
-    Storage->>Log: get_shard_server(shard_id) — one-time discovery
-    Log-->>Storage: {:ok, shard_server}
-    Storage->>Log: ShardServer.pull(from_version) — chunks + buffer
-    Log-->>Storage: {:ok, [slices], %{high_water, kcv}}
-    Storage->>Storage: apply slices to local storage
+    Note over Log, Materializer: Background: the Materializer Streams from the Log's Demux
+    Materializer->>Log: get_shard_server(shard_id) — one-time discovery
+    Log-->>Materializer: {:ok, shard_server}
+    Materializer->>Log: ShardServer.pull(from_version) — chunks + buffer
+    Log-->>Materializer: {:ok, [slices], %{high_water, kcv}}
+    Materializer->>Materializer: apply slices to local state
 ```
 
 ## Component Deep Dives
@@ -119,13 +119,13 @@ sequenceDiagram
 For detailed technical documentation on any component, see the [Components Documentation](./architecture.md) directory:
 
 - **[Link Deep Dive](architecture/infrastructure/link.md)** - Client interface, cluster discovery, routing cache
-- **[Transaction Builder Deep Dive](architecture/infrastructure/transaction-builder.md)** - Per-transaction processes, read-your-writes, storage coordination  
+- **[Transaction Builder Deep Dive](architecture/infrastructure/transaction-builder.md)** - Per-transaction processes, read-your-writes, materializer coordination  
 - **[Sequencer Deep Dive](architecture/data-plane/sequencer.md)** - Version assignment, Lamport clock, global ordering
 - **[Commit Proxy Deep Dive](architecture/data-plane/commit-proxy.md)** - Transaction batching, finalization pipeline, client coordination
 - **[Resolver Deep Dive](architecture/data-plane/resolver.md)** - MVCC conflict detection, version history, range processing
 - **[Log System Deep Dive](architecture/data-plane/log.md)** - Durable storage, replication, recovery coordination
 - **[Shale Deep Dive](architecture/implementations/shale.md)** - Disk-based log implementation, WAL architecture
-- **[Materializer Deep Dive](architecture/data-plane/storage.md)** - Multi-version storage, MVCC reads, Demux streaming
+- **[Materializer Deep Dive](architecture/data-plane/materializer.md)** - Multi-version storage, MVCC reads, Demux streaming
 
 ## Transaction Format
 
@@ -151,7 +151,7 @@ The flexible design allows each component to work with only needed sections:
 
 - **Transaction Builder → Commit Proxy**: Full transaction with mutations, conflicts, and read version
 - **Commit Proxy → Resolver**: Conflicts and versions for conflict detection (mutations not needed)
-- **Commit Proxy → Logs**: Mutations and commit version for storage (conflicts not needed)
+- **Commit Proxy → Logs**: Mutations and commit version for materialization (conflicts not needed)
 
 This approach improves efficiency and reduces data transfer overhead between components.
 
@@ -257,7 +257,7 @@ This is the most complex phase involving multiple distributed components working
    - Request commit version from Sequencer via `next_commit_version/1`
    - Sequencer returns `last_commit_version`, `commit_version`, and the `known_committed_version` (KCV)
    - The `{last, current}` pair defines the Lamport predecessor chain; numeric gaps are valid, but every log appends only the connected prefix
-   - KCV is an independent monotonic watermark carried on every log push and accumulated with `max`, so downstream durability machinery (Demux chunk cuts, storage eviction) can gate on it even when a future transaction is parked
+   - KCV is an independent monotonic watermark carried on every log push and accumulated with `max`, so downstream durability machinery (Demux chunk cuts, materializer eviction) can gate on it even when a future transaction is parked
 
 **Key Code Locations**:
 
@@ -379,20 +379,20 @@ This is the most complex phase involving multiple distributed components working
 
 ## Background Operations
 
-### Storage Updates from the Demux
+### Materializer Updates from the Demux
 
-**Purpose**: Eventually consistent application of committed transactions to storage servers.
+**Purpose**: Eventually consistent application of committed transactions to materializers.
 
 **Process**:
 
-1. Each storage server streams its shard's slices from a log's Demux ShardServer — object-storage chunks for history, the in-memory buffer for recent data, one continuous stream
+1. Each materializer streams its shard's slices from a log's Demux ShardServer — object-storage chunks for history, the in-memory buffer for recent data, one continuous stream
 2. Slices are applied in version order; empty "current through v" replies advance the server's version when its shard is idle
-3. Storage maintains multiple versions for MVCC reads, applying eagerly but persisting to disk only up to the known committed version
+3. A materializer maintains multiple versions for MVCC reads, applying eagerly but persisting to disk only up to the known committed version
 4. Old versions leave memory through window advancement based on version-time lag
 
 **Key Code Locations**:
 
-- Storage streaming: `lib/bedrock/data_plane/materializer/olivine/streaming.ex`
+- Materializer streaming: `lib/bedrock/data_plane/materializer/olivine/streaming.ex`
 - Shard serving: `lib/bedrock/data_plane/demux/shard_server.ex`
 - Log pull (recovery-only): `lib/bedrock/data_plane/log.ex`
 
@@ -419,13 +419,13 @@ This is the most complex phase involving multiple distributed components working
 ### System Failures
 
 - **Log Server Failures**: Trigger commit proxy recovery (fail-fast)
-- **Storage Server Failures**: Reads continue from replicas
+- **Materializer Failures**: Reads continue from replicas
 - **Commit Proxy Failures**: Director detects and starts new commit proxies
 - **Network Partitions**: Raft consensus ensures consistency
 
 ### Version Management
 
-- **Version Too Old**: Storage no longer has the requested version
+- **Version Too Old**: the materializer no longer has the requested version
 - **Version Too New**: Read version exceeds current committed version
 
 ## Performance Characteristics
@@ -434,8 +434,8 @@ This is the most complex phase involving multiple distributed components working
 
 1. **Batching**: Multiple transactions processed together
 2. **Pipelining**: Read versions assigned while commits process
-3. **Local Caching**: Transaction builders cache storage server choices
-4. **Horse Racing**: Parallel queries to multiple storage replicas
+3. **Local Caching**: Transaction builders cache materializer choices
+4. **Horse Racing**: Parallel queries to multiple materializer replicas
 5. **Tag-Based Sharding**: Efficient distribution of writes across logs
 
 ### Latency Sources
@@ -450,7 +450,7 @@ This is the most complex phase involving multiple distributed components working
 1. **Batch Size**: Larger batches improve throughput but increase latency
 2. **Conflict Rate**: High conflicts reduce effective throughput
 3. **Key Distribution**: Hot keys can become bottlenecks
-4. **Storage Parallelism**: More storage servers improve read throughput
+4. **Materializer Parallelism**: More materializers improve read throughput
 
 ## Transaction Guarantees (ACID)
 
@@ -474,7 +474,7 @@ This is the most complex phase involving multiple distributed components working
 
 - Committed transactions survive system failures
 - ALL log servers must WAL-fsync acknowledge before commit confirmation
-- Storage servers eventually reflect all committed transactions
+- Materializers eventually reflect all committed transactions
 
 ## Client Usage Examples
 

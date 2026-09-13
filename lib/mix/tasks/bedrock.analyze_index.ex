@@ -118,6 +118,10 @@ defmodule Mix.Tasks.Bedrock.AnalyzeIndex do
       {:error, :missing_pages} ->
         Mix.shell().info("Index has missing pages")
         System.halt(1)
+
+      {:error, {:corrupt_index, reason}} ->
+        Mix.shell().error("Index is corrupt: #{inspect(reason)}")
+        System.halt(1)
     end
   end
 

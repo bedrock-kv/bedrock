@@ -131,24 +131,36 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   def log_event(
         [:bedrock, :raft, :append_entries_ack_received],
         %{at: at},
-        %{term: term, follower: follower, newest_transaction_id: newest_transaction_id} = _metadata,
+        %{
+          term: term,
+          follower: follower,
+          success: success,
+          request_transaction_id: request_transaction_id,
+          follower_newest_transaction_id: follower_newest_transaction_id
+        } = _metadata,
         start
       ) do
     info(
       at - start,
-      "Received append entries ack for term #{term} from follower #{follower} with newest transaction ID #{inspect(newest_transaction_id)}"
+      "Received #{ack_outcome(success)} append entries ack for term #{term} from follower #{follower} for request #{inspect(request_transaction_id)} (follower newest #{inspect(follower_newest_transaction_id)})"
     )
   end
 
   def log_event(
         [:bedrock, :raft, :append_entries_ack_sent],
         %{at: at},
-        %{term: term, leader: leader, newest_transaction_id: newest_transaction_id} = _metadata,
+        %{
+          term: term,
+          leader: leader,
+          success: success,
+          request_transaction_id: request_transaction_id,
+          follower_newest_transaction_id: follower_newest_transaction_id
+        } = _metadata,
         start
       ) do
     info(
       at - start,
-      "Sent append entries ack for term #{term} to leader #{leader} with newest transaction ID #{inspect(newest_transaction_id)}"
+      "Sent #{ack_outcome(success)} append entries ack for term #{term} to leader #{leader} for request #{inspect(request_transaction_id)} (our newest #{inspect(follower_newest_transaction_id)})"
     )
   end
 
@@ -193,4 +205,7 @@ defmodule Bedrock.Internal.Tracing.RaftTelemetry do
   end
 
   # def log_event(_, _, _, _), do: :ok
+
+  defp ack_outcome(true), do: "successful"
+  defp ack_outcome(false), do: "rejected"
 end

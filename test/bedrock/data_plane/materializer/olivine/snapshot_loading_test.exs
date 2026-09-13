@@ -13,6 +13,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
 
   import ExUnit.CaptureLog
 
+  alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
   alias Bedrock.DataPlane.Materializer.Olivine.IndexDatabase
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
   alias Bedrock.DataPlane.Materializer.Olivine.State
@@ -94,7 +95,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
       # Create a valid snapshot in ObjectStorage
       data_content = "snapshot data content"
       version = <<0, 0, 0, 0, 0, 0, 0, 42>>
-      pages_map = %{}
+      pages_map = %{0 => {Page.new(0, []), 0}}
 
       index_record = IndexDatabase.build_snapshot_record(version, pages_map)
       index_binary = IO.iodata_to_binary(index_record)
@@ -166,7 +167,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
       # Create a valid snapshot with proper index structure
       data_content = ""
       version = <<0, 0, 0, 0, 0, 0, 0, 100>>
-      pages_map = %{}
+      pages_map = %{0 => {Page.new(0, []), 0}}
 
       index_record = IndexDatabase.build_snapshot_record(version, pages_map)
       index_binary = IO.iodata_to_binary(index_record)
@@ -218,7 +219,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
 
       # Write a snapshot to ObjectStorage (should not be used)
       version = <<0, 0, 0, 0, 0, 0, 0, 999>>
-      pages_map = %{}
+      pages_map = %{0 => {Page.new(0, []), 0}}
       index_record = IndexDatabase.build_snapshot_record(version, pages_map)
       :ok = Snapshot.write(snapshot, 999, IO.iodata_to_binary(index_record))
 

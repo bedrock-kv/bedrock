@@ -190,3 +190,31 @@ jobs:
 
     - name: Run distributed durability suite
       run: mix test --include distributed test/bedrock/distributed/minio_durability_test.exs
+
+  local_filesystem_native:
+    name: LocalFilesystem native (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.3"
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+      - run: mix run scripts/test_local_filesystem.exs
+      - name: Build and exercise extracted source package
+        shell: bash
+        run: |
+          mix hex.build
+          package_dir=$(mktemp -d)
+          tar -xf bedrock-0.7.0.tar -C "$package_dir"
+          tar -xzf "$package_dir/contents.tar.gz" -C "$package_dir"
+          cd "$package_dir"
+          mix deps.get
+          mix compile --warnings-as-errors
+          mix run scripts/local_filesystem_smoke.exs

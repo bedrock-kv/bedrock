@@ -14,11 +14,15 @@
     {
       "text": "Found the deterministic first-run CI defect: commit 0c922c0a deriving the Hex artifact name landed via #310 on main but was never returned to develop. PR #311, correctly based on develop, therefore still tries to extract bedrock-0.7.0.tar after building 0.7.1. Landing the workflow-only fix on develop before release verification.",
       "timestamp": "2026-09-13T04:30:13Z"
+    },
+    {
+      "text": "Corrected release after develop history rewrite: forced annotated tag 0.7.1 now resolves to 15266d0e (BEAM-only atomic replacement plus Livebook reevaluation repair). 0850df93 is not in the tag ancestry. main intentionally remains at 0.7.0. No Hex publication was performed.",
+      "timestamp": "2026-09-13T05:25:29Z"
     }
   ],
   "priority": 1,
   "status": "in_progress",
   "title": "Release 0.7.1: fix LocalFilesystem lock entries breaking Livebook startup",
   "type": "task",
-  "updated_at": "2026-09-13T04:30:13Z"
+  "updated_at": "2026-09-13T05:25:29Z"
 }

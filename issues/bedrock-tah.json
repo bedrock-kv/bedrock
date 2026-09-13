@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-13T04:45:25Z",
+  "description": "A Livebook/Kino child reevaluation terminates the old cluster supervisor. The director and distributor stop, but the distributor-linked registered placeholder survives a normal distributor exit. The replacement distributor takes its epoch lock, fails startup_sweep when its placeholder start returns {:already_started, old_pid}, and the director retries every 1s. Add a same-VM stop/restart regression test, guarantee placeholder teardown on every normal distributor termination, and verify the replacement distributor reaches a stable running sweep.",
+  "id": "bedrock-tah",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Livebook reevaluation leaks distributor placeholder and loops lock acquisition",
+  "type": "bug",
+  "updated_at": "2026-09-13T04:45:25Z"
+}

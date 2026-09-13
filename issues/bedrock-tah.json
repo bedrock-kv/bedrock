@@ -6,9 +6,15 @@
   "description": "A Livebook/Kino child reevaluation terminates the old cluster supervisor. The director and distributor stop, but the distributor-linked registered placeholder survives a normal distributor exit. The replacement distributor takes its epoch lock, fails startup_sweep when its placeholder start returns {:already_started, old_pid}, and the director retries every 1s. Add a same-VM stop/restart regression test, guarantee placeholder teardown on every normal distributor termination, and verify the replacement distributor reaches a stable running sweep.",
   "id": "bedrock-tah",
   "labels": [],
+  "comments": [
+    {
+      "text": "PR #313: https://github.com/bedrock-kv/bedrock/pull/313\n\nTDD: the new linked-placeholder cleanup regression failed before the fix (placeholder survived distributor normal exit), then passed after it. It starts a replacement distributor using the same registered placeholder name. Livebook-style same-VM terminate/restart harness recorded exactly one epoch-2 lock acquisition over 7s with no startup_sweep failure. Local full suite: 17 doctests, 158 properties, 2927 tests, 0 failures; compile warnings-as-errors, strict Credo, and Dialyzer pass. Adversarial review completed before push. Required PR CI passed on the first attempt: OTP 27/28/29, S3, native LocalFilesystem on Ubuntu and macOS.",
+      "timestamp": "2026-09-13T04:53:37Z"
+    }
+  ],
   "priority": 1,
   "status": "in_progress",
   "title": "Livebook reevaluation leaks distributor placeholder and loops lock acquisition",
   "type": "bug",
-  "updated_at": "2026-09-13T04:45:30Z"
+  "updated_at": "2026-09-13T04:53:37Z"
 }

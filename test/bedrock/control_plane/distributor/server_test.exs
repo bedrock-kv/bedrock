@@ -117,6 +117,54 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       assert {:stop, :normal, _t} = Server.handle_info({:DOWN, ref, :process, self(), :shutdown}, t)
     end
+
+    test "director shutdown also stops the linked placeholder" do
+      test_pid = self()
+      placeholder_name = otp_name_for_worker(Placeholder.worker_id())
+
+      start_distributor = fn director ->
+        Server.start(
+          cluster: __MODULE__,
+          epoch: 3,
+          director: director,
+          deps: scripted_deps(%{}),
+          placeholder_start_fn: fn _opts ->
+            fn -> :placeholder end
+            |> Agent.start_link(name: placeholder_name)
+            |> tap(fn {:ok, placeholder} -> send(test_pid, {:placeholder_started, placeholder}) end)
+          end
+        )
+      end
+
+      director = spawn(fn -> Process.sleep(:infinity) end)
+      {:ok, distributor} = start_distributor.(director)
+
+      assert_receive {:placeholder_started, placeholder}, 1_000
+
+      distributor_ref = Process.monitor(distributor)
+      placeholder_ref = Process.monitor(placeholder)
+
+      Process.exit(director, :shutdown)
+
+      assert_receive {:DOWN, ^distributor_ref, :process, ^distributor, :normal}, 1_000
+      assert_receive {:DOWN, ^placeholder_ref, :process, ^placeholder, :shutdown}, 1_000
+      assert Process.whereis(placeholder_name) == nil
+
+      replacement_director = spawn(fn -> Process.sleep(:infinity) end)
+      {:ok, replacement_distributor} = start_distributor.(replacement_director)
+
+      assert_receive {:placeholder_started, replacement_placeholder}, 1_000
+      assert replacement_placeholder != placeholder
+      assert Process.whereis(placeholder_name) == replacement_placeholder
+
+      replacement_ref = Process.monitor(replacement_distributor)
+      replacement_placeholder_ref = Process.monitor(replacement_placeholder)
+      Process.exit(replacement_director, :shutdown)
+      assert_receive {:DOWN, ^replacement_ref, :process, ^replacement_distributor, :normal}, 1_000
+
+      assert_receive {:DOWN, ^replacement_placeholder_ref, :process, ^replacement_placeholder, :shutdown},
+                     1_000
+    end
   end
 
   describe "the startup sweep" do

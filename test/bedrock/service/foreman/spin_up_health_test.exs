@@ -52,7 +52,6 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
         health: :starting,
         otp_name: :spin_up_test_foreman,
         path: dir,
-        waiting_for_healthy: [],
         workers: %{}
       },
       overrides

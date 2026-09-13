@@ -47,7 +47,7 @@ end
 # Application configuration
 config :my_app, MyApp.Cluster,
   coordinator_nodes: [:"node1@host1", :"node2@host2"],
-  capabilities: [:coordination, :storage, :log],
+  capabilities: [:coordination, :materializer, :log],
   # ... other configuration
 ```
 
@@ -59,7 +59,7 @@ defmodule MyApp.Cluster do
     name: "test_cluster",
     config: [
       coordinator_nodes: [Node.self()],
-      capabilities: [:coordination, :storage, :log, :resolution],
+      capabilities: [:coordination, :materializer, :log],
       coordinator_ping_timeout_ms: 5000,
       link_ping_timeout_ms: 10000
     ]
@@ -154,16 +154,20 @@ Clusters manage node capabilities for service placement:
 ### Capability Types
 
 - **`:coordination`**: Node can run Coordinator processes
-- **`:storage`**: Node can host storage workers
+- **`:materializer`**: Node can host materializer workers
 - **`:log`**: Node can host log workers  
-- **`:resolution`**: Node can run conflict resolution services
+
+Resolvers have no capability of their own. The Coordinator places them on
+the coordination nodes, so a node never advertises resolution — and
+`module_for_capability/1` recognises only the three above, which means
+listing `:resolution` here stops the node at startup.
 
 ### Capability Configuration
 
 ```elixir
 # Configure node capabilities
 config :my_app, MyApp.Cluster,
-  capabilities: [:coordination, :storage, :log]
+  capabilities: [:coordination, :materializer, :log]
 
 # Access capabilities at runtime
 capabilities = MyCluster.node_capabilities()

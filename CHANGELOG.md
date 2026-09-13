@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+## 0.7.1 — 2026-09-13
+
+- **Keep LocalFilesystem publication BEAM-only and atomic.** The filesystem
+  backend writes each object to a same-directory scratch file, fsyncs it, and
+  atomically renames it into place. Readers therefore see a complete old
+  object, a complete replacement, or no object — never a partially-written
+  target. Scratch files remain invisible to listings.
+
+- **Fix Livebook reevaluation.** A replacement distributor now removes the
+  previous run's registered placeholder before the next epoch starts, so a
+  second evaluation does not retry its startup sweep indefinitely.
+
+- **Snapshots can be pruned once they are written.** Every snapshot a
+  materializer ever wrote stayed in object storage forever; nothing in
+  `lib/` called `Snapshot.delete_older_than/2`. A new manifest param,
+  `snapshot_keep_last`, says how many of a shard's newest snapshots to
+  keep, and the prune runs after a snapshot has durably landed — so a
+  shard can never be left without a baseline, and the newest snapshot is
+  never the one deleted. A worker without the param deletes nothing and
+  does not even list. A prune that cannot complete its listing says so
+  rather than reporting nothing to delete. Shard chunks are untouched:
+  they are the history, and reclaiming them needs a replay floor
+  (bedrock-wxf.6.11).
+
+- **Snapshot uploads answer to a policy.** A materializer uploaded a
+  snapshot whenever a compaction happened to finish, with no way to say how
+  much of that cadence was worth paying for. Three new manifest params say
+  it: `snapshot_min_interval_ms` is a floor on how often a snapshot may be
+  written, and `snapshot_after_bytes` / `snapshot_after_transactions`
+  require that enough work has accumulated since the last one. A worker
+  with none of them set behaves exactly as before, uploading at every
+  compaction. The spin-down snapshot stays unconditional — it is the only
+  artifact bridging spin-down to revival.
+
+- **Olivine keeps append-only workloads readable after page splits.** Keys
+  above every stored page boundary now extend the actual rightmost page
+  instead of returning to page 0 and overlapping later ranges. Recovery
+  validates complete snapshots and the recovered page chain, rejecting
+  damaged indexes explicitly instead of silently routing reads through an
+  ambiguous page map.
+
 ## 0.7.0 — 2026-08-28
 
 This release moves cluster metadata out of the broadcast layout and into the

@@ -25,7 +25,6 @@ defmodule Bedrock.Service.Foreman.StateTest do
       assert state.otp_name == :test_foreman
       assert state.object_storage == object_storage
       assert state.health == :starting
-      assert state.waiting_for_healthy == []
       assert state.workers == %{}
     end
 
@@ -70,30 +69,6 @@ defmodule Bedrock.Service.Foreman.StateTest do
 
       updated = State.put_health(updated, :error)
       assert updated.health == :error
-    end
-  end
-
-  describe "update_waiting_for_healthy/2" do
-    test "updates waiting list using an updater function" do
-      state = %State{waiting_for_healthy: []}
-
-      updated =
-        State.update_waiting_for_healthy(state, fn list ->
-          [self() | list]
-        end)
-
-      assert self() in updated.waiting_for_healthy
-    end
-  end
-
-  describe "put_waiting_for_healthy/2" do
-    test "sets the waiting for healthy list" do
-      state = %State{waiting_for_healthy: []}
-      pids = [self(), spawn(fn -> :ok end)]
-
-      updated = State.put_waiting_for_healthy(state, pids)
-
-      assert updated.waiting_for_healthy == pids
     end
   end
 

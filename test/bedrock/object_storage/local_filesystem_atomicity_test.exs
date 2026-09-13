@@ -37,6 +37,19 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemAtomicityTest do
              "scratch files must not survive a successful put"
     end
 
+    test "put replaces an existing object with a whole new payload", %{backend: backend, root: root} do
+      original = String.duplicate("original-", 64_000)
+      replacement = String.duplicate("replacement-", 64_000)
+
+      :ok = ObjectStorage.put(backend, "c/0/obj", original)
+      :ok = ObjectStorage.put(backend, "c/0/obj", replacement)
+
+      assert {:ok, ^replacement} = ObjectStorage.get(backend, "c/0/obj")
+
+      assert all_files(root) == ["c/0/obj"],
+             "replacement must publish only the target and consume its scratch file"
+    end
+
     test "a completed put_if_not_exists leaves exactly one file", %{backend: backend, root: root} do
       :ok = ObjectStorage.put_if_not_exists(backend, "c/0/obj", "payload")
 

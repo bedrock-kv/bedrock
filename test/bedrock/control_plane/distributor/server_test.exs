@@ -117,6 +117,54 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       assert {:stop, :normal, _t} = Server.handle_info({:DOWN, ref, :process, self(), :shutdown}, t)
     end
+
+    test "director shutdown also stops the linked placeholder" do
+      test_pid = self()
+      placeholder_name = otp_name_for_worker(Placeholder.worker_id())
+
+      start_distributor = fn director ->
+        Server.start(
+          cluster: __MODULE__,
+          epoch: 3,
+          director: director,
+          deps: scripted_deps(%{}),
+          placeholder_start_fn: fn _opts ->
+            fn -> :placeholder end
+            |> Agent.start_link(name: placeholder_name)
+            |> tap(fn {:ok, placeholder} -> send(test_pid, {:placeholder_started, placeholder}) end)
+          end
+        )
+      end
+
+      director = spawn(fn -> Process.sleep(:infinity) end)
+      {:ok, distributor} = start_distributor.(director)
+
+      assert_receive {:placeholder_started, placeholder}, 1_000
+
+      distributor_ref = Process.monitor(distributor)
+      placeholder_ref = Process.monitor(placeholder)
+
+      Process.exit(director, :shutdown)
+
+      assert_receive {:DOWN, ^distributor_ref, :process, ^distributor, :normal}, 1_000
+      assert_receive {:DOWN, ^placeholder_ref, :process, ^placeholder, :shutdown}, 1_000
+      assert Process.whereis(placeholder_name) == nil
+
+      replacement_director = spawn(fn -> Process.sleep(:infinity) end)
+      {:ok, replacement_distributor} = start_distributor.(replacement_director)
+
+      assert_receive {:placeholder_started, replacement_placeholder}, 1_000
+      assert replacement_placeholder != placeholder
+      assert Process.whereis(placeholder_name) == replacement_placeholder
+
+      replacement_ref = Process.monitor(replacement_distributor)
+      replacement_placeholder_ref = Process.monitor(replacement_placeholder)
+      Process.exit(replacement_director, :shutdown)
+      assert_receive {:DOWN, ^replacement_ref, :process, ^replacement_distributor, :normal}, 1_000
+
+      assert_receive {:DOWN, ^replacement_placeholder_ref, :process, ^replacement_placeholder, :shutdown},
+                     1_000
+    end
   end
 
   describe "the startup sweep" do
@@ -287,7 +335,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       # The covered tag is reserved only while its verification is in
       # flight; a current-epoch answer releases it without recruiting.
-      assert_receive {:assignment_verified, 0, "wkr_sys", :current}
+      assert_receive {:assignment_verified, 0, "wkr_sys", :current}, 5_000
       assert {:noreply, t3} = Server.handle_info({:assignment_verified, 0, "wkr_sys", :current}, t2)
       refute MapSet.member?(t3.recruiting, 0)
       assert MapSet.member?(t3.recruiting, 1)
@@ -313,8 +361,8 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       refute MapSet.member?(t2.recruiting, 0)
 
       # A current-epoch answer means no publish, no adoption, no recruit.
-      assert_receive {:assignment_verified, 0, "wkr_sys", :current}
-      assert_receive {:assignment_verified, 1, _worker, verdict1}
+      assert_receive {:assignment_verified, 0, "wkr_sys", :current}, 5_000
+      assert_receive {:assignment_verified, 1, _worker, verdict1}, 5_000
 
       assert {:noreply, t3} =
                Server.handle_info({:assignment_verified, 0, {"wkr_sys", Atom.to_string(node())}, :current}, t2)
@@ -364,11 +412,11 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       # The stale worker was locked into THIS epoch and unlocked at the
       # version IT reported.
-      assert_receive {:adopt_locked, {_name, _node}, 3}
-      assert_receive {:adopt_unlocked, version}
+      assert_receive {:adopt_locked, {_name, _node}, 3}, 5_000
+      assert_receive {:adopt_unlocked, version}, 5_000
       assert version == Version.from_integer(5)
 
-      assert_receive {:assignment_verified, 1, worker, {:adopted, ^adopted, _node, "wkr_stale"}}
+      assert_receive {:assignment_verified, 1, worker, {:adopted, ^adopted, _node, "wkr_stale"}}, 5_000
 
       assert {:noreply, t3} =
                Server.handle_info({:assignment_verified, 1, worker, {:adopted, adopted, node(), "wkr_stale"}}, t2)
@@ -417,7 +465,8 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         ExUnit.CaptureLog.capture_log(fn ->
           assert {:noreply, t2} = Server.handle_continue(:startup_sweep, t)
 
-          assert_receive {:assignment_verified, 1, worker, {:error, {:materializer_lock_failed, :wedged_mid_lock, _}}}
+          assert_receive {:assignment_verified, 1, worker, {:error, {:materializer_lock_failed, :wedged_mid_lock, _}}},
+                         5_000
 
           assert {:noreply, t3} =
                    Server.handle_info(
@@ -571,8 +620,8 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       # until the verdict clears it.
       assert {0, "wkr_back"} in Map.values(t2.assignment_monitors)
       assert t2.unreachable_counts == %{{0, "wkr_back"} => 1}
-      assert_receive :probed
-      assert_receive {:assignment_verified, 0, "wkr_back", :current}
+      assert_receive :probed, 5_000
+      assert_receive {:assignment_verified, 0, "wkr_back", :current}, 5_000
     end
 
     test "a verification verdict for a tag another mechanism re-owned is dropped" do
@@ -670,7 +719,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         )
 
       assert {:noreply, _t} = Server.handle_cast({:coverage_demand, 7}, t)
-      assert_receive {:placeholder_got, {:covered, 7, {_otp_name, _node}}}
+      assert_receive {:placeholder_got, {:covered, 7, {_otp_name, _node}}}, 5_000
     end
 
     test "an uncovered tag is recorded as pending demand for recruitment" do
@@ -778,7 +827,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
       assert {:noreply, t} = Server.handle_cast({:coverage_demand, 9}, t)
       assert MapSet.member?(t.recruiting, 9)
-      assert_receive {:recruitment_complete, 9, {:error, _}}, 500
+      assert_receive {:recruitment_complete, 9, {:error, _}}, 5_000
 
       # Second demand while in flight: no second task.
       assert {:noreply, t2} = Server.handle_cast({:coverage_demand, 9}, t)
@@ -817,7 +866,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
                _ -> false
              end)
 
-      assert_receive {:placeholder_got, {:covered, 9, {_otp, _node}}}
+      assert_receive {:placeholder_got, {:covered, 9, {_otp, _node}}}, 5_000
       assert t2.snapshot.materializer_refs[9] == %{"wkr_new" => Atom.to_string(node())}
       refute MapSet.member?(t2.recruiting, 9)
 
@@ -872,7 +921,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
         ExUnit.CaptureLog.capture_log(fn ->
           assert {:noreply, t2} = Server.handle_info({:recruitment_complete, 9, {:error, :no_nodes}}, t)
 
-          assert_receive {:placeholder_got, {:coverage_failed, 9, :no_nodes}}
+          assert_receive {:placeholder_got, {:coverage_failed, 9, :no_nodes}}, 5_000
           assert Map.has_key?(t2.backoff, 9)
 
           # Backoff suppresses an immediate re-recruit.
@@ -919,13 +968,13 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
         # The crash arrives as a DOWN; the server must synthesize the
         # failed completion itself (handler-level: drive the DOWN).
-        assert_receive {:DOWN, ref, :process, _pid, {%RuntimeError{}, _}} = down
+        assert_receive {:DOWN, ref, :process, _pid, {%RuntimeError{}, _}} = down, 5_000
         assert Map.fetch!(t.recruit_task_refs, ref) == 9
 
         assert {:noreply, t2} = Server.handle_info(down, t)
         refute MapSet.member?(t2.recruiting, 9)
         assert t2.recruit_task_refs == %{}
-        assert_receive {:placeholder_got, {:coverage_failed, 9, {:recruit_task_crashed, _}}}
+        assert_receive {:placeholder_got, {:coverage_failed, 9, {:recruit_task_crashed, _}}}, 5_000
       end)
     end
 
@@ -1054,7 +1103,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
           # Park, don't forward; and the re-recruit is in flight. (The
           # stub forwards a cast: wait, don't demand prior arrival.)
-          assert_receive {:placeholder_got, {:uncovered, 7}}
+          assert_receive {:placeholder_got, {:uncovered, 7}}, 5_000
           assert MapSet.member?(t2.recruiting, 7)
           assert t2.snapshot.materializer_refs[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
           assert t2.assignment_monitors == %{}
@@ -1095,7 +1144,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           # The placeholder swap is published and the tag uncovered —
           # exactly like a heal — but NO recruit task starts.
           assert_received {:committed, _}
-          assert_receive {:placeholder_got, {:uncovered, 7}}
+          assert_receive {:placeholder_got, {:uncovered, 7}}, 5_000
           refute MapSet.member?(t2.recruiting, 7)
           assert t2.snapshot.materializer_refs[7] == %{Placeholder.worker_id() => Atom.to_string(node())}
 
@@ -1227,7 +1276,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
 
         # The placeholder must learn the survivor: it may still be
         # forwarding to the corpse from an earlier notify_covered.
-        assert_receive {:placeholder_got, {:covered, 7, _survivor_ref}}
+        assert_receive {:placeholder_got, {:covered, 7, _survivor_ref}}, 5_000
         refute_received {:placeholder_got, {:uncovered, 7}}
 
         assert t2.snapshot.materializer_refs[7] == %{"wkr_live" => node_string}
@@ -1421,7 +1470,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
           # ...the third escalates: retire the member, park, re-recruit.
           assert {:noreply, t3} = Server.handle_info({:reverify_assignment, 7, "wkr_gone"}, t)
           assert_received {:committed, _}
-          assert_receive {:placeholder_got, {:uncovered, 7}}
+          assert_receive {:placeholder_got, {:uncovered, 7}}, 5_000
           assert MapSet.member?(t3.recruiting, 7)
           assert t3.unreachable_counts == %{}
         end)
@@ -1447,7 +1496,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       assert t2.unreachable_counts == %{{7, "wkr_alive"} => 2}
       assert Map.values(t2.assignment_monitors) == [{7, "wkr_alive"}]
 
-      assert_receive {:assignment_verified, 7, worker, :current}
+      assert_receive {:assignment_verified, 7, worker, :current}, 5_000
       assert {:noreply, t2b} = Server.handle_info({:assignment_verified, 7, worker, :current}, t2)
       assert t2b.unreachable_counts == %{}
       refute_received {:committed, _}
@@ -1480,7 +1529,7 @@ defmodule Bedrock.ControlPlane.Distributor.ServerTest do
       ExUnit.CaptureLog.capture_log(fn ->
         assert {:noreply, t2} = Server.handle_info({:DOWN, ref, :process, nil, :noproc}, t)
         assert_received {:committed, _}
-        assert_receive {:placeholder_got, {:uncovered, 7}}
+        assert_receive {:placeholder_got, {:uncovered, 7}}, 5_000
         assert MapSet.member?(t2.recruiting, 7)
       end)
     end

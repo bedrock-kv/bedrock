@@ -26,6 +26,10 @@ def deps do
 end
 ```
 
+Bedrock requires Elixir 1.17 or later. CI tests OTP 27, 28, and 29 with
+Elixir 1.17.3, 1.19.5, and 1.20.3 respectively; see the
+[CI matrix](.github/workflows/elixir_ci.yaml) for the exact versions.
+
 ## A taste
 
 Define a cluster and a repo, add them to your supervision tree, and you have a

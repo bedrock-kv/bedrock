@@ -8,7 +8,7 @@ The [Commit Proxy](../../../glossary.md#commit-proxy) serves as the central orch
 
 The Commit Proxy occupies the critical junction between client transaction requests and the distributed storage infrastructure. It receives prepared transactions from [Transaction Builders](../../../glossary.md#transaction-builder) and orchestrates their processing through multiple specialized components: [Resolvers](../../../glossary.md#resolver) for conflict detection, [Log servers](../../../glossary.md#log) for durable persistence, and the [Sequencer](../../../glossary.md#sequencer) for version ordering.
 
-This central coordination role enables sophisticated optimizations impossible with direct client-to-storage interactions. The component aggregates transactions into batches that amortize processing overhead, implements intra-batch conflict detection[^1], and ensures atomic all-or-nothing durability guarantees across the distributed log infrastructure.
+This central coordination role enables sophisticated optimizations impossible with direct client-to-materializer reads. The component aggregates transactions into batches that amortize processing overhead, implements intra-batch conflict detection[^1], and ensures atomic all-or-nothing durability guarantees across the distributed log infrastructure.
 
 ## Core Concepts
 

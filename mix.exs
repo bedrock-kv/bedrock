@@ -4,7 +4,7 @@ defmodule Bedrock.MixProject do
   def project do
     [
       app: :bedrock,
-      version: "0.7.0",
+      version: "0.7.1",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -70,8 +70,8 @@ defmodule Bedrock.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     add_deps_for_dev_and_test([
-      {:bedrock_raft, "~> 0.9"},
-      {:flatbuffer, "~> 0.5"},
+      {:bedrock_raft, "~> 0.10"},
+      {:flatbuffer, "~> 0.6"},
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.2"},
       {:ex_aws, "~> 2.7"},
@@ -139,7 +139,7 @@ defmodule Bedrock.MixProject do
         "guides/deep-dives/architecture/data-plane/log.md",
         "guides/deep-dives/architecture/data-plane/resolver.md",
         "guides/deep-dives/architecture/data-plane/sequencer.md",
-        "guides/deep-dives/architecture/data-plane/storage.md",
+        "guides/deep-dives/architecture/data-plane/materializer.md",
         "guides/deep-dives/architecture/implementations/README.md",
         "guides/deep-dives/architecture/implementations/olivine.md",
         "guides/deep-dives/architecture/implementations/shale.md",

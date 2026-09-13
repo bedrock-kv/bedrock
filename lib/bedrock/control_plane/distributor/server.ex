@@ -89,6 +89,19 @@ defmodule Bedrock.ControlPlane.Distributor.Server do
     {:ok, state, {:continue, :take_lock}}
   end
 
+  # The placeholder is linked to us so an abnormal placeholder exit can
+  # be handled and restarted, but a normal distributor exit does not
+  # propagate across that link. Stop it synchronously before yielding
+  # the registered worker name to the next epoch's distributor.
+  @impl true
+  def terminate(_reason, %State{placeholder: placeholder}) when is_pid(placeholder) do
+    GenServer.stop(placeholder, :shutdown)
+  catch
+    :exit, {:noproc, _} -> :ok
+  end
+
+  def terminate(_reason, _t), do: :ok
+
   # Lock first, everything else second (FDB's DD startup order): a
   # distributor that cannot own the fence must not exist. Take is
   # last-take-wins and never a supersession verdict (Transactions

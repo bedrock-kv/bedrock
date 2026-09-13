@@ -211,8 +211,9 @@ jobs:
         shell: bash
         run: |
           mix hex.build
+          version=$(sed -nE 's/^[[:space:]]*version: "([^"]+)".*/\1/p' mix.exs)
           package_dir=$(mktemp -d)
-          tar -xf bedrock-0.7.0.tar -C "$package_dir"
+          tar -xf "bedrock-$version.tar" -C "$package_dir"
           tar -xzf "$package_dir/contents.tar.gz" -C "$package_dir"
           cd "$package_dir"
           mix deps.get

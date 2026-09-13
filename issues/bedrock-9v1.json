@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-13T05:28:06Z",
+  "description": "Adapt the Bedrock Raft Claude release skill into this repository. Include Bedrock-specific versioning, changelog approval, Livebook/package verification, tag retargeting safeguards, branch-protection handling, and explicit non-publication boundary.",
+  "id": "bedrock-9v1",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Add Bedrock release workflow skill",
+  "type": "task",
+  "updated_at": "2026-09-13T05:28:06Z"
+}

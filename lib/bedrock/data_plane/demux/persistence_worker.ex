@@ -13,6 +13,7 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
   @default_retry_tick_ms 25
 
   defstruct [
+    :clock,
     :perform,
     :on_drop,
     :queue,
@@ -20,6 +21,7 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
   ]
 
   @type state :: %__MODULE__{
+          clock: (-> integer()),
           perform: (term() -> :ok | {:error, term()}),
           on_drop: (payload :: term(), reason :: term() -> any()) | nil,
           queue: PersistenceQueue.t(),
@@ -49,6 +51,7 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
 
   @impl true
   def init(opts) do
+    clock = Keyword.get(opts, :clock, fn -> System.monotonic_time(:millisecond) end)
     perform = Keyword.fetch!(opts, :perform)
     on_drop = Keyword.get(opts, :on_drop)
 
@@ -60,6 +63,10 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
       )
 
     retry_tick_ms = Keyword.get(opts, :retry_tick_ms, @default_retry_tick_ms)
+
+    if !is_function(clock, 0) do
+      raise ArgumentError, ":clock must be a function with arity 0"
+    end
 
     if !is_function(perform, 1) do
       raise ArgumentError, ":perform must be a function with arity 1"
@@ -73,12 +80,19 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
       raise ArgumentError, ":on_drop must be a function with arity 2"
     end
 
-    {:ok, %__MODULE__{perform: perform, on_drop: on_drop, queue: queue, retry_tick_ms: retry_tick_ms}}
+    {:ok,
+     %__MODULE__{
+       clock: clock,
+       perform: perform,
+       on_drop: on_drop,
+       queue: queue,
+       retry_tick_ms: retry_tick_ms
+     }}
   end
 
   @impl true
   def handle_call({:enqueue, payload}, _from, state) do
-    case PersistenceQueue.enqueue(state.queue, payload) do
+    case PersistenceQueue.enqueue(state.queue, payload, now: state.clock.()) do
       {:ok, queue} ->
         send(self(), :drain)
         {:reply, :ok, %{state | queue: queue}}
@@ -95,7 +109,7 @@ defmodule Bedrock.DataPlane.Demux.PersistenceWorker do
 
   @impl true
   def handle_info(:drain, state) do
-    now_ms = System.monotonic_time(:millisecond)
+    now_ms = state.clock.()
 
     case PersistenceQueue.dequeue(state.queue, now: now_ms) do
       :empty ->

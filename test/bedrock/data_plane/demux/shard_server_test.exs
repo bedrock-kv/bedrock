@@ -492,6 +492,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       shard_id = :erlang.unique_integer([:positive]) + 500
       handler_id = "shard-persistence-retry-#{shard_id}"
       {:ok, attempts} = Agent.start_link(fn -> 0 end)
+      {:ok, clock} = Agent.start_link(fn -> 1_000 end)
 
       :ok =
         :telemetry.attach_many(
@@ -508,6 +509,7 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
       on_exit(fn ->
         :telemetry.detach(handler_id)
         if Process.alive?(attempts), do: Agent.stop(attempts)
+        if Process.alive?(clock), do: Agent.stop(clock)
       end)
 
       backend = ObjectStorage.backend(FlakyLocalFilesystem, root: test_dir, attempts: attempts)
@@ -518,8 +520,11 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
           cluster: "test-cluster",
           object_storage: backend,
           persistence_retry_backoff_ms: 1,
-          persistence_retry_tick_ms: 1
+          persistence_retry_tick_ms: 1,
+          persistence_clock: fn -> Agent.get(clock, & &1) end
         )
+
+      %{persistence_worker: worker} = :sys.get_state(server)
 
       slice = make_slice([{:set, "key", "value"}])
       v1000 = Version.from_integer(1000)
@@ -537,8 +542,14 @@ defmodule Bedrock.DataPlane.Demux.ShardServerTest do
                      1_500
 
       assert retry_meas.attempt == 1
-      assert retry_meas.delay_ms >= 1
+      assert retry_meas.delay_ms == 1
       assert retry_meta.reason == {:write_failed, :transient_write_failure}
+
+      # Advance the worker's injected monotonic clock rather than waiting for
+      # its real retry timer. This makes the retry path deterministic under
+      # full-suite scheduler load (bedrock-uvk).
+      Agent.update(clock, &(&1 + retry_meas.delay_ms))
+      send(worker, :drain)
 
       assert_receive {:telemetry, [:bedrock, :demux, :persistence, :write, :ok], _ok_meas, ok_meta}, 1_500
       assert ok_meta.shard_id == shard_id

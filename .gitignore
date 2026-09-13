@@ -38,6 +38,7 @@ bedrock-*.tar
 .vscode/
 
 # AI tools
+/.agents/
 /.claude/
 CLAUDE.md
 AGENTS.md

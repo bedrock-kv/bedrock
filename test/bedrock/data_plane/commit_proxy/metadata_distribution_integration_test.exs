@@ -13,8 +13,6 @@ defmodule Bedrock.DataPlane.CommitProxy.MetadataDistributionIntegrationTest do
   """
   use ExUnit.Case, async: false
 
-  import Bedrock.Test.TelemetryTestHelper
-
   alias Bedrock.DataPlane.CommitProxy
   alias Bedrock.DataPlane.CommitProxy.ResolverLayout
   alias Bedrock.DataPlane.CommitProxy.Server, as: CommitProxyServer

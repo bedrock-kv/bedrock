@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.7.2 — 2026-09-13
+
+- **LocalFilesystem ignores its private metadata during object listings.**
+  Files whose basenames begin with `.bedrock-` are backend internals and are
+  excluded before sorting and applying listing limits. This prevents stale
+  metadata such as `.bedrock-lock` from shadowing valid snapshots, allowing
+  affected stores and Livebook reevaluations to recover without deleting or
+  rewriting existing files. This reserved prefix applies only to the
+  LocalFilesystem backend.
+
 ## 0.7.1 — 2026-09-13
 
 - **Keep LocalFilesystem publication BEAM-only and atomic.** The filesystem

@@ -152,7 +152,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
       start_test_server()
     end
 
-    test "initializes with correct state", %{server: server, lock_token: lock_token} do
+    test "initializes with correct state", %{server: server} do
       assert %State{
                waiting: %{}
              } = :sys.get_state(server)
@@ -193,7 +193,7 @@ defmodule Bedrock.DataPlane.Resolver.ServerTest do
              } = :sys.get_state(server)
     end
 
-    test "server maintains state consistency", %{server: server, lock_token: lock_token} do
+    test "server maintains state consistency", %{server: server} do
       assert %State{} = :sys.get_state(server)
 
       assert Process.alive?(server)

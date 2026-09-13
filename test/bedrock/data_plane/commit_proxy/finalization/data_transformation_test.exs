@@ -3,7 +3,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
 
   alias Bedrock.DataPlane.CommitProxy.Batch
   alias Bedrock.DataPlane.CommitProxy.Finalization
-  alias Bedrock.DataPlane.CommitProxy.RoutingData
   alias Bedrock.DataPlane.Transaction
 
   # Helper functions for creating test data
@@ -26,24 +25,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
         |> Enum.reverse()
         |> Enum.map(fn {{reply_fn, tx}, idx} -> {idx, reply_fn, tx} end)
     }
-  end
-
-  # Build routing data for tests
-  # Default shard layout covering entire keyspace with a single shard (tag 0)
-  defp build_routing_data(logs) do
-    log_map =
-      logs
-      |> Map.keys()
-      |> Enum.sort()
-      |> Enum.with_index()
-      |> Map.new(fn {log_id, index} -> {index, log_id} end)
-
-    RoutingData.from_snapshot(%{
-      shard_layout: %{<<0xFF, 0xFF>> => {0, <<>>}},
-      log_map: log_map,
-      log_services: %{},
-      replication_factor: max(1, map_size(logs))
-    })
   end
 
   defp create_ordered_transactions(count) do
@@ -106,12 +87,6 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationDataTransformationTest do
             {1, fn _ -> :ok end, binary_transaction2}
           ])
       }
-
-      layout = %{
-        logs: %{}
-      }
-
-      routing_data = build_routing_data(layout.logs)
 
       assert %{stage: :ready_for_resolution, transactions: transactions} =
                Finalization.create_finalization_plan(batch)

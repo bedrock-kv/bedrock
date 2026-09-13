@@ -6,9 +6,15 @@
   "description": "Merge PR #305 after verified current-develop integration, add 0.7.1 release notes/version, publish the Hex patch release, and tag the release.",
   "id": "bedrock-jyy",
   "labels": [],
+  "comments": [
+    {
+      "text": "Release paused by user: Hex publication must not proceed. CI required two retries: initial release-package checks deterministically used hard-coded bedrock-0.7.0.tar after version bump (fixed in #310); subsequent S3 retry-telemetry test passed only on rerun (existing bedrock-uvk flake). Do not treat rerun-green CI as release verification.",
+      "timestamp": "2026-09-13T04:14:11Z"
+    }
+  ],
   "priority": 1,
   "status": "in_progress",
   "title": "Release 0.7.1: fix LocalFilesystem lock entries breaking Livebook startup",
   "type": "task",
-  "updated_at": "2026-09-13T03:56:30Z"
+  "updated_at": "2026-09-13T04:14:11Z"
 }

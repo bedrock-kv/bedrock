@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-13T06:21:37Z",
+  "description": "Fix pre-existing test-source compiler warnings so mix test --warnings-as-errors exits successfully, without changing production behavior.",
+  "id": "bedrock-czn",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Eliminate warnings from strict test suite",
+  "type": "task",
+  "updated_at": "2026-09-13T06:21:37Z"
+}

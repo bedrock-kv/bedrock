@@ -233,8 +233,8 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemTest do
     end
 
     test "sequential writers - second fails after first succeeds", %{backend: backend} do
-      # LocalFilesystem has TOCTOU race for concurrent writes.
-      # This test verifies sequential behavior; S3/GCS use native atomic conditionals.
+      # Sequential behavior is complemented by the concurrent public API,
+      # native barrier and independent-peer regressions in the adjacent suites.
       :ok = ObjectStorage.put(backend, "race/key", "initial")
       {:ok, _, version_token} = ObjectStorage.get_with_version(backend, "race/key")
 

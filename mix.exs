@@ -8,6 +8,8 @@ defmodule Bedrock.MixProject do
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      compilers: [:elixir_make] ++ Mix.compilers(),
+      make_clean: ["clean"],
       description: description(),
       package: package(),
       docs: &docs/0,
@@ -36,7 +38,8 @@ defmodule Bedrock.MixProject do
   defp package do
     [
       name: "bedrock",
-      files: ~w(lib priv/schemas mix.exs README.md CHANGELOG.md LICENSE .formatter.exs),
+      files:
+        ~w(lib priv/schemas c_src Makefile guides/local-filesystem.md scripts/local_filesystem_smoke.exs mix.exs README.md CHANGELOG.md LICENSE .formatter.exs),
       licenses: ["MIT"],
       links: %{
         "GitHub" => "https://github.com/bedrock-kv/bedrock",
@@ -70,6 +73,7 @@ defmodule Bedrock.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     add_deps_for_dev_and_test([
+      {:elixir_make, "~> 0.10", runtime: false},
       {:bedrock_raft, "~> 0.10"},
       {:flatbuffer, "~> 0.6"},
       {:jason, "~> 1.4"},
@@ -129,6 +133,7 @@ defmodule Bedrock.MixProject do
         "guides/durability-foundation.md",
         "guides/durability-profile.md",
         "guides/object-storage-s3.md",
+        "guides/local-filesystem.md",
         "guides/async-persistence-queue.md",
         "guides/distributed-durability-tests.md",
         "guides/glossary.md",
@@ -170,6 +175,7 @@ defmodule Bedrock.MixProject do
           "guides/durability-foundation.md",
           "guides/durability-profile.md",
           "guides/object-storage-s3.md",
+          "guides/local-filesystem.md",
           "guides/async-persistence-queue.md",
           "guides/distributed-durability-tests.md"
         ],

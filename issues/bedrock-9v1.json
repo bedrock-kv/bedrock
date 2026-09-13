@@ -2,13 +2,15 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-13T05:33:16Z",
+  "close_reason": "Added /.agents/ to .gitignore and installed the local Bedrock release skill at .agents/skills/release; skill remains intentionally untracked.",
   "created": "2026-09-13T05:28:06Z",
   "description": "Adapt the Bedrock Raft Claude release skill into this repository. Include Bedrock-specific versioning, changelog approval, Livebook/package verification, tag retargeting safeguards, branch-protection handling, and explicit non-publication boundary.",
   "id": "bedrock-9v1",
   "labels": [],
   "priority": 1,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Add Bedrock release workflow skill",
   "type": "task",
-  "updated_at": "2026-09-13T05:28:11Z"
+  "updated_at": "2026-09-13T05:33:16Z"
 }

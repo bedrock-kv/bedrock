@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.7.1 — 2026-09-13
+
+- **Keep LocalFilesystem publication BEAM-only and atomic.** The filesystem
+  backend writes each object to a same-directory scratch file, fsyncs it, and
+  atomically renames it into place. Readers therefore see a complete old
+  object, a complete replacement, or no object — never a partially-written
+  target. Scratch files remain invisible to listings.
+
 - **Snapshots can be pruned once they are written.** Every snapshot a
   materializer ever wrote stayed in object storage forever; nothing in
   `lib/` called `Snapshot.delete_older_than/2`. A new manifest param,

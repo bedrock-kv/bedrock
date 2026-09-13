@@ -81,7 +81,7 @@ defmodule Bedrock.Cluster.Link.RoutingCacheTest do
     end
 
     test "re-inserting the same range replaces its ref, in both", %{table: table} do
-      index = load(table, [{"a", "z", :old}])
+      load(table, [{"a", "z", :old}])
       index = load(table, [{"a", "z", :new}])
 
       assert {:ok, {_, :new}} = RoutingCache.lookup(table, "m")

@@ -37,8 +37,7 @@ defmodule Bedrock.ControlPlane.Distributor.PlaceholderTest do
     })
   end
 
-  defp async_get(placeholder, key, opts \\ []),
-    do: Task.async(fn -> Materializer.get(placeholder, key, @version, opts) end)
+  defp async_get(placeholder, key, opts), do: Task.async(fn -> Materializer.get(placeholder, key, @version, opts) end)
 
   defp attach_telemetry(test_pid) do
     handler_id = "placeholder-test-#{System.unique_integer([:positive])}"

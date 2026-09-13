@@ -230,7 +230,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhaseTest do
           %{},
           node_capabilities: %{log: [:node1@host]},
           create_worker_fn: fn _foreman, _id, :log, _opts -> {:ok, :new_log_ref} end,
-          worker_info_fn: fn {_ref, node}, _facts, _opts ->
+          worker_info_fn: fn {_ref, _node}, _facts, _opts ->
             {:ok, %{id: "new_log", otp_name: :new_log_otp, kind: :log, pid: worker_pid}}
           end,
           lock_service_fn: fn _service, _epoch ->

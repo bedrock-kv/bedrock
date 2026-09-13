@@ -353,7 +353,7 @@ defmodule Bedrock.DataPlane.CommitProxy.FinalizationCoreTest do
       end
 
       # Mock resolver that fails
-      mock_resolver_fn = fn resolver, _epoch, last_version, commit_version, _summaries, _metadata_per_tx, _opts ->
+      mock_resolver_fn = fn resolver, _epoch, _last_version, _commit_version, _summaries, _metadata_per_tx, _opts ->
         assert resolver == :test_resolver
         {:error, :timeout}
       end

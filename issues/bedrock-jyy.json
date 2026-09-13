@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-13T03:56:07Z",
+  "description": "Merge PR #305 after verified current-develop integration, add 0.7.1 release notes/version, publish the Hex patch release, and tag the release.",
+  "id": "bedrock-jyy",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Release 0.7.1: fix LocalFilesystem lock entries breaking Livebook startup",
+  "type": "task",
+  "updated_at": "2026-09-13T03:56:07Z"
+}

@@ -68,12 +68,13 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemAtomicityTest do
       assert backend |> ObjectStorage.list("c/") |> Enum.to_list() == ["c/0/obj"]
     end
 
-    test "legacy lock files are never visible to snapshot discovery", %{backend: backend, root: root} do
+    test "reserved internal files are never visible to snapshot discovery", %{backend: backend, root: root} do
       snapshot = Snapshot.new(backend, "0")
       snapshot_key = Keys.snapshot_path("0", 123)
 
       :ok = Snapshot.write(snapshot, 123, "snapshot")
       File.write!(Path.join([root, "s", "0", ".bedrock-lock"]), "")
+      File.write!(Path.join([root, "s", "0", ".bedrock-future-metadata"]), "")
 
       assert backend |> ObjectStorage.list("s/0/", limit: 1) |> Enum.to_list() == [snapshot_key]
       assert {:ok, 123, "snapshot"} = Snapshot.read_latest(snapshot)

@@ -63,20 +63,14 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
 
   alias Bedrock.ObjectStorage
 
+  # LocalFilesystem reserves this basename prefix for its own metadata.
   # Scratch files live in the target's own directory, so publishing is a
-  # rename or link within one filesystem — the only way it is atomic. The
-  # leading dot and the prefix keep them out of `list/3`. No key `Keys`
-  # builds can begin with this prefix (they are `c/`, `s/` and a
-  # base36 suffix), though the bootstrap key is free-form app-env text,
+  # rename or link within one filesystem — the only way it is atomic. No
+  # key `Keys` builds can begin with this prefix (they are `c/`, `s/` and
+  # a base36 suffix), though the bootstrap key is free-form app-env text,
   # so that remains a convention rather than something enforced here.
+  @internal_prefix ".bedrock-"
   @scratch_prefix ".bedrock-tmp."
-
-  # The short-lived lock-based implementation reserved this prefix for
-  # per-directory metadata. Those files can outlive the code that made
-  # them, so keep treating them as backend internals: exposing one as an
-  # object makes a limit-1 snapshot listing choose it before any versioned
-  # snapshot key.
-  @legacy_lock_prefix ".bedrock-lock"
 
   # Exhausting these means the same node, pid and unique-integer collided
   # repeatedly, which is not a real filesystem state — surfacing :eexist
@@ -280,10 +274,11 @@ defmodule Bedrock.ObjectStorage.LocalFilesystem do
   end
 
   defp internal_file?(path) do
-    name = Path.basename(path)
-
-    String.starts_with?(name, @scratch_prefix) or
-      name |> String.normalize(:nfc) |> String.downcase() |> String.starts_with?(@legacy_lock_prefix)
+    path
+    |> Path.basename()
+    |> String.normalize(:nfc)
+    |> String.downcase()
+    |> String.starts_with?(@internal_prefix)
   end
 
   # List state: {root, dirs_to_visit, files_collected, prefix, remaining_limit}

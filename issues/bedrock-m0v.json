@@ -6,9 +6,15 @@
   "description": "User directive: remove 0850df93b9ea4ea28180ff458bb454f490642e5f from develop history; no NIF/C source/build integration may remain. Do NOT add filesystem or cross-BEAM locking. Preserve the BEAM-only atomic replacement contract: write and fsync a scratch file in the target directory, then atomically rename it into place, so readers see the old complete object or new complete object. Rebuild develop from the pre-#305 parent and replay only desired subsequent changes, correcting the 0.7.1 changelog. Prove no NIF references remain before force-updating develop. Release/tagging remains paused; do not publish.",
   "id": "bedrock-m0v",
   "labels": [],
+  "comments": [
+    {
+      "text": "Rebuilt candidate develop from 14b53774 with BEAM-only scratch-write/fsync/rename semantics; retained #311 and #313, corrected 0.7.1 notes, and excluded all #305/native CI artifacts. Focused 89 tests, direct replacement smoke, archive compilation, Credo, and Dialyzer pass. 0850df93 is not an ancestor of candidate. Full suite reproduces unrelated Olivine health-report failures on untouched 14b53774; no open PR fixes those. Force-with-lease to develop was rejected by GitHub GH013: develop rule forbids force-push. Candidate remains at local branch bedrock-m0v/beam-local-filesystem-locking, HEAD 15266d0e; ticket stays in progress pending an administrator override.",
+      "timestamp": "2026-09-13T05:20:40Z"
+    }
+  ],
   "priority": 0,
   "status": "in_progress",
   "title": "Replace LocalFilesystem native mutation path with BEAM-only atomic locking",
   "type": "bug",
-  "updated_at": "2026-09-13T05:10:31Z"
+  "updated_at": "2026-09-13T05:20:40Z"
 }

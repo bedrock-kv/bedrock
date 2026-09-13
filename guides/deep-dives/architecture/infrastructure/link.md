@@ -34,7 +34,7 @@ The Link's embedded architecture enables capabilities impossible in client-serve
 
 The embedded approach also transforms operational characteristics. The Link ensures that transaction capabilities are always available when applications start—there's no separate database service to connect to or dependency to manage. Applications and their transaction coordination deploy and scale together as single units, eliminating the operational complexity of coordinating application and database infrastructure.
 
-This design also enables sophisticated performance optimizations. The Link can learn from application transaction patterns, pre-warm [transaction system layouts](../../../glossary.md#transaction-system-layout) for frequently used data ranges, and coordinate with local storage workers to optimize data placement for application access patterns.
+This design also enables sophisticated performance optimizations. The Link can learn from application transaction patterns, pre-warm [transaction system layouts](../../../glossary.md#transaction-system-layout) for frequently used data ranges, and coordinate with local materializer workers to optimize data placement for application access patterns.
 
 ## Core Responsibilities
 
@@ -213,7 +213,7 @@ The Link uses the `Bedrock.Internal.GenServerApi` pattern:
 
 The Link serves as the **entry point** in Bedrock's core transaction processing workflow:
 
-**Link → Transaction Builder → Commit Proxy → Resolver → Sequencer → Storage**
+**Link → Transaction Builder → Commit Proxy → Resolver → Sequencer → Materializer**
 
 **Workflow Context**:
 

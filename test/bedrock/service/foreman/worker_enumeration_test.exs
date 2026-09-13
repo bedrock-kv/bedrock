@@ -165,7 +165,6 @@ defmodule Bedrock.Service.Foreman.WorkerEnumerationTest do
         health: :ok,
         otp_name: :enumeration_test_foreman,
         path: dir,
-        waiting_for_healthy: [],
         workers: %{}
       }
 

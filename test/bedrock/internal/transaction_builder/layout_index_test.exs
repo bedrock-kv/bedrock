@@ -1,7 +1,45 @@
 defmodule Bedrock.Internal.TransactionBuilder.LayoutIndexTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.ControlPlane.Config
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Director.Recovery.InitializationPhase
   alias Bedrock.Internal.TransactionBuilder.LayoutIndex
+
+  for order <- [:forward, :reverse] do
+    @order order
+    test "the fresh cluster's touching shards stay distinct in #{@order} fetch order (gh-141)" do
+      attempt = RecoveryAttempt.new(Bedrock.Cluster, 1, DateTime.utc_now())
+      {initialized, _next_phase} = InitializationPhase.execute(attempt, %{cluster_config: Config.new([node()])})
+
+      # Use recovery's actual default layout so a copied fixture cannot drift.
+      # Different refs make routing to the wrong side of the boundary visible.
+      refs = %{0 => [{:metadata_materializer, node()}], 1 => [{:data_materializer, node()}]}
+      entries = Enum.sort(initialized.shard_layout)
+      entries = if @order == :reverse, do: Enum.reverse(entries), else: entries
+
+      index =
+        Enum.reduce(entries, LayoutIndex.new(), fn {end_key, {tag, start_key}}, index ->
+          LayoutIndex.insert(index, start_key, end_key, Map.fetch!(refs, tag))
+        end)
+
+      # The old bulk builder emitted a third, zero-width entry at 0xFF.
+      # OTP 28 accepted its duplicate tree key; OTP 29 rejected it.
+      assert :gb_trees.to_list(index.tree) == [
+               {<<0xFF>>, {<<>>, refs[1]}},
+               {Bedrock.end_of_keyspace(), {<<0xFF>>, refs[0]}}
+             ]
+
+      for key <- [<<>>, "banana", <<0xFE, 0xFF>>] do
+        assert LayoutIndex.lookup_key(index, key) == {:ok, {{<<>>, <<0xFF>>}, refs[1]}}
+      end
+
+      for key <- [<<0xFF>>, <<0xFF, 0>>, Bedrock.end_of_keyspace()] do
+        assert LayoutIndex.lookup_key(index, key) ==
+                 {:ok, {{<<0xFF>>, Bedrock.end_of_keyspace()}, refs[0]}}
+      end
+    end
+  end
 
   test "an empty index misses" do
     assert LayoutIndex.lookup_key(LayoutIndex.new(), "a") == :not_cached

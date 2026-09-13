@@ -25,13 +25,16 @@ defmodule Bedrock.ObjectStorage.LocalFilesystemAtomicityTest do
     |> Path.join("**")
     |> Path.wildcard(match_dot: true)
     |> Enum.filter(&File.regular?/1)
+    |> Enum.reject(&(Path.basename(&1) == ".bedrock-lock"))
     |> Enum.map(&Path.relative_to(&1, root))
     |> Enum.sort()
   end
 
   describe "no intermediate state is observable" do
-    test "a completed put leaves exactly one file", %{backend: backend, root: root} do
+    test "a completed put leaves an object and permanent lock metadata", %{backend: backend, root: root} do
       :ok = ObjectStorage.put(backend, "c/0/obj", "payload")
+
+      assert File.regular?(Path.join(root, "c/0/.bedrock-lock"))
 
       assert all_files(root) == ["c/0/obj"],
              "scratch files must not survive a successful put"

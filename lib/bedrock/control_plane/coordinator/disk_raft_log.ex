@@ -16,7 +16,9 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
   - Transaction records: `{transaction_id, data}`
   - Chain links: `{{:chain, transaction_id}, next_transaction_id | nil}`
-  - Well-known keys: `{:tail, transaction_id}`, `{:last_commit, transaction_id}`, `{:current_term, election_term}`
+  - Well-known keys: `{:tail, transaction_id}`, `{:last_commit, transaction_id}`,
+    `{:election_state, {election_term, voted_for}}` (with `{:current_term, election_term}`
+    read as a legacy fallback for logs written before the vote was persisted)
 
   ## File Layout
 
@@ -38,6 +40,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   @type metadata_record ::
           {:tail, Raft.transaction_id()}
           | {:last_commit, Raft.transaction_id()}
+          | {:election_state, {Raft.election_term(), Raft.peer() | nil}}
           | {:current_term, Raft.election_term()}
   @type dets_record :: stored_transaction_record() | chain_link_record() | metadata_record()
   @type dets_error ::
@@ -151,19 +154,27 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   end
 
   @doc """
-  Helper function to walk chain inclusively from current to target.
+  Helper function to walk chain inclusively from current to target, returning
+  at most `limit` records (`:infinity` for no limit).
   """
-  @spec walk_chain_inclusive(t(), Raft.transaction_id(), Raft.transaction_id()) :: [
-          stored_transaction_record()
-        ]
-  def walk_chain_inclusive(log, current_id, to_id) when current_id <= to_id do
+  @spec walk_chain_inclusive(
+          t(),
+          Raft.transaction_id(),
+          Raft.transaction_id(),
+          non_neg_integer() | :infinity
+        ) :: [stored_transaction_record()]
+  def walk_chain_inclusive(log, current_id, to_id, limit \\ :infinity)
+
+  def walk_chain_inclusive(_log, _current_id, _to_id, 0), do: []
+
+  def walk_chain_inclusive(log, current_id, to_id, limit) when current_id <= to_id do
     case :dets.lookup(log.table_name, current_id) do
       [{^current_id, data}] ->
         [
           {current_id, data}
           | case :dets.lookup(log.table_name, {:chain, current_id}) do
               [{{:chain, ^current_id}, next_id}] when next_id != nil and next_id <= to_id ->
-                walk_chain_inclusive(log, next_id, to_id)
+                walk_chain_inclusive(log, next_id, to_id, decrement_limit(limit))
 
               _ ->
                 []
@@ -175,8 +186,10 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
-  @spec walk_chain_inclusive(t(), Raft.transaction_id(), Raft.transaction_id()) :: []
-  def walk_chain_inclusive(_log, _current_id, _to_id), do: []
+  def walk_chain_inclusive(_log, _current_id, _to_id, _limit), do: []
+
+  defp decrement_limit(:infinity), do: :infinity
+  defp decrement_limit(limit), do: limit - 1
 
   @doc """
   Sync the DETS table to disk to ensure durability.
@@ -237,24 +250,58 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
 
   @doc """
   Purge the log of all transactions after the given id.
+
+  A purge that would remove committed transactions is rejected, since Raft's
+  commit index must never decrease. Purged records are deleted outright rather
+  than merely unlinked: the leader reads `has_transaction_id?/2` to reposition
+  its send cursor on a follower's hint, so a stale physical record would
+  confirm an entry the chain can no longer reach.
   """
-  @spec purge_transactions_after(t(), Raft.transaction_id()) :: dets_operation_result()
+  @spec purge_transactions_after(t(), Raft.transaction_id()) ::
+          dets_operation_result() | {:error, :would_delete_committed_transactions}
   def purge_transactions_after(t, transaction_id) do
-    # Get current commit to ensure it doesn't go beyond purge point
-    current_commit = newest_safe_transaction_id(t)
-    new_commit = min(current_commit, transaction_id)
+    cond do
+      transaction_id < newest_safe_transaction_id(t) ->
+        {:error, :would_delete_committed_transactions}
 
-    records = [
-      # Mark as end
-      {{:chain, transaction_id}, nil},
-      {:tail, transaction_id},
-      {:last_commit, new_commit}
-    ]
+      transaction_id >= newest_transaction_id(t) ->
+        {:ok, t}
 
-    with :ok <- :dets.insert(t.table_name, records),
-         :ok <- sync(t) do
-      {:ok, t}
+      true ->
+        Enum.each(transaction_ids_after(t, transaction_id), fn id ->
+          :ok = :dets.delete(t.table_name, id)
+          :ok = :dets.delete(t.table_name, {:chain, id})
+        end)
+
+        records = [
+          # Mark as end
+          {{:chain, transaction_id}, nil},
+          {:tail, transaction_id}
+        ]
+
+        with :ok <- :dets.insert(t.table_name, records),
+             :ok <- sync(t) do
+          {:ok, t}
+        end
     end
+  end
+
+  @spec transaction_ids_after(t(), Raft.transaction_id()) :: [Raft.transaction_id()]
+  defp transaction_ids_after(t, transaction_id), do: select_transaction_ids(t, :>, transaction_id)
+
+  # Transaction records are the only ones keyed by an integer pair, so the
+  # guards select exactly the transaction ids, skipping chain links (keyed
+  # `{:chain, id}`) and metadata (keyed by a bare atom).
+  @spec select_transaction_ids(t(), :> | :<, Raft.transaction_id()) :: [Raft.transaction_id()]
+  defp select_transaction_ids(t, comparison, transaction_id) do
+    :dets.select(t.table_name, [
+      {{{:"$1", :"$2"}, :_},
+       [
+         {:is_integer, :"$1"},
+         {:is_integer, :"$2"},
+         {comparison, {{:"$1", :"$2"}}, {:const, transaction_id}}
+       ], [{{:"$1", :"$2"}}]}
+    ])
   end
 
   @doc """
@@ -333,15 +380,29 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
           Raft.transaction_id(),
           Raft.transaction_id() | :newest | :newest_safe
         ) :: [stored_transaction_record()]
-  def transactions_from(t, from, :newest), do: transactions_from(t, from, newest_transaction_id(t))
+  def transactions_from(t, from, to), do: transactions_from(t, from, to, :infinity)
 
-  def transactions_from(t, from, :newest_safe), do: transactions_from(t, from, newest_safe_transaction_id(t))
+  @doc """
+  Same as `transactions_from/3`, but returns at most `limit` transactions
+  (`:infinity` for no limit). The replication hot path fetches one bounded
+  batch per AppendEntries request through this function.
+  """
+  @spec transactions_from(
+          t(),
+          Raft.transaction_id(),
+          Raft.transaction_id() | :newest | :newest_safe,
+          non_neg_integer() | :infinity
+        ) :: [stored_transaction_record()]
+  def transactions_from(t, from, :newest, limit), do: transactions_from(t, from, newest_transaction_id(t), limit)
 
-  def transactions_from(t, @initial_transaction_id, to) do
+  def transactions_from(t, from, :newest_safe, limit),
+    do: transactions_from(t, from, newest_safe_transaction_id(t), limit)
+
+  def transactions_from(t, @initial_transaction_id, to, limit) do
     # Special case: from initial_transaction_id includes all up to 'to'
     case :dets.lookup(t.table_name, {:chain, @initial_transaction_id}) do
       [{{:chain, @initial_transaction_id}, first_real_txn}] when first_real_txn != nil ->
-        walk_chain_inclusive(t, first_real_txn, to)
+        walk_chain_inclusive(t, first_real_txn, to, limit)
 
       # Empty chain
       _ ->
@@ -349,7 +410,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
     end
   end
 
-  def transactions_from(t, from, to) when from != @initial_transaction_id do
+  def transactions_from(t, from, to, limit) when from != @initial_transaction_id do
     # Normal case: exclude 'from', include up to 'to'
     case :dets.lookup(t.table_name, from) do
       # from not found
@@ -360,11 +421,28 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
         # Follow chain starting from NEXT after from
         case :dets.lookup(t.table_name, {:chain, from}) do
           [{{:chain, ^from}, next_id}] when next_id != nil and next_id <= to ->
-            walk_chain_inclusive(t, next_id, to)
+            walk_chain_inclusive(t, next_id, to, limit)
 
           _ ->
             []
         end
+    end
+  end
+
+  @doc """
+  Get the id of the newest transaction in the log that is older than the given
+  transaction id, or the initial id when no such transaction exists.
+
+  The protocol asks for O(log n) here; DETS tables are unordered, so this is a
+  single-pass select over the table instead. The coordinator's raft log stays
+  small and the leader only consults this on rejected AppendEntries responses,
+  so the full pass is not a hot path.
+  """
+  @spec previous_transaction_id(t(), Raft.transaction_id()) :: Raft.transaction_id()
+  def previous_transaction_id(t, transaction_id) do
+    case select_transaction_ids(t, :<, transaction_id) do
+      [] -> @initial_transaction_id
+      transaction_ids -> Enum.max(transaction_ids)
     end
   end
 
@@ -374,20 +452,75 @@ defmodule Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   """
   @spec current_term(t()) :: Raft.election_term()
   def current_term(t) do
-    case :dets.lookup(t.table_name, :current_term) do
-      [{:current_term, term}] -> term
-      # No term persisted yet - return initial term 0
-      [] -> 0
+    {term, _voted_for} = election_state(t)
+    term
+  end
+
+  @doc """
+  Get the candidate that received this server's vote in the current term, or
+  `nil` if the server has not voted.
+  """
+  @spec voted_for(t()) :: Raft.peer() | nil
+  def voted_for(t) do
+    {_term, voted_for} = election_state(t)
+    voted_for
+  end
+
+  @spec election_state(t()) :: {Raft.election_term(), Raft.peer() | nil}
+  defp election_state(t) do
+    case :dets.lookup(t.table_name, :election_state) do
+      [{:election_state, {term, voted_for}}] ->
+        {term, voted_for}
+
+      [] ->
+        # Logs written before the vote was persisted carry only the term.
+        case :dets.lookup(t.table_name, :current_term) do
+          [{:current_term, term}] -> {term, nil}
+          [] -> {0, nil}
+        end
     end
   end
 
   @doc """
   Save the current election term to persistent storage.
   This must be called before responding to RPCs to ensure Raft safety.
+  Advancing the term also clears any vote from an earlier term; equal or
+  lower terms leave the persisted state untouched.
   """
   @spec save_current_term(t(), Raft.election_term()) :: dets_operation_result()
   def save_current_term(t, term) do
-    with :ok <- :dets.insert(t.table_name, {:current_term, term}),
+    if term > current_term(t) do
+      save_election_state(t, term, nil)
+    else
+      {:ok, t}
+    end
+  end
+
+  @doc """
+  Atomically save the current term and the candidate voted for in that term.
+
+  Advancing to a new term may set any vote (usually `nil`). Within the durable
+  term, a vote may be set when none exists or repeated verbatim, but never
+  changed or cleared (`{:error, :already_voted}`). Writes below the durable
+  term return `{:error, :stale_term}`. Both values live in a single DETS
+  record, so they are persisted together.
+  """
+  @spec save_election_state(t(), Raft.election_term(), Raft.peer() | nil) ::
+          dets_operation_result() | {:error, :already_voted | :stale_term}
+  def save_election_state(t, term, voted_for) do
+    case election_state(t) do
+      {current, _} when term > current -> persist_election_state(t, term, voted_for)
+      {current, nil} when term == current -> persist_election_state(t, term, voted_for)
+      {current, ^voted_for} when term == current -> {:ok, t}
+      {current, _} when term == current -> {:error, :already_voted}
+      _stale -> {:error, :stale_term}
+    end
+  end
+
+  @spec persist_election_state(t(), Raft.election_term(), Raft.peer() | nil) ::
+          dets_operation_result()
+  defp persist_election_state(t, term, voted_for) do
+    with :ok <- :dets.insert(t.table_name, {:election_state, {term, voted_for}}),
          :ok <- sync(t) do
       {:ok, t}
     end
@@ -408,6 +541,10 @@ defimpl Bedrock.Raft.Log, for: Bedrock.ControlPlane.Coordinator.DiskRaftLog do
   defdelegate has_transaction_id?(t, transaction_id), to: DiskRaftLog
   defdelegate transactions_to(t, to), to: DiskRaftLog
   defdelegate transactions_from(t, from, to), to: DiskRaftLog
+  defdelegate transactions_from(t, from, to, limit), to: DiskRaftLog
+  defdelegate previous_transaction_id(t, transaction_id), to: DiskRaftLog
   defdelegate current_term(t), to: DiskRaftLog
   defdelegate save_current_term(t, term), to: DiskRaftLog
+  defdelegate voted_for(t), to: DiskRaftLog
+  defdelegate save_election_state(t, term, voted_for), to: DiskRaftLog
 end

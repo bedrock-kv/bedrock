@@ -17,7 +17,6 @@ defmodule Bedrock.Service.ForemanTest do
         health: :ok,
         otp_name: :test_foreman,
         path: "/tmp/test",
-        waiting_for_healthy: [],
         workers: %{}
       },
       overrides
@@ -61,7 +60,6 @@ defmodule Bedrock.Service.ForemanTest do
         cluster: RelayCluster,
         path: "/nonexistent",
         health: :ok,
-        waiting_for_healthy: [],
         workers: workers
       }
 
@@ -77,7 +75,6 @@ defmodule Bedrock.Service.ForemanTest do
         cluster: RelayCluster,
         path: "/nonexistent",
         health: :ok,
-        waiting_for_healthy: [],
         workers: workers
       }
 
@@ -103,7 +100,7 @@ defmodule Bedrock.Service.ForemanTest do
         "stays" => worker_info("stays", health: :stopped, manifest: log_manifest("stays"))
       }
 
-      state = %State{cluster: JanitorCluster, path: path, health: :ok, waiting_for_healthy: [], workers: workers}
+      state = %State{cluster: JanitorCluster, path: path, health: :ok, workers: workers}
 
       state = Impl.do_worker_retired(state, "gone")
 
@@ -115,7 +112,7 @@ defmodule Bedrock.Service.ForemanTest do
     end
 
     test "an unknown worker id is a no-op" do
-      state = %State{cluster: JanitorCluster, path: "/nonexistent", health: :ok, waiting_for_healthy: [], workers: %{}}
+      state = %State{cluster: JanitorCluster, path: "/nonexistent", health: :ok, workers: %{}}
 
       assert Impl.do_worker_retired(state, "ghost").workers == %{}
     end
@@ -220,23 +217,6 @@ defmodule Bedrock.Service.ForemanTest do
 
       refute Impl.materializer_worker?(nil_manifest_worker)
       refute Impl.materializer_worker?(nil_worker_manifest)
-    end
-  end
-
-  describe "do_wait_for_healthy/2" do
-    test "returns :ok when foreman is already healthy" do
-      state = base_state()
-      assert :ok = Impl.do_wait_for_healthy(state, self())
-    end
-
-    test "adds caller to waiting list when not healthy" do
-      caller_pid = self()
-      state = base_state(%{health: :starting})
-
-      assert %State{
-               waiting_for_healthy: [^caller_pid],
-               health: :starting
-             } = Impl.do_wait_for_healthy(state, caller_pid)
     end
   end
 

@@ -1,5 +1,5 @@
 {
-  "assignee": "",
+  "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
   "created": "2026-09-13T05:34:17Z",
@@ -7,7 +7,7 @@
   "id": "bedrock-i5f",
   "labels": [],
   "priority": 1,
-  "status": "open",
+  "status": "in_progress",
   "title": "Audit and complete release 0.7.1",
   "type": "task",
   "updated_at": "2026-09-13T05:34:17Z"

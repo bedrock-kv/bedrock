@@ -14,11 +14,15 @@
     {
       "text": "Audit 2026-09-06 of PR #277: PARTIAL. The injected :drain only helps if real time has already passed due_at_ms (PersistenceQueue.dequeue promotes on monotonic_time), so the test still leans on the same backoff clock; the ticket's 20+ full-suite verification was not run (~9 runs reported). Either inject the clock or scale the budget with load, then verify. Its one red CI job is the unrelated repo_transact_test.exs:605 name-registration flake.",
       "timestamp": "2026-09-06T14:06:00Z"
+    },
+    {
+      "text": "PR #311 rebased on #312's package-smoke fix and passed all required CI checks on its first attempt, including S3 retry telemetry and both native package smokes. Merged.",
+      "timestamp": "2026-09-13T04:36:57Z"
     }
   ],
   "priority": 3,
   "status": "in_progress",
   "title": "[BUG] Flaky: ShardServer retry-telemetry test misses its 1.5s assert_receive under full-suite load",
   "type": "bug",
-  "updated_at": "2026-09-06T14:06:00Z"
+  "updated_at": "2026-09-13T04:36:57Z"
 }

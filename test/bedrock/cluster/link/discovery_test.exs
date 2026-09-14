@@ -77,7 +77,7 @@ defmodule Bedrock.Cluster.Link.DiscoveryTest do
   # Integration tests would be more appropriate for testing this functionality
 
   describe "change_coordinator/2 registering capabilities against a not-yet-running Foreman" do
-    # GH #319: on cold boot, ClusterSupervisor can start Link before the
+    # On cold boot, ClusterSupervisor can start Link before the
     # local Foreman is registered. A capability-bearing Link then reaches
     # into Foreman for its running-services inventory as part of
     # registering with the coordinator, so that call must survive Foreman

@@ -74,7 +74,7 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
   end
 
   describe "children start order" do
-    # GH #319: Link's :find_a_live_coordinator continuation queries the
+    # Link's :find_a_live_coordinator continuation queries the
     # local Foreman for already-running services (discovery.ex). If Link
     # starts before Foreman, that query can race a Foreman that isn't
     # registered yet. Starting Foreman (a capability child) before Link

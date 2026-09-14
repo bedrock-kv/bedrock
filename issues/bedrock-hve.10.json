@@ -1,7 +1,8 @@
 {
   "assignee": "",
   "blocked_by": [
-    "bedrock-hve.7"
+    "bedrock-hve.7",
+    "bedrock-hve.9"
   ],
   "blocks": [],
   "created": "2026-09-14T19:13:12Z",
@@ -13,5 +14,5 @@
   "status": "open",
   "title": "Run the chaos suite nightly in CI",
   "type": "task",
-  "updated_at": "2026-09-14T19:13:19Z"
+  "updated_at": "2026-09-14T19:13:20Z"
 }

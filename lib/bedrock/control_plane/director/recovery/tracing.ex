@@ -151,18 +151,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.Tracing do
 
   def trace(:tsl_validation_success, _, _), do: info("TSL type safety validation passed")
 
-  def trace(:tsl_validation_failed, _, %{transaction_system_layout: tsl, validation_error: validation_error}) do
+  def trace(:tsl_validation_failed, _, %{core_state: core_state, validation_error: validation_error}) do
     error("""
     TSL type safety validation failed during recovery - this indicates data corruption.
 
     Validation Error: #{inspect(validation_error, limit: :infinity)}
 
-    TSL Components being validated:
-      - Logs: #{inspect(Map.get(tsl, :logs), limit: 10)}
-      - Resolvers: #{inspect(Map.get(tsl, :resolvers), limit: 5)}
+    Prior core state being validated:
+      - Logs: #{inspect(Map.get(core_state, :logs), limit: 10)}
 
-    This indicates the TSL data was corrupted, likely due to improper integer-to-binary
-    version conversion. Manual intervention may be required to fix the underlying data.
+    This indicates the durable bootstrap record was corrupted, likely due to improper
+    integer-to-binary version conversion. Manual intervention may be required to fix
+    the underlying data.
     """)
   end
 

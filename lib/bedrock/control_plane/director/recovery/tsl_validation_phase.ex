@@ -59,7 +59,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   """
   @impl true
   def execute(%RecoveryAttempt{} = recovery_attempt, %{prior_core_state: %{} = core_state}) do
-    case TSLTypeValidator.validate_type_safety(core_state) do
+    case TSLTypeValidator.validate_core_state_type_safety(core_state) do
       :ok ->
         trace_recovery_tsl_validation_success()
         {recovery_attempt, next_phase(core_state)}

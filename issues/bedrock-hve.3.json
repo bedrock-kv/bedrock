@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:12:35Z",
+  "description": "Verifies a cold start could actually catch up from what is in object storage.\n\nChecks:\n- The latest s/{tag}/ bundle per shard has a valid index record (magic 0x4F4C5644, 16-byte header, trailing payload_size footer). Validate via SnapshotBundle.find_index_boundary/1 rather than reimplementing the framing.\n- The bundle's embedded durable_version is \u003c= that shard's max chunk version.\n- Chunks covering [snapshot_version, ...] forward still exist. If they do not, cold start cannot catch up -- a silent, latent unrecoverability that nothing surfaces until a node actually restarts.\n\nUnlike chunks, snapshots ARE pruned (Snapshot.delete_older_than/2), so the pruning boundary is a live correctness concern rather than a no-op.\n\nKnown limitation to document rather than solve: durable version is not persisted to object storage -- it is RAM-only in ShardServer and aggregated by Demux.Durability.min_durable_version/1. fsck can derive max-chunk-version but cannot independently verify the cluster's own durability claim. Worth stating plainly in the task output so nobody reads more assurance into a green run than it provides.",
+  "id": "bedrock-hve.3",
+  "labels": [],
+  "parent": "bedrock-hve",
+  "priority": 3,
+  "status": "open",
+  "title": "fsck: snapshot and chunk continuity",
+  "type": "task",
+  "updated_at": "2026-09-14T19:12:35Z"
+}

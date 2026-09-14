@@ -28,6 +28,8 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   require Logger
 
+  @start_recovery_retry_ms 1_000
+
   @doc false
   @spec child_spec(
           opts :: [
@@ -82,9 +84,13 @@ defmodule Bedrock.ControlPlane.Director.Server do
     # Services are already provided by coordinator from service directory
     t
     |> ping_all_coordinators()
-    |> try_to_recover()
+    |> start_recovery()
     |> noreply()
   end
+
+  @impl true
+  def handle_info({:timeout, :start_recovery}, %State{state: :starting} = t), do: t |> start_recovery() |> noreply()
+  def handle_info({:timeout, :start_recovery}, t), do: noreply(t)
 
   @impl true
   def handle_info({:timeout, :ping_all_coordinators}, t) do
@@ -189,6 +195,21 @@ defmodule Bedrock.ControlPlane.Director.Server do
 
   @spec now() :: DateTime.t()
   defp now, do: DateTime.utc_now()
+
+  # Recovery stays :starting only while the durable record cannot be
+  # read. Retry at FDB's MASTER_SPIN_DELAY (1s; ClusterController.actor.cpp:
+  # "Don't retry cluster recovery more than once per second").
+  @spec start_recovery(State.t()) :: State.t()
+  defp start_recovery(t) do
+    case try_to_recover(t) do
+      %State{state: :starting} = t ->
+        Process.send_after(self(), {:timeout, :start_recovery}, @start_recovery_retry_ms)
+        t
+
+      t ->
+        t
+    end
+  end
 
   @spec add_services_to_directory(State.t(), [{String.t(), atom(), {atom(), node()}}]) ::
           State.t()

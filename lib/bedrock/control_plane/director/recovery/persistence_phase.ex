@@ -90,6 +90,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
     end
   end
 
+  @doc """
+  Reads the cluster bootstrap record from where this phase writes it —
+  the durable prior state a recovery starts from.
+  """
+  @spec read_bootstrap(module()) :: {:ok, map()} | {:error, :no_object_storage | :not_found | term()}
+  def read_bootstrap(cluster) do
+    with {:ok, backend} <- get_object_storage_backend(cluster),
+         {:ok, data} <- ObjectStorage.get(backend, "bootstrap") do
+      ClusterBootstrap.read(data)
+    end
+  end
+
   defp write_state_to_object_storage(recovery_attempt, config, transaction_system_layout) do
     cluster = recovery_attempt.cluster
 

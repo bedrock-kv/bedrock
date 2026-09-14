@@ -49,6 +49,7 @@ defmodule Bedrock.ControlPlane.Director.RecoveryTest do
   defmodule TestCluster do
     @moduledoc false
     def name, do: "test_cluster"
+    def node_config, do: []
 
     def otp_name(component) do
       case component do

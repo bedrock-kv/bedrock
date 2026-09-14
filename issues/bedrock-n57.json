@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:47:08Z",
+  "description": "Residual from bedrock-3t9 (PR #323) and the three-node harness runs.\n\n1. `LogRecruitmentPhase.fill_log_vacancies/4` (log_recruitment_phase.ex ~208-238) fills vacancies from existing candidate log services first (`Enum.zip(vacancies, candidates_ids)`) with no constraint that the chosen logs sit on distinct nodes; only NEW workers are spread round-robin. With desired_logs 3 a generation can therefore put two or three replicas of every mutation on one machine, silently defeating the durability the profile checks. FDB recruits tlogs under a replication policy (PolicyAcross over zoneid) — replicas must span fault domains. In the fresh 3-node harness run (all new workers) the three logs did land one per node; the hazard is the reuse path (restarts, recoveries with leftover log workers).\n2. On origin/develop 3af051c2 with desired_logs 1, a fresh three-node cluster placed both initial materializers (tag 0 and tag 1) on the director's node alongside the only log, although all three nodes advertise :materializer (bedrock-22g / #290 spread only the distributor's placement?). Verify which component places the bootstrap materializers and whether spreading applies there.\n\nExpected: replicas of a generation's logs, and a shard's materializers, span distinct nodes whenever enough capable nodes exist.",
+  "id": "bedrock-n57",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Log recruitment reuses existing log candidates without regard to node: logs of one generation can share a node; develop still places both initial materializers on the director's node",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:47:08Z"
+}

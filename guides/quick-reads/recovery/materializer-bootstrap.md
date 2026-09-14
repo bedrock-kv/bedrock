@@ -1,54 +1,53 @@
 # Materializer Bootstrap
 
-**Get the shard layout back, by asking the materializer that already holds it.**
+**Read the committed shard layout from a verified cache or rebuild that view from durable history.**
 
-Recovery needs to know the cluster's shard boundaries before it can place
-resolvers or route anything. Those boundaries live in the committed keyspace
-under `\xff/system/shard_keys/`, which means recovery has to bring one
-materializer — the one serving the system shard, tag 0 — back online and read
-them out of it.
-
-This phase is deliberately *not* a recruitment phase. Materializers hold
-irreplaceable committed state, so the goal is to reuse the survivors, not to
-replace them.
+The shard boundaries live in `\xff/system/shard_keys/*`, served by tag 0.
+The materializer serving that view is disposable: recovered logs and
+object-storage chunks hold the history. Recovery must make the view readable
+at its chosen recovery version before placing resolvers or routing writes.
 
 ## Fresh Cluster
 
-With no prior logs there is nothing to recover, so the phase invents the
-starting layout: two shards, the system shard (tag 0) covering `0xFF` to the
-end of the keyspace, and the user shard (tag 1) covering everything below
-`0xFF`.
+A bootstrap record with no prior logs means there is no committed history.
+Recovery creates a system materializer and seeds two shards: tag 0 for system
+keys and tag 1 for user keys. Only this fresh path invents a layout.
 
 ## Existing Cluster
 
-1. **Resolve the system materializer by name** from the prior
-   [`CoreState`](../transaction-system-layout.md). It is looked up, never
-   invented — recovery does not guess which worker was serving tag 0.
-2. **Lock it** for this recovery.
-3. **Unlock it** with its replica set of pull sources, so it starts pulling
-   from the logs.
-4. **Wait for catchup** — up to 60 seconds, polling — until it has applied
-   through the recovery version.
-5. **Read the shard layout** from `\xff/system/shard_keys/*`.
+1. Prefer a locked tag-0 cache named by CoreState. Unlock it at the recovery
+   version and let it resume its own stream cursor.
+2. Wait until it can serve that version, then read the shard layout and
+   materializer membership at the same version. Reuse the cache only if the
+   committed family still names its worker and node.
+3. If no named cache is available or the named cache was displaced, recruit a
+   fresh tag-0 worker. Legacy records without cache hints use this path too.
+   The worker starts from a committed snapshot or zero and streams old chunks
+   followed by the recovered WAL suffix through its ShardServer.
+4. Wait for catchup and read the existing layout and membership. An empty
+   layout or failed read stalls recovery; it never becomes a fresh layout.
+5. Carry any new worker into the recovery system transaction so its read
+   coverage is published only after the historical reads succeed.
 
-The `\xff/system/materializers/` family is read alongside it: a family-named
-worker that this epoch locked, whose own shard assignment agrees, is
-re-adopted for its shard. Only a shard with no survivor gets a fresh
-materializer, which rebuilds from its object-storage chunks.
+The distributor owns committed read coverage between recoveries and may
+retire a CoreState-named cache. CoreState's log identities remain durable
+recovery input; its materializer names are only a cache preference. No atomic
+write across the keyspace and bootstrap object is required to keep those
+preferences usable. An arbitrary worker claiming tag 0 is not substituted
+for a missing named cache: reconstruction starts a worker with known replay
+provenance instead.
 
-## Stalls
+## Failures
 
-The phase stalls — and recovery retries — if the named members are
-unavailable, if catchup times out, or if the recovered layout reads empty. An
-empty read is treated as a failure rather than as "this cluster has no
-shards", because the difference matters: see
-[The System Keyspace](../system-keyspace.md).
+Missing capacity, failed worker startup, unavailable history, catchup timeout,
+and failed or empty layout reads stall with their cause. A newly created
+worker that fails before publication is removed. Potentially published workers
+are reconciled against committed membership, so a lost persistence reply is
+never treated as permission to destroy them.
 
 ## Next Phase
 
-Recovery proceeds to [commit proxy startup](proxy-startup.md) with the system
-materializer's pid and the shard layout in hand.
-
----
+Recovery proceeds to [commit proxy startup](proxy-startup.md) with the recovered
+shard layout and system read coverage.
 
 **Implementation**: `lib/bedrock/control_plane/director/recovery/materializer_bootstrap_phase.ex`

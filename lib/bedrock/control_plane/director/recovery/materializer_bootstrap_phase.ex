@@ -1,35 +1,21 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   @moduledoc """
-  Bootstraps the metadata shard materializer for recovery.
+  Makes the system shard readable at the recovery version.
 
-  The metadata materializer holds the authoritative shard layout - the mapping from
-  key ranges to shard tags. This phase ensures the materializer is available and
-  queries it for the current shard layout.
+  Fresh clusters seed the default system/user shard layout. Existing clusters
+  read their committed layout from tag 0 after replaying through the recovery
+  version; they never substitute a default layout for missing history.
 
-  ## Fresh Cluster
+  CoreState's materializer names are preferred cache locations. A locked named
+  worker is reused only if the recovered membership still names it on its node.
+  Missing or displaced caches, and legacy records without names, are rebuilt
+  by a newly recruited worker from the recovered logs and epoch-spanning chunks.
+  Arbitrary tag-0 claimants are never adopted as bootstrap authority.
 
-  For a fresh cluster (no old logs), creates a default shard layout with two shards:
-  - System shard (tag 0): Keys from 0xFF to end-of-keyspace (system metadata)
-  - User shard (tag 1): Keys from empty string to 0xFF (user data)
-
-  ## Existing Cluster
-
-  For an existing cluster:
-  1. Resolve the system materializer BY NAME from the prior core state —
-     it is looked up, never invented (bedrock-q67.21.12)
-  2. Lock it for recovery
-  3. Unlock it with its replica set of pull sources to start pulling
-  4. Wait for it to catch up (60s timeout)
-  5. Query the shard layout from `\\xff/system/shard_keys/*`
-
-  Stalls if the named members are unavailable, if catchup times out, or if
-  the recovered layout reads empty. Records written before the core state
-  carried system materializers take a one-time migration: recovery adopts
-  the sole locked worker claiming tag 0, and refuses to choose when
-  several do (bedrock-q67.21.21).
-
-  Transitions to CommitProxyStartupPhase with the materializer pid and
-  shard layout.
+  Reconstruction waits for catchup and reads both layout and membership at one
+  version before publishing coverage. Failed creation, replay or reads stall;
+  an empty existing-cluster layout is an error. Unpublished created workers
+  are cleaned up on failure. Transitions to CommitProxyStartupPhase on success.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
@@ -170,16 +156,46 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # assignment from creation — it is never recovered by inverting a
   # services map) plus the service record ({id, descriptor}) that must
   # travel into transaction_services so the layout references the creation.
-  defp create_and_start_materializer(shard_tag, recovery_attempt, context) do
+  defp create_and_start_materializer(
+         shard_tag,
+         recovery_attempt,
+         context,
+         recovery_version \\ Bedrock.DataPlane.Version.zero()
+       ) do
     with {:ok, node} <- find_materializer_capable_node(context),
          {:ok, {worker_id, worker_ref, node}} <-
-           create_materializer_worker(node, shard_tag, recovery_attempt, context),
-         {:ok, pid} <-
-           lock_new_materializer({:materializer, {worker_ref, node}, shard_tag}, recovery_attempt.epoch, context),
-         :ok <- start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
-      descriptor = %{kind: :materializer, last_seen: {worker_ref, node}, status: {:up, pid}}
-      {:ok, {worker_id, node, pid}, {worker_id, descriptor}}
+           create_materializer_worker(node, shard_tag, recovery_attempt, context) do
+      case lock_and_start_materializer(
+             {:materializer, {worker_ref, node}, shard_tag},
+             shard_tag,
+             recovery_version,
+             recovery_attempt,
+             context
+           ) do
+        {:ok, pid} ->
+          descriptor = %{kind: :materializer, last_seen: {worker_ref, node}, status: {:up, pid}}
+          {:ok, {worker_id, node, pid}, {worker_id, descriptor}}
+
+        {:error, _} = error ->
+          remove_created_materializer(worker_id, node, recovery_attempt, context)
+          error
+      end
     end
+  end
+
+  defp lock_and_start_materializer(service, shard_tag, recovery_version, recovery_attempt, context) do
+    with {:ok, pid} <- lock_materializer(service, recovery_attempt.epoch, context),
+         :ok <- unlock_and_start_pulling(pid, shard_tag, recovery_version, recovery_attempt, context) do
+      {:ok, pid}
+    end
+  end
+
+  # Only a worker created by this phase and not yet offered to persistence
+  # may be removed here. Existing or potentially published members retire
+  # through committed membership reconciliation, never this cleanup path.
+  defp remove_created_materializer(worker_id, node, recovery_attempt, context) do
+    remove_fn = Map.get(context, :remove_worker_fn, &Foreman.remove_worker/3)
+    remove_fn.({recovery_attempt.cluster.otp_name(:foreman), node}, worker_id, timeout: 5_000)
   end
 
   # Create worker via Foreman for a specific shard. The shard assignment
@@ -199,25 +215,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end
   end
 
-  # Lock a newly created materializer
-  defp lock_new_materializer(service, epoch, context) do
-    lock_fn = Map.get(context, :lock_materializer_fn, &default_lock_materializer/2)
-    lock_fn.(service, epoch)
-  end
-
-  # Start materializer pulling from its replica set of logs
-  defp start_materializer_pulling(pid, shard_tag, recovery_attempt, context) do
-    # For fresh cluster, start from version zero
-    durable_version = Bedrock.DataPlane.Version.zero()
-    unlock_fn = Map.get(context, :unlock_materializer_fn, &default_unlock_materializer/3)
-
-    case unlock_fn.(pid, durable_version, pull_sources_for_shard(shard_tag, recovery_attempt)) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:unlock_failed, reason}}
-      {:failure, reason, _ref} -> {:error, {:unlock_failed, reason}}
-    end
-  end
-
   defp handle_existing_cluster(recovery_attempt, context) do
     # Read at the newest version determined during log recovery planning;
     # this is also the cluster's rollback point, and therefore the version
@@ -227,38 +224,15 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     # would discard real state.)
     {_available_after, recovery_version} = recovery_attempt.version_vector
 
-    # Materializers were locked during the locking phase; their recovery
-    # info carries their shard assignments. Reuse them — they hold the
-    # durable state, including the shard layout this phase exists to read.
+    # Locked caches can save replay work. Their coverage is independent of
+    # the durable log/chunk history, which can reconstruct a missing cache.
     existing_by_shard = existing_materializers_by_shard(recovery_attempt)
 
-    with {:ok, {system_worker_id, materializer_service}} <-
-           resolve_system_materializer(recovery_attempt, context),
-         {:ok, materializer_pid} <- lock_materializer(materializer_service, recovery_attempt.epoch, context),
-         # Unlock with logs so it streams the replayed WAL from the demux
-         :ok <-
-           unlock_and_start_pulling(
-             materializer_pid,
-             RecoveryAttempt.system_shard_id(),
-             recovery_version,
-             recovery_attempt,
-             context
-           ),
-         # It must be able to SERVE the layout query: wait on the applied
-         # position, which the stream advances (durability trails by design)
-         :ok <-
-           wait_for_materializer_catchup(
-             materializer_pid,
-             {RecoveryAttempt.system_shard_id(), recovery_attempt.attempt},
-             recovery_version,
-             context
-           ),
-         {:ok, shard_layout} <- get_shard_layout(materializer_pid, recovery_version, context),
-         :ok <- reject_empty_layout(shard_layout),
-         {:ok, prior_refs} <- read_prior_refs(materializer_pid, recovery_version, context),
+    with {:ok, {system_worker_id, _node, materializer_pid}, shard_layout, prior_refs, bootstrap_services} <-
+           recover_system_shard(recovery_attempt, recovery_version, context),
          {:ok, shard_materializers, created_services} <-
-           ensure_materializers_for_shards(
-             shard_layout,
+           shard_layout
+           |> ensure_materializers_for_shards(
              prefer_family_named(existing_by_shard, prior_refs, recovery_attempt),
              %{
                RecoveryAttempt.system_shard_id() => {system_worker_id, node(materializer_pid), materializer_pid}
@@ -266,12 +240,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
              recovery_version,
              recovery_attempt,
              context
-           ) do
-      # Every creation must reach transaction_services: the layout and the
-      # materializers keyspace are built from it, and workers self-retire
-      # when the committed state doesn't name them. The system shard needs
-      # no synthetic entry — it is never created here, only looked up, so
-      # it is already in transaction_services from the locking phase.
+           )
+           |> cleanup_bootstrap_on_failure(bootstrap_services, recovery_attempt, context) do
+      # A reconstructed bootstrap worker must reach transaction_services
+      # and the persistence transaction, just like a fresh-cluster creation.
+      # Its new membership is published only after historical reads succeed.
       updated_attempt =
         recovery_attempt
         |> Map.put(:shard_layout, shard_layout)
@@ -282,7 +255,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         |> Map.put(:seeded_layout?, false)
         |> Map.put(:prior_materializer_refs, prior_refs)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
-        |> Map.update!(:transaction_services, &Map.merge(&1, created_services))
+        |> Map.update!(:transaction_services, &(&1 |> Map.merge(bootstrap_services) |> Map.merge(created_services)))
 
       {updated_attempt, CommitProxyStartupPhase}
     else
@@ -290,6 +263,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
         {recovery_attempt, {:stalled, reason}}
     end
   end
+
+  defp cleanup_bootstrap_on_failure({:error, _} = error, bootstrap_services, recovery_attempt, context) do
+    for {worker_id, %{last_seen: {_ref, node}}} <- bootstrap_services do
+      remove_created_materializer(worker_id, node, recovery_attempt, context)
+    end
+
+    error
+  end
+
+  defp cleanup_bootstrap_on_failure(result, _bootstrap_services, _recovery_attempt, _context), do: result
 
   # An empty shard_keys family decodes as a SUCCESSFUL read of no shards
   # (Reader.shard_layout_from_entries([]) returns {:ok, %{}}), and nothing
@@ -352,88 +335,68 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     end)
   end
 
-  # The system shard is LOOKED UP by name. Discovery exists only as
-  # the one-time migration for records that predate the field, and it
-  # refuses to choose when the answer is ambiguous.
-  #
-  # The prior core state names its members, because both durable
-  # families — the shard layout and materializer membership — are served
-  # from tag 0, and recovery cannot read either until it knows who holds
-  # it. FDB has the same indirection and the same discipline: it builds
-  # its log system from exactly the servers the coordinated state names
-  # (TagPartitionedLogSystem.actor.cpp:2549-2585) and waits for a quorum
-  # of THOSE, never substituting another server and never fabricating
-  # one.
-  #
-  # So an unavailable named member is a STALL, not a fallback. Recovery
-  # manufacturing the store its own metadata lives in would come up
-  # "successfully" on an empty layout and orphan the cluster's data;
-  # stalling is retried by the director, and an operator can see why.
-  defp resolve_system_materializer(recovery_attempt, context) do
+  # Materializer names are cache hints, not durability authority. Only the
+  # recovered log/chunk stream owns the history needed to rebuild tag 0.
+  # A warm named cache saves replay work, but its recovered membership must
+  # still authorize it before recovery republishes that assignment.
+  defp recover_system_shard(recovery_attempt, recovery_version, context) do
     named = CoreState.system_materializers(context.prior_core_state)
 
     case Enum.min(available_named_members(named, recovery_attempt), fn -> nil end) do
       {worker_id, service} ->
-        {:ok, {worker_id, service}}
+        with {:ok, pid} <-
+               lock_and_start_materializer(
+                 service,
+                 RecoveryAttempt.system_shard_id(),
+                 recovery_version,
+                 recovery_attempt,
+                 context
+               ),
+             {:ok, layout, refs} <- read_system_metadata(pid, recovery_version, recovery_attempt, context) do
+          if get_in(refs, [RecoveryAttempt.system_shard_id(), worker_id]) == Atom.to_string(node(pid)) do
+            {:ok, {worker_id, node(pid), pid}, layout, refs, %{}}
+          else
+            rebuild_system_shard(recovery_attempt, recovery_version, context)
+          end
+        end
 
-      # A record that names NONE predates this field. That is not a lost
-      # cause: the locking phase has already locked every advertised
-      # materializer, and each one reports its own shard_id, so tag 0 can
-      # be READ from evidence rather than invented. Recovery adopts it,
-      # the persistence phase records it, and the next recovery resolves
-      # by name — the migration is one-time and self-healing.
-      nil when named == %{} ->
-        discover_system_materializer(recovery_attempt)
-
-      # A record that DOES name members is authoritative, and substituting
-      # a different worker is the fabrication FDB refuses: it locks
-      # exactly the servers its coordinated state names
-      # (TagPartitionedLogSystem.actor.cpp:2549-2585) and waits for a
-      # quorum of THOSE. So this stalls even with a healthy stranger
-      # available, and the reason carries the nodes to go looking on.
       nil ->
-        {:error, {:system_materializers_unavailable, named}}
+        # No pointer, unavailable named caches, and ambiguous legacy
+        # claimants all take the same controlled reconstruction. A random
+        # tag-0 claimant's reported position is not evidence of completeness.
+        rebuild_system_shard(recovery_attempt, recovery_version, context)
     end
   end
 
-  # The legacy path only, and it adopts exactly one UNAMBIGUOUS survivor.
-  #
-  # Recovery reads which locked worker claims the system shard; it never
-  # creates one. But it also refuses to CHOOSE. This path runs only on
-  # records written before the field existed — precisely the clusters
-  # whose recovery could invent a replacement when a tag-0 node missed
-  # the 2s roll call, so empty strays claiming shard 0 are the expected
-  # population here, not an exotic case. Picking among them by lowest
-  # RANDOM worker id would be a coin toss, and the winner is then written
-  # to the durable record and resolved by name forever: one wrong flip is
-  # permanent.
-  #
-  # So ambiguity stalls, naming the candidates. An operator can see the
-  # choice and make it; recovery cannot make it silently.
-  defp discover_system_materializer(recovery_attempt) do
-    case tag_zero_claimants(recovery_attempt) do
-      [{worker_id, service}] ->
-        Logger.info("Bootstrap record names no system materializers; adopting sole locked survivor #{worker_id}")
+  defp rebuild_system_shard(recovery_attempt, recovery_version, context) do
+    shard_tag = RecoveryAttempt.system_shard_id()
 
-        {:ok, {worker_id, service}}
+    with {:ok, {worker_id, node, pid} = assignment, service} <-
+           create_and_start_materializer(shard_tag, recovery_attempt, context, recovery_version) do
+      case read_system_metadata(pid, recovery_version, recovery_attempt, context) do
+        {:ok, layout, refs} ->
+          {:ok, assignment, layout, refs, Map.new([service])}
 
-      [] ->
-        {:error, :no_system_materializer_found}
-
-      several ->
-        {:error, {:ambiguous_system_materializer, Enum.map(several, fn {worker_id, _} -> worker_id end)}}
+        {:error, _} = error ->
+          remove_created_materializer(worker_id, node, recovery_attempt, context)
+          error
+      end
     end
   end
 
-  # Every locked worker that reports itself serving the system shard,
-  # ordered so the stall reason is stable across attempts.
-  defp tag_zero_claimants(recovery_attempt) do
-    system_shard = RecoveryAttempt.system_shard_id()
-
-    for {worker_id, info} <- Enum.sort(recovery_attempt.materializer_recovery_info_by_id),
-        Map.get(info, :shard_id) == system_shard,
-        %{status: {:up, ref}} <- [Map.get(recovery_attempt.transaction_services, worker_id)],
-        do: {worker_id, {:materializer, ref}}
+  defp read_system_metadata(pid, recovery_version, recovery_attempt, context) do
+    with :ok <-
+           wait_for_materializer_catchup(
+             pid,
+             {RecoveryAttempt.system_shard_id(), recovery_attempt.attempt},
+             recovery_version,
+             context
+           ),
+         {:ok, shard_layout} <- get_shard_layout(pid, recovery_version, context),
+         :ok <- reject_empty_layout(shard_layout),
+         {:ok, prior_refs} <- read_prior_refs(pid, recovery_version, context) do
+      {:ok, shard_layout, prior_refs}
+    end
   end
 
   # A named member counts only if this epoch actually locked it and it

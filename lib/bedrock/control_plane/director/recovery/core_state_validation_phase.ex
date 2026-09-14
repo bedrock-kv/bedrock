@@ -3,11 +3,11 @@ defmodule Bedrock.ControlPlane.Director.Recovery.CoreStateValidationPhase do
   Early recovery phase that type-checks the PRIOR CORE STATE before any
   later phase trusts it.
 
-  On a cold boot the record is genuinely durable — written by a previous
-  epoch, possibly by a previous version of this software, and read back
-  off object storage. (On a warm relaunch it is projected in memory from
-  this coordinator's own last layout and never round-trips storage, so
-  the check is cheap there and meaningful here.) Everything after this
+  The record is genuinely durable — written by a previous epoch, possibly
+  by a previous version of this software, and read back off object
+  storage when the director starts recovery. (Only without object
+  storage is it the coordinator's in-memory projection of its own last
+  layout, where the check is cheap.) Everything after this
   point locks and copies from the logs it names, so a type mismatch
   (integer tag ranges arriving as Version.t() binaries, say) would
   otherwise surface as an MVCC lookup failure far from its cause.

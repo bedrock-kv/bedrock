@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:13:11Z",
+  "description": "Establish a green baseline before injecting anything. If the harness is flaky with no chaos, every chaos result afterward is meaningless.\n\nBuilds on the peer cluster from bedrock-80f.\n\n- A workload driver running transactions against the peer cluster via Bedrock.Repo, with configurable concurrency and key distribution. Must live in compiled test/support, not a .exs file: peers inherit the primary's code paths but .exs is only evaluated in the primary VM, so a closure built in a test file has no module on the peer.\n- An external journal of every acked commit, written as it happens, so evidence survives a wedged or killed cluster.\n- The conservation workload: transfers across N accounts whose total is invariant at every snapshot version. Catches lost writes, torn transactions, and MVCC violations without needing any fault at all.\n- Oracles run against a fault-free run and must be green and repeatable before the next child starts.\n\nExit criterion: sustained workload against a 3-node peer cluster, all oracles green, repeatable across consecutive runs.",
+  "id": "bedrock-hve.5",
+  "labels": [],
+  "parent": "bedrock-hve",
+  "priority": 2,
+  "status": "open",
+  "title": "Workload driver and acked-commit journal, with zero faults",
+  "type": "task",
+  "updated_at": "2026-09-14T19:13:11Z"
+}

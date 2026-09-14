@@ -10,11 +10,15 @@
     {
       "text": "Scope decision from the user: the object store is assumed to be MinIO in the harness proper, and object storage is EXCLUDED from chaos coverage -- it is a stable substrate, not a fault target.\n\nConsequences:\n- No fault-injection against object-storage writers. The resource-cleanliness oracle drops its tie-in to bedrock-ck3 (scratch files from a killed object-storage writer); that stays a normal bug, not harness coverage.\n- bedrock-1qh (MinIO test fixture binds fixed port 9000) becomes an environment prerequisite for parallel harness runs rather than a chaos concern.\n\nFor THIS spike specifically: MinIO is not required. Object storage defaults to LocalFilesystem rooted under the node's own path (ClusterSupervisor.ensure_n/1 builds ObjectStorage.backend(LocalFilesystem, root: \u003cpath\u003e/n)), so a 3-peer cluster can form with zero external dependencies. Keeping it that way so the spike isolates its actual question -- peer cluster formation -- rather than entangling it with a shared object store.",
       "timestamp": "2026-09-14T18:59:51Z"
+    },
+    {
+      "text": "Scope refinement (user, 2026-09-14): object storage is NOT a fault target but IS a verification target. Quote: 'reported health is good, we'll need some tooling to check the consistency of the data on object storage.'\n\nThese are different claims and my earlier comment blurred them:\n- No fault injection against object-storage writers. Unchanged.\n- But an offline consistency checker ('fsck') that reads object storage INDEPENDENTLY of the running cluster becomes a first-class harness oracle, not an optional extra. A self-reported health verdict is exactly the signal a chaos harness cannot trust -- if the only thing telling us the data is fine is the same system we are busy killing, the run proves nothing.\n\nCandidate assertions for that checker, to be confirmed against the actual layout: referential integrity (every chunk referenced by a manifest exists), shard key-range coverage (no gaps, no overlaps), version/durability monotonicity, write atomicity (no torn/partial objects visible), and strongest of all -- replay object storage from scratch and diff the reconstructed keyspace against what the live cluster serves.\n\nStill out of scope for THIS spike. Recording it here so the epic picks it up.",
+      "timestamp": "2026-09-14T19:03:54Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Spike: can :peer nodes form a real bedrock cluster and commit?",
   "type": "task",
-  "updated_at": "2026-09-14T18:59:51Z"
+  "updated_at": "2026-09-14T19:03:54Z"
 }

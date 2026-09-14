@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:24:53Z",
+  "description": "## Failure\n\n`ClusterSupervisor.init/1` enforces the durability profile against NODE config. `Durability.Profile.desired_parameter/4` falls back to `durability: [desired_logs: 3, desired_replication_factor: 3]` in node config, as guides/durability-profile.md and durability-foundation.md instruct. But a fresh cluster's parameters come from `Coordinator.Server.default_parameters/1`, which hardcodes `desired_logs: 1, desired_replication_factor: 1` and never reads that setting.\n\nObserved on main in a 3-node cluster with `durability_mode: :strict` + `durability: [desired_replication_factor: 3, desired_logs: 3]`: every node started (strict check `:ok`), the cluster ran with one log and RF 1, and `Bedrock.Durability.profile(Cluster)` (which prefers the cluster config) reported `:failed` — with nothing acting on it. Same code on origin/develop.\n\nSo strict mode's promise (\"fails fast when requirements are not met\") is vacuous: the documented configuration satisfies the check without producing the durability it checks for, and there is no configuration path to get desired_logs \u003e 1 on a fresh cluster at all.\n\n## Expected\n\nThe value the guardrail validates must be the value the cluster runs with. Either the fresh-cluster parameters are seeded from the same node-config source the profile reads, or the profile stops accepting a source the cluster ignores (and the guides stop recommending it). Related: bedrock-q67.50 (config migration to \\xFF/system/config), bedrock-q67.51 (no operator path to change a committed parameter) — this ticket is only about the fresh-cluster seed and the guardrail's honesty.",
+  "id": "bedrock-3t9",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "[BUG] Durability guardrail passes on node-config desired_logs/desired_replication_factor that the coordinator never applies",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:24:53Z"
+}

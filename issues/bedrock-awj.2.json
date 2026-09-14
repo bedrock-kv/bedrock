@@ -2,14 +2,15 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-14T16:37:38Z",
   "created": "2026-09-14T16:17:07Z",
   "description": "GH #319 part 2. TSLValidationPhase.execute/2 (tsl_validation_phase.ex:55-68) matches %{prior_core_state: %{} = core_state} for ANY non-nil map (Elixir's %{} pattern matches all maps, not just empty ones) and always transitions to LockingPhase on successful validation, never consulting Bedrock.ControlPlane.Config.CoreState.fresh?/1 (core_state.ex:132-140), which already exists and already correctly treats logs: %{} (and nil) as fresh. MaterializerBootstrapPhase already uses CoreState.fresh?/1 this way (materializer_bootstrap_phase.ex:89) -- TSLValidationPhase is the outlier. Downstream, LogRecoveryPlanningPhase computes zero old log ids for a fresh bootstrap and stalls with :unable_to_meet_log_quorum since 0 \u003e 0/2 is false. Fix: after successful type validation, route to InitializationPhase when CoreState.fresh?(core_state) is true, else LockingPhase (unchanged). Existing tsl_validation_phase_test.exs 'transitions to LockingPhase when TSL validation succeeds' test currently asserts this exact bug (passes logs: %{} and expects LockingPhase) and must be corrected; add a case proving non-empty prior logs still route to LockingPhase. TDD: fix the test's wrong expectation and add the missing non-fresh case first, watch them fail against current code, then fix the phase.",
   "id": "bedrock-awj.2",
   "labels": [],
   "parent": "bedrock-awj",
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "TSLValidationPhase routes a fresh empty-log core state to LockingPhase instead of InitializationPhase",
   "type": "bug",
-  "updated_at": "2026-09-14T16:23:57Z"
+  "updated_at": "2026-09-14T16:37:38Z"
 }

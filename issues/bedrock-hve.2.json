@@ -4,7 +4,8 @@
     "bedrock-hve.1"
   ],
   "blocks": [
-    "bedrock-hve.3"
+    "bedrock-hve.3",
+    "bedrock-hve.4"
   ],
   "created": "2026-09-14T19:12:35Z",
   "description": "Extends fsck from 'each chunk is well-formed' to 'each chunk holds what it should'.\n\nThe authoritative shard layout is not in object storage. It lives in the keyspace family \\xFF/system/shard_keys/\u003cend_key\u003e -\u003e {tag, start_key}, which is itself materialized from chunks. So fsck has a bootstrap step: replay shard 0 to recover the shard map, then validate everything else against it.\n\nChecks:\n- The recovered shard_keys/ family is gapless and non-overlapping from \"\" through end.\n- Every mutation in every slice falls inside the key range of the shard whose prefix it was stored under. This is the real shard-coverage check for the shard-centric storage work (bedrock-q67).\n- Shard tags referenced in the layout have corresponding c/ prefixes, and vice versa.\n\nReuse the SystemKeys reader for decoding shard_keys entries and Transaction.mutations/1 for slice contents. Depends on the chunk decoding from the first fsck slice.",
@@ -15,5 +16,5 @@
   "status": "open",
   "title": "fsck: shard layout recovery and key-range containment",
   "type": "task",
-  "updated_at": "2026-09-14T19:13:17Z"
+  "updated_at": "2026-09-14T19:13:18Z"
 }

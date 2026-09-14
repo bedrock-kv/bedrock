@@ -14,13 +14,13 @@ minio_available? =
 Application.put_env(:bedrock, :minio_available, minio_available?)
 System.put_env("BEDROCK_MINIO_AVAILABLE", if(minio_available?, do: "1", else: "0"))
 
-distributed_tag? = fn tag ->
-  tag == "distributed" or String.starts_with?(tag, "distributed:")
+matches_tag? = fn tag, name ->
+  tag == name or String.starts_with?(tag, name <> ":")
 end
 
 argv = System.argv()
 
-distributed_requested? =
+tag_requested? = fn name ->
   argv
   |> Enum.with_index()
   |> Enum.any?(fn {arg, index} ->
@@ -28,26 +28,30 @@ distributed_requested? =
       arg in ["--include", "--only"] ->
         case Enum.at(argv, index + 1) do
           nil -> false
-          tag -> distributed_tag?.(tag)
+          tag -> matches_tag?.(tag, name)
         end
 
       String.starts_with?(arg, "--include=") ->
         arg
         |> String.replace_prefix("--include=", "")
-        |> distributed_tag?.()
+        |> matches_tag?.(name)
 
       String.starts_with?(arg, "--only=") ->
         arg
         |> String.replace_prefix("--only=", "")
-        |> distributed_tag?.()
+        |> matches_tag?.(name)
 
       true ->
         false
     end
   end)
+end
 
 distributed_enabled? =
-  System.get_env("BEDROCK_INCLUDE_DISTRIBUTED") in ["1", "true", "TRUE"] or distributed_requested?
+  System.get_env("BEDROCK_INCLUDE_DISTRIBUTED") in ["1", "true", "TRUE"] or tag_requested?.("distributed")
+
+chaos_enabled? =
+  System.get_env("BEDROCK_CHAOS") in ["1", "true", "TRUE"] or tag_requested?.("chaos")
 
 excludes =
   []
@@ -57,6 +61,9 @@ excludes =
   |> then(fn excludes ->
     if distributed_enabled?, do: excludes, else: [:distributed | excludes]
   end)
+  |> then(fn excludes ->
+    if chaos_enabled?, do: excludes, else: [:chaos | excludes]
+  end)
 
 if !minio_available? do
   IO.puts("MinIO not available - tests tagged :s3 will be skipped")
@@ -64,6 +71,10 @@ end
 
 if !distributed_enabled? do
   IO.puts("Distributed tests disabled - set BEDROCK_INCLUDE_DISTRIBUTED=1 or pass --include distributed")
+end
+
+if !chaos_enabled? do
+  IO.puts("Chaos tests disabled - set BEDROCK_CHAOS=1 or pass --include chaos")
 end
 
 ExUnit.start(exclude: excludes)

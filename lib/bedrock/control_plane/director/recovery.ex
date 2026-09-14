@@ -82,8 +82,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   @spec setup_for_subsequent_recovery(State.t()) :: State.t()
   def setup_for_subsequent_recovery(t) do
     Map.update!(t, :recovery_attempt, fn recovery_attempt ->
+      # The attempt struct is reused, so the system transaction the last
+      # attempt accumulated has to be dropped before the phases run again.
       %{
-        recovery_attempt
+        RecoveryAttempt.reset_pending_tx(recovery_attempt)
         | attempt: recovery_attempt.attempt + 1
       }
     end)

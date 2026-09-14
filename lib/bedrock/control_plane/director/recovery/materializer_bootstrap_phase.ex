@@ -22,6 +22,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   layout (tag 0 for system keys, tag 1 for user keys) and one created
   materializer for tag 0.
 
+  ## What it writes
+
+  Both durable families are this phase's to write, because this is where
+  they are decided: the seeded layout under `shard_keys/` (fresh cluster
+  only — an existing cluster's layout was read, and boundaries never
+  change without splits) and the membership it decided under
+  `materializers/`, as a diff against the family it read. The mutations
+  go into the attempt's `pending_tx`, which the persistence phase commits
+  once at the end of recovery.
+
   ## What it deliberately does not do
 
   The layout names data tags, and the locking phase locked their
@@ -60,9 +70,12 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   alias Bedrock.ControlPlane.Director.Recovery.CommitProxyStartupPhase
   alias Bedrock.DataPlane.Materializer
   alias Bedrock.DataPlane.ShardRouter
+  alias Bedrock.Internal.TransactionBuilder.Tx
   alias Bedrock.Service.Foreman
   alias Bedrock.Service.Worker
+  alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Reader
+  alias Bedrock.SystemKeys.Values
 
   require Logger
 
@@ -119,15 +132,24 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
     # data-plane coverage it has no use for (bedrock-q67.21.13).
     case create_and_start_materializer(RecoveryAttempt.system_shard_id(), recovery_attempt, context) do
       {:ok, {worker_id, node, _pid}, {worker_id, descriptor}} ->
+        seated = seated_refs(worker_id, node)
+
         updated_attempt =
           recovery_attempt
           |> Map.put(:shard_layout, shard_layout)
-          |> Map.put(:shard_materializers, seated_refs(worker_id, node))
-          # Provenance for the persistence phase: this recovery INVENTED
-          # the layout (fresh cluster), so it seeds the durable families;
-          # the empty prior means every assignment writes.
-          |> Map.put(:seeded_layout?, true)
+          |> Map.put(:shard_materializers, seated)
+          # The empty prior is the diff base for the membership write and
+          # the routing seed both: a fresh cluster has committed nothing,
+          # so every assignment is new.
           |> Map.put(:prior_materializer_refs, %{})
+          # This recovery INVENTED the layout, so it seeds the durable
+          # family too — the one path that writes shard_keys.
+          |> Map.put(
+            :pending_tx,
+            recovery_attempt.pending_tx
+            |> put_shard_keys(shard_layout)
+            |> put_materializer_members(seated, %{})
+          )
           # The creation must reach transaction_services: the layout and
           # the materializers keyspace are built from it, and a worker the
           # committed state does not name retires itself.
@@ -146,7 +168,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # orchestrates with a live pid (lock, unlock, catchup), but the attempt
   # carries what recovery SEATED exactly as every reader consumes it —
   # the family's MEMBER shape, %{worker_id => node}, all strings. The
-  # persistence writer embeds this map verbatim, so what recovery
+  # membership write below embeds this map verbatim, so what recovery
   # decided and what the keyspace says are the same map read twice; ghost
   # pruning takes its worker ids from it directly. It is member-SHAPED
   # for one member, because the family is a set and every reader treats
@@ -154,6 +176,51 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # reader needs.
   @spec seated_refs(Worker.id(), node()) :: %{Bedrock.range_tag() => %{Worker.id() => String.t()}}
   defp seated_refs(worker_id, node), do: %{RecoveryAttempt.system_shard_id() => %{worker_id => Atom.to_string(node)}}
+
+  # Creates shard_key(end_key) -> {tag, start_key} entries (ceiling
+  # search) for a layout this recovery SEEDED — FDB's seedShardServers
+  # analogue, and the only path that writes the family. An existing
+  # cluster's layout was READ from it, and boundaries never change
+  # without splits, so there is nothing to write; the family is durable
+  # across epochs. The seed writes into a definitionally empty family (a
+  # fresh cluster has no committed data), so no clear is needed.
+  @doc false
+  @spec put_shard_keys(Tx.t(), RecoveryAttempt.shard_layout()) :: Tx.t()
+  def put_shard_keys(tx, shard_layout) do
+    Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
+      Tx.set(tx, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key))
+    end)
+  end
+
+  # Creates materializer_key(tag, worker_id) -> node entries as a DIFF
+  # against the prior family: only assignments this recovery changed are
+  # written; unchanged entries are left in place, and entries for tags
+  # this recovery did not decide are not recovery's to clean —
+  # read-and-heal means stale reconciliation belongs to the distributor
+  # (bedrock-q67.21.4). On the fresh path the prior is empty, so every
+  # assignment writes: the safe direction. The attempt carries refs in
+  # the family's member shape, so keyspace and routing-snapshot seed
+  # remain one map read twice.
+  #
+  # The family is a SET, so writing one member never implies removing
+  # another: members recovery never touched (other replicas of the same
+  # shard) keep their keys.
+  @doc false
+  @spec put_materializer_members(
+          Tx.t(),
+          %{Bedrock.range_tag() => %{Worker.id() => String.t()}},
+          %{Bedrock.range_tag() => %{Worker.id() => String.t()}}
+        ) :: Tx.t()
+  def put_materializer_members(tx, members_by_tag, prior) do
+    for {tag, members} <- members_by_tag, {worker_id, node} <- members, reduce: tx do
+      tx ->
+        if prior |> Map.get(tag, %{}) |> Map.get(worker_id) == node do
+          tx
+        else
+          Tx.set(tx, SystemKeys.materializer_key(tag, worker_id), Values.encode_materializer_node(node))
+        end
+    end
+  end
 
   # Create a materializer for a specific shard and start it pulling.
   # Returns the {worker_id, node, pid} assignment (the worker id rides the
@@ -249,16 +316,18 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
       # after every recovery regardless (bedrock-q67.21.13). The system
       # shard needs no synthetic services entry: it is looked up, never
       # created, so it is already there from the locking phase.
+      seated = seated_refs(system_worker_id, node(materializer_pid))
+
       updated_attempt =
         recovery_attempt
         |> Map.put(:shard_layout, shard_layout)
-        |> Map.put(:shard_materializers, seated_refs(system_worker_id, node(materializer_pid)))
-        # Provenance for the persistence phase: the layout was READ from
-        # the durable family (nothing to rewrite), and the prior refs are
-        # the diff base for materializer writes.
-        |> Map.put(:seeded_layout?, false)
+        |> Map.put(:shard_materializers, seated)
         |> Map.put(:prior_materializer_refs, prior_refs)
         |> Map.put(:resolvers, resolver_descriptors_for_layout(shard_layout))
+        # The layout was READ from the durable family, so there is nothing
+        # to rewrite under shard_keys; only the membership this recovery
+        # decided differently from the prior family is written.
+        |> Map.put(:pending_tx, put_materializer_members(recovery_attempt.pending_tx, seated, prior_refs))
 
       {updated_attempt, CommitProxyStartupPhase}
     else
@@ -414,7 +483,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   end
 
   defp default_read_prior_refs(materializer_pid, read_version) do
-    prefix = Bedrock.SystemKeys.materializers_prefix()
+    prefix = SystemKeys.materializers_prefix()
     {_range_start, range_end} = Bedrock.KeyRange.from_prefix(prefix)
 
     range_read_fn = fn start_key ->
@@ -578,10 +647,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   # degraded layout — it is a WRONG one (missing shards read as holes in
   # the keyspace), so the continuation must be drained, never dropped.
   defp default_get_shard_layout(materializer_pid, read_version) do
-    # The same bound construction the writer uses (persistence phase's
-    # clear_prefix), so reader and writer ranges are definitionally
-    # identical rather than two hand-rolled sentinels kept in agreement.
-    {_range_start, range_end} = Bedrock.KeyRange.from_prefix(Bedrock.SystemKeys.shard_keys_prefix())
+    # The same bound construction the writer uses (`put_shard_keys`
+    # above), so reader and writer ranges are definitionally identical
+    # rather than two hand-rolled sentinels kept in agreement.
+    {_range_start, range_end} = Bedrock.KeyRange.from_prefix(SystemKeys.shard_keys_prefix())
 
     range_read_fn = fn start_key ->
       Materializer.get_range(materializer_pid, start_key, range_end, read_version, limit: 1000)
@@ -600,7 +669,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
   @spec read_all_shard_entries(Reader.range_read_fn()) ::
           {:ok, [{Bedrock.key(), binary()}]} | {:error, {:shard_layout_query_failed, term()}}
   def read_all_shard_entries(range_read_fn),
-    do: Reader.read_family(range_read_fn, Bedrock.SystemKeys.shard_keys_prefix(), :shard_layout_query_failed)
+    do: Reader.read_family(range_read_fn, SystemKeys.shard_keys_prefix(), :shard_layout_query_failed)
 
   @doc false
   @spec shard_layout_from_entries([{Bedrock.key(), binary()}]) ::

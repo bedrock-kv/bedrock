@@ -1,13 +1,42 @@
 defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   @moduledoc """
-  Persists cluster configuration through a complete system transaction.
+  Commits the system transaction the recovery phases accumulated, then writes
+  the cluster bootstrap record to object storage.
 
-  Constructs a system transaction containing the full cluster configuration and
-  submits it through the entire data plane pipeline. This simultaneously persists
-  the new configuration and validates that all transaction components work correctly.
+  The transaction is not built here. Each phase contributes its own mutations
+  to `recovery_attempt.pending_tx` where it decides them — the materializer
+  bootstrap phase seeds the shard layout it invented and writes the
+  membership it decided — and this phase submits the one accumulated
+  transaction through the entire data plane pipeline. That simultaneously
+  persists the new state and validates that all transaction components work
+  correctly. A phase with keyspace writes to make adds them to the Tx; it
+  never leaves provenance behind for this phase to rebuild them from.
 
-  Stores configuration in both monolithic and decomposed formats. Monolithic keys
-  support coordinator handoff while decomposed keys allow targeted component access.
+  ## What recovery commits
+
+  Every key in the transaction has a named purpose: `shard_keys/` feeds
+  both RoutingData and the next recovery's materializer bootstrap, and
+  `materializers/` refs feed the client-facing routing projection (FDB's
+  serverList analogue — runtime hints, never recovery input) and worker
+  rejoin validation. Both families are contributed by the phase that
+  decides them, the materializer bootstrap. Nothing else is written:
+  config and policy travel via the object-storage cluster bootstrap, which
+  the coordinator actually reads, and services are rebuilt each recovery
+  from foreman discovery. Families return to the keyspace when their
+  readers do (bedrock-q67.9, q67.25) — and only then, by the phase that
+  owns them adding to this same Tx.
+
+  FDB does keep a keyspace copy of its log set (`\\xff/logs`,
+  `SystemData.cpp:1171`, written by the recovery transaction at
+  `ClusterRecovery.actor.cpp:1728`), so the deleted layout/logs family was
+  its analogue — but FDB's copy has three readers we have no equivalent
+  of: recovery's stale-master fence
+  (`ClusterRecovery.actor.cpp:770-801`), exclusion safety
+  (`ManagementAPI.actor.cpp:2394`), and the in-progress-exclusion
+  special-key module (`SpecialKeySpace.actor.cpp:1294`). Ours had none,
+  and the tag mapping it held survives in the cluster bootstrap the
+  coordinator actually loads. The family comes back when one of those
+  readers does (bedrock-q67.21.10).
 
   If the system transaction fails, the director exits immediately rather than
   retrying. System transaction failure indicates fundamental problems that require
@@ -28,9 +57,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.Internal.TransactionBuilder.Tx
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
-  alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.ClusterBootstrap
-  alias Bedrock.SystemKeys.Values
 
   @impl true
   def execute(recovery_attempt, context) do
@@ -38,7 +65,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
 
     transaction_system_layout = recovery_attempt.transaction_system_layout
 
-    system_transaction = build_system_transaction(recovery_attempt)
+    system_transaction = Tx.commit(recovery_attempt.pending_tx, nil)
 
     case submit_system_transaction(system_transaction, recovery_attempt.proxies, recovery_attempt.epoch, context) do
       {:ok, _version, _sequence} ->
@@ -210,101 +237,6 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
       # The shard_tags field is kept for backward compatibility but is always empty.
       %{id: log_id, otp_ref: nil, shard_tags: []}
     end)
-  end
-
-  @spec build_system_transaction(RecoveryAttempt.t()) :: Transaction.encoded()
-  defp build_system_transaction(recovery_attempt) do
-    tx = Tx.new()
-    tx = build_readable_keys(tx, recovery_attempt)
-
-    Tx.commit(tx, nil)
-  end
-
-  # Every key written here has a named purpose: shard_keys/ feeds both
-  # RoutingData and the next recovery's materializer bootstrap, and
-  # materializers/ refs feed the client-facing routing projection (FDB's
-  # serverList analogue - runtime hints, never recovery input) and worker
-  # rejoin validation. Nothing else is written (config and policy travel
-  # via the object-storage cluster bootstrap, which the coordinator
-  # actually reads; services are rebuilt each recovery from foreman
-  # discovery). Families return to the keyspace when their readers do
-  # (bedrock-q67.9, q67.25) - and only then. FDB does keep a keyspace
-  # copy of its log set (`\xff/logs`, SystemData.cpp:1171, written by the
-  # recovery transaction at ClusterRecovery.actor.cpp:1728), so the
-  # deleted layout/logs family was its analogue - but FDB's copy has
-  # three readers we have no equivalent of: recovery's stale-master
-  # fence (ClusterRecovery.actor.cpp:770-801), exclusion safety
-  # (ManagementAPI.actor.cpp:2394), and the in-progress-exclusion
-  # special-key module (SpecialKeySpace.actor.cpp:1294). Ours had none,
-  # and the tag mapping it held survives in the cluster bootstrap the
-  # coordinator actually loads. The family comes back when one of those
-  # readers does (bedrock-q67.21.10).
-  @spec build_readable_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
-  defp build_readable_keys(tx, recovery_attempt) do
-    # The mapping families are durable, distributor-era state: recovery
-    # reads and heals, never blanket-clears (bedrock-q67.21.2).
-    tx
-    |> build_shard_keys(recovery_attempt)
-    |> build_materializer_keys(recovery_attempt)
-  end
-
-  # Creates materializer_key(tag, worker_id) -> node entries as a DIFF
-  # against the prior family (read by bootstrap): only assignments this
-  # recovery changed are written; unchanged entries are left in place,
-  # and entries for tags outside this layout are not recovery's to clean
-  # — read-and-heal means stale reconciliation belongs to the
-  # distributor (bedrock-q67.21.4). A nil prior means the family was not
-  # read (fresh cluster, legacy path): every assignment writes, the safe
-  # direction. The attempt carries refs in the family's member shape, so
-  # keyspace and routing-snapshot seed remain one map read twice. Gated
-  # on the same INPUT as before: shard_materializers absent/empty means
-  # shard management is not active.
-  @spec build_materializer_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
-  defp build_materializer_keys(tx, recovery_attempt) do
-    case Map.get(recovery_attempt, :shard_materializers) do
-      nil ->
-        tx
-
-      materializers when map_size(materializers) == 0 ->
-        tx
-
-      materializers ->
-        prior = Map.get(recovery_attempt, :prior_materializer_refs) || %{}
-
-        # Recovery writes the members it decided on and nothing else: an
-        # entry already naming this worker on this node is left alone,
-        # and members recovery never touched (other replicas of the same
-        # shard) keep their keys — the family is a set, so writing one
-        # member never implies removing another.
-        for {tag, members} <- materializers, {worker_id, node} <- members, reduce: tx do
-          tx ->
-            if prior |> Map.get(tag, %{}) |> Map.get(worker_id) == node do
-              tx
-            else
-              Tx.set(tx, SystemKeys.materializer_key(tag, worker_id), Values.encode_materializer_node(node))
-            end
-        end
-    end
-  end
-
-  # Creates shard_key(end_key) -> {tag, start_key} entries (ceiling
-  # search) ONLY when this recovery seeded the layout (fresh cluster —
-  # FDB's seedShardServers analogue). An existing cluster's layout was
-  # READ from the family, and boundaries never change without splits, so
-  # there is nothing to write; the family is durable across epochs. The
-  # seed writes into a definitionally empty family (a fresh cluster has
-  # no committed data), so no clear is needed.
-  @spec build_shard_keys(Tx.t(), RecoveryAttempt.t()) :: Tx.t()
-  defp build_shard_keys(tx, recovery_attempt) do
-    shard_layout = recovery_attempt.shard_layout
-
-    if Map.get(recovery_attempt, :seeded_layout?, false) and is_map(shard_layout) and map_size(shard_layout) > 0 do
-      Enum.reduce(shard_layout, tx, fn {end_key, {tag, start_key}}, tx ->
-        Tx.set(tx, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key))
-      end)
-    else
-      tx
-    end
   end
 
   @spec submit_system_transaction(Transaction.encoded(), [pid()], Bedrock.epoch(), map()) ::

@@ -2,31 +2,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Materializer.Olivine.Index
-  alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
-  alias Bedrock.DataPlane.Materializer.Olivine.Index.Tree
+  alias Bedrock.Test.Materializer.Olivine.IndexTestHelpers
 
   # Helper to create a locator (8-byte binary)
   defp locator(n), do: <<n::unsigned-big-64>>
 
   # Helper to build an index with pages
   defp build_index_with_pages(page_tuples) do
-    # page_tuples is a list of {page_id, kvs, next_id}
-    page_map =
-      Enum.reduce(page_tuples, %{}, fn {page_id, kvs, next_id}, acc ->
-        page = Page.new(page_id, kvs)
-        Map.put(acc, page_id, {page, next_id})
-      end)
-
-    tree =
-      Enum.reduce(page_tuples, :gb_trees.empty(), fn {page_id, kvs, _next_id}, tree_acc ->
-        page = Page.new(page_id, kvs)
-        Tree.add_page_to_tree(tree_acc, page)
-      end)
-
-    %Index{
-      tree: tree,
-      page_map: page_map
-    }
+    # page_tuples is a list of {page_id, kvs, next_id}; the chain implied by
+    # next_id already matches key order, so the shared helper's rebuild is a no-op.
+    page_specs = Enum.map(page_tuples, fn {page_id, kvs, _next_id} -> {page_id, kvs} end)
+    {index, _allocator} = IndexTestHelpers.build_index(page_specs)
+    index
   end
 
   describe "delete_pages/2" do

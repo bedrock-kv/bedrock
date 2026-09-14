@@ -7,6 +7,7 @@ defmodule Bedrock.Cluster.Link.Discovery do
 
   alias Bedrock.Cluster.Link.State
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.Service.Foreman
 
   @doc """
   Find the leader coordinator. This implements enhanced two-phase discovery:
@@ -196,16 +197,12 @@ defmodule Bedrock.Cluster.Link.Discovery do
   defp get_running_services_from_foreman(t) do
     # Only query Foreman if we have storage or log capabilities
     if :materializer in t.capabilities or :log in t.capabilities do
-      foreman_ref = t.cluster.otp_name(:foreman)
-
-      case GenServer.call(foreman_ref, :get_all_running_services, 1000) do
-        {:ok, services} when is_list(services) -> services
-        _ -> []
+      case Foreman.get_all_running_services(t.cluster.otp_name(:foreman), timeout: 1_000) do
+        {:ok, services} -> services
+        {:error, _} -> []
       end
     else
       []
     end
-  rescue
-    _ -> []
   end
 end

@@ -75,4 +75,25 @@ defmodule Bedrock.Cluster.Link.DiscoveryTest do
 
   # Note: try_direct_coordinator_call/2 would require proper mocking setup
   # Integration tests would be more appropriate for testing this functionality
+
+  describe "change_coordinator/2 registering capabilities against a not-yet-running Foreman" do
+    # On cold boot, ClusterSupervisor can start Link before the
+    # local Foreman is registered. A capability-bearing Link then reaches
+    # into Foreman for its running-services inventory as part of
+    # registering with the coordinator, so that call must survive Foreman
+    # not existing yet rather than crashing the Link.
+    test "does not crash when the node has a capability but Foreman isn't registered" do
+      state = %State{
+        node: :test_node,
+        cluster: DefaultTestCluster,
+        known_coordinator: :unavailable,
+        capabilities: [:log]
+      }
+
+      # DefaultTestCluster.otp_name(:foreman) is :test_foreman, deliberately
+      # left unregistered here.
+      assert %State{known_coordinator: :some_coordinator} =
+               Discovery.change_coordinator(state, :some_coordinator)
+    end
+  end
 end

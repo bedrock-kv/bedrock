@@ -12,6 +12,7 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
   defmodule TestCluster do
     @moduledoc false
     def name, do: "test_cluster"
+    def node_config, do: []
     def otp_name(:coordinator), do: :test_coordinator
     def otp_name(:sup), do: :test_sup
     def otp_name(component), do: :"test_#{component}"

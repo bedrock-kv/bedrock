@@ -23,6 +23,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.Durability.Profile
 
   require Logger
 
@@ -50,8 +51,27 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
 
   def try_to_start_director(t), do: t
 
+  # A fresh cluster: no bootstrap record, so nothing has been configured.
+  # FDB waits here for an operator's `configure new`; Bedrock has no such
+  # write path, so the node config is the operator's say. Sizing is the value
+  # the startup durability check validated, taken from the node config of
+  # the coordinator leading this first recovery — so `durability:` must be
+  # identical on every coordinator node — and is persisted with the first
+  # bootstrap record. Evaluated on the keyword list, not the cluster module:
+  # a module target would fetch_config from this very coordinator.
   @spec maybe_put_default_config(State.t()) :: State.t()
-  defp maybe_put_default_config(%{config: nil} = t), do: put_config(t, Config.new(Bedrock.Raft.known_peers(t.raft)))
+  defp maybe_put_default_config(%{config: nil} = t) do
+    config = Config.new(Bedrock.Raft.known_peers(t.raft))
+    %{checks: checks} = Profile.evaluate(t.cluster.node_config())
+
+    parameters = %{
+      config.parameters
+      | desired_logs: checks.desired_logs.actual,
+        desired_replication_factor: checks.desired_replication_factor.actual
+    }
+
+    put_config(t, %{config | parameters: parameters})
+  end
 
   defp maybe_put_default_config(t), do: t
 

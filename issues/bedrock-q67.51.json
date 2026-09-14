@@ -7,9 +7,15 @@
   "id": "bedrock-q67.51",
   "labels": [],
   "parent": "bedrock-q67",
+  "comments": [
+    {
+      "text": "Residual from bedrock-3t9 (PR #323): a fresh cluster now seeds desired_logs/desired_replication_factor from node config (durability: [...]) and persists them in the first bootstrap. After that, editing node config does NOT resize the cluster, but ClusterSupervisor's startup durability check still validates node config — so raising node config on a 1-log cluster passes strict mode while it runs 1 log, and mismatched node configs across coordinators pass their own checks. Closing that gap needs either this ticket's operator write path or a startup check against the committed parameters.",
+      "timestamp": "2026-09-14T19:47:08Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "No operator path to change a committed cluster config parameter",
   "type": "task",
-  "updated_at": "2026-09-06T01:28:44Z"
+  "updated_at": "2026-09-14T19:47:08Z"
 }

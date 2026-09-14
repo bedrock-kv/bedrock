@@ -11,19 +11,27 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   Provides both defensive validation (returns errors) and assertive validation (raises).
   """
 
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @doc """
-  Validates TSL type safety defensively, returning error tuples.
+  Validates a transaction system layout's type safety defensively, returning
+  error tuples.
 
   Use this for validating old/recovered data where corruption should be handled gracefully.
   """
-  @spec validate_type_safety(TransactionSystemLayout.t()) :: :ok | {:error, term()}
-  def validate_type_safety(%{} = tsl) do
-    with :ok <- validate_logs(Map.get(tsl, :logs)) do
-      validate_resolvers(Map.get(tsl, :resolvers))
-    end
-  end
+  @spec validate_layout_type_safety(TransactionSystemLayout.t()) :: :ok | {:error, term()}
+  def validate_layout_type_safety(%{} = tsl), do: validate_fields(tsl)
+
+  @doc """
+  Validates a durable prior core state's type safety defensively, returning
+  error tuples.
+
+  A `CoreState.t()` carries only `:logs` (no `:resolvers`), so the resolvers
+  check is vacuous against it — see `validate_resolvers/1`.
+  """
+  @spec validate_core_state_type_safety(CoreState.t()) :: :ok | {:error, term()}
+  def validate_core_state_type_safety(%{} = core_state), do: validate_fields(core_state)
 
   @doc """
   Validates TSL type safety assertively, raising on errors.
@@ -32,7 +40,7 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   """
   @spec assert_type_safety!(TransactionSystemLayout.t()) :: TransactionSystemLayout.t()
   def assert_type_safety!(%{} = tsl) do
-    case validate_type_safety(tsl) do
+    case validate_layout_type_safety(tsl) do
       :ok ->
         tsl
 
@@ -43,6 +51,12 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
         This indicates a programmer error - new TSL data should have correct types.
         TransactionSystemLayout: #{inspect(tsl, limit: :infinity)}
         """
+    end
+  end
+
+  defp validate_fields(%{} = data) do
+    with :ok <- validate_logs(Map.get(data, :logs)) do
+      validate_resolvers(Map.get(data, :resolvers))
     end
   end
 

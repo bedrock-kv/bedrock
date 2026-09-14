@@ -6,16 +6,34 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
   alias Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase
 
   describe "execute/2" do
-    test "transitions to LockingPhase when TSL validation succeeds" do
+    test "transitions to InitializationPhase when prior core state names no logs (fresh cluster)" do
       recovery_attempt = %RecoveryAttempt{}
 
-      # Valid TSL with correct types
-      valid_tsl = %{
+      # Valid types, but no prior logs to recover from -- the durable
+      # bootstrap of a cluster that has never completed a recovery.
+      fresh_core_state = %{
         logs: %{},
         resolvers: []
       }
 
-      context = %{prior_core_state: valid_tsl}
+      context = %{prior_core_state: fresh_core_state}
+
+      {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
+
+      assert result_attempt == recovery_attempt
+      assert next_phase == InitializationPhase
+    end
+
+    test "transitions to LockingPhase when prior core state names prior logs (existing cluster)" do
+      recovery_attempt = %RecoveryAttempt{}
+
+      # Valid types, and prior logs to lock and recover from.
+      existing_core_state = %{
+        logs: %{"log_1" => [1, 2]},
+        resolvers: []
+      }
+
+      context = %{prior_core_state: existing_core_state}
 
       {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
 

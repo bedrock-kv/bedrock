@@ -32,14 +32,20 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   any processing that depends on type-correct TSL fields. This provides a clear
   failure point with detailed diagnostics.
 
-  Transitions to the next appropriate recovery phase on successful validation.
+  On successful validation, transitions to `InitializationPhase` when the
+  prior core state is fresh (`CoreState.fresh?/1` — absent, or naming no
+  logs) and to `LockingPhase` otherwise, mirroring the same freshness
+  check `MaterializerBootstrapPhase` makes for the system shard.
   """
 
   use Bedrock.ControlPlane.Director.Recovery.RecoveryPhase
 
   import Bedrock.ControlPlane.Director.Recovery.Telemetry
 
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TSLTypeValidator
+  alias Bedrock.ControlPlane.Director.Recovery.InitializationPhase
+  alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
 
   @doc """
   Validates the prior core state's type safety.
@@ -53,10 +59,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   """
   @impl true
   def execute(%RecoveryAttempt{} = recovery_attempt, %{prior_core_state: %{} = core_state}) do
-    case TSLTypeValidator.validate_type_safety(core_state) do
+    case TSLTypeValidator.validate_core_state_type_safety(core_state) do
       :ok ->
         trace_recovery_tsl_validation_success()
-        {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.LockingPhase}
+        {recovery_attempt, next_phase(core_state)}
 
       {:error, validation_error} ->
         trace_recovery_tsl_validation_failed(core_state, validation_error)
@@ -64,6 +70,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
     end
   end
 
-  def execute(recovery_attempt, _context),
-    do: {recovery_attempt, Bedrock.ControlPlane.Director.Recovery.InitializationPhase}
+  def execute(recovery_attempt, _context), do: {recovery_attempt, InitializationPhase}
+
+  # A prior core state naming no logs (or absent entirely) has no prior
+  # epoch's data to recover: initialization seeds a layout rather than
+  # locking and copying from logs that don't exist.
+  defp next_phase(core_state) do
+    if CoreState.fresh?(core_state) do
+      InitializationPhase
+    else
+      LockingPhase
+    end
+  end
 end

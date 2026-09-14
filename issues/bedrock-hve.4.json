@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:12:35Z",
+  "description": "The strongest consistency oracle: rebuild the keyspace from object storage alone, then diff it against what the running cluster serves. If they disagree, something is definitively wrong and neither side gets a vote.\n\nThis is cheaper than it sounds. ChunkReader.read_all_transactions/2 yields {version, slice} oldest-first for a shard with zero cluster involvement; slices decode with Transaction.mutations/1 and fold into a plain map. An independent KV image is a short program, not a project.\n\nDeliverables:\n- Reconstruct the full keyspace offline (all shards, using the layout recovered by the containment child).\n- Diff against live reads at a pinned read version, reporting keys present/absent/differing on each side.\n- Usable both as a mix task and in-process from the harness, since this is the oracle a chaos run calls at quiesce.\n\nDo NOT route this through Olivine.Logic.startup/5: it pulls in Database.open/3's named ETS/DETS processes and reads ObjectStorageConfig.backend() from app env, which makes it awkward to run standalone. Construct the Snapshot/ChunkReader structs directly instead.\n\nFidelity note: a plain mutation fold gives point-lookup equivalence. Full fidelity for range reads and value locators would need the page index, which is a larger job -- scope this child to point-lookup equivalence and note the gap.",
+  "id": "bedrock-hve.4",
+  "labels": [],
+  "parent": "bedrock-hve",
+  "priority": 2,
+  "status": "open",
+  "title": "fsck: replay object storage and diff against the live cluster",
+  "type": "task",
+  "updated_at": "2026-09-14T19:12:35Z"
+}

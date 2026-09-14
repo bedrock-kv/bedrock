@@ -50,7 +50,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   alias Bedrock.ControlPlane.Coordinator.RaftAdapter
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ObjectStorage
-  alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
   alias Bedrock.Raft
   alias Bedrock.Raft.Log
   alias Bedrock.Raft.Log.InMemoryLog
@@ -457,7 +457,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   @spec load_state_from_object_storage(module()) ::
           {Bedrock.epoch() | nil, map() | nil, map() | nil}
   defp load_state_from_object_storage(cluster) do
-    with {:ok, backend} <- get_object_storage_backend(cluster),
+    with backend when backend != nil <- ObjectStorageConfig.cluster_backend(cluster.node_config()),
          {:ok, data} <- fetch_bootstrap_data(backend, cluster),
          {:ok, bootstrap} <- parse_bootstrap_data(data, cluster) do
       epoch = bootstrap.epoch
@@ -467,7 +467,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       Logger.info("Bedrock [#{cluster}]: Loaded cluster bootstrap from object storage (epoch: #{epoch})")
       {epoch, config, core_state}
     else
-      {:error, :no_object_storage} -> {nil, nil, nil}
+      nil -> {nil, nil, nil}
       {:error, :not_found} -> {nil, nil, nil}
       {:error, _reason} -> {nil, nil, nil}
     end
@@ -540,37 +540,4 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   defp build_policies(nil), do: %{allow_volunteer_nodes_to_join: true}
   defp build_policies(p), do: %{allow_volunteer_nodes_to_join: p[:allow_volunteer_nodes_to_join] || false}
-
-  @spec get_object_storage_backend(module()) :: {:ok, ObjectStorage.backend()} | {:error, :no_object_storage}
-  defp get_object_storage_backend(cluster) do
-    node_config = cluster.node_config()
-
-    # Check for explicit object_storage config
-    case Keyword.fetch(node_config, :object_storage) do
-      {:ok, backend} ->
-        {:ok, backend}
-
-      :error ->
-        # Derive from path config (same logic as cluster_supervisor and persistence_phase)
-        derive_object_storage_from_path(node_config)
-    end
-  end
-
-  defp derive_object_storage_from_path(node_config) do
-    # Try to find a path from any capability config
-    path =
-      Enum.find_value([:coordinator, :log, :storage, :materializer, :coordination], fn capability ->
-        node_config
-        |> Keyword.get(capability, [])
-        |> Keyword.get(:path)
-      end)
-
-    if path do
-      object_storage_root = Path.join(path, "object_storage")
-      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
-      {:ok, backend}
-    else
-      {:error, :no_object_storage}
-    end
-  end
 end

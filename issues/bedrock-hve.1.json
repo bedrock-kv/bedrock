@@ -4,6 +4,7 @@
   "blocks": [
     "bedrock-hve.2"
   ],
+  "closed_at": "2026-09-14T19:41:24Z",
   "created": "2026-09-14T19:12:34Z",
   "description": "First slice of the consistency checker. Reads object storage with no running cluster and validates chunk structure.\n\nObject storage has no manifest and no index -- the namespace is flat and self-describing by listing: c/{shard_tag}/{inverted_version_base36} for transaction chunks, s/{shard_tag}/... for Olivine snapshot bundles. So there is no referential-integrity check to make; validation is structural and per-shard.\n\nChecks:\n- Every key parses via Keys.extract_version/1, and key_to_version(basename) == header.max_version (the writer names a chunk for its last commit).\n- Header: magic BDCH, format version, min_version \u003c= max_version, directory_size == txn_count*16, min/max match first/last directory entries, data length \u003e= max(offset+length).\n- Directory ascending by version; every slice decodes as a valid BRDT transaction whose commit version matches its directory entry.\n- Per shard, chunk version ranges must not overlap and must not have unexpected gaps. This is the highest-value check: ChunkReader.covering_chunk_keys/2 assumes the leading run of chunk names covers the target version, so an overlap or gap produces a SILENT replay gap rather than an error.\n\nNote there are no checksums anywhere in the chunk encoding -- integrity rests on magic bytes plus structural completeness. LocalFilesystem.get_with_version/2 returns a sha256: content digest that is available for free.\n\nLegal, do not report as faults: superseded or unreferenced chunks (never deleted by design, bedrock-wxf.6). Report but do not fault: .bedrock-tmp.* scratch debris (bedrock-ck3).\n\nReuse Chunk.decode/1, Chunk.decode_header/1, ChunkReader.list_chunk_metadata/2 (supports on_error: :skip) and Keys rather than reimplementing decode.\n\nShape: logic in a plain, unit-testable module under lib/bedrock/; lib/mix/tasks/bedrock.fsck.ex is a thin argv shell only, so the harness can call the checker in-process and get structured results instead of parsing stdout. Must run fully offline against a store path or MinIO URL. Follows the existing mix bedrock.dump_storage / mix bedrock.analyze_index convention.",
   "id": "bedrock-hve.1",
@@ -16,8 +17,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "mix bedrock.fsck: offline structural validation of object-storage chunks",
   "type": "task",
-  "updated_at": "2026-09-14T19:40:53Z"
+  "updated_at": "2026-09-14T19:41:24Z"
 }

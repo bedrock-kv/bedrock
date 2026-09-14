@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T21:21:24Z",
+  "description": "`Olivine.Logic.maybe_load_snapshot/2` turns anything but `:not_found` into a hard failure, so a corrupt or unreadable snapshot bundle prevents the materializer from starting at all.\n\nThat is an unnecessary loss of availability, because the fallback is guaranteed to exist: chunks are never deleted (by design -- see bedrock-wxf.6 for the consolidation work), so replaying from the chunk stream can always reconstruct the shard. The snapshot is an optimization to avoid replaying from zero, not the only source of truth.\n\nCurrent behaviour on a bad bundle: the shard will not come up.\nAvailable behaviour: log loudly, discard the bundle, replay from chunks, and carry on -- slower, but correct and available.\n\nThis is the mirror image of the sibling P1 (a corrupt index silently restoring an EMPTY shard). Taken together the current handling manages to be both too trusting and too brittle: some corruptions are swallowed into silent emptiness, others are fatal when a safe recovery path existed. Worth designing the two together rather than patching each in isolation.\n\nFound while building bedrock-hve.3.",
+  "id": "bedrock-n7s",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "A corrupt snapshot bundle is fatal to cold start, though a full chunk replay would always succeed",
+  "type": "task",
+  "updated_at": "2026-09-14T21:21:24Z"
+}

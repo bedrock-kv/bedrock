@@ -333,9 +333,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IntakeQueueTest do
       {batch, last_version, updated_queue} = IntakeQueue.take_batch_by_size(queue, max_size)
 
       # Should always take at least one transaction
-      assert length(batch) >= 1 or IntakeQueue.empty?(queue)
+      assert not Enum.empty?(batch) or IntakeQueue.empty?(queue)
 
-      if length(batch) > 0 do
+      if not Enum.empty?(batch) do
         assert last_version == <<version::64>>
         assert IntakeQueue.empty?(updated_queue)
       end

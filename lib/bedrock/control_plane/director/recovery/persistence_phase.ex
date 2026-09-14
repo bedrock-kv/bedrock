@@ -276,13 +276,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
         # shard) keep their keys — the family is a set, so writing one
         # member never implies removing another.
         for {tag, members} <- materializers, {worker_id, node} <- members, reduce: tx do
-          tx ->
-            if prior |> Map.get(tag, %{}) |> Map.get(worker_id) == node do
-              tx
-            else
-              Tx.set(tx, SystemKeys.materializer_key(tag, worker_id), Values.encode_materializer_node(node))
-            end
+          tx -> maybe_set_materializer_key(tx, prior, tag, worker_id, node)
         end
+    end
+  end
+
+  defp maybe_set_materializer_key(tx, prior, tag, worker_id, node) do
+    if prior |> Map.get(tag, %{}) |> Map.get(worker_id) == node do
+      tx
+    else
+      Tx.set(tx, SystemKeys.materializer_key(tag, worker_id), Values.encode_materializer_node(node))
     end
   end
 

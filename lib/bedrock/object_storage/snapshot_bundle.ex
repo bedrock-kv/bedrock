@@ -102,20 +102,24 @@ defmodule Bedrock.ObjectStorage.SnapshotBundle do
       data_end_offset = file_size - idx_size
 
       if data_end_offset >= 0 do
-        # Read header to validate magic number
-        case read_bytes_at(path, data_end_offset, @header_size) do
-          {:ok, <<@magic_number::32, _rest::binary>>} ->
-            {:ok, data_end_offset, idx_size}
-
-          {:ok, _} ->
-            {:error, :no_index_record}
-
-          error ->
-            error
-        end
+        validate_header(path, data_end_offset, idx_size)
       else
         {:error, :invalid_bundle}
       end
+    end
+  end
+
+  # Read header to validate magic number
+  defp validate_header(path, data_end_offset, idx_size) do
+    case read_bytes_at(path, data_end_offset, @header_size) do
+      {:ok, <<@magic_number::32, _rest::binary>>} ->
+        {:ok, data_end_offset, idx_size}
+
+      {:ok, _} ->
+        {:error, :no_index_record}
+
+      error ->
+        error
     end
   end
 

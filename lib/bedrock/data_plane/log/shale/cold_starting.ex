@@ -15,12 +15,7 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
         files
         |> Enum.filter(&String.starts_with?(&1, Segment.file_prefix()))
         |> Enum.sort(:desc)
-        |> Enum.reduce_while({:ok, []}, fn file_name, {:ok, segments} ->
-          case Segment.from_path(Path.join(segment_dir, file_name)) do
-            {:ok, segment} -> {:cont, {:ok, [segment | segments]}}
-            {:error, reason} -> {:halt, {:error, reason}}
-          end
-        end)
+        |> Enum.reduce_while({:ok, []}, &accumulate_segment(&1, segment_dir, &2))
         |> case do
           {:ok, segments} -> {:ok, Enum.sort_by(segments, & &1.min_version, :desc)}
           error -> error
@@ -28,6 +23,13 @@ defmodule Bedrock.DataPlane.Log.Shale.ColdStarting do
 
       {:error, posix} ->
         {:error, {:wal_io, segment_dir, posix}}
+    end
+  end
+
+  defp accumulate_segment(file_name, segment_dir, {:ok, segments}) do
+    case Segment.from_path(Path.join(segment_dir, file_name)) do
+      {:ok, segment} -> {:cont, {:ok, [segment | segments]}}
+      {:error, reason} -> {:halt, {:error, reason}}
     end
   end
 end

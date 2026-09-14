@@ -98,7 +98,7 @@ defmodule Bedrock.DataPlane.Log.Shale.WalSegmentIssuesTest do
       assert {:ok, stream} = TransactionStreams.from_segments(segments, middle_version)
       transactions = Enum.take(stream, 10)
 
-      assert length(transactions) > 0, """
+      assert not Enum.empty?(transactions), """
       Expected transactions after version #{inspect(middle_version)} with large version gaps,
       but got empty stream. This indicates from_segments can't handle large version ranges.
       """

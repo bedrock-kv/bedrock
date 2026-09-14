@@ -272,15 +272,19 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexDatabase do
           <<@magic_number::32, version::binary-size(8), ^payload_size::32, payload::binary-size(^payload_size),
             ^payload_size::32>>} <- :file.pread(file, record_offset, record_size) do
       if version == target_version do
-        {previous_version, pages_map} = :erlang.binary_to_term(payload)
-        next_version = if previous_version == version, do: nil, else: previous_version
-        {:ok, pages_map, next_version}
+        version_found(payload, version)
       else
         scan_backward_for_version(file, record_offset, target_version)
       end
     else
       _ -> {:error, :not_found}
     end
+  end
+
+  defp version_found(payload, version) do
+    {previous_version, pages_map} = :erlang.binary_to_term(payload)
+    next_version = if previous_version == version, do: nil, else: previous_version
+    {:ok, pages_map, next_version}
   end
 
   defp count_records(_file, file_size) when file_size < @min_record_size, do: 0

@@ -173,7 +173,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PersistenceIntegrationTest do
 
         {:evict, batch, updated_manager} ->
           # Eviction occurred - verify the batch contains versions
-          assert length(batch) > 0
+          refute Enum.empty?(batch)
           # Each batch entry should be {version, data_size_in_bytes, bytes}
           Enum.each(batch, fn {version, _data_size_in_bytes, _bytes} ->
             assert Version.valid?(version)

@@ -379,7 +379,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
       end)
       |> Enum.sort()
 
-    if length(already_committed_txns) > 0 do
+    if not Enum.empty?(already_committed_txns) do
       Logger.info(
         "Bedrock [#{t.cluster}]: Sending recovery consensus for #{length(already_committed_txns)} already-committed transactions: #{inspect(already_committed_txns)}"
       )

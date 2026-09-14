@@ -91,24 +91,25 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorPropertyTest do
     2..5
     |> StreamData.integer()
     |> StreamData.map(fn page_count ->
-      pages =
-        for page_id <- 0..(page_count - 1) do
-          base_key_num = page_id * 100
-
-          keys =
-            Enum.map(1..50, fn i ->
-              "page#{page_id}_key#{String.pad_leading(to_string(base_key_num + i), 3, "0")}"
-            end)
-
-          versions = List.duplicate(<<0, 0, 0, 0, 0, 0, 0, 1>>, 50)
-          key_locators = Enum.zip(keys, versions)
-          next_id = if page_id == page_count - 1, do: 0, else: page_id + 1
-          page = Page.new(page_id, key_locators)
-          {page, next_id}
-        end
+      pages = for page_id <- 0..(page_count - 1), do: build_page_entry(page_id, page_count)
 
       create_index_from_pages(pages)
     end)
+  end
+
+  defp build_page_entry(page_id, page_count) do
+    base_key_num = page_id * 100
+
+    keys =
+      Enum.map(1..50, fn i ->
+        "page#{page_id}_key#{String.pad_leading(to_string(base_key_num + i), 3, "0")}"
+      end)
+
+    versions = List.duplicate(<<0, 0, 0, 0, 0, 0, 0, 1>>, 50)
+    key_locators = Enum.zip(keys, versions)
+    next_id = if page_id == page_count - 1, do: 0, else: page_id + 1
+    page = Page.new(page_id, key_locators)
+    {page, next_id}
   end
 
   defp create_index_from_pages(page_tuples) do
@@ -177,7 +178,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorPropertyTest do
     check all(
             index <- multi_page_index_generator(),
             all_keys = get_all_keys_from_index(index),
-            length(all_keys) > 0
+            not Enum.empty?(all_keys)
           ) do
       existing_key = Enum.random(all_keys)
       selector = existing_key |> KeySelector.first_greater_or_equal() |> KeySelector.add(0)

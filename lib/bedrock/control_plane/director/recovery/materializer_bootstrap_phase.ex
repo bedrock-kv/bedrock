@@ -469,20 +469,38 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase do
           {:cont, {:ok, acc, services}}
 
         :error ->
-          shard_tag
-          |> start_materializer_for_shard(existing_by_shard, recovery_version, recovery_attempt, context)
-          |> case do
-            {:ok, :absent, _created} ->
-              {:cont, {:ok, acc, services}}
-
-            {:ok, assignment, created} ->
-              {:cont, {:ok, Map.put(acc, shard_tag, assignment), Map.merge(services, created)}}
-
-            {:error, reason} ->
-              {:halt, {:error, {shard_tag, reason}}}
-          end
+          ensure_materializer_for_shard(
+            shard_tag,
+            existing_by_shard,
+            recovery_version,
+            recovery_attempt,
+            context,
+            acc,
+            services
+          )
       end
     end)
+  end
+
+  defp ensure_materializer_for_shard(
+         shard_tag,
+         existing_by_shard,
+         recovery_version,
+         recovery_attempt,
+         context,
+         acc,
+         services
+       ) do
+    case start_materializer_for_shard(shard_tag, existing_by_shard, recovery_version, recovery_attempt, context) do
+      {:ok, :absent, _created} ->
+        {:cont, {:ok, acc, services}}
+
+      {:ok, assignment, created} ->
+        {:cont, {:ok, Map.put(acc, shard_tag, assignment), Map.merge(services, created)}}
+
+      {:error, reason} ->
+        {:halt, {:error, {shard_tag, reason}}}
+    end
   end
 
   defp start_materializer_for_shard(shard_tag, existing_by_shard, recovery_version, recovery_attempt, context) do

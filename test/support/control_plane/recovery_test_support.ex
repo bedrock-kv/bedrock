@@ -254,7 +254,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
           context.node_capabilities
 
         count when is_integer(count) ->
-          nodes = if count > 0, do: for(i <- 1..count, do: :"node#{i}@host"), else: []
+          nodes = node_names(count)
           %{log: nodes, storage: nodes}
 
         nodes when is_list(nodes) ->
@@ -263,6 +263,9 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
 
     Map.put(context, :node_capabilities, node_capabilities)
   end
+
+  defp node_names(count) when count > 0, do: for(i <- 1..count, do: :"node#{i}@host")
+  defp node_names(_count), do: []
 
   @doc """
   Creates a simple mock node capabilities for testing.

@@ -289,12 +289,14 @@ defmodule Bedrock.Directory do
   def create_or_open(%Layer{repo: repo} = layer, path, opts) do
     with :ok <- validate_path(path),
          true <- not root?(path) || {:error, :cannot_create_or_open_root} do
-      repo.transact(fn ->
-        case do_open(layer, nil, path) do
-          {:ok, node} -> {:ok, node}
-          {:error, :directory_does_not_exist} -> do_create(layer, nil, path, opts)
-        end
-      end)
+      repo.transact(fn -> open_or_create(layer, path, opts) end)
+    end
+  end
+
+  defp open_or_create(layer, path, opts) do
+    case do_open(layer, nil, path) do
+      {:ok, node} -> {:ok, node}
+      {:error, :directory_does_not_exist} -> do_create(layer, nil, path, opts)
     end
   end
 
@@ -604,18 +606,19 @@ defmodule Bedrock.Directory do
       existing_value = repo.get(layer.node_keyspace, path)
 
       case existing_value do
-        nil ->
-          if parent_exists?(layer, path) do
-            create_directory(layer, txn, path, opts)
-          else
-            {:error, :parent_directory_does_not_exist}
-          end
-
-        _value ->
-          {:error, :directory_already_exists}
+        nil -> create_if_parent_exists(layer, txn, path, opts)
+        _value -> {:error, :directory_already_exists}
       end
     else
       {:error, _} = error -> error
+    end
+  end
+
+  defp create_if_parent_exists(layer, txn, path, opts) do
+    if parent_exists?(layer, path) do
+      create_directory(layer, txn, path, opts)
+    else
+      {:error, :parent_directory_does_not_exist}
     end
   end
 

@@ -26,7 +26,12 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
 
   @impl true
   def timer(:heartbeat), do: set_timer(:heartbeat, heartbeat_ms(), heartbeat_ms())
-  def timer(:election), do: set_timer(:election, 250, 350)
+
+  # A follower waits as long as a leader waits to hear from its followers
+  # before giving up leadership (bedrock_raft's quorum check spans five
+  # heartbeats), randomized over (T, 2T] to break split votes. That outlasts
+  # the 2 * heartbeat_ms a healthy follower may go between AppendEntries.
+  def timer(:election), do: set_timer(:election, 5 * heartbeat_ms(), 10 * heartbeat_ms())
 
   @spec set_timer(atom(), pos_integer(), pos_integer()) :: (-> :ok)
   defp set_timer(name, min_ms, max_ms) do

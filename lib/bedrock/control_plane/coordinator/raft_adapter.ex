@@ -4,7 +4,6 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
 
   @spec determine_timeout(pos_integer(), pos_integer()) :: pos_integer()
   defp determine_timeout(min_ms, max_ms) when min_ms == max_ms, do: min_ms
-  defp determine_timeout(min_ms, max_ms) when min_ms > max_ms, do: raise("invalid_timeout")
   defp determine_timeout(min_ms, max_ms), do: min_ms + :rand.uniform(max_ms - min_ms)
 
   @impl true
@@ -26,22 +25,37 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapter do
   end
 
   @impl true
-  def timer(:heartbeat), do: set_timer(:heartbeat, heartbeat_ms(), 0)
-  def timer(:election), do: set_timer(:election, 250, 100)
+  def timer(:heartbeat), do: set_timer(:heartbeat, heartbeat_ms(), heartbeat_ms())
 
-  @spec set_timer(atom(), pos_integer(), non_neg_integer()) :: (-> :ok | {:error, :badarg})
-  defp set_timer(name, min_ms, jitter) do
-    min_ms
-    |> determine_timeout(min_ms + jitter)
-    |> :timer.send_after({:raft, :timer, name})
-    |> case do
-      {:ok, ref} ->
-        fn -> :timer.cancel(ref) end
+  # A follower waits as long as a leader waits to hear from its followers
+  # before giving up leadership (bedrock_raft's quorum check spans five
+  # heartbeats), randomized over (T, 2T] to break split votes. That outlasts
+  # the 2 * heartbeat_ms a healthy follower may go between AppendEntries.
+  def timer(:election), do: set_timer(:election, 5 * heartbeat_ms(), 10 * heartbeat_ms())
 
-      {:error, _} ->
-        raise "Bedrock: failed to start timer for raft #{inspect(name)}"
+  @spec set_timer(atom(), pos_integer(), pos_integer()) :: (-> :ok)
+  defp set_timer(name, min_ms, max_ms) do
+    ref = Process.send_after(self(), {:raft, :timer, name}, determine_timeout(min_ms, max_ms))
+    fn -> cancel_timer(ref, name) end
+  end
 
-        fn -> :ok end
+  # A timer that already fired has queued its message. Cancelling must
+  # discard it too, or the stale timeout is handled after the event that
+  # superseded it (an election despite a heartbeat). The protocol cancels a
+  # timer before arming its replacement, so any queued message of this name
+  # is stale.
+  @spec cancel_timer(reference(), atom()) :: :ok
+  defp cancel_timer(ref, name) do
+    Process.cancel_timer(ref) || flush_timer(name)
+    :ok
+  end
+
+  @spec flush_timer(atom()) :: :ok
+  defp flush_timer(name) do
+    receive do
+      {:raft, :timer, ^name} -> :ok
+    after
+      0 -> :ok
     end
   end
 

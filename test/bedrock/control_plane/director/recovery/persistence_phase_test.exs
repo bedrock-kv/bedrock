@@ -312,6 +312,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
   end
 
   describe "rewriting a bootstrap record that predates a field" do
+    alias Bedrock.ControlPlane.Config.Parameters
     alias Bedrock.ControlPlane.Config.RecoveryAttempt
     alias Bedrock.SystemKeys.ClusterBootstrap
 
@@ -352,8 +353,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
         |> Map.put(:shard_materializers, %{0 => %{"mat_sys" => "a@host"}})
         |> Map.put(:prior_materializer_refs, %{})
 
+      # The config the director holds always came through the
+      # coordinator's build_parameters/2, which fills every parameter
+      # the record did not carry.
       config = %{
-        parameters: legacy.parameters,
+        parameters:
+          Map.put(
+            legacy.parameters,
+            :materializer_idle_timeout_ms,
+            Parameters.default_materializer_idle_timeout_ms()
+          ),
         policies: legacy.policies
       }
 
@@ -365,6 +374,47 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       # Untouched fields survive the merge.
       assert updated.cluster_id == "abc"
       assert updated.coordinators == [%{node: "a@host"}]
+    end
+
+    # bedrock-q67.21.8: zero means "never spin down", and a flatbuffer
+    # omits a scalar equal to its schema default — so with the implicit
+    # default of 0 a disabled cluster would read back as "absent" and be
+    # silently re-enabled by the coordinator's fallback on the next
+    # restart. The schema's non-zero default is what keeps the two
+    # distinguishable.
+    test "a cluster with materializer spin-down disabled survives the bootstrap round trip" do
+      parameters = %{
+        desired_logs: 1,
+        desired_replication_factor: 1,
+        desired_commit_proxies: 1,
+        desired_coordinators: 1,
+        desired_read_version_proxies: 1,
+        ping_rate_in_hz: 10,
+        retransmission_rate_in_hz: 20,
+        transaction_window_in_ms: 5000,
+        empty_transaction_timeout_ms: 1000,
+        materializer_idle_timeout_ms: 0
+      }
+
+      assert {:ok, decoded} =
+               %{cluster_id: "abc", epoch: 3, parameters: parameters}
+               |> ClusterBootstrap.to_binary()
+               |> ClusterBootstrap.read()
+
+      assert decoded.parameters.materializer_idle_timeout_ms == 0
+
+      # A record written before the field existed still reads as absent,
+      # which is what lets the coordinator supply the default.
+      assert {:ok, legacy} =
+               %{
+                 cluster_id: "abc",
+                 epoch: 3,
+                 parameters: Map.delete(parameters, :materializer_idle_timeout_ms)
+               }
+               |> ClusterBootstrap.to_binary()
+               |> ClusterBootstrap.read()
+
+      refute Map.has_key?(legacy.parameters, :materializer_idle_timeout_ms)
     end
   end
 end

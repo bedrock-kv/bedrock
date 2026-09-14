@@ -87,6 +87,44 @@ defmodule Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhaseTest 
       :ets.delete(created_shards)
     end
 
+    # bedrock-q67.21.8: idle spin-down is opt-in per worker, and the
+    # system shard's exemption is structural — recovery's create call
+    # carries the shard assignment and nothing else, so tag 0 can never
+    # be handed an "idle_timeout". Only the distributor's recruits carry
+    # the cluster's policy params.
+    test "the system shard's materializer is created with the shard assignment alone" do
+      test_pid = self()
+
+      recovery_attempt =
+        recovery_attempt()
+        |> Map.put(:shard_layout, nil)
+        |> Map.put(:logs, %{"log_1" => [0, 1]})
+
+      context =
+        [
+          prior_core_state: %{logs: %{}},
+          node_capabilities: %{log: [Node.self()], materializer: [Node.self()]}
+        ]
+        |> create_test_context()
+        |> Map.put(:create_worker_fn, fn _foreman_ref, _worker_id, :materializer, opts ->
+          send(test_pid, {:created_with, opts[:params]})
+          {:ok, :new_materializer_ref}
+        end)
+        |> Map.put(:lock_materializer_fn, fn {:materializer, _ref, _shard_tag}, _epoch ->
+          {:ok, spawn(fn -> Process.sleep(:infinity) end)}
+        end)
+        |> Map.put(:unlock_materializer_fn, fn _pid, _version, _sources -> :ok end)
+
+      capture_log(fn ->
+        assert {_updated_attempt, CommitProxyStartupPhase} =
+                 MaterializerBootstrapPhase.execute(recovery_attempt, context)
+      end)
+
+      assert_received {:created_with, params}
+      assert params == %{"shard_id" => RecoveryAttempt.system_shard_id()}
+      refute_received {:created_with, _}
+    end
+
     test "for fresh cluster, seeds shard materializers with the epoch's pull sources" do
       system_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)
       user_materializer_pid = spawn(fn -> Process.sleep(:infinity) end)

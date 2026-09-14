@@ -38,6 +38,17 @@ table ClusterParameters {
   retransmission_rate_in_hz: uint;
   transaction_window_in_ms: uint;
   empty_transaction_timeout_ms: uint;
+  // Read-inactivity window after which a data-shard materializer spins
+  // itself down (bedrock-q67.21.8). Zero disables spin-down, and the
+  // non-zero schema default is what makes that representable: a scalar
+  // equal to its default is not written, so with the implicit default
+  // of 0 a disabled cluster would read back as "absent" and silently
+  // re-enable. Absent still means absent — a record written before this
+  // field existed — and reads back as the Parameters default. Keep this
+  // value equal to that default: a cluster explicitly configured AT the
+  // schema default writes nothing and reads back absent, so if the two
+  // drift, such a cluster silently migrates to the other one.
+  materializer_idle_timeout_ms: uint = 900000;
 }
 
 // Cluster policies

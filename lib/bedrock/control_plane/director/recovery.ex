@@ -244,7 +244,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
              epoch: t.epoch,
              node_capabilities: t.node_capabilities,
              logs: wiring.logs,
-             log_refs: wiring.log_refs
+             log_refs: wiring.log_refs,
+             worker_params: materializer_worker_params(t.config)
            }
          ) do
       {:ok, pid} ->
@@ -257,6 +258,17 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   end
 
   def maybe_start_distributor(t), do: t
+
+  # The per-worker policy params the distributor's recruits are created
+  # with (bedrock-q67.21.5's idle spin-down, wired for production in
+  # bedrock-q67.21.8). They travel the same route the shard assignment
+  # does — cluster config to recruitment_ctx to the foreman's manifest
+  # to the worker's startup opts. Recovery's own seating does not carry
+  # them (tag 0 is created with the shard id alone), and the system
+  # shard is exempt from them wherever they ARE carried:
+  # Recruitment.worker_params/2 drops them for tag 0.
+  @spec materializer_worker_params(Config.t()) :: %{String.t() => term()}
+  defp materializer_worker_params(config), do: %{"idle_timeout" => config.parameters.materializer_idle_timeout_ms}
 
   @doc false
   @spec handle_distributor_down(State.t(), reason :: term()) :: State.t()

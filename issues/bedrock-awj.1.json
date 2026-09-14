@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T16:17:00Z",
+  "description": "GH #319 part 1. ClusterSupervisor starts Link (cluster_supervisor.ex:142-157) before the capability children that include Foreman, and Link.Discovery.get_running_services_from_foreman/1 (discovery.ex:204-217) calls Foreman with a raw GenServer.call wrapped in rescue, which does not catch the :exit signal a dead-process call raises. Fix: (1) start Foreman (capability children) before Link in ClusterSupervisor's children list, matching the documented Foreman -\u003e Link -\u003e Coordinator -\u003e Director startup workflow (guides/deep-dives/cluster-startup.md); (2) replace the raw GenServer.call + rescue with Bedrock.Service.Foreman.get_all_running_services/2, which already goes through Bedrock.Internal.GenServer.Calls.call/3 — the codebase's existing exit-safe call wrapper (catches :noproc/:timeout/:nodedown and returns {:error, _} instead of crashing). TDD: reproduce the uncaught-exit crash and the ordering race with a failing test first.",
+  "id": "bedrock-awj.1",
+  "labels": [],
+  "parent": "bedrock-awj",
+  "priority": 2,
+  "status": "open",
+  "title": "Link crashes on Foreman :noproc during cluster startup",
+  "type": "bug",
+  "updated_at": "2026-09-14T16:17:00Z"
+}

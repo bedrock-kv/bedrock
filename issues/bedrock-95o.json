@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T21:21:23Z",
+  "description": "`IndexDatabase.n/2` (lib/bedrock/data_plane/materializer/olivine/index_database.ex) ends:\n\n    else\n      _ -\u003e Version.zero()\n    end\n\nThat catch-all swallows EVERY failure in the with-chain: a pread error, a wrong magic number, a truncated record, and -- critically -- a header/footer payload_size disagreement, since the header match pins the footer's value (`^payload_size::32`).\n\nThe result is not an error. The shard comes up believing it is durable through version zero, which means it loads no pages and serves as EMPTY. Nothing raises, nothing logs a fault, and the caller cannot distinguish 'this shard genuinely has no data' from 'this shard's index is corrupt and I just threw its contents away'.\n\nThis is a silent data-loss-on-restart path. A materializer that restarts against a subtly corrupt bundle comes back online, reports healthy, and answers reads with nothing.\n\nDiscovered while building bedrock-hve.3 (offline snapshot validation). The specific reachable case: `SnapshotBundle.find_index_boundary/1` sizes the index record from the FOOTER alone, so a bundle whose header and footer disagree on payload_size splits cleanly and looks valid at the bundle layer -- then n/2 compares the two, fails, and returns zero. Two layers disagreeing about how to size the same record is the underlying hazard.\n\nSuggested direction: distinguish 'no index record present' (legitimately Version.zero()) from 'an index record is present but unreadable' (an error the caller must handle). The latter should never silently degrade to an empty shard. See also the sibling ticket about cold start having no fallback to chunk replay -- together these are the two halves of 'what should happen when a bundle is bad'.\n\nfsck now detects this offline as :snapshot_index_size_disagreement, but that only helps if someone runs it.",
+  "id": "bedrock-95o",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "[BUG] A corrupt snapshot index silently restores an EMPTY shard instead of failing",
+  "type": "bug",
+  "updated_at": "2026-09-14T21:21:23Z"
+}

@@ -315,7 +315,7 @@ defmodule Bedrock.ObjectStorage.Fsck do
     header_size = Chunk.header_size()
 
     case binary do
-      <<header_binary::binary-size(header_size), rest::binary>> ->
+      <<header_binary::binary-size(^header_size), rest::binary>> ->
         decode_header(header_binary, rest, key_version, opts)
 
       _ ->
@@ -400,7 +400,7 @@ defmodule Bedrock.ObjectStorage.Fsck do
     if byte_size(rest) < directory_size do
       {[fault(:truncated_directory, %{bytes: byte_size(rest), required: directory_size})], nil}
     else
-      <<directory_binary::binary-size(directory_size), data::binary>> = rest
+      <<directory_binary::binary-size(^directory_size), data::binary>> = rest
 
       case Chunk.decode_directory(directory_binary, header.txn_count) do
         {:ok, directory} ->

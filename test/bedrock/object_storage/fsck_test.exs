@@ -42,7 +42,7 @@ defmodule Bedrock.ObjectStorage.FsckTest do
 
   # Replaces `size` bytes at `offset` with `replacement`.
   defp splice(binary, offset, size, replacement) do
-    <<head::binary-size(offset), _::binary-size(size), tail::binary>> = binary
+    <<head::binary-size(^offset), _::binary-size(^size), tail::binary>> = binary
     head <> replacement <> tail
   end
 

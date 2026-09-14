@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T20:03:54Z",
+  "description": "`Mix.Tasks.Bedrock.Fsck.run/1` ends in `System.halt/1` to set an exit code, which makes the task untestable -- any test that exercises it kills the test VM. The task therefore has ZERO automated coverage, while the library module behind it (`Bedrock.ObjectStorage.Fsck`) is thoroughly tested.\n\nThat gap already cost a real bug. During bedrock-hve.2, `--format json` was found to crash on any key containing a 0xFF byte: Jason rejects invalid UTF-8, so the tool crashed precisely when it had a fault to report -- the one moment it needed to work. Keys with 0xFF bytes are not exotic here; \\xFF is the system keyspace prefix. It was fixed in that PR, but only because someone ran the task by hand against a corrupt fixture. Nothing would have caught it otherwise, and nothing would catch the next one.\n\nSuggested fix: split the task into a testable `main/1` returning `{output, exit_code}` and a thin `run/1` that prints and halts. Then cover the formatting paths -- particularly JSON encoding of binary keys and the text formatter -- against reports containing every fault kind.\n\nWorth doing before the task grows further: it is now the operator-facing entry point to fsck and gains options with each child of bedrock-hve.",
+  "id": "bedrock-7hj",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "mix bedrock.fsck has no test coverage because it calls System.halt/1",
+  "type": "task",
+  "updated_at": "2026-09-14T20:03:54Z"
+}

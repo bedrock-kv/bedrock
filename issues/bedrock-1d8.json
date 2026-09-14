@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:51:18Z",
+  "description": "Residual from bedrock-w10's cold review.\n\nWith w10, the Director reads the bootstrap once at recovery start (`PersistencePhase.read_bootstrap/1`) but discards the object version token; `PersistencePhase` later does its own `get_with_version` and `put_if_version_matches` at write time. So a Director that started from record R will still overwrite a record written in between by another (older, still-running) Director — the CAS fences against concurrent writers at write time, not against the state this recovery was planned from.\n\nFDB fences here by writing cstate immediately after reading it with `recoveryCount++` (ClusterRecovery.actor.cpp ~1584-1590), so any older recovery's later write fails. Expected: the version read at recovery start is the one the persistence write must match (or an equivalent generation fence). Note the unmerged bedrock-7i1 / bedrock-t0k / bedrock-50n work (PRs #306/#308, reservation + retained CAS token) targets this territory — reconcile rather than duplicate.",
+  "id": "bedrock-1d8",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "PersistencePhase overwrites the bootstrap without fencing on the version the recovery started from",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:51:18Z"
+}

@@ -17,6 +17,7 @@ defmodule Bedrock.Test.Chaos.PeerCluster do
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.Test.Chaos.Cluster
+  alias Bedrock.Test.Chaos.Ops
 
   @type node_spec :: %{name: node(), peer: pid(), data_dir: Path.t()}
   @type t :: %{nodes: [node_spec()], data_root: Path.t(), descriptor_path: Path.t()}
@@ -200,7 +201,7 @@ defmodule Bedrock.Test.Chaos.PeerCluster do
     :ok
   end
 
-  # Readiness has two parts, and both matter.
+  # Readiness has three parts, and all of them matter.
   #
   # ClusterSupervisor.child_spec/1 silently falls back to a single-node
   # descriptor when it cannot read the file, so three nodes can each come up
@@ -210,11 +211,19 @@ defmodule Bedrock.Test.Chaos.PeerCluster do
   #
   # Agreement alone does not mean the cluster is serving, so we then wait for a
   # transaction system layout, which only exists once recovery has completed.
+  #
+  # And a layout does not mean it is serving either. Roughly one cluster in a
+  # hundred publishes a layout and then never commits anything: every
+  # transaction comes back `:unavailable`, and it does not heal (measured: 12
+  # attempts over 60s). A caller that took the layout as "ready" would see that
+  # as its workload failing rather than as its cluster never having started, so
+  # the last gate is an actual committed transaction — on *every* node, since
+  # callers drive all of them.
   defp await_ready!(cluster, timeout_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     expected = node_names(cluster)
 
-    await_until!(deadline, "every node to agree on coordinator set #{inspect(expected)}", fn ->
+    await_until!(cluster, deadline, "every node to agree on coordinator set #{inspect(expected)}", fn ->
       Enum.all?(expected, fn node ->
         case safe_call(node, Cluster, :fetch_coordinator_nodes, []) do
           {:ok, nodes} -> Enum.sort(nodes) == Enum.sort(expected)
@@ -223,26 +232,56 @@ defmodule Bedrock.Test.Chaos.PeerCluster do
       end)
     end)
 
-    await_until!(deadline, "a transaction system layout to be available", fn ->
+    await_until!(cluster, deadline, "a transaction system layout to be available", fn ->
       Enum.any?(expected, fn node ->
         match?({:ok, _}, safe_call(node, Cluster, :fetch_transaction_system_layout, []))
       end)
     end)
 
+    await_until!(cluster, deadline, "every node to commit a transaction", fn ->
+      Enum.all?(expected, fn node -> :ok == safe_call(node, Ops, :put, ["chaos/probe/ready", to_string(node)]) end)
+    end)
+
     :ok
   end
 
-  defp await_until!(deadline, description, check) do
+  defp await_until!(cluster, deadline, description, check) do
     if check.() do
       :ok
     else
       if System.monotonic_time(:millisecond) >= deadline do
-        raise "Timed out waiting for #{description}"
+        raise "Timed out waiting for #{description}.\n\n#{diagnostics(cluster)}"
       end
 
       Process.sleep(250)
-      await_until!(deadline, description, check)
+      await_until!(cluster, deadline, description, check)
     end
+  end
+
+  # A cluster that never becomes ready is rare enough that reproducing it to
+  # diagnose it is expensive. Dumping what each node believed at the moment we
+  # gave up is what makes the next occurrence useful instead of merely annoying.
+  defp diagnostics(cluster) do
+    cluster
+    |> node_names()
+    |> Enum.map_join("\n", fn node ->
+      layout =
+        case safe_call(node, Cluster, :fetch_transaction_system_layout, []) do
+          {:ok, tsl} ->
+            "epoch=#{inspect(tsl[:epoch])} sequencer=#{inspect(tsl[:sequencer])} proxies=#{inspect(tsl[:proxies])}"
+
+          other ->
+            inspect(other)
+        end
+
+      """
+      #{node}
+        coordinator_nodes: #{inspect(safe_call(node, Cluster, :fetch_coordinator_nodes, []))}
+        coordinator:       #{inspect(safe_call(node, Cluster, :fetch_coordinator, []))}
+        layout:            #{layout}
+        commit probe:      #{inspect(safe_call(node, Ops, :put, ["chaos/probe/diagnostic", "probe"]))}\
+      """
+    end)
   end
 
   defp safe_call(node, module, function, args) do

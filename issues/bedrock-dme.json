@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:44:51Z",
+  "description": "## Failure\n\nFound verifying bedrock-3t9 in the 3-node harness: kill -9 a node hosting one of three logs while clients run `Repo.transact/1` transfers. The commit proxy exits with `{:log_failures, [{\"oeeinc77\", :unavailable}]}`; a client on another node was killed outright:\n\n    ** (exit) {:signal, {{:log_failures, [{\"oeeinc77\", :unavailable}]},\n                {GenServer, :call, [#PID\u003c...\u003e, {:commit, 1, \u003c\u003c...\u003e\u003e, :user}, :infinity]}}}\n\ninstead of `Repo.transact` returning/raising a transaction error the caller can handle or retry.\n\n## Mechanism (origin/develop 3af051c2)\n\n- `CommitProxy.commit/4` -\u003e `Bedrock.Internal.GenServer.Calls.call/3` (internal/gen_server/calls.ex:19-31) catches only `{:noproc, _}`, `{{:nodedown, _}, _}`, `{:timeout, _}` exits. A server that crashes while handling the call exits the caller with `{server_reason, {GenServer, :call, args}}` — uncaught.\n- That exit kills the `TransactionBuilder` inside its `handle_call(:commit, ...)`; `Repo` starts the builder with `start_link` (internal/repo.ex:369), so the exit signal kills the client process.\n\n## Expected / care needed\n\nA proxy dying mid-commit is an ambiguous outcome: the batch may or may not have been made durable. FDB reports `commit_unknown_result` (1021) for exactly this and its retry loop only retries it for idempotent transactions — mapping it to `:unavailable` (and blindly retrying) would risk double-applying non-idempotent transactions. The fix must surface an unknown-result error to the transaction loop rather than crash the caller, and must decide retry semantics deliberately (read ../foundationdb NativeAPI commit error handling). Timeouts with `:infinity` on this call are also worth a look.",
+  "id": "bedrock-dme",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "[BUG] A commit proxy that dies mid-commit kills the client: Calls.call/3 doesn't catch the crashed-server exit, the linked TransactionBuilder propagates it",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:44:51Z"
+}

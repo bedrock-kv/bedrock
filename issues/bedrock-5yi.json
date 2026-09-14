@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:24:53Z",
+  "description": "## Observations (main 0.7.2, 3-node ../bedrock_ex harness, loopback, MinIO)\n\n1. With c1 kill -9'd and c2/c3 alive (a 2-of-3 quorum), leadership alternated between c2 and c3 roughly once per second for ~40s (epochs 5 -\u003e 26), each new leader launching a Director that stalled on :unable_to_meet_log_quorum, then settled at term 26 with healthy 100ms heartbeats. It flapped again (epochs 27 -\u003e 47) when c1 briefly connected and crashed during boot (bedrock-awj.1 startup race, fixed on develop).\n2. Contrast: an earlier kill of c2 left c1 leading stably for 45s under the same stall.\n3. One `:undecided` leadership change fired on all three nodes at once (15:05:54) with every node healthy and idle, ~66s after boot. It did not reproduce on a fresh cluster (idle baseline, normal RPCs, killed hidden control nodes). That election handed leadership to a follower with a stale prior_core_state and wiped the cluster (see the prior_core_state P0 ticket).\n\n## Unknown\n\nMechanism. Candidates to falsify: coordinator process blocked (synchronous work on leadership change / director cleanup / durable writes) missing heartbeat or election timers; competing Directors of different epochs locking each other's logs; nodeup/nodedown of a crash-looping peer resetting raft state; election timeout/heartbeat constants too tight for a BEAM under load.\n\n## Expected\n\nWith a quorum of healthy coordinators and no partitions, leadership is stable. A dead or crash-looping minority must not cause elections. Spike first — prove the mechanism with a deterministic repro before any fix.",
+  "id": "bedrock-5yi",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Coordinator raft leadership flaps (~1 election/s) while one coordinator is down or crash-looping at boot; one election observed with all nodes healthy",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:24:53Z"
+}

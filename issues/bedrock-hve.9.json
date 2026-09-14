@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:13:12Z",
+  "description": "Given a seed that fails, find the smallest fault schedule that still reproduces it.\n\nReplay the run with faults progressively removed -- delta-debugging over the fault journal -- and keep the smallest schedule that still trips an oracle. This is what converts 'chaos found something' into a three-line repro that can be attached to a ticket and fixed.\n\nRequires the schedule to be fully deterministic given a seed, and requires replay to be reliable enough that a non-reproducing run means 'this fault was not necessary' rather than 'we got lucky'. Flaky replay makes shrinking actively misleading, so this child depends on replay-by-seed being trustworthy first.\n\nOutput: a minimized fault schedule plus the oracle violation it produces, in a form that can be pasted into a bug ticket.",
+  "id": "bedrock-hve.9",
+  "labels": [],
+  "parent": "bedrock-hve",
+  "priority": 3,
+  "status": "open",
+  "title": "Shrink failing runs to a minimal fault schedule",
+  "type": "task",
+  "updated_at": "2026-09-14T19:13:12Z"
+}

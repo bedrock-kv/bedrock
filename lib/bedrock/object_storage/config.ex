@@ -2,6 +2,7 @@ defmodule Bedrock.ObjectStorage.Config do
   @moduledoc "Configuration helpers for ObjectStorage backends."
 
   alias Bedrock.ObjectStorage
+  alias Bedrock.ObjectStorage.DiskCache
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.S3
 
@@ -42,12 +43,27 @@ defmodule Bedrock.ObjectStorage.Config do
     ObjectStorage.backend(LocalFilesystem, Keyword.get(app_config, :local_filesystem, []))
   end
 
+  defp normalize_backend({:disk_cache, backend_config}, app_config) when is_list(backend_config) do
+    normalize_backend({DiskCache, backend_config}, app_config)
+  end
+
+  defp normalize_backend(:disk_cache, app_config) do
+    normalize_backend({DiskCache, Keyword.get(app_config, :disk_cache, [])}, app_config)
+  end
+
   defp normalize_backend({module, backend_config}, app_config) when is_atom(module) and is_list(backend_config) do
     ObjectStorage.backend(module, normalize_module_config(module, backend_config, app_config))
   end
 
   defp normalize_backend(module, app_config) when is_atom(module) do
     normalize_backend({module, []}, app_config)
+  end
+
+  # The cache wraps a backend, so its `:inner` is itself something to
+  # normalize — that is what lets `inner: :s3` pick up the top-level `:s3`
+  # config rather than having to be spelled out again.
+  defp normalize_module_config(DiskCache, backend_config, app_config) do
+    Keyword.update!(backend_config, :inner, &normalize_backend(&1, app_config))
   end
 
   defp normalize_module_config(S3, backend_config, app_config) do

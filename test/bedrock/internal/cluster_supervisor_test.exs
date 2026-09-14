@@ -45,9 +45,11 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       # This simulates what happens when the livebook's config is used
       capabilities = [:coordination, :log, :storage]
 
-      # Set up all the mock expectations needed for init
+      # Set up all the mock expectations needed for init. Capability
+      # children build before Link (see "children start order" below), so
+      # the :storage capability raises before Link's otp_name is ever
+      # queried.
       expect(Bedrock.MockCluster, :otp_name, fn :sup -> :test_sup end)
-      expect(Bedrock.MockCluster, :otp_name, fn :link -> :test_link end)
 
       assert_raise RuntimeError, "Unknown capability: :storage", fn ->
         # module_for_capability is private, so we test via init
@@ -68,6 +70,36 @@ defmodule Bedrock.Internal.ClusterSupervisorTest do
       # the capabilities are recognized by checking no "Unknown capability" error
       # This would need integration testing to fully verify
       assert [:coordination, :log, :materializer] == capabilities
+    end
+  end
+
+  describe "children start order" do
+    # GH #319: Link's :find_a_live_coordinator continuation queries the
+    # local Foreman for already-running services (discovery.ex). If Link
+    # starts before Foreman, that query can race a Foreman that isn't
+    # registered yet. Starting Foreman (a capability child) before Link
+    # closes that window: by the time Link's supervisor start_link
+    # returns, Foreman is already registered under its OTP name.
+    test "starts capability children (Foreman) before Link" do
+      expect(Bedrock.MockCluster, :otp_name, fn :sup -> :test_sup end)
+      expect(Bedrock.MockCluster, :otp_name, fn :link -> :test_link end)
+      expect(Bedrock.MockCluster, :otp_name, fn :worker_supervisor -> :test_worker_supervisor end)
+      expect(Bedrock.MockCluster, :otp_name, fn :foreman -> :test_foreman end)
+
+      {:ok, {_flags, child_specs}} =
+        ClusterSupervisor.init(
+          {:test_node, Bedrock.MockCluster, nil,
+           [capabilities: [:log], coordinator: [path: "/tmp"], worker: [path: "/tmp"], durability_mode: :relaxed],
+           "bedrock.cluster", %Descriptor{cluster_name: "test", coordinator_nodes: [:test_node]}}
+        )
+
+      ids = Enum.map(child_specs, & &1.id)
+
+      foreman_index = Enum.find_index(ids, &(&1 == Bedrock.Service.Foreman.Supervisor))
+      link_index = Enum.find_index(ids, &(&1 == :test_link))
+
+      assert foreman_index && link_index
+      assert foreman_index < link_index
     end
   end
 

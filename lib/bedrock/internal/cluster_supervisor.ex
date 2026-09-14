@@ -139,20 +139,22 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       unsupported -> Logger.warning("Unsupported tracing module: #{inspect(unsupported)}")
     end)
 
+    # Capability children (Foreman among them) start before Link: Link's
+    # post-init continuation queries the local Foreman for its running
+    # services, and that call must find Foreman already registered.
     children =
-      [
-        {DynamicSupervisor, name: cluster.otp_name(:sup)},
-        {Link,
-         [
-           cluster: cluster,
-           descriptor: descriptor,
-           path_to_descriptor: path_to_descriptor,
-           otp_name: cluster.otp_name(:link),
-           capabilities: capabilities,
-           mode: mode_for_capabilities(capabilities)
-         ]}
-        | children_for_capabilities(cluster, capabilities, config)
-      ]
+      [{DynamicSupervisor, name: cluster.otp_name(:sup)} | children_for_capabilities(cluster, capabilities, config)] ++
+        [
+          {Link,
+           [
+             cluster: cluster,
+             descriptor: descriptor,
+             path_to_descriptor: path_to_descriptor,
+             otp_name: cluster.otp_name(:link),
+             capabilities: capabilities,
+             mode: mode_for_capabilities(capabilities)
+           ]}
+        ]
 
     Supervisor.init(children, strategy: :one_for_one)
   end

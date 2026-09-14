@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:51:17Z",
+  "description": "Residual from bedrock-w10's cold review (the Director now reads the bootstrap from object storage at recovery start).\n\nThe w10 fix covers clusters whose nodes share one object store. Two real configurations still hand a new leader's Director a nil prior core state, which routes recovery to InitializationPhase and re-initializes a live cluster (the w10 wipe):\n\n1. No object storage resolvable on the leader (e.g. a coordination-only node with no nested :path and no top-level object_storage): PersistencePhase never writes a bootstrap, and the only prior state is what the leader's own Directors notified its coordinator. A follower that wins leadership has nothing.\n2. Multi-node clusters that fall back to per-node LocalFilesystem (derived from each node's :path): each leader writes its own disk; a new leader's read returns :not_found, which reads as \"fresh\".\n\nFDB has no such mode: the coordinators' DBCoreState is the quorum-replicated durable record every recovery reads. Expected: a multi-node cluster must either have a shared durable core-state record or refuse to run without one — never treat \"I can't see a record\" as \"fresh cluster\" when other coordinators exist. Related: bedrock-1cp (single object-storage resolution; its residual notes nothing flags a multi-node cluster on per-node local storage).",
+  "id": "bedrock-yzg",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "Clusters without a shared object store have no durable core state: a follower that wins leadership still recovers from nil",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:51:17Z"
+}

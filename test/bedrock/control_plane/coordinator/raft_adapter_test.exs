@@ -54,18 +54,30 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapterTest do
       cancel_fn = RaftAdapter.timer(:heartbeat)
 
       assert is_function(cancel_fn, 0)
-      # Timer cancel returns {:ok, :cancel} or false
-      result = cancel_fn.()
-      assert result == {:ok, :cancel} or result == false
+      assert :ok = cancel_fn.()
     end
 
     test "creates election timer with jitter" do
       cancel_fn = RaftAdapter.timer(:election)
 
       assert is_function(cancel_fn, 0)
-      # Timer cancel returns {:ok, :cancel} or false
-      result = cancel_fn.()
-      assert result == {:ok, :cancel} or result == false
+      assert :ok = cancel_fn.()
+    end
+
+    # A coordinator busy for longer than a timer's interval finds the fired
+    # timer's message already queued when the protocol resets that timer
+    # (e.g. on AppendEntries). Delivered afterwards, the stale election
+    # timeout would start an election despite the leader's heartbeat.
+    test "cancelling a timer that already fired discards its queued message" do
+      cancel_fn = RaftAdapter.timer(:heartbeat)
+      Process.send_after(self(), :heartbeat_interval_elapsed, 2 * RaftAdapter.heartbeat_ms())
+      assert_receive :heartbeat_interval_elapsed, 1_000
+      {:messages, messages} = Process.info(self(), :messages)
+      assert {:raft, :timer, :heartbeat} in messages
+
+      cancel_fn.()
+
+      refute_received {:raft, :timer, :heartbeat}
     end
   end
 

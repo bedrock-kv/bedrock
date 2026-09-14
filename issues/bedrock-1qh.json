@@ -6,9 +6,15 @@
   "description": "Observed repeatedly while multiple agents ran mix test concurrently in worktrees of this repo, and by the h3p/mi1 agents on a single run: test_helper starts a MinIO on 9000, an :s3-tagged test starts another, the second bind fails and the run aborts partway. Two fixes, both worth doing: (1) one MinIO per run — the :s3 tests should reuse the test_helper instance or be the only starter; (2) pick a free port (bind 0, read it back) and thread it to the ExAws config so parallel runs on one machine don't collide. Retries are currently the only workaround.",
   "id": "bedrock-1qh",
   "labels": [],
+  "comments": [
+    {
+      "text": "Now actively biting, not theoretical. Running test suites in two worktrees concurrently (parallel agents on bedrock-hve.1 and bedrock-hve.5) produces:\n\n    FATAL Specified port is already in use: listen tcp 127.0.0.1:9000: bind: address already in use\n    minio: Process exited with status 1\n    ** (EXIT from #PID\u003c...\u003e) shutdown\n\nwhich aborts the whole run, not just the :s3 tests. It cost a false signal during bedrock-hve.5 verification: a workload-baseline run failed and looked like a harness flake until I read the log and found it was this.\n\nThis will get worse. The chaos harness (epic bedrock-hve) runs long multi-node suites, and bedrock-hve.10 wants them in CI. Every chaos run starts MinIO via test_helper.exs regardless of whether the test touches object storage, so any concurrency at all collides.\n\nTwo things worth separating in the fix: bind an ephemeral port (or derive one per run) rather than a fixed 9000, and make a MinIO start failure degrade to 'skip the :s3 tests' rather than aborting the entire suite. The second is arguably the more valuable half -- an unavailable optional fixture should not take down unrelated tests.",
+      "timestamp": "2026-09-14T19:51:40Z"
+    }
+  ],
   "priority": 3,
   "status": "open",
   "title": "MinIO test fixture binds a fixed port 9000: parallel suites and :s3 tests collide and abort the run",
   "type": "bug",
-  "updated_at": "2026-09-06T01:00:28Z"
+  "updated_at": "2026-09-14T19:51:40Z"
 }

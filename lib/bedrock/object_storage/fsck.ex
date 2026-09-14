@@ -901,7 +901,19 @@ defmodule Bedrock.ObjectStorage.Fsck do
 
   defp chunk_opts(opts, _layout), do: opts
 
-  defp recover_layout(backend, opts) do
+  @doc """
+  Recovers the shard layout by replaying the system shard, without checking
+  anything else.
+
+  Exposed because the layout is the prerequisite for any offline work over
+  the store's contents — `Bedrock.ObjectStorage.Replay` needs to know which
+  prefixes to replay before it can replay them — and deriving it a second
+  way would be deriving it a second, less trustworthy way.
+
+  Returns `nil` when `check_layout: false`.
+  """
+  @spec recover_layout(ObjectStorage.backend(), keyword()) :: LayoutResult.t() | nil
+  def recover_layout(backend, opts \\ []) do
     if Keyword.get(opts, :check_layout, true) do
       tag = system_shard_tag()
 

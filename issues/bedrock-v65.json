@@ -12,11 +12,15 @@
     {
       "text": "Draft PR: https://github.com/bedrock-kv/bedrock/pull/282 — Link now re-polls the whole coordinator set on a jittered 5s interval (highest epoch wins) instead of trusting the leader it is pinned to, and fences {:tsl_updated, _} pushes against a wiring_epoch high-water mark. Cold audit PASS-WITH-NOTES; all three notes addressed.",
       "timestamp": "2026-09-06T02:17:18Z"
+    },
+    {
+      "text": "Status note (2026-09-14): this ticket is closed but its fix, PR #282, is still OPEN/unmerged and origin/develop (153a2b62) has no Link re-polling. Reproduced live in the 3-node harness during bedrock-w10 verification: after two elections without process death (leadership w2 -\u003e w3 -\u003e w1, see bedrock-5yi), every node's Link stayed pinned to w2's alive-but-follower coordinator with the epoch-2 TSL; clients got :unavailable indefinitely, and Foreman.advertise_running_worker registered new log workers via Raft.add_transaction on that follower (result ignored), so the epoch-4 leader's service directory never learned the epoch-3 log and its recovery stalled on :unable_to_meet_log_quorum forever.",
+      "timestamp": "2026-09-14T20:00:03Z"
     }
   ],
   "priority": 3,
   "status": "closed",
   "title": "Link discovery: partitioned-but-alive old coordinator leader is never abandoned",
   "type": "task",
-  "updated_at": "2026-09-06T14:05:33Z"
+  "updated_at": "2026-09-14T20:00:03Z"
 }

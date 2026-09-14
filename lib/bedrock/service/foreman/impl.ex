@@ -18,6 +18,7 @@ defmodule Bedrock.Service.Foreman.Impl do
   alias Bedrock.Cluster.Link
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.Service.Foreman.Removal
   alias Bedrock.Service.Foreman.State
   alias Bedrock.Service.Foreman.WorkerInfo
   alias Bedrock.Service.Worker
@@ -78,9 +79,34 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec do_worker_retired(State.t(), Worker.id()) :: State.t()
   def do_worker_retired(t, worker_id) do
     Logger.info("Bedrock foreman: worker #{worker_id} retired itself; disposing")
-    {t, _result} = do_remove_worker(t, worker_id)
+    {t, result} = do_remove_worker(t, worker_id)
+
+    if result != :ok,
+      do: Logger.warning("Bedrock foreman: retirement cleanup for #{worker_id} deferred: #{inspect(result)}")
+
     t
   end
+
+  @spec do_worker_retired(State.t(), Worker.id(), pid()) :: State.t()
+  def do_worker_retired(t, worker_id, reporter) do
+    case Map.get(t.workers, worker_id) do
+      %WorkerInfo{} = info ->
+        registered = registered_worker(info)
+
+        if is_pid(reporter) and
+             (registered == reporter or
+                (is_nil(registered) and incarnation(info) == reporter)), do: do_worker_retired(t, worker_id), else: t
+
+      nil ->
+        t
+    end
+  end
+
+  defp registered_worker(%{otp_name: name}) when is_atom(name) and not is_nil(name), do: Process.whereis(name)
+  defp registered_worker(_), do: nil
+  defp incarnation(%{incarnation_pid: pid}) when is_pid(pid), do: pid
+  defp incarnation(%{health: {:ok, pid}}), do: pid
+  defp incarnation(_), do: nil
 
   @spec do_new_worker(State.t(), Worker.id(), :log | :materializer, params :: map()) ::
           {State.t(), Worker.ref()}
@@ -109,21 +135,25 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec do_remove_worker(State.t(), Worker.id()) ::
           {State.t(),
            :ok
-           | {:error, :worker_not_found | {:failed_to_remove_directory, File.posix(), Path.t()}}}
+           | {:error,
+              :worker_not_found | :worker_shutdown_unresolved | {:failed_to_remove_directory, File.posix(), Path.t()}}}
   def do_remove_worker(t, worker_id) do
     case Map.get(t.workers, worker_id) do
       nil ->
         {t, {:error, :worker_not_found}}
 
       worker_info ->
-        result = remove_worker_completely(worker_info, t.cluster, t.path)
+        case remove_worker_completely(worker_info, t) do
+          :ok ->
+            {t |> update_workers(&Map.delete(&1, worker_id)) |> recompute_health(), :ok}
 
-        t =
-          t
-          |> update_workers(&Map.delete(&1, worker_id))
-          |> recompute_health()
+          {:error, :worker_shutdown_unresolved} = error ->
+            {t, error}
 
-        {t, result}
+          error ->
+            stopped = worker_info |> WorkerInfo.put_health(:stopped) |> WorkerInfo.put_monitor_ref(nil)
+            {t |> update_workers(&Map.put(&1, worker_id, stopped)) |> recompute_health(), error}
+        end
     end
   end
 
@@ -132,7 +162,10 @@ defmodule Bedrock.Service.Foreman.Impl do
            %{
              Worker.id() =>
                :ok
-               | {:error, :worker_not_found | {:failed_to_remove_directory, File.posix(), Path.t()}}
+               | {:error,
+                  :worker_not_found
+                  | :worker_shutdown_unresolved
+                  | {:failed_to_remove_directory, File.posix(), Path.t()}}
            }}
   def do_remove_workers(t, worker_ids) do
     {updated_state, results} = process_worker_removals(t, worker_ids)
@@ -145,19 +178,8 @@ defmodule Bedrock.Service.Foreman.Impl do
   end
 
   defp remove_single_worker(worker_id, {state, acc_results}) do
-    case Map.get(state.workers, worker_id) do
-      nil ->
-        {state, Map.put(acc_results, worker_id, {:error, :worker_not_found})}
-
-      worker_info ->
-        result = remove_worker_completely(worker_info, state.cluster, state.path)
-        updated_state = remove_worker_from_state(state, worker_id)
-        {updated_state, Map.put(acc_results, worker_id, result)}
-    end
-  end
-
-  defp remove_worker_from_state(state, worker_id) do
-    update_workers(state, &Map.delete(&1, worker_id))
+    {state, result} = do_remove_worker(state, worker_id)
+    {state, Map.put(acc_results, worker_id, result)}
   end
 
   @spec advertise_running_workers([WorkerInfo.t()], Cluster.t()) :: [WorkerInfo.t()]
@@ -193,17 +215,13 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec advertise_running_worker(WorkerInfo.t(), module()) :: WorkerInfo.t()
   def advertise_running_worker(worker_info, _), do: worker_info
 
-  @spec remove_worker_completely(WorkerInfo.t(), module(), String.t()) ::
-          :ok | {:error, {:failed_to_remove_directory, File.posix(), Path.t()}}
-  defp remove_worker_completely(worker_info, cluster, base_path) do
-    # Release the monitor before terminating, with :flush so an already
-    # queued :DOWN is discarded. A deliberate removal is not a death, and
-    # must not be reported as one.
-    release_monitor(worker_info)
-
-    with :ok <- terminate_worker_process(worker_info, cluster),
-         :ok <- unadvertise_worker(worker_info, cluster) do
-      cleanup_worker_directory(worker_info, base_path)
+  @spec remove_worker_completely(WorkerInfo.t(), State.t()) ::
+          :ok | {:error, :worker_shutdown_unresolved | {:failed_to_remove_directory, File.posix(), Path.t()}}
+  defp remove_worker_completely(worker_info, t) do
+    with :ok <- Removal.stop(t, worker_info) do
+      release_monitor(worker_info)
+      :ok = unadvertise_worker(worker_info, t.cluster)
+      cleanup_worker_directory(worker_info, t.path)
     end
   end
 
@@ -215,19 +233,6 @@ defmodule Bedrock.Service.Foreman.Impl do
     Process.demonitor(ref, [:flush])
     :ok
   end
-
-  @spec terminate_worker_process(WorkerInfo.t(), module()) :: :ok | {:error, :not_found}
-  defp terminate_worker_process(%{health: {:ok, pid}, otp_name: _otp_name}, cluster) do
-    worker_supervisor = cluster.otp_name(:worker_supervisor)
-
-    case DynamicSupervisor.terminate_child(worker_supervisor, pid) do
-      :ok -> :ok
-      {:error, :not_found} -> :ok
-    end
-  end
-
-  defp terminate_worker_process(%{health: :stopped}, _cluster), do: :ok
-  defp terminate_worker_process(%{health: {:failed_to_start, _}}, _cluster), do: :ok
 
   # Best-effort: a ghost directory entry is tolerable (locking a gone
   # service fails and is skipped), but leaving one behind on every
@@ -325,6 +330,10 @@ defmodule Bedrock.Service.Foreman.Impl do
   @spec do_worker_recheck(State.t(), Worker.id(), non_neg_integer()) ::
           {State.t(), :done | :retry}
   def do_worker_recheck(t, worker_id, attempts_left) do
+    if Map.has_key?(t.workers, worker_id), do: recheck_existing_worker(t, worker_id, attempts_left), else: {t, :done}
+  end
+
+  defp recheck_existing_worker(t, worker_id, attempts_left) do
     with %{health: :stopped, otp_name: otp_name} <- Map.get(t.workers, worker_id),
          pid when is_pid(pid) <- Process.whereis(otp_name) do
       Logger.info("Bedrock foreman: worker #{worker_id} was replaced; adopting #{inspect(pid)}")
@@ -344,6 +353,21 @@ defmodule Bedrock.Service.Foreman.Impl do
       _ -> {t, :done}
     end
   end
+
+  @spec do_worker_health(State.t(), Worker.id(), pid(), WorkerInfo.health()) :: State.t()
+  def do_worker_health(t, worker_id, reporter, health) do
+    with %WorkerInfo{} = info <- Map.get(t.workers, worker_id),
+         true <- is_pid(reporter) and registered_worker(info) == reporter,
+         true <- reported_pid_matches?(health, reporter) do
+      t = update_workers(t, &Map.update!(&1, worker_id, fn info -> %{info | incarnation_pid: reporter} end))
+      do_worker_health(t, worker_id, health)
+    else
+      _ -> t
+    end
+  end
+
+  defp reported_pid_matches?({:ok, pid}, reporter), do: pid == reporter
+  defp reported_pid_matches?(_health, _reporter), do: true
 
   @spec do_worker_health(State.t(), Worker.id(), WorkerInfo.health()) :: State.t()
   def do_worker_health(t, worker_id, health) do

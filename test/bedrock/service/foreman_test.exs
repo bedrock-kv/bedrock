@@ -91,6 +91,7 @@ defmodule Bedrock.Service.ForemanTest do
     end
 
     test "disposes the retired worker's directory and entry — and does not restart it" do
+      start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: JanitorCluster.otp_name(:worker_supervisor)})
       path = Path.join(System.tmp_dir!(), "foreman_retired_#{System.unique_integer([:positive])}")
       File.mkdir_p!(Path.join(path, "gone"))
       File.mkdir_p!(Path.join(path, "stays"))

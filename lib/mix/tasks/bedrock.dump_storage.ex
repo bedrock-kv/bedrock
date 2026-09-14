@@ -126,7 +126,7 @@ defmodule Mix.Tasks.Bedrock.DumpStorage do
 
     # Wait for health report from the storage worker
     receive do
-      {:"$gen_cast", {:worker_health, ^worker_id, {:ok, ^storage_pid}}} -> :ok
+      {:"$gen_cast", {:worker_health, ^worker_id, ^storage_pid, {:ok, ^storage_pid}}} -> :ok
     after
       5000 ->
         Mix.shell().error("Error: Storage worker failed to start within timeout")

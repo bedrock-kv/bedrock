@@ -1,0 +1,15 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:13:12Z",
+  "description": "Wire the harness into CI on a schedule, not per-PR. Chaos runs are slow and their failures need triage, so gating every PR on them would train people to ignore them.\n\n- Nightly workflow running the suite behind BEDROCK_CHAOS=1 with a fixed duration and a rotating seed.\n- On failure, upload the diagnosis bundle (journals, telemetry, per-node traces) as a build artifact -- a chaos failure with no artifacts is unactionable by the time anyone looks.\n- Report the seed prominently so a failure can be reproduced locally with one command.\n\nNote bedrock-1qh: the MinIO test fixture binds a fixed port 9000, so parallel or concurrent runs collide. Either resolve that first or serialize chaos runs.\n\nExisting CI is a single ubuntu-24.04 runner matrixed over OTP/Elixir versions; chaos should run on one version only, not the full matrix.",
+  "id": "bedrock-hve.10",
+  "labels": [],
+  "parent": "bedrock-hve",
+  "priority": 3,
+  "status": "open",
+  "title": "Run the chaos suite nightly in CI",
+  "type": "task",
+  "updated_at": "2026-09-14T19:13:12Z"
+}

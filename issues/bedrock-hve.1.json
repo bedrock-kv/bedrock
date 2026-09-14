@@ -9,9 +9,15 @@
   "id": "bedrock-hve.1",
   "labels": [],
   "parent": "bedrock-hve",
+  "comments": [
+    {
+      "text": "Correction to this ticket's premise, established during implementation and verified independently.\n\nI wrote that 'an overlap or gap produces a silent replay gap' in ChunkReader.covering_chunk_keys/2. The gap half was wrong. The implementation is:\n\n    list_chunks()  # newest-first, keys are inverted versions\n    |\u003e Stream.take_while(\u0026(max_version_from_key(\u00261) \u003e= target_version))\n\nThat take_while is SOUND across gaps. It walks newest-to-oldest and stops at the first chunk whose named max is below the target, so every chunk that could hold the target is taken regardless of holes between them.\n\nWhat actually breaks it:\n- name/header disagreement -- max_version_from_key reads the NAME, so a chunk named lower than its header's true max gets cut by take_while even though it holds the target\n- overlap -- a version replays twice, out of order\n\nBoth are faulted. Gaps are deliberately NOT faulted, and this is the right call: versions are sequencer commit versions rather than a dense sequence, a shard only receives transactions that touch it, and chunks carry no link to a predecessor. So nothing in the store distinguishes a lost chunk from a quiet shard. Gaps are reported as :version_gap notes in ShardResult.gaps for a caller that DOES know the expected stream -- e.g. a chaos harness driving a known workload, which is exactly bedrock-hve.5 onward. That is the right division of labour: fsck reports what it can prove, the harness judges what it has the context to judge.\n\nConsistent with the 'guard only real hazards' convention -- a check that cannot distinguish a fault from normal operation is noise, not safety.",
+      "timestamp": "2026-09-14T19:40:53Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "mix bedrock.fsck: offline structural validation of object-storage chunks",
   "type": "task",
-  "updated_at": "2026-09-14T19:24:52Z"
+  "updated_at": "2026-09-14T19:40:53Z"
 }

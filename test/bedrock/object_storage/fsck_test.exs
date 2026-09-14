@@ -7,8 +7,15 @@ defmodule Bedrock.ObjectStorage.FsckTest do
   alias Bedrock.ObjectStorage.Fsck
   alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Values
 
   @header_size 32
+  @end_of_keyspace <<0xFF, 0xFF>>
+
+  # The layout a fresh cluster bootstraps with: shard 1 covers the user
+  # keyspace, shard 0 everything from \xFF up.
+  @default_layout %{<<0xFF>> => {1, <<>>}, @end_of_keyspace => {0, <<0xFF>>}}
 
   # ---------------------------------------------------------------- fixtures
 
@@ -38,6 +45,33 @@ defmodule Bedrock.ObjectStorage.FsckTest do
     key = key_for(shard_tag, List.last(versions))
     :ok = ObjectStorage.put(backend, key, chunk_for(versions))
     key
+  end
+
+  # ----------------------------------------------------------- layout fixtures
+
+  defp slice(version, mutations) do
+    Transaction.encode(%{mutations: mutations, commit_version: <<version::unsigned-big-64>>})
+  end
+
+  defp put_slices(backend, shard_tag, versioned_mutations) do
+    entries = Enum.map(versioned_mutations, fn {version, muts} -> {version, slice(version, muts)} end)
+    {:ok, binary} = Chunk.encode(entries)
+    {version, _} = List.last(entries)
+    key = key_for(shard_tag, version)
+    :ok = ObjectStorage.put(backend, key, binary)
+    key
+  end
+
+  defp shard_key_sets(layout) do
+    Enum.map(layout, fn {end_key, {tag, start_key}} ->
+      {:set, SystemKeys.shard_key(end_key), Values.encode_shard_key_entry(tag, start_key)}
+    end)
+  end
+
+  # Writes `layout` into the system shard's chunks the way recovery's
+  # bootstrap transaction does, so fsck has something to replay.
+  defp put_layout(backend, layout, version \\ 10) do
+    put_slices(backend, "0", [{version, shard_key_sets(layout)}])
   end
 
   # Replaces `size` bytes at `offset` with `replacement`.
@@ -464,7 +498,7 @@ defmodule Bedrock.ObjectStorage.FsckTest do
       put_chunk(backend, "b", [10, 20])
       File.write!(Path.join([root, "c", "b", ".bedrock-tmp.abc"]), "x")
 
-      assert Fsck.check(backend, shards: ["a"]).notes == []
+      assert Enum.filter(Fsck.check(backend, shards: ["a"]).notes, &(&1.kind == :scratch_debris)) == []
       assert [_] = Enum.filter(Fsck.check(backend, shards: ["b"]).notes, &(&1.kind == :scratch_debris))
     end
 
@@ -472,6 +506,426 @@ defmodule Bedrock.ObjectStorage.FsckTest do
       put_chunk(backend, "a", [10, 20])
 
       assert Enum.filter(Fsck.check(backend).notes, &(&1.kind == :scratch_debris)) == []
+    end
+  end
+
+  # ------------------------------------------------------------------ layout
+
+  describe "check/2 layout recovery" do
+    test "replays the system shard's chunks into the shard layout", %{backend: backend} do
+      put_layout(backend, @default_layout)
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert report.layout.status == :recovered
+      assert report.layout.containment == :decidable
+
+      assert report.layout.shards == [
+               %{tag: 1, start_key: <<>>, end_key: <<0xFF>>},
+               %{tag: 0, start_key: <<0xFF>>, end_key: @end_of_keyspace}
+             ]
+
+      assert report.layout.ranges_by_tag == %{
+               "0" => [{<<0xFF>>, @end_of_keyspace}],
+               "1" => [{<<>>, <<0xFF>>}]
+             }
+    end
+
+    test "a later transaction's clear removes the entry it names", %{backend: backend} do
+      # Shard 1 is split at "m" into 1 and 2, and the old boundary cleared.
+      split = %{"m" => {1, <<>>}, <<0xFF>> => {2, "m"}, @end_of_keyspace => {0, <<0xFF>>}}
+
+      put_slices(backend, "0", [
+        {10, shard_key_sets(@default_layout)},
+        {20, shard_key_sets(split)}
+      ])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert Enum.map(report.layout.shards, & &1.tag) == [1, 2, 0]
+
+      # Shard 1's earlier, wider range survives in the containment domain:
+      # the chunks it wrote under it are not retroactively wrong.
+      assert Enum.sort(report.layout.ranges_by_tag["1"]) == [{<<>>, "m"}, {<<>>, <<0xFF>>}]
+    end
+
+    test "a clear retires the boundary it names", %{backend: backend} do
+      # A merge: shards 1 and 2 become one, so the "m" boundary is cleared
+      # and 1 widens to take it back. Ignoring the clear would leave both
+      # the old and the new entry live, and the layout would overlap.
+      split = %{"m" => {1, <<>>}, <<0xFF>> => {2, "m"}, @end_of_keyspace => {0, <<0xFF>>}}
+
+      put_slices(backend, "0", [
+        {10, shard_key_sets(split)},
+        {20, [{:clear, SystemKeys.shard_key("m")} | shard_key_sets(%{<<0xFF>> => {1, <<>>}})]}
+      ])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert Enum.map(report.layout.shards, & &1.tag) == [1, 0]
+    end
+
+    test "a clear_range over the family drops every entry it covers", %{backend: backend} do
+      prefix = SystemKeys.shard_keys_prefix()
+
+      put_slices(backend, "0", [
+        {10, shard_key_sets(@default_layout)},
+        {20, [{:clear_range, prefix, prefix <> <<0xFF, 0xFF, 0xFF>>}]}
+      ])
+
+      report = Fsck.check(backend)
+
+      assert report.layout.status == :unavailable
+      assert report.layout.reason == :no_shard_keys_entries
+    end
+
+    test "no system shard chunks leaves the layout unavailable, not faulted", %{backend: backend} do
+      put_chunk(backend, "1", [10, 20])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert report.layout.status == :unavailable
+      assert report.layout.reason == :no_system_shard_chunks
+      assert [note] = Enum.filter(report.notes, &(&1.kind == :layout_unavailable))
+      assert note.detail == %{reason: :no_system_shard_chunks}
+    end
+
+    test "check_layout: false skips recovery entirely", %{backend: backend} do
+      put_layout(backend, @default_layout)
+
+      assert Fsck.check(backend, check_layout: false).layout == nil
+    end
+  end
+
+  describe "check/2 layout coverage" do
+    test "faults when the layout leaves a hole between two shards", %{backend: backend} do
+      gapped = %{"d" => {1, <<>>}, <<0xFF>> => {2, "h"}, @end_of_keyspace => {0, <<0xFF>>}}
+      put_layout(backend, gapped)
+
+      report = Fsck.check(backend)
+
+      refute report.clean?
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :layout_gap))
+      assert fault.detail == %{after_key: "d", before_key: "h"}
+    end
+
+    test "faults when the layout does not start at the beginning of the keyspace", %{backend: backend} do
+      late = %{<<0xFF>> => {1, "a"}, @end_of_keyspace => {0, <<0xFF>>}}
+      put_layout(backend, late)
+
+      report = Fsck.check(backend)
+
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :layout_gap))
+      assert fault.detail == %{after_key: <<>>, before_key: "a"}
+    end
+
+    test "faults when the layout stops short of the end of the keyspace", %{backend: backend} do
+      short = %{<<0xFF>> => {1, <<>>}}
+      put_layout(backend, short)
+
+      report = Fsck.check(backend)
+
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :layout_gap))
+      assert fault.detail == %{after_key: <<0xFF>>, before_key: @end_of_keyspace}
+    end
+
+    test "faults when two shards claim the same keys", %{backend: backend} do
+      overlapping = %{"m" => {1, <<>>}, <<0xFF>> => {2, "d"}, @end_of_keyspace => {0, <<0xFF>>}}
+      put_layout(backend, overlapping)
+
+      report = Fsck.check(backend)
+
+      refute report.clean?
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :layout_overlap))
+      assert fault.detail == %{covered_through: "m", start_key: "d", end_key: <<0xFF>>}
+    end
+
+    test "a tag that names no object-storage prefix is reported, not raised on", %{backend: backend} do
+      # `decode_shard_key_entry/1` promises an integer and nothing more; a
+      # negative one round-trips through it, and `Keys.shard_tag/1` has no
+      # clause for it. An operator's fsck must report that, not crash in it.
+      odd = %{<<0xFF>> => {-3, <<>>}, @end_of_keyspace => {0, <<0xFF>>}}
+      put_layout(backend, odd)
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert Enum.map(report.layout.shards, & &1.tag) == [-3, 0]
+      assert Map.keys(report.layout.ranges_by_tag) == ["0"]
+    end
+
+    test "faults on a shard_keys value that will not decode", %{backend: backend} do
+      key = SystemKeys.shard_key(<<0xFF>>)
+      put_slices(backend, "0", [{10, [{:set, key, "not a packed tuple"}]}])
+
+      report = Fsck.check(backend)
+
+      refute report.clean?
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :layout_undecodable_entry))
+      assert fault.key == key
+      assert report.layout.status == :unavailable
+    end
+  end
+
+  describe "check/2 layout recovery degrades when the system shard is broken" do
+    test "a faulted system shard chunk abandons recovery rather than replaying it", %{backend: backend} do
+      put_layout(backend, @default_layout)
+      # A second system chunk with bad magic: the replay would silently
+      # skip it and report a layout derived from whatever survived.
+      :ok = ObjectStorage.put(backend, key_for("0", 40), patch_header(chunk_for([30, 40]), :magic, 0))
+
+      report = Fsck.check(backend)
+
+      refute report.clean?
+      assert report.layout.status == :unavailable
+      assert report.layout.reason == :system_shard_unhealthy
+      # The structural fault is still reported once, by the main pass.
+      assert [_] = Enum.filter(report.faults, &(&1.kind == :bad_magic))
+    end
+
+    test "overlapping system chunks abandon recovery: the replay would double-apply", %{backend: backend} do
+      put_slices(backend, "0", [{10, shard_key_sets(@default_layout)}, {30, []}])
+      put_slices(backend, "0", [{25, []}, {40, []}])
+
+      report = Fsck.check(backend)
+
+      assert report.layout.status == :unavailable
+      assert report.layout.reason == :system_shard_unhealthy
+    end
+
+    test "a system chunk filed under the wrong version abandons recovery", %{backend: backend} do
+      # ChunkReader selects from the name alone, so this chunk is skipped
+      # by a read that wants version 30 — a silent hole in the replay.
+      {:ok, binary} = Chunk.encode([{10, slice(10, shard_key_sets(@default_layout))}, {30, slice(30, [])}])
+      :ok = ObjectStorage.put(backend, key_for("0", 20), binary)
+
+      report = Fsck.check(backend)
+
+      assert report.layout.status == :unavailable
+      assert report.layout.reason == :system_shard_unhealthy
+    end
+
+    test "no layout-derived fault is reported when the layout is unavailable", %{backend: backend} do
+      # Shard 1 holds a key that belongs to shard 0, but with no trustworthy
+      # map there is nothing to say so.
+      put_slices(backend, "1", [{10, [{:set, <<0xFF, "x">>, "v"}]}])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert Enum.filter(report.faults, &(&1.kind == :mutation_out_of_shard_range)) == []
+    end
+  end
+
+  describe "check/2 key containment" do
+    setup %{backend: backend} do
+      put_layout(backend, @default_layout)
+      :ok
+    end
+
+    test "a shard holding only its own keys is clean", %{backend: backend} do
+      put_slices(backend, "1", [{20, [{:set, "apple", "v"}, {:clear, "banana"}]}])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+    end
+
+    test "faults when a set lands outside the shard's range", %{backend: backend} do
+      key = put_slices(backend, "1", [{20, [{:set, "apple", "v"}, {:set, <<0xFF, "sys">>, "v"}]}])
+
+      report = Fsck.check(backend)
+
+      refute report.clean?
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :mutation_out_of_shard_range))
+      assert fault.shard_tag == "1"
+      assert fault.key == key
+      assert fault.detail.version == 20
+      assert fault.detail.key == <<0xFF, "sys">>
+      assert fault.detail.count == 1
+      assert fault.detail.shard_ranges == [{<<>>, <<0xFF>>}]
+    end
+
+    test "faults when a clear lands outside the shard's range", %{backend: backend} do
+      put_slices(backend, "0", [{20, [{:clear, "user-key"}]}])
+
+      report = Fsck.check(backend)
+
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :mutation_out_of_shard_range))
+      assert fault.shard_tag == "0"
+      assert fault.detail.key == "user-key"
+    end
+
+    test "faults when an atomic op lands outside the shard's range", %{backend: backend} do
+      put_slices(backend, "1", [{20, [{:atomic, :add, <<0xFF, "counter">>, <<1::64>>}]}])
+
+      report = Fsck.check(backend)
+
+      assert [_] = Enum.filter(report.faults, &(&1.kind == :mutation_out_of_shard_range))
+    end
+
+    test "faults when a clear_range straddles the shard's boundary", %{backend: backend} do
+      # The proxy clamps each routed copy to the owning shard's bounds, so
+      # an unclamped range in a persisted slice was never routed.
+      put_slices(backend, "1", [{20, [{:clear_range, "m", <<0xFF, "z">>}]}])
+
+      report = Fsck.check(backend)
+
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :mutation_out_of_shard_range))
+      assert fault.detail.key == {"m", <<0xFF, "z">>}
+    end
+
+    test "a clear_range inside the shard's range is clean", %{backend: backend} do
+      put_slices(backend, "1", [{20, [{:clear_range, "m", "q"}]}])
+
+      assert Fsck.check(backend).clean?
+    end
+
+    test "one fault per chunk, carrying the first offender and a count", %{backend: backend} do
+      put_slices(backend, "1", [
+        {20, [{:set, <<0xFF, "a">>, "v"}, {:set, <<0xFF, "b">>, "v"}]},
+        {30, [{:set, <<0xFF, "c">>, "v"}]}
+      ])
+
+      report = Fsck.check(backend)
+
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :mutation_out_of_shard_range))
+      assert fault.detail.version == 20
+      assert fault.detail.key == <<0xFF, "a">>
+      assert fault.detail.count == 3
+    end
+
+    test "a privatized notice past the end of the keyspace is not a fault", %{backend: backend} do
+      # The proxy prefixes a membership clear past every boundary and
+      # addresses it to a tag, precisely so no shard can store it. It
+      # still rides that shard's stream into that shard's chunks.
+      notice = @end_of_keyspace <> SystemKeys.materializer_key(1, "worker-7")
+      put_slices(backend, "1", [{20, [{:clear, notice}]}])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+    end
+
+    test "a degenerate empty clear_range names no keys and is not a fault", %{backend: backend} do
+      put_slices(backend, "1", [{20, [{:clear_range, <<0xFF, "a">>, <<0xFF, "a">>}]}])
+
+      assert Fsck.check(backend).clean?
+    end
+
+    test "containment is checked against every range the tag has held", %{backend: backend} do
+      # Shard 1 gave up ["m", 0xFF) in a later transaction. Its older
+      # chunks still hold keys from that range, and they are correct.
+      split = %{"m" => {1, <<>>}, <<0xFF>> => {2, "m"}, @end_of_keyspace => {0, <<0xFF>>}}
+      put_slices(backend, "0", [{40, shard_key_sets(split)}])
+      put_slices(backend, "1", [{20, [{:set, "zebra", "v"}]}])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+    end
+
+    test "chunks under a tag the layout does not name are not checked", %{backend: backend} do
+      put_slices(backend, "7", [{20, [{:set, "apple", "v"}]}])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert [note] = Enum.filter(report.notes, &(&1.kind == :shard_not_in_layout))
+      assert note.shard_tag == "7"
+    end
+
+    test "containment survives a shard filter", %{backend: backend} do
+      put_slices(backend, "1", [{20, [{:set, <<0xFF, "sys">>, "v"}]}])
+
+      report = Fsck.check(backend, shards: ["1"])
+
+      assert [_] = Enum.filter(report.faults, &(&1.kind == :mutation_out_of_shard_range))
+    end
+
+    test "skip_transactions takes containment with it", %{backend: backend} do
+      put_slices(backend, "1", [{20, [{:set, <<0xFF, "sys">>, "v"}]}])
+
+      report = Fsck.check(backend, check_transactions: false)
+
+      assert report.clean?
+    end
+
+    test "a legacy shard_keys family suspends containment", %{backend: backend} do
+      # Pre-Values entries carry a bare tag; start keys are reconstructed
+      # by adjacency, which is a current map with no history behind it.
+      legacy =
+        Enum.map(@default_layout, fn {end_key, {tag, _start}} ->
+          {:set, SystemKeys.shard_key(end_key), :erlang.term_to_binary(tag)}
+        end)
+
+      :ok = ObjectStorage.delete(backend, key_for("0", 10))
+      put_slices(backend, "0", [{10, legacy}])
+      put_slices(backend, "1", [{20, [{:set, <<0xFF, "sys">>, "v"}]}])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert report.layout.status == :recovered
+      assert report.layout.containment == :undecidable
+      assert [_] = Enum.filter(report.notes, &(&1.kind == :containment_undecidable))
+    end
+  end
+
+  describe "check/2 tag and prefix correspondence" do
+    test "a layout shard with no chunks is a note, not a fault", %{backend: backend} do
+      # Shard 1 is named by the layout but has never flushed. Chunks
+      # appear only after a flush, so this is an ordinary young cluster.
+      put_layout(backend, @default_layout)
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert [note] = Enum.filter(report.notes, &(&1.kind == :layout_shard_without_chunks))
+      assert note.shard_tag == "1"
+    end
+
+    test "chunks under a tag the layout forgot are a note, not a fault", %{backend: backend} do
+      put_layout(backend, @default_layout)
+      put_chunk(backend, "7", [20, 30])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert [note] = Enum.filter(report.notes, &(&1.kind == :shard_not_in_layout))
+      assert note.shard_tag == "7"
+    end
+
+    test "correspondence is not reported under a shard filter", %{backend: backend} do
+      put_layout(backend, @default_layout)
+      put_chunk(backend, "7", [20, 30])
+
+      report = Fsck.check(backend, shards: ["7"])
+
+      kinds = Enum.map(report.notes, & &1.kind)
+      refute :shard_not_in_layout in kinds
+      refute :layout_shard_without_chunks in kinds
+    end
+  end
+
+  describe "check_chunk/3 containment" do
+    test "checks a chunk against ranges handed to it directly" do
+      {:ok, binary} = Chunk.encode([{20, slice(20, [{:set, "zebra", "v"}])}])
+
+      result = Fsck.check_chunk(key_for("a", 20), binary, layout_ranges: %{"a" => [{<<>>, "m"}]})
+
+      assert [fault] = result.faults
+      assert fault.kind == :mutation_out_of_shard_range
+    end
+
+    test "a tag absent from the ranges map is not checked" do
+      {:ok, binary} = Chunk.encode([{20, slice(20, [{:set, "zebra", "v"}])}])
+
+      assert Fsck.check_chunk(key_for("a", 20), binary, layout_ranges: %{"b" => [{<<>>, "m"}]}).faults == []
     end
   end
 

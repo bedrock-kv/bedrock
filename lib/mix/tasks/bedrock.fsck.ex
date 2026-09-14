@@ -21,7 +21,9 @@ defmodule Mix.Tasks.Bedrock.Fsck do
     * `--shard TAG` - Only check this shard; may be given more than once
     * `--skip-transactions` - Check chunk structure only, without decoding
       each transaction slice. Much faster on a large store, and enough to
-      catch every framing fault.
+      catch every framing fault. Takes key containment with it.
+    * `--skip-layout` - Do not replay the system shard to recover the shard
+      layout, and skip the checks that need it
     * `--verbose` - List version gaps and every chunk, not just the faults
     * `--format FORMAT` - `text` (default) or `json`
 
@@ -38,7 +40,16 @@ defmodule Mix.Tasks.Bedrock.Fsck do
 
   See `Bedrock.ObjectStorage.Fsck` for what each check proves — and, just
   as importantly, for what a version gap does NOT prove. Gaps between
-  chunks are normal: they are reported, never faulted.
+  chunks are normal: they are reported, never faulted. The same goes for a
+  shard the layout names but no chunks back, and for chunks under a tag the
+  layout has forgotten.
+
+  ## The shard layout
+
+  The layout every key-containment check is measured against is not in the
+  store as a map. It is replayed out of the system shard's own chunks, so
+  a store whose system shard is missing or structurally faulted reports
+  `layout: unavailable` and skips those checks rather than guessing.
   """
 
   use Mix.Task
@@ -51,6 +62,7 @@ defmodule Mix.Tasks.Bedrock.Fsck do
     path: :string,
     shard: :keep,
     skip_transactions: :boolean,
+    skip_layout: :boolean,
     verbose: :boolean,
     format: :string,
     help: :boolean
@@ -74,7 +86,8 @@ defmodule Mix.Tasks.Bedrock.Fsck do
 
     Fsck.check(backend,
       shards: shards(opts),
-      check_transactions: !opts[:skip_transactions]
+      check_transactions: !opts[:skip_transactions],
+      check_layout: !opts[:skip_layout]
     )
   rescue
     e in ObjectStorage.ListError ->
@@ -118,13 +131,29 @@ defmodule Mix.Tasks.Bedrock.Fsck do
 
   defp text(report, verbose) do
     Enum.join(
-      shard_lines(report, verbose) ++
+      layout_lines(report.layout, verbose) ++
+        shard_lines(report, verbose) ++
         section("FAULTS", Enum.map(report.faults, &finding_line/1)) ++
         section("NOTES", note_lines(report, verbose)) ++
         [summary(report)],
       "\n"
     )
   end
+
+  defp layout_lines(nil, _verbose), do: []
+
+  defp layout_lines(%{status: :unavailable, reason: reason}, _verbose),
+    do: ["layout: unavailable (#{reason}) — key containment and shard correspondence not checked", ""]
+
+  defp layout_lines(layout, verbose) do
+    header =
+      "layout: #{length(layout.shards)} shard(s) recovered from the system shard" <>
+        if(layout.containment == :undecidable, do: " [containment not checked: legacy encoding]", else: "")
+
+    [header | if(verbose, do: Enum.map(layout.shards, &layout_shard_line/1), else: [])] ++ [""]
+  end
+
+  defp layout_shard_line(shard), do: "  tag #{shard.tag}  #{inspect(shard.start_key)}..#{inspect(shard.end_key)}"
 
   defp shard_lines(%{shards: []}, _verbose), do: ["No chunks found."]
 
@@ -174,12 +203,32 @@ defmodule Mix.Tasks.Bedrock.Fsck do
       %{
         "clean" => report.clean?,
         "chunk_count" => report.chunk_count,
+        "layout" => json_layout(report.layout),
         "shards" => Enum.map(report.shards, &json_shard/1),
         "faults" => Enum.map(report.faults, &json_finding/1),
         "notes" => Enum.map(report.notes, &json_finding/1)
       },
       pretty: true
     )
+  end
+
+  defp json_layout(nil), do: nil
+
+  defp json_layout(%{status: :unavailable, reason: reason}),
+    do: %{"status" => "unavailable", "reason" => to_string(reason)}
+
+  # Shard boundaries are arbitrary binaries — mostly unprintable, since
+  # the interesting ones live up at \xFF — so they are inspected rather
+  # than pretended into strings.
+  defp json_layout(layout) do
+    %{
+      "status" => "recovered",
+      "containment" => to_string(layout.containment),
+      "shards" =>
+        Enum.map(layout.shards, fn shard ->
+          %{"tag" => shard.tag, "start_key" => inspect(shard.start_key), "end_key" => inspect(shard.end_key)}
+        end)
+    }
   end
 
   defp json_shard(shard) do
@@ -222,8 +271,16 @@ defmodule Mix.Tasks.Bedrock.Fsck do
   defp json_range({min, max}), do: [min, max]
 
   defp json_value({min, max}) when is_integer(min) and is_integer(max), do: [min, max]
-  defp json_value(value) when is_binary(value) or is_number(value) or is_nil(value), do: value
+  defp json_value(value) when is_number(value) or is_nil(value), do: value
   defp json_value(value) when is_atom(value), do: to_string(value)
+
+  # Keys are arbitrary binaries, and the ones a containment fault names
+  # are the ones with a \xFF in them. Jason refuses invalid UTF-8 by
+  # raising, which would turn a found fault into a crashed fsck.
+  defp json_value(value) when is_binary(value) do
+    if String.valid?(value), do: value, else: inspect(value)
+  end
+
   defp json_value(value), do: inspect(value)
 
   @spec abort(String.t()) :: no_return()

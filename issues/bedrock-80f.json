@@ -14,11 +14,15 @@
     {
       "text": "Scope refinement (user, 2026-09-14): object storage is NOT a fault target but IS a verification target. Quote: 'reported health is good, we'll need some tooling to check the consistency of the data on object storage.'\n\nThese are different claims and my earlier comment blurred them:\n- No fault injection against object-storage writers. Unchanged.\n- But an offline consistency checker ('fsck') that reads object storage INDEPENDENTLY of the running cluster becomes a first-class harness oracle, not an optional extra. A self-reported health verdict is exactly the signal a chaos harness cannot trust -- if the only thing telling us the data is fine is the same system we are busy killing, the run proves nothing.\n\nCandidate assertions for that checker, to be confirmed against the actual layout: referential integrity (every chunk referenced by a manifest exists), shard key-range coverage (no gaps, no overlaps), version/durability monotonicity, write atomicity (no torn/partial objects visible), and strongest of all -- replay object storage from scratch and diff the reconstructed keyspace against what the live cluster serves.\n\nStill out of scope for THIS spike. Recording it here so the epic picks it up.",
       "timestamp": "2026-09-14T19:03:54Z"
+    },
+    {
+      "text": "Delivery shape (user, 2026-09-14): expose this tooling as mix tasks.\n\nDesign constraints to hold to:\n- Mix task modules stay THIN -- argv parsing and output formatting only. All real logic lives in plain modules under lib/bedrock/... so it is unit-testable and so the chaos harness can call it in-process and get structured results back rather than parsing stdout.\n- Anything under lib/mix/tasks/ SHIPS: mix.exs packages ~w(lib priv/schemas mix.exs README.md CHANGELOG.md LICENSE .formatter.exs), so these appear in every consuming app's 'mix help'. For 'mix bedrock.fsck' that is a feature -- an operator-facing consistency checker is useful on its own and bedrock_ex gets it for free. For a chaos driver it is more arguable; that may belong in test/support behind the :chaos tag instead. Decide per task, not as a blanket rule.\n- 'mix bedrock.fsck \u003cstore\u003e' MUST run fully offline against a store path or MinIO URL with no running cluster. Not trusting the cluster is the entire point of the tool.\n\nNaming: mix bedrock.fsck (and possibly mix bedrock.chaos). Still out of scope for this spike.",
+      "timestamp": "2026-09-14T19:06:09Z"
     }
   ],
   "priority": 2,
   "status": "in_progress",
   "title": "Spike: can :peer nodes form a real bedrock cluster and commit?",
   "type": "task",
-  "updated_at": "2026-09-14T19:03:54Z"
+  "updated_at": "2026-09-14T19:06:09Z"
 }

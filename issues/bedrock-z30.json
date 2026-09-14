@@ -6,9 +6,15 @@
   "description": "Residual from bedrock-5yi (coordinator election storms). The 5yi fix works around these in the coordinator's raft adapter (stale-timer flush; election timeout sized to 5 heartbeat intervals), but the library-side amplifiers remain (bedrock_raft 0.10.x, hex dep; paths relative to deps/bedrock_raft/lib/bedrock/raft):\n\n1. mode/leader.ex ~436-443: the heartbeat tick skips any follower heard from within the last interval, so followers see AppendEntries every OTHER tick (~200ms at a 100ms tick). Measured in the 3-node harness. Halves the effective heartbeat rate the election timeout has to outlast.\n2. mode/leader.ex ~140-167 + follower_tracking.ex ~40-45: on winning an election the new leader sends nothing immediately and marks every follower as just-heard, so its first heartbeat can arrive a full skipped interval later — the window where followers' timers fire and re-elect.\n3. raft.ex ~195-204: no PreVote (Raft thesis §9.6) and no leader stickiness — a follower that times out (e.g. a coordinator stalled 50-200ms in DETS, or a node rejoining with a stale term) bumps the term and deposes a healthy leader. Not observed driving the measured storms, but it's the standard protection.\n\nExpected: a new leader asserts itself immediately; every follower receives a heartbeat every tick (or the tick/timeout ratio is documented and consumers can size to it); elections require a PreVote round. Fix belongs in /Users/j5n/Workspace/bedrock_raft (separate repo), then bump the dependency.",
   "id": "bedrock-z30",
   "labels": [],
+  "comments": [
+    {
+      "text": "Two more consequences recorded by the bedrock-5yi cold review: (a) because of the skip rule a follower's last ack at the leader can be ~200ms old, so a leader stall of ~300ms+ crosses leader.ex:449's 5-heartbeat (500ms) no-quorum window and the leader deposes itself with healthy followers — measured DETS stalls (up to 216ms, bedrock-zjk) sit ~90ms below that edge. Fix the skip rule rather than raising adapter timeouts further. (b) A single-node cluster (quorum 0) still waits for the follower election timer before electing itself; with 5yi's (500,1000]ms timeout its first election takes 501-1000ms. The library should elect immediately when quorum is 0.",
+      "timestamp": "2026-09-14T20:52:16Z"
+    }
+  ],
   "priority": 2,
   "status": "open",
   "title": "bedrock_raft: new leader sends no immediate heartbeat, heartbeats skip recently-heard followers, and there is no PreVote",
   "type": "bug",
-  "updated_at": "2026-09-14T20:47:45Z"
+  "updated_at": "2026-09-14T20:52:16Z"
 }

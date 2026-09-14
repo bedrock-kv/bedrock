@@ -2,6 +2,7 @@
   "assignee": "Jason Allum",
   "blocked_by": [],
   "blocks": [],
+  "closed_at": "2026-09-14T17:56:13Z",
   "created": "2026-09-14T16:08:33Z",
   "description": "GH issue #319: reproduce and diagnose two defects in fresh strict cluster startup — (1) ClusterSupervisor starts Link before Foreman, so Link's GenServer.call to Foreman :noproc's; (2) after fixing order, TSLValidationPhase treats a persisted bootstrap with logs: %{} as an old cluster needing log quorum, instead of taking CoreState.fresh?/1's init path.",
   "id": "bedrock-awj",
@@ -13,8 +14,8 @@
     }
   ],
   "priority": 2,
-  "status": "in_progress",
+  "status": "closed",
   "title": "Fresh strict cluster startup fails on Link/Foreman order and empty-log recovery",
   "type": "bug",
-  "updated_at": "2026-09-14T16:09:48Z"
+  "updated_at": "2026-09-14T17:56:13Z"
 }

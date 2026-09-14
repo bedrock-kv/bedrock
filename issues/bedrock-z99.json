@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T20:03:54Z",
+  "description": "`Demux.MutationSlicer.build_slices_from_list/4` (lib/bedrock/data_plane/demux/mutation_slicer.ex:110) assigns mutations to shards purely by position:\n\n    defp build_slices_from_list([{shard_id, count} | rest_index], mutations, commit_version, acc) do\n      {shard_mutations, remaining_mutations} = Enum.split(mutations, count)\n      ...\n\nIt takes the first `count` mutations for `shard_id` and never compares a single key against that shard's range. The shard_index carried on the transaction is trusted absolutely, and the materializer applies the resulting slices unconditionally.\n\nSo the correctness of routing rests entirely on the shard_index having been computed against the same layout the slicer and materializer believe in. If that index is stale or wrong -- computed against a pre-split layout, say, or by a proxy holding an old TSL -- mutations land in the wrong shard. Nothing at any layer notices: the counts still add up, every slice decodes, and the materializer writes what it is handed. The data is simply in the wrong place, permanently, and reads against the correct shard return nothing.\n\nThis is a silent-corruption path with no runtime detector. Worth deciding deliberately whether that is acceptable (the index and the layout may be provably co-committed, in which case document WHY no check is needed) or whether the slicer should validate the first and last key of each run against the shard's range -- cheap, since the ranges are ordered and the mutations within a run are already contiguous.\n\nFound while building bedrock-hve.2. The offline containment check there (Fsck :mutation_out_of_shard_range) is currently the only thing in the system that would catch this, after the fact. That is a reasonable safety net but a poor primary defense: it only runs when someone runs it.\n\nRelated: epic bedrock-q67 (shard-centric storage), which is where resharding makes stale indexes more likely rather than less.",
+  "id": "bedrock-z99",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Mutation slicing is ordinal, not spatial: a stale shard index misroutes mutations silently",
+  "type": "task",
+  "updated_at": "2026-09-14T20:03:54Z"
+}

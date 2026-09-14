@@ -25,9 +25,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexTest do
 
     %Index{
       tree: tree,
-      page_map: page_map,
-      min_key: <<>>,
-      max_key: <<0xFF, 0xFF>>
+      page_map: page_map
     }
   end
 

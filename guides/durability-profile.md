@@ -70,6 +70,13 @@ Desired sizing parameters can be provided via:
   `parameters.desired_logs`)
 - or node config fallback (`durability: [...]`).
 
+A fresh cluster (no cluster bootstrap in object storage) is seeded from the
+node config values, so the startup check validates what the cluster runs
+with. The seed comes from the node config of whichever coordinator leads the
+first recovery, so `durability:` must be identical on every coordinator node.
+The values are then persisted in the cluster bootstrap; changing node config
+afterwards does not resize an existing cluster.
+
 ## Telemetry Events
 
 Profile evaluations emit one of:

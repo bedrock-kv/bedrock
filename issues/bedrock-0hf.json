@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T16:33:17Z",
+  "description": "Found during cold review of bedrock-awj.1 (GH #319 fix). lib/bedrock/internal/cluster_supervisor.ex:310-324 fetch_coordinator/1 does GenServer.call(link, :get_known_coordinator, 1000) wrapped only in rescue, which does not catch the :exit signal a dead/unregistered Link raises -- same bug class fixed in bedrock-awj.1 for Link.Discovery.get_running_services_from_foreman/1. A caller invoking fetch_coordinator/1 (or coordinator!/1, which wraps it) against a cluster whose Link isn't running crashes instead of getting {:error, :unavailable}. Fix should mirror bedrock-awj.1: route through Bedrock.Internal.GenServer.Calls.call/3 (catch :exit) instead of a bare rescue, or reuse an existing Link API if one already wraps get_known_coordinator safely.",
+  "id": "bedrock-0hf",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "ClusterSupervisor.fetch_coordinator/1 has the same raw GenServer.call + rescue :exit bug as Link.Discovery",
+  "type": "bug",
+  "updated_at": "2026-09-14T16:33:17Z"
+}

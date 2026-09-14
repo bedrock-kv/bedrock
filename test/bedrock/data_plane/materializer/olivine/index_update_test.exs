@@ -220,8 +220,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     # Note: page 0 can never appear as a MIDDLE page of a chain traversal.
     # next_id == 0 is the chain terminator, so traversal always stops before
     # visiting page 0 as a successor; page 0 is only ever the first collected
-    # page. The `0 in middle_page_ids` branch in apply_mutation is therefore
-    # defensive and unreachable through the public API.
+    # page (bedrock-9mo removed the dead `0 in middle_page_ids` branch this
+    # once guarded).
     test "page 0 as the first page of a multi-page range clear survives even when fully cleared", %{
       database: database
     } do

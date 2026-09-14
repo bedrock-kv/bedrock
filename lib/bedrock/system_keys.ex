@@ -14,7 +14,10 @@ defmodule Bedrock.SystemKeys do
   write}` is the distributor's write fence (FDB's MoveKeys lock,
   bedrock-q67.21): opaque UIDs read-checked-written inside every
   mutating distributor transaction, so ownership is enforced by the
-  commit pipeline itself. A system key without a
+  commit pipeline itself. `logs/<generation>/<log_id>` names where the
+  epoch's logs sit and which prior generation recovery has not finished
+  with, read by exclusion safety (FDB's `logsKey`, bedrock-q67.21.15).
+  A system key without a
   reader is inventory, not communication - unread MACHINERY is deleted,
   while durable observability keys stay by decision, named as such;
   families return here when their readers do (config authority with
@@ -72,6 +75,32 @@ defmodule Bedrock.SystemKeys do
   def materializers_prefix, do: "#{@system_prefix}/materializers/"
 
   @doc """
+  Log location entry: `logs/<generation>/<log_id>` -> node string, where
+  the generation is `:current` (the logs this epoch runs) or `:old` (the
+  prior generation recovery copied from and has not finished with).
+
+  FDB keeps the same record in one key — `logsKey` (`SystemData.cpp:1171`),
+  whose value is two vectors of `(UID, NetworkAddress)`, current then old
+  (`TagPartitionedLogSystem::getLogsValue`,
+  `TagPartitionedLogSystem.actor.cpp:1831-1854`). Split per entry here for
+  the reason the materializer family is: the id belongs in the key, so the
+  value carries only what cannot be derived from it — the node, a string,
+  so decoding durable bytes never creates atoms.
+
+  The generation is the load-bearing half. Exclusion safety asks whether an
+  address still holds a log recovery needs, and for a survivor being copied
+  from the answer is yes even though it serves no current shard — which is
+  why FDB's check walks BOTH vectors (`ManagementAPI.actor.cpp:2393-2408`).
+  """
+  @spec log_key(:current | :old, Worker.id()) :: Bedrock.key()
+  def log_key(generation, log_id) when generation in [:current, :old] and is_binary(log_id),
+    do: "#{@system_prefix}/logs/#{generation}/#{log_id}"
+
+  @doc "Prefix covering every log location entry, both generations"
+  @spec logs_prefix() :: Bedrock.key()
+  def logs_prefix, do: "#{@system_prefix}/logs/"
+
+  @doc """
   The reserved worker id the distributor's placeholder registers under.
 
   A keyspace-level convention, not a distributor detail: routing reads it
@@ -88,12 +117,18 @@ defmodule Bedrock.SystemKeys do
   @spec parse_key(Bedrock.key()) ::
           {:shard_key, Bedrock.key()}
           | {:materializer_key, Bedrock.range_tag(), Worker.id()}
+          | {:log_key, :current | :old, Worker.id()}
           | {:distributor_lock, :owner | :write}
           | :unknown
           | :error
   def parse_key(<<@system_prefix, "/distributor_lock/owner">>), do: {:distributor_lock, :owner}
   def parse_key(<<@system_prefix, "/distributor_lock/write">>), do: {:distributor_lock, :write}
   def parse_key(<<@system_prefix, "/shard_keys/", rest::binary>>), do: {:shard_key, rest}
+
+  def parse_key(<<@system_prefix, "/logs/current/", log_id::binary>>) when log_id != "",
+    do: {:log_key, :current, log_id}
+
+  def parse_key(<<@system_prefix, "/logs/old/", log_id::binary>>) when log_id != "", do: {:log_key, :old, log_id}
 
   def parse_key(<<@system_prefix, "/materializers/", rest::binary>>) do
     case String.split(rest, "/", parts: 2) do

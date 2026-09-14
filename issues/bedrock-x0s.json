@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:44:51Z",
+  "description": "## Failure\n\nFound verifying bedrock-3t9 (PR #323) in the 3-node harness with desired_logs 3 (one log per node). kill -9 a follower hosting a log: the commit proxy fails, the director restarts recovery and stalls on `{:insufficient_nodes, 3, 2}` (expected — three new logs need three live nodes). Restart the node: it re-registers (coordinator shows its capabilities and services), but the director never attempts recovery again. Observed stuck for minutes; cluster unavailable though all three nodes are up.\n\n## Mechanism (origin/develop 3af051c2)\n\n- `Coordinator.State.Changes.convert_to_capability_map/1` (coordinator/state.ex:170-183) filters each capability's nodes by `Node.ping(\u00261) == :pong` when building the map handed to the director. The dead node is dropped from the director's view.\n- The coordinator's own `node_capabilities` still contains the node (nothing removes it on nodedown).\n- On return, `Durability.process_command({:set_node_resources, ...})` (coordinator/durability.ex) computes `capabilities_changed = current != new` against the coordinator's unfiltered map -\u003e false; restarted workers keep the same id and `{otp_name, node}` ref -\u003e not new_or_changed. So `notify_director_of_resource_changes/4` sends nothing, and `Director.Server.try_to_recover_if_stalled/1` never runs.\n\nAlso note: `Node.ping/1` runs inside the coordinator GenServer (the raft driver) for every capability node; against an unreachable non-loopback host it can block for net_setuptime.\n\n## Expected\n\nA stalled recovery waiting on nodes must be woken when a node it excluded becomes available again. Liveness should not be a one-shot snapshot that the change detector compares against a different (unfiltered) map.",
+  "id": "bedrock-x0s",
+  "labels": [],
+  "priority": 1,
+  "status": "open",
+  "title": "[BUG] Stalled recovery never retries when a missing node returns: liveness is snapshotted by Node.ping at director launch and re-registration with unchanged capabilities notifies nobody",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:44:51Z"
+}

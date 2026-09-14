@@ -3,7 +3,9 @@
   "blocked_by": [
     "bedrock-hve.6"
   ],
-  "blocks": [],
+  "blocks": [
+    "bedrock-hve.9"
+  ],
   "created": "2026-09-14T19:13:11Z",
   "description": "Turn a failing run into something a person can act on.\n\n- Capture all [:bedrock, ...] telemetry events for the run duration.\n- Capture per-node Logger output with the relevant :trace categories enabled (:recovery, :coordinator, :raft, :commit_proxy, :resolver, :sequencer among them).\n- Write everything to a per-run directory alongside the fault and op journals, so a wedged cluster still leaves a complete record.\n- Replay by seed: re-run an identical fault schedule from a seed alone and confirm it reproduces.\n\nKnown noise to filter or fix so real signal is visible: 'Bedrock durability profile failed in relaxed mode' warns on every node at every startup under LocalFilesystem, and Mox.Server global name conflicts spam the log when peers connect (peers pick up mox from the shared code path). Both are cosmetic today but will bury real findings once nodes are being killed and restarted continuously.\n\nGap worth noting: Foreman deliberately emits no telemetry -- health transitions are logged, not emitted (epic bedrock-gu0). A health oracle has no trustworthy event stream until that lands. The durability, conservation, and liveness oracles do not depend on it.",
   "id": "bedrock-hve.8",

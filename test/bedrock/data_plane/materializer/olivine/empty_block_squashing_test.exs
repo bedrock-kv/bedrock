@@ -4,8 +4,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.EmptyBlockSquashingTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.TestHelpers
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   defp setup_tmp_dir(context) do
     tmp_dir =
@@ -19,20 +19,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.EmptyBlockSquashingTest do
     end)
 
     {:ok, tmp_dir: tmp_dir}
-  end
-
-  defp create_transaction(mutations, version_int) do
-    transaction_map = %{
-      mutations: mutations,
-      read_conflicts: {nil, []},
-      write_conflicts: []
-    }
-
-    encoded = Transaction.encode(transaction_map)
-    version = Version.from_integer(version_int)
-
-    {:ok, with_version} = Transaction.add_commit_version(encoded, version)
-    with_version
   end
 
   defp data_size_in_bytes({data_db, _index_db}), do: data_db.file_offset
@@ -50,7 +36,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.EmptyBlockSquashingTest do
 
       # Version 1: Create initial data
       keys_v1 = [{:set, "initial_key", "initial_value"}]
-      transaction_v1 = create_transaction(keys_v1, 1_000_000)
+      transaction_v1 = TransactionTestSupport.new_log_transaction_from_mutations(keys_v1, 1_000_000)
 
       index_manager = IndexManager.new()
       {index_manager_v1, database_v1} = IndexManager.apply_transactions(index_manager, [transaction_v1], database)
@@ -68,7 +54,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.EmptyBlockSquashingTest do
         )
 
       # Version 2: Empty (no modifications)
-      transaction_v2 = create_transaction([], 2_000_000)
+      transaction_v2 = TransactionTestSupport.new_log_transaction_from_mutations([], 2_000_000)
       {index_manager_v2, database_v2} = IndexManager.apply_transactions(index_manager_v1, [transaction_v2], database_v1)
 
       [{_v2, {_index2, modified_pages_v2}} | _] = index_manager_v2.versions
@@ -83,7 +69,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.EmptyBlockSquashingTest do
         )
 
       # Version 3: Empty again (should squash with v2)
-      transaction_v3 = create_transaction([], 3_000_000)
+      transaction_v3 = TransactionTestSupport.new_log_transaction_from_mutations([], 3_000_000)
       {index_manager_v3, database_v3} = IndexManager.apply_transactions(index_manager_v2, [transaction_v3], database_v2)
 
       [{_v3, {_index3, modified_pages_v3}} | _] = index_manager_v3.versions
@@ -98,7 +84,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.EmptyBlockSquashingTest do
         )
 
       # Version 4: Empty again (should squash with v3)
-      transaction_v4 = create_transaction([], 4_000_000)
+      transaction_v4 = TransactionTestSupport.new_log_transaction_from_mutations([], 4_000_000)
       {index_manager_v4, database_v4} = IndexManager.apply_transactions(index_manager_v3, [transaction_v4], database_v3)
 
       [{_v4, {_index4, modified_pages_v4}} | _] = index_manager_v4.versions
@@ -143,7 +129,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.EmptyBlockSquashingTest do
 
       # Version 1: Create initial data
       keys_v1 = [{:set, "key1", "value1"}]
-      transaction_v1 = create_transaction(keys_v1, 1_000_000)
+      transaction_v1 = TransactionTestSupport.new_log_transaction_from_mutations(keys_v1, 1_000_000)
 
       index_manager = IndexManager.new()
       {index_manager_v1, database_v1} = IndexManager.apply_transactions(index_manager, [transaction_v1], database)
@@ -160,7 +146,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.EmptyBlockSquashingTest do
         )
 
       # Version 2: Empty
-      transaction_v2 = create_transaction([], 2_000_000)
+      transaction_v2 = TransactionTestSupport.new_log_transaction_from_mutations([], 2_000_000)
       {index_manager_v2, database_v2} = IndexManager.apply_transactions(index_manager_v1, [transaction_v2], database_v1)
 
       [{_v2, {_index2, modified_pages_v2}} | _] = index_manager_v2.versions
@@ -176,7 +162,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.EmptyBlockSquashingTest do
 
       # Version 3: Non-empty (should NOT squash)
       keys_v3 = [{:set, "key2", "value2"}]
-      transaction_v3 = create_transaction(keys_v3, 3_000_000)
+      transaction_v3 = TransactionTestSupport.new_log_transaction_from_mutations(keys_v3, 3_000_000)
       {index_manager_v3, database_v3} = IndexManager.apply_transactions(index_manager_v2, [transaction_v3], database_v2)
 
       [{_v3, {_index3, modified_pages_v3}} | _] = index_manager_v3.versions

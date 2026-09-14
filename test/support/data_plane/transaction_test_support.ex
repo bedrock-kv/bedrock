@@ -57,6 +57,35 @@ defmodule Bedrock.Test.DataPlane.TransactionTestSupport do
   end
 
   @doc """
+  Creates a log-style transaction from an explicit, ordered list of mutations.
+
+  Unlike `new_log_transaction/3`, which builds mutations from a map (or list)
+  of key-value pairs and so cannot preserve mutation order or duplicate keys,
+  this accepts already-built `t:Transaction.mutation/0` tuples directly
+  (`{:set, key, value}`, `{:clear_range, start, end}`, `{:atomic, ...}`, etc).
+
+  ## Examples
+
+      iex> encoded = new_log_transaction_from_mutations([{:set, "key1", "value1"}], 42)
+      iex> Transaction.commit_version(encoded)
+      {:ok, <<42::64>>}
+  """
+  @spec new_log_transaction_from_mutations([Transaction.mutation()], Bedrock.version() | integer()) ::
+          Transaction.encoded()
+  def new_log_transaction_from_mutations(mutations, version) do
+    transaction = %{mutations: mutations, read_conflicts: {nil, []}, write_conflicts: []}
+    encoded = Transaction.encode(transaction)
+
+    version_binary =
+      if is_binary(version) and byte_size(version) == 8,
+        do: version,
+        else: Version.from_integer(version)
+
+    {:ok, with_version} = Transaction.add_commit_version(encoded, version_binary)
+    with_version
+  end
+
+  @doc """
   Extracts the commit version from a transaction created with new_log_transaction.
   """
   @spec extract_log_version(Transaction.encoded()) :: binary() | nil

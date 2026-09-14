@@ -6,9 +6,15 @@
   "description": "Phase 0 of the chaos-testing harness. Falsifiable question, not construction work.\n\n## The question\n\nCan we start N (3) BEAM nodes via `:peer`, each with its own data dir and cluster descriptor, have them form a single bedrock cluster, commit one transaction through `Bedrock.Repo`, and tear down cleanly -- all driven from ExUnit?\n\nEverything else in the chaos harness is worthless if this does not hold, so it gets proven before anything is built on top of it.\n\n## Why it is genuinely uncertain\n\n- There is no multi-node test facility anywhere in the repo. No `:peer`, no `:slave`, no `LocalCluster`. Every existing 'integration' test is single-BEAM against mock clusters (`test/support/control_plane/recovery_test_support.ex`).\n- Cluster identity is node-keyed: `Descriptor.coordinator_nodes :: [node()]`, capabilities are per-node config, and `ClusterSupervisor.check_node_is_in_a_cluster/1` hard-refuses `:nonode@nohost`. So a single-BEAM multi-coordinator cluster is structurally impossible -- real distribution is the floor, not an upgrade.\n- ../bedrock_ex ISSUES.md documents cross-node worker init failures and orphaned workers under `tmp/\u003cnode\u003e/` from exactly this kind of multi-node setup, done by hand. Those may reproduce here.\n\n## Exit criterion\n\nA single ExUnit test, tagged so it does not run by default, that:\n1. starts 3 peers with distinct names, data dirs, and descriptors\n2. observes the cluster reach a recovered/serving state\n3. commits one transaction and reads the value back\n4. tears down with no orphaned OS processes, no leaked temp dirs\n\nPass = the test is green and repeatable. Fail is an equally valid outcome: write up precisely what blocks it, because that becomes the real first ticket.\n\n## Explicitly out of scope\n\nNo fault injection. No workload generator. No oracles. No scheduler. Resist building the harness here.",
   "id": "bedrock-80f",
   "labels": [],
+  "comments": [
+    {
+      "text": "Scope decision from the user: the object store is assumed to be MinIO in the harness proper, and object storage is EXCLUDED from chaos coverage -- it is a stable substrate, not a fault target.\n\nConsequences:\n- No fault-injection against object-storage writers. The resource-cleanliness oracle drops its tie-in to bedrock-ck3 (scratch files from a killed object-storage writer); that stays a normal bug, not harness coverage.\n- bedrock-1qh (MinIO test fixture binds fixed port 9000) becomes an environment prerequisite for parallel harness runs rather than a chaos concern.\n\nFor THIS spike specifically: MinIO is not required. Object storage defaults to LocalFilesystem rooted under the node's own path (ClusterSupervisor.ensure_n/1 builds ObjectStorage.backend(LocalFilesystem, root: \u003cpath\u003e/n)), so a 3-peer cluster can form with zero external dependencies. Keeping it that way so the spike isolates its actual question -- peer cluster formation -- rather than entangling it with a shared object store.",
+      "timestamp": "2026-09-14T18:59:51Z"
+    }
+  ],
   "priority": 2,
   "status": "in_progress",
   "title": "Spike: can :peer nodes form a real bedrock cluster and commit?",
   "type": "task",
-  "updated_at": "2026-09-14T18:59:21Z"
+  "updated_at": "2026-09-14T18:59:51Z"
 }

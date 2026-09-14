@@ -11,14 +11,17 @@ defmodule Bedrock.ControlPlane.Config.TSLTypeValidator do
   Provides both defensive validation (returns errors) and assertive validation (raises).
   """
 
+  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
   @doc """
   Validates TSL type safety defensively, returning error tuples.
 
   Use this for validating old/recovered data where corruption should be handled gracefully.
+  A durable `CoreState.t()` carries only `:logs` (no `:resolvers`), so the
+  resolvers check is vacuous against it — see `validate_resolvers/1`.
   """
-  @spec validate_type_safety(TransactionSystemLayout.t()) :: :ok | {:error, term()}
+  @spec validate_type_safety(TransactionSystemLayout.t() | CoreState.t()) :: :ok | {:error, term()}
   def validate_type_safety(%{} = tsl) do
     with :ok <- validate_logs(Map.get(tsl, :logs)) do
       validate_resolvers(Map.get(tsl, :resolvers))

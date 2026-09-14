@@ -12,6 +12,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
+  alias Bedrock.ControlPlane.Director.Recovery.InitializationPhase
   alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogRecruitmentPhase
   alias Bedrock.ControlPlane.Director.Recovery.LogReplayPhase
@@ -37,9 +38,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.LockingPhaseTest do
 
       context = create_full_mocked_context(available_services, prior_core_state)
 
-      # Execute TSL validation phase first (this comes before LockingPhase now)
-      # Should proceed to LockingPhase since TSL validation passed
-      assert {_validated_attempt, LockingPhase} =
+      # A prior core state naming no logs is fresh: no old system to lock,
+      # so TSL validation routes straight to initialization instead of
+      # LockingPhase.
+      assert {_validated_attempt, InitializationPhase} =
                TSLValidationPhase.execute(recovery_attempt, context)
     end
 

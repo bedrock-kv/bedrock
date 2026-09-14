@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T21:21:24Z",
+  "description": "The two readers disagree about malformed keys under `s/{shard_tag}/`.\n\n`Snapshot.read_latest/1` takes the first listed key with no fallback and no validation. Because keys are inverted versions sorted newest-first, a junk name that happens to sort ahead of the real bundles is selected -- and then fails. One stray file makes the newest snapshot unreachable.\n\n`Snapshot.list/2` silently drops names it cannot parse. So retention logic counts a prefix it cannot fully see, and may make decisions (including pruning) against an inaccurate view of what is actually stored.\n\nTwo problems from one inconsistency: the same malformed object is fatal to one reader and invisible to the other. Neither reports it.\n\nGiven that a corrupt snapshot is already fatal to cold start (see sibling ticket), 'one stray file in the bucket' is a bigger blast radius than it should be.\n\nPartly anticipated by bedrock-q67.21.19 (unparseable keys are errors). Found while building bedrock-hve.3, which now reports these offline as :unparsable_snapshot_key / :malformed_snapshot_key.",
+  "id": "bedrock-onw",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "[BUG] Snapshot.read_latest/1 bricks on one unparsable bundle name while Snapshot.list/2 silently drops it",
+  "type": "bug",
+  "updated_at": "2026-09-14T21:21:24Z"
+}

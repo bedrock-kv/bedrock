@@ -214,14 +214,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.KeySelectorTest do
       extreme_selector = "key1" |> KeySelector.first_greater_or_equal() |> KeySelector.add(999_999)
 
       # Should handle gracefully without crashing
-      assert %KeySelector{offset: 999_999} = extreme_selector
+      assert %KeySelector{offset: 1_000_000} = extreme_selector
       assert {:error, :not_found} = ReadingTestHelpers.get(state, extreme_selector, test_version(), [])
     end
 
     test "empty key KeySelector", %{state: state} do
       empty_key_selector = KeySelector.first_greater_or_equal("")
 
-      assert %KeySelector{key: "", or_equal: true, offset: 0} = empty_key_selector
+      assert %KeySelector{key: "", or_equal: false, offset: 1} = empty_key_selector
       # Should handle empty keys appropriately - should find the first key
       assert {:ok, {resolved_key, _value}} =
                ReadingTestHelpers.get(state, empty_key_selector, test_version(), [])

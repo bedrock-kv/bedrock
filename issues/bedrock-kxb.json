@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:08:58Z",
+  "description": "`Bedrock.Cluster` declares:\n\n    @type capability :: :coordination | :log | :materializer | :resolution   (lib/bedrock/cluster.ex:23)\n\nbut `ClusterSupervisor.module_for_capability/1` only handles three of those:\n\n    defp module_for_capability(:coordination), do: Coordinator   # cluster_supervisor.ex:253\n    defp module_for_capability(:materializer), do: Foreman\n    defp module_for_capability(:log), do: Foreman\n    defp module_for_capability(capability), do: raise(\"Unknown capability: #{inspect(capability)}\")\n\nSo configuring a node with `capabilities: [:resolution]` -- a value the public typespec says is legal -- raises during `Supervisor.init/1` and the node fails to start.\n\nEither resolution is a real per-node capability and the dispatch is missing, or it is not and the typespec is lying. Dialyzer will not catch this: the raise clause is reachable for any atom, so the spec and the implementation never get compared.\n\nFound while building the peer-cluster test harness (bedrock-80f), where the typespec was the natural source of truth for which capability combinations to test.",
+  "id": "bedrock-kxb",
+  "labels": [],
+  "priority": 3,
+  "status": "open",
+  "title": "[BUG] :resolution capability is in the typespec but ClusterSupervisor raises on it",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:08:58Z"
+}

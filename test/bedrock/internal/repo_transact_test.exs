@@ -20,8 +20,10 @@ defmodule Bedrock.Internal.RepoTransactTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.Cluster.Link.RoutingCache
+  alias Bedrock.DataPlane.Version
   alias Bedrock.Internal.Repo
   alias Bedrock.Internal.Repo.TransactionContext
+  alias Bedrock.KeySelector
 
   defmodule TestRepo do
     use Bedrock.Repo, cluster: MockCluster
@@ -285,6 +287,85 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert TransactionContext.builder(TestRepo) == nil
     end
 
+    test "surfaces a system-key read as a permanent error instead of retrying" do
+      # A read the transaction is not allowed to address fails the same way a
+      # rejected commit does: once, with the offending key, at the client. Its
+      # old shape was :layout_lookup_failed - a RETRYABLE routing miss - so
+      # the caller burned its whole deadline and then raised something
+      # generic about a retry limit.
+      attempts = :counters.new(1, [])
+      key = <<0xFF, "/system/config/desired_commit_proxies">>
+
+      result =
+        Repo.transact(
+          NoCluster,
+          TestRepo,
+          fn ->
+            :counters.add(attempts, 1, 1)
+            Repo.get(TestRepo, key, next_read_version_fn: fn _t -> {:ok, Version.from_integer(1)} end)
+          end,
+          transaction_system_layout: @minimal_tsl,
+          retry_limit: 3
+        )
+
+      assert result == {:error, {:key_out_of_range, key}}
+      assert :counters.get(attempts, 1) == 1
+      assert TransactionContext.builder(TestRepo) == nil
+    end
+
+    test "select and get_range surface the bound the same way get does" do
+      # Three entry points, one classification. `{:key_out_of_range, key}` has
+      # a TUPLE reason, so without its own clause each of these takes a
+      # different wrong path: get/select match no arm at all (CaseClauseError,
+      # since the catch-all requires is_atom(reason)), and the range stream
+      # raises "Range query failed".
+      selector_result =
+        Repo.transact(
+          NoCluster,
+          TestRepo,
+          fn -> Repo.select(TestRepo, KeySelector.first_greater_or_equal(<<0xFF, "/system/x">>)) end,
+          transaction_system_layout: @minimal_tsl
+        )
+
+      assert selector_result == {:error, {:key_out_of_range, <<0xFF, "/system/x">>}}
+
+      range_result =
+        Repo.transact(
+          NoCluster,
+          TestRepo,
+          fn -> TestRepo |> Repo.get_range("a", <<0xFF, 0x00>>) |> Enum.to_list() end,
+          transaction_system_layout: @minimal_tsl
+        )
+
+      assert range_result == {:error, {:key_out_of_range, <<0xFF, 0x00>>}}
+    end
+
+    test "read_system_keys: true lets the same read through to routing" do
+      # With no routing_fn (a caller-provided layout is wiring only), the
+      # read fails as :layout_lookup_failed - proof it passed the bound and
+      # went looking for the shard, rather than being refused at the client.
+      attempts = :counters.new(1, [])
+
+      assert_raise RuntimeError, ~r/retry limit exceeded/, fn ->
+        Repo.transact(
+          NoCluster,
+          TestRepo,
+          fn ->
+            :counters.add(attempts, 1, 1)
+
+            Repo.get(TestRepo, <<0xFF, "/system/config/desired_commit_proxies">>,
+              next_read_version_fn: fn _t -> {:ok, Version.from_integer(1)} end
+            )
+          end,
+          transaction_system_layout: @minimal_tsl,
+          read_system_keys: true,
+          retry_limit: 1
+        )
+      end
+
+      assert :counters.get(attempts, 1) == 2
+    end
+
     test "raises after exhausting the retry limit when commit keeps failing" do
       # A put makes the transaction non-empty; with no commit proxies in the
       # layout, commit fails with :unavailable, a retryable failure.
@@ -447,7 +528,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
     defp sequencer_loop do
       receive do
         {:"$gen_call", from, {:next_read_version, _epoch}} ->
-          GenServer.reply(from, {:ok, Bedrock.DataPlane.Version.from_integer(1)})
+          GenServer.reply(from, {:ok, Version.from_integer(1)})
           sequencer_loop()
       end
     end

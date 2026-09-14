@@ -23,12 +23,35 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   alias Bedrock.ControlPlane.Config
   alias Bedrock.ControlPlane.Coordinator.State
   alias Bedrock.ControlPlane.Director
+  alias Bedrock.Raft
 
   require Logger
 
   @spec try_to_start_director(State.t()) :: State.t()
   def try_to_start_director(t) when t.leader_node == t.my_node and t.director == :unavailable do
-    t = maybe_put_default_config(t)
+    if authoritative_leader?(t), do: start_director(t), else: t
+  end
+
+  def try_to_start_director(t), do: t
+
+  @doc false
+  @spec authoritative_leader?(State.t()) :: boolean()
+  def authoritative_leader?(%{raft: nil}), do: false
+
+  def authoritative_leader?(t) do
+    t.leader_node == t.my_node and Raft.am_i_the_leader?(t.raft) and
+      Raft.leadership(t.raft) == {t.my_node, t.raft_term}
+  end
+
+  @doc false
+  @spec current_director?(State.t(), pid(), Bedrock.epoch()) :: boolean()
+  def current_director?(t, director, epoch) do
+    is_pid(director) and t.director == director and t.epoch == epoch and
+      t.director_raft_term == t.raft_term and authoritative_leader?(t)
+  end
+
+  defp start_director(t) do
+    t = t |> clear_transaction_system_layout() |> maybe_put_default_config()
 
     trace_director_launch(t.epoch, t.prior_core_state)
 
@@ -48,10 +71,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     end
   end
 
-  def try_to_start_director(t), do: t
-
   @spec maybe_put_default_config(State.t()) :: State.t()
-  defp maybe_put_default_config(%{config: nil} = t), do: put_config(t, Config.new(Bedrock.Raft.known_peers(t.raft)))
+  defp maybe_put_default_config(%{config: nil} = t), do: put_config(t, Config.new(Raft.known_peers(t.raft)))
 
   defp maybe_put_default_config(t), do: t
 
@@ -85,7 +106,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     trace_director_failure_detected(t.director, reason)
     Logger.warning("Director #{inspect(t.director)} failed with reason: #{inspect(reason)}")
 
-    updated_t = put_director(t, :unavailable)
+    updated_t = t |> put_director(:unavailable) |> clear_transaction_system_layout()
 
     # Only attempt restart if we have necessary state (not in tests) and we're in a state that allows recovery
     if t.raft != nil and t.supervisor_otp_name != nil and t.leader_startup_state == :leader_ready do
@@ -123,7 +144,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
         :ok
     end
 
-    put_director(t, :unavailable)
+    t |> put_director(:unavailable) |> clear_transaction_system_layout()
   end
 
   def shutdown_director_if_running(t), do: t
@@ -141,8 +162,8 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
       {:error, _reason} -> :ok
     end
 
-    put_director(t, :unavailable)
+    t |> put_director(:unavailable) |> clear_transaction_system_layout()
   end
 
-  def cleanup_director_on_leadership_loss(t), do: t
+  def cleanup_director_on_leadership_loss(t), do: clear_transaction_system_layout(t)
 end

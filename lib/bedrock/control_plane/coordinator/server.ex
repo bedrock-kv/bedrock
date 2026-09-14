@@ -5,6 +5,7 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   import Bedrock.ControlPlane.Coordinator.DirectorManagement,
     only: [
       try_to_start_director: 1,
+      current_director?: 3,
       handle_director_failure: 3,
       cleanup_director_on_leadership_loss: 1
     ]
@@ -213,43 +214,39 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   @impl true
-  def handle_info({:raft, :leadership_changed, {:undecided, _raft_epoch}}, t) do
-    Logger.info("Bedrock: Received :undecided leadership change")
+  def handle_info({:raft, :leadership_changed, {new_leader, raft_term} = leadership}, t) do
+    cond do
+      t.raft == nil or Raft.leadership(t.raft) != leadership ->
+        noreply(t)
 
-    t
-    |> put_leader_node(:undecided)
-    |> put_leader_startup_state(:not_leader)
-    |> cleanup_director_on_leadership_loss()
-    |> noreply()
-  end
+      {t.leader_node, t.raft_term} == leadership ->
+        # A duplicate callback must not reset publication ordering or retry a
+        # retired instance. Capability changes own failed-start retries.
+        noreply(t)
 
-  def handle_info({:raft, :leadership_changed, {new_leader, raft_epoch}}, t) do
-    trace_election_completed(new_leader)
+      true ->
+        trace_election_completed(new_leader)
 
-    updated_t =
-      t
-      |> put_leader_node(new_leader)
-      |> put_epoch(raft_epoch)
+        # Retire the old instance even when this node won a newer term.
+        updated_t =
+          t
+          |> cleanup_director_on_leadership_loss()
+          |> put_leader_node(new_leader)
+          |> Map.put(:raft_term, raft_term)
+          |> put_epoch(raft_term)
 
-    if_result =
-      if new_leader == t.my_node do
-        # We became leader - start Director immediately
-        # TSL is OUTPUT of recovery (not input), config is loaded from object storage at init
-        service_count = map_size(updated_t.service_directory)
-        trace_leader_ready_starting_director(service_count)
+        if new_leader == t.my_node and Raft.am_i_the_leader?(t.raft) do
+          trace_leader_ready_starting_director(map_size(updated_t.service_directory))
 
-        updated_t
-        |> put_leader_startup_state(:leader_ready)
-        |> update_recovery_capability_hash()
-        |> attempt_director_recovery(:leadership_change)
-      else
-        # Someone else is leader - clean up director if we have one
-        updated_t
-        |> put_leader_startup_state(:not_leader)
-        |> cleanup_director_on_leadership_loss()
-      end
-
-    noreply(if_result)
+          updated_t
+          |> put_leader_startup_state(:leader_ready)
+          |> update_recovery_capability_hash()
+          |> attempt_director_recovery(:leadership_change)
+          |> noreply()
+        else
+          updated_t |> put_leader_startup_state(:not_leader) |> noreply()
+        end
+    end
   end
 
   def handle_info({:raft, :timer, event}, t) do
@@ -284,35 +281,35 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   end
 
   @impl true
-  def handle_cast({:ping, {epoch, director}}, t) when t.epoch == epoch do
-    GenServer.cast(director, {:pong, self()})
+  def handle_cast({:ping, {epoch, director}}, t) do
+    if current_director?(t, director, epoch), do: GenServer.cast(director, {:pong, self()})
     noreply(t)
   end
 
-  def handle_cast({:ping, _}, t) do
-    noreply(t)
+  def handle_cast({:ping, _}, t), do: noreply(t)
+
+  def handle_cast({:notify_transaction_system_layout, {director, epoch, sequence}, layout, core_state}, t) do
+    if current_publication?(t, director, epoch, sequence, :layout) and layout.epoch == epoch do
+      t
+      |> accept_publication(sequence, :layout)
+      |> put_transaction_system_layout(layout, core_state)
+      |> noreply()
+    else
+      noreply(t)
+    end
   end
 
-  def handle_cast({:notify_transaction_system_layout, transaction_system_layout, core_state}, t) do
-    # Direct notification from Director - update state and broadcast to subscribers.
-    # No Raft consensus needed: the director has already persisted BOTH
-    # records to object storage, and it sends both for the same reason it
-    # writes both — the broadcast cannot carry membership, so the durable
-    # record has to arrive alongside it or a warm recovery would find
-    # none.
-    t
-    |> put_transaction_system_layout(transaction_system_layout, core_state)
-    |> put_epoch(transaction_system_layout.epoch)
-    |> noreply()
+  def handle_cast({:notify_config, {director, epoch, sequence}, config}, t) do
+    if current_publication?(t, director, epoch, sequence, :config) do
+      t |> accept_publication(sequence, :config) |> put_config(config) |> noreply()
+    else
+      noreply(t)
+    end
   end
 
-  def handle_cast({:notify_config, config}, t) do
-    # Direct notification from Director - update cached config
-    # No Raft consensus needed - config is persisted to object storage by Director
-    t
-    |> put_config(config)
-    |> noreply()
-  end
+  # Legacy messages have no instance attribution and cannot authorize changes.
+  def handle_cast({:notify_transaction_system_layout, _layout, _core_state}, t), do: noreply(t)
+  def handle_cast({:notify_config, _config}, t), do: noreply(t)
 
   def handle_cast({:forward_register_node_resources, node, services, capabilities, original_from}, t) do
     command = Commands.set_node_resources(node, services, capabilities)
@@ -334,6 +331,15 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     t
     |> update_raft(&Raft.handle_event(&1, event, source))
     |> noreply()
+  end
+
+  defp current_publication?(t, director, epoch, sequence, kind) do
+    is_integer(sequence) and sequence > t.publication_sequences[kind] and
+      current_director?(t, director, epoch)
+  end
+
+  defp accept_publication(t, sequence, kind) do
+    %{t | publication_sequences: Map.put(t.publication_sequences, kind, sequence)}
   end
 
   @spec ack_fn(GenServer.from()) :: (term() -> :ok)

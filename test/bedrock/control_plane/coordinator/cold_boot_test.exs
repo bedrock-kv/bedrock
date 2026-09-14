@@ -24,13 +24,14 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
       raft_log = InMemoryLog.new(:tuple)
 
       raft =
-        Raft.new(
-          my_node,
+        my_node
+        |> Raft.new(
           # No other nodes - single node cluster
           [],
           raft_log,
           RaftAdapter
         )
+        |> Raft.handle_event(:election, :timer)
 
       state = %State{
         cluster: TestCluster,
@@ -81,12 +82,13 @@ defmodule Bedrock.ControlPlane.Coordinator.ColdBootTest do
       {:ok, raft_log} = Log.commit_up_to(raft_log, {0, 1})
 
       raft =
-        Raft.new(
-          my_node,
+        my_node
+        |> Raft.new(
           [],
           raft_log,
           RaftAdapter
         )
+        |> Raft.handle_event(:election, :timer)
 
       state = %State{
         cluster: TestCluster,

@@ -300,9 +300,9 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec persist_config(State.t()) :: State.t()
   def persist_config(t) do
-    # Notify coordinator of config update directly (no Raft consensus).
-    # Config is persisted to object storage by the persistence phase.
-    Coordinator.notify_config(t.coordinator, t.config)
+    # This cache also carries stalled-attempt progress, not just durable config.
+    t = %{t | publication_sequence: t.publication_sequence + 1}
+    Coordinator.notify_config(t.coordinator, t.epoch, t.publication_sequence, t.config)
     trace_recovery_attempt_persisted(:notified)
     t
   end
@@ -322,7 +322,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     # materializers and stall.
     core_state = CoreState.from_layout(t.transaction_system_layout, system_materializers(completed))
 
-    Coordinator.notify_transaction_system_layout(t.coordinator, t.transaction_system_layout, core_state)
+    t = %{t | publication_sequence: t.publication_sequence + 1}
+
+    Coordinator.notify_transaction_system_layout(
+      t.coordinator,
+      t.epoch,
+      t.publication_sequence,
+      t.transaction_system_layout,
+      core_state
+    )
+
     trace_recovery_layout_persisted(:notified)
     t
   end

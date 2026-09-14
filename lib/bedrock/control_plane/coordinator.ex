@@ -46,7 +46,9 @@ defmodule Bedrock.ControlPlane.Coordinator do
   alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TransactionSystemLayout
 
-  @type ref :: atom() | {atom(), node()}
+  @type publication_sequence :: pos_integer()
+
+  @type ref :: pid() | atom() | {atom(), node()}
   @typep timeout_in_ms :: Bedrock.timeout_in_ms()
 
   @spec config_key() :: atom()
@@ -71,11 +73,14 @@ defmodule Bedrock.ControlPlane.Coordinator do
   Notify the coordinator of a config update.
 
   This is called by the Director during recovery to update the coordinator's
-  cached config (e.g., recovery_attempt state). Config is persisted to object
-  storage by the Director's persistence phase, not via Raft consensus.
+  cached config, including stalled recovery progress that is not a durable
+  publication. The Director increments its sequence for every notification.
+  Only its currently registered instance under the same Raft leadership may
+  update the cache; duplicates and older config sequences are ignored.
   """
-  @spec notify_config(coordinator_ref :: ref(), config :: Config.t()) :: :ok
-  def notify_config(coordinator, config), do: GenServer.cast(coordinator, {:notify_config, config})
+  @spec notify_config(ref(), Bedrock.epoch(), publication_sequence(), Config.t()) :: :ok
+  def notify_config(coordinator, epoch, sequence, config),
+    do: GenServer.cast(coordinator, {:notify_config, {self(), epoch, sequence}, config})
 
   @spec fetch_transaction_system_layout(
           coordinator_ref :: ref(),
@@ -92,15 +97,23 @@ defmodule Bedrock.ControlPlane.Coordinator do
   This is called by the Director after recovery completes to update the coordinator's
   cached TSL and broadcast it to all Link subscribers. Unlike the old Raft-based
   update, this is a direct notification without consensus - the TSL is persisted
-  to object storage by the Director's persistence phase.
+  to object storage by the Director's persistence phase. The sequence increases
+  within the sending Director's lifetime. Layout and config maintain separate
+  high-water marks so cross-stream delivery order cannot discard a layout.
   """
   @spec notify_transaction_system_layout(
           coordinator_ref :: ref(),
+          epoch :: Bedrock.epoch(),
+          sequence :: publication_sequence(),
           transaction_system_layout :: TransactionSystemLayout.t(),
           core_state :: CoreState.t()
         ) :: :ok
-  def notify_transaction_system_layout(coordinator, transaction_system_layout, core_state),
-    do: GenServer.cast(coordinator, {:notify_transaction_system_layout, transaction_system_layout, core_state})
+  def notify_transaction_system_layout(coordinator, epoch, sequence, transaction_system_layout, core_state),
+    do:
+      GenServer.cast(
+        coordinator,
+        {:notify_transaction_system_layout, {self(), epoch, sequence}, transaction_system_layout, core_state}
+      )
 
   @type service_info :: {service_id :: String.t(), kind :: atom(), worker_ref :: {atom(), node()}}
   @type compact_service_info :: {service_id :: String.t(), kind :: atom(), name :: atom()}

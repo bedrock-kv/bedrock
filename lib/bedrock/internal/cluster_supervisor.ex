@@ -19,8 +19,7 @@ defmodule Bedrock.Internal.ClusterSupervisor do
   alias Bedrock.DataPlane.Sequencer.Tracing, as: SequencerTracing
   alias Bedrock.Durability, as: DurabilityProfile
   alias Bedrock.Internal.Tracing.RaftTelemetry
-  alias Bedrock.ObjectStorage
-  alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
   alias Bedrock.Service.Foreman
   alias Cluster.Link.Tracing, as: LinkTracing
 
@@ -214,10 +213,18 @@ defmodule Bedrock.Internal.ClusterSupervisor do
       # Merge configs with capability-specific taking precedence
       merged_config = Keyword.merge(module_config, capability_configs)
 
-      # For Foreman, ensure object_storage is set (with a default based on path)
+      # Refused, not overridden: a backend set here reached only the foreman,
+      # splitting the cluster's durable state (bedrock-1cp).
+      section = Enum.find([module.config_key() | capabilities], &Keyword.has_key?(config[&1] || [], :object_storage))
+
+      if section do
+        raise "Bedrock: :object_storage belongs at the top level of the node config, not in the #{inspect(section)} section"
+      end
+
+      # For Foreman, hand its workers the cluster's one object storage backend
       merged_config =
         if module == Foreman do
-          ensure_object_storage(merged_config)
+          Keyword.put(merged_config, :object_storage, ObjectStorageConfig.cluster_backend(config))
         else
           merged_config
         end
@@ -228,26 +235,6 @@ defmodule Bedrock.Internal.ClusterSupervisor do
          capabilities: capabilities
        ] ++ merged_config}
     end)
-  end
-
-  defp ensure_object_storage(config) do
-    case Keyword.fetch(config, :object_storage) do
-      {:ok, _object_storage} ->
-        config
-
-      :error ->
-        # Create default object_storage based on the path
-        path = Keyword.get(config, :path)
-
-        if path do
-          object_storage_root = Path.join(path, "object_storage")
-          object_storage = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
-          Keyword.put(config, :object_storage, object_storage)
-        else
-          # No path means we can't create a default - raise to signal configuration issue
-          raise "Missing :path configuration for Foreman - cannot create default object_storage"
-        end
-    end
   end
 
   defp module_for_capability(:coordination), do: Coordinator

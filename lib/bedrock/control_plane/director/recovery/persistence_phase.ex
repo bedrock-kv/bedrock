@@ -58,7 +58,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   alias Bedrock.Internal.Id
   alias Bedrock.Internal.TransactionBuilder.Tx
   alias Bedrock.ObjectStorage
-  alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
   alias Bedrock.SystemKeys.ClusterBootstrap
 
   @impl true
@@ -93,47 +93,14 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhase do
   defp write_state_to_object_storage(recovery_attempt, config, transaction_system_layout) do
     cluster = recovery_attempt.cluster
 
-    case get_object_storage_backend(cluster) do
-      {:ok, backend} ->
-        # ClusterBootstrap is the sole source of truth for coordinator cold boot
-        do_write_bootstrap(backend, "bootstrap", recovery_attempt, config, transaction_system_layout)
-
-      {:error, :no_object_storage} ->
+    case ObjectStorageConfig.cluster_backend(cluster.node_config()) do
+      nil ->
         # No object storage configured - skip bootstrap write
         :ok
-    end
-  end
 
-  # Get object_storage backend from cluster's node config
-  defp get_object_storage_backend(cluster) do
-    node_config = cluster.node_config()
-
-    # Check for explicit object_storage config
-    case Keyword.fetch(node_config, :object_storage) do
-      {:ok, backend} ->
-        {:ok, backend}
-
-      :error ->
-        # Derive from path config (same logic as cluster_supervisor)
-        derive_object_storage_from_path(node_config)
-    end
-  end
-
-  defp derive_object_storage_from_path(node_config) do
-    # Try to find a path from any capability config
-    path =
-      Enum.find_value([:log, :storage, :materializer, :coordination], fn capability ->
-        node_config
-        |> Keyword.get(capability, [])
-        |> Keyword.get(:path)
-      end)
-
-    if path do
-      object_storage_root = Path.join(path, "object_storage")
-      backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
-      {:ok, backend}
-    else
-      {:error, :no_object_storage}
+      backend ->
+        # ClusterBootstrap is the sole source of truth for coordinator cold boot
+        do_write_bootstrap(backend, "bootstrap", recovery_attempt, config, transaction_system_layout)
     end
   end
 

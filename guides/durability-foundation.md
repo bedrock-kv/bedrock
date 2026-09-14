@@ -160,11 +160,12 @@ rollout.
 
 ## S3 Backend Configuration
 
-Use S3 as the Bedrock object store via normalized backend config:
+Use S3 as the Bedrock object store from the top level of the cluster's node
+config:
 
 ```elixir
-config :bedrock, Bedrock.ObjectStorage,
-  backend: :s3,
+config :my_app, MyApp.Cluster,
+  object_storage: :s3,
   s3: [
     bucket: "bedrock",
     access_key_id: "minio_key",

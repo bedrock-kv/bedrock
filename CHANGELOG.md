@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- **One place decides where a cluster's durable state lives — some of it
+  moves.** Workers, the director, the coordinator, and materializer
+  snapshots each found the object storage backend for themselves, and they
+  disagreed, so a single config could leave workers on S3 while every node
+  kept its own bootstrap on local disk. All of them now resolve it the same
+  way: `object_storage:` at the top level of the cluster's node config (the
+  `object_storage: :s3, s3: [...]` shorthand works there), else a local store
+  at `<first role path>/object_storage`, taking the first `:path` among
+  `coordinator:`, `log:`, `storage:`, `materializer:`, `coordination:`,
+  `worker:`. **Check where your data is before upgrading:**
+
+  - A top-level `object_storage:` already held the bootstrap; now worker
+    chunks go there too, instead of `<foreman path>/object_storage`.
+  - The derived chunk location follows that single order rather than the
+    foreman's merged sections. With `coordinator: [path: "/d"], log: [path:
+    "/d"], materializer: [path: "/d/mat"]` and `:materializer` listed after
+    `:log` in `capabilities`, chunks move from
+    `/d/mat/object_storage` to `/d/object_storage`. A worker-only node whose
+    `log:` and `materializer:` paths differ now uses the `log:` path.
+  - When the coordinator's path differs from the log's, the director's
+    bootstrap moves from `<log path>/object_storage` to the coordinator's —
+    where the coordinator was already looking for it.
+  - Materializer snapshots move from `System.tmp_dir!()/bedrock_objects` (or
+    the application-config backend) to the cluster's backend.
+
+  Nothing is migrated automatically: copy the objects from their old location
+  into the resolved store before starting the upgraded cluster. Two
+  placements now fail startup instead of being quietly half-honored:
+  `config :bedrock, Bedrock.ObjectStorage, backend: ...`, which only ever
+  reached snapshots, and `object_storage:` inside a role section, which only
+  ever reached the foreman.
+
 ## 0.7.2 — 2026-09-13
 
 - **LocalFilesystem ignores its private metadata during object listings.**

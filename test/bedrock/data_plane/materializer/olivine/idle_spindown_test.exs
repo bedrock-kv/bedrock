@@ -25,7 +25,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
-  alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
   alias Bedrock.ObjectStorage.Keys, as: ObjectStorageKeys
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
@@ -154,19 +153,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
       File.mkdir_p!(object_storage_root)
       backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
 
-      old_config = Application.get_env(:bedrock, ObjectStorage)
-      Application.put_env(:bedrock, ObjectStorage, backend: backend)
-
-      on_exit(fn ->
-        if old_config,
-          do: Application.put_env(:bedrock, ObjectStorage, old_config),
-          else: Application.delete_env(:bedrock, ObjectStorage)
-
-        File.rm_rf(object_storage_root)
-      end)
+      on_exit(fn -> File.rm_rf(object_storage_root) end)
 
       {pid, worker_id, _otp_name} =
-        start_worker(tmp_dir, %{"idle_timeout" => 60_000, "shard_id" => 42}, cluster: TestCluster)
+        start_worker(tmp_dir, %{"idle_timeout" => 60_000, "shard_id" => 42}, object_storage: backend)
 
       ref = Process.monitor(pid)
       rewind_idle_clock(pid, 120_000)
@@ -180,7 +170,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
       # what matters is that it EXISTS and is discoverable before the
       # exit: it is the only durable artifact bridging spin-down to
       # demand-driven revival.
-      snapshot = %Snapshot{} = snapshot_handle_for(42)
+      snapshot = %Snapshot{} = snapshot_handle_for(backend, 42)
       assert {:ok, _version, _data} = Snapshot.read_latest(snapshot)
 
       assert_receive {:"$gen_call", from, {:remove_worker, ^worker_id}}, 5_000
@@ -239,20 +229,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
       File.chmod!(unwritable_root, 0o444)
       backend = ObjectStorage.backend(LocalFilesystem, root: unwritable_root)
 
-      old_config = Application.get_env(:bedrock, ObjectStorage)
-      Application.put_env(:bedrock, ObjectStorage, backend: backend)
-
       on_exit(fn ->
-        if old_config,
-          do: Application.put_env(:bedrock, ObjectStorage, old_config),
-          else: Application.delete_env(:bedrock, ObjectStorage)
-
         File.chmod(unwritable_root, 0o755)
         File.rm_rf(unwritable_root)
       end)
 
       {pid, _worker_id, _otp_name} =
-        start_worker(tmp_dir, %{"idle_timeout" => 60_000, "shard_id" => 42}, cluster: TestCluster)
+        start_worker(tmp_dir, %{"idle_timeout" => 60_000, "shard_id" => 42}, object_storage: backend)
 
       ref = Process.monitor(pid)
       rewind_idle_clock(pid, 120_000)
@@ -392,11 +375,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     # down, and restores into a FRESH directory.
     test "a multi-window-flush shard spins down and revives from the bundle with its data intact",
          %{tmp_dir: tmp_dir, test_id: test_id} do
-      {root, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
-      _ = root
+      {backend, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
 
       {:ok, state} =
-        Logic.startup(:"idle_rt_a_#{test_id}", self(), "rt_wkr_a", dir_a, cluster: TestCluster, shard_id: 42)
+        Logic.startup(:"idle_rt_a_#{test_id}", self(), "rt_wkr_a", dir_a, object_storage: backend, shard_id: 42)
 
       # Two applies, each far enough apart that the 5s (in version-time)
       # window lag evicts the earlier one — two flushes, two idx records.
@@ -411,7 +393,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
       # Cold start in a fresh directory: discovery + restore from the
       # uploaded bundle.
       {:ok, restored} =
-        Logic.startup(:"idle_rt_b_#{test_id}", self(), "rt_wkr_b", dir_b, cluster: TestCluster, shard_id: 42)
+        Logic.startup(:"idle_rt_b_#{test_id}", self(), "rt_wkr_b", dir_b, object_storage: backend, shard_id: 42)
 
       assert Database.durable_version(restored.database) == durable
       assert IndexManager.info(restored.index_manager, :n_keys) >= 1
@@ -419,10 +401,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     end
 
     test "a never-written shard's spin-down bundle does not poison revival", %{tmp_dir: tmp_dir, test_id: test_id} do
-      {_root, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
+      {backend, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
 
       {:ok, state} =
-        Logic.startup(:"idle_empty_a_#{test_id}", self(), "empty_wkr_a", dir_a, cluster: TestCluster, shard_id: 42)
+        Logic.startup(:"idle_empty_a_#{test_id}", self(), "empty_wkr_a", dir_a, object_storage: backend, shard_id: 42)
 
       assert :ok = Logic.upload_snapshot_before_spindown(state)
       Logic.shutdown(state)
@@ -431,7 +413,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
       # poisoned version-0 object would block every recruit forever.
       assert {:ok, restored} =
                Logic.startup(:"idle_empty_b_#{test_id}", self(), "empty_wkr_b", dir_b,
-                 cluster: TestCluster,
+                 object_storage: backend,
                  shard_id: 42
                )
 
@@ -443,18 +425,18 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     # or a shard accumulates one object per spin-down forever.
     test "retention prunes the shard's older snapshots behind the one just written",
          %{tmp_dir: tmp_dir, test_id: test_id} do
-      {_root, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
+      {backend, dir_a, dir_b} = object_storage_and_dirs(tmp_dir, test_id)
 
       {:ok, state} =
         Logic.startup(:"idle_ret_a_#{test_id}", self(), "ret_wkr_a", dir_a,
-          cluster: TestCluster,
+          object_storage: backend,
           shard_id: 42,
           snapshot_retention: %SnapshotRetention{keep_last: 1}
         )
 
       # Seeded after startup: these stand in for earlier spin-downs, and
       # this worker must not try to restore from one.
-      snapshot = snapshot_handle_for(42)
+      snapshot = snapshot_handle_for(backend, 42)
       for version <- [1, 2], do: assert(:ok = Snapshot.write(snapshot, version, "stale bundle #{version}"))
 
       state = apply_and_flush(state, "k1", "v1", 10_000_000)
@@ -471,7 +453,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
 
       # And the survivor is still the baseline a cold start revives from.
       {:ok, restored} =
-        Logic.startup(:"idle_ret_b_#{test_id}", self(), "ret_wkr_b", dir_b, cluster: TestCluster, shard_id: 42)
+        Logic.startup(:"idle_ret_b_#{test_id}", self(), "ret_wkr_b", dir_b, object_storage: backend, shard_id: 42)
 
       assert Database.durable_version(restored.database) == Version.from_integer(durable)
       Logic.shutdown(restored)
@@ -482,23 +464,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     root = Path.join(System.tmp_dir!(), "olivine_idle_rt_objects_#{test_id}")
     File.mkdir_p!(root)
     backend = ObjectStorage.backend(LocalFilesystem, root: root)
-
-    old_config = Application.get_env(:bedrock, ObjectStorage)
-    Application.put_env(:bedrock, ObjectStorage, backend: backend)
-
-    on_exit(fn ->
-      if old_config,
-        do: Application.put_env(:bedrock, ObjectStorage, old_config),
-        else: Application.delete_env(:bedrock, ObjectStorage)
-
-      File.rm_rf(root)
-    end)
+    on_exit(fn -> File.rm_rf(root) end)
 
     dir_a = Path.join(tmp_dir, "a")
     dir_b = Path.join(tmp_dir, "b")
     File.mkdir_p!(dir_a)
     File.mkdir_p!(dir_b)
-    {root, dir_a, dir_b}
+    {backend, dir_a, dir_b}
   end
 
   defp apply_and_flush(state, key, value, version_int) do
@@ -511,8 +483,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IdleSpindownTest do
     state
   end
 
-  defp snapshot_handle_for(shard_num) do
+  defp snapshot_handle_for(backend, shard_num) do
     tag = ObjectStorageKeys.shard_tag(shard_num)
-    Snapshot.new(ObjectStorageConfig.backend(), tag)
+    Snapshot.new(backend, tag)
   end
 end

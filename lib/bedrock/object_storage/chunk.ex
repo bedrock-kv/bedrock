@@ -76,6 +76,14 @@ defmodule Bedrock.ObjectStorage.Chunk do
   @spec header_size() :: pos_integer()
   def header_size, do: @header_size
 
+  @doc "Returns the magic number every chunk header begins with."
+  @spec magic_number() :: pos_integer()
+  def magic_number, do: @magic_number
+
+  @doc "Returns the chunk format version this module writes."
+  @spec format_version() :: pos_integer()
+  def format_version, do: @format_version
+
   @doc "Returns the size of each directory entry in bytes."
   @spec directory_entry_size() :: pos_integer()
   def directory_entry_size, do: @directory_entry_size

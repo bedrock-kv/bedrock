@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T20:47:46Z",
+  "description": "Residual from bedrock-5yi. Stack sampling of the coordinator GenServer during election storms in the 3-node harness (load avg 21-45) showed it blocked 54-216ms inside DETS calls on the raft path: `DiskRaftLog.newest_safe_transaction_id/1`, `DiskRaftLog.transactions_from/3`, and `persist_election_state` (an fsync'd write on every term change). The same calls are \u003c5ms on a quiet node. The coordinator process drives raft timers and heartbeats, so these stalls directly delay heartbeats and timer processing — they were the latency source behind the genuine timeouts (64 of 84 candidacies), and every election adds more fsync'd writes and a launched recovery, making the next election likelier.\n\nExpected: steady-state heartbeat handling does no disk I/O (newest-safe id and the tail needed for AppendEntries are cached in memory; DETS only on append/commit/term change), and durable election-state writes don't stall heartbeat processing beyond what raft safety requires. Measure with the 5yi probe procedure before/after.",
+  "id": "bedrock-zjk",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Coordinator raft path does synchronous DETS I/O on every heartbeat: 50-200ms stalls under load feed election timeouts",
+  "type": "bug",
+  "updated_at": "2026-09-14T20:47:46Z"
+}

@@ -3,8 +3,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
   import Bedrock.Test.ControlPlane.RecoveryTestSupport
 
-  alias Bedrock.ControlPlane.Director.Recovery.MaterializerBootstrapPhase
   alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
+  alias Bedrock.ControlPlane.Director.Recovery.SystemShardBootstrapPhase
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.Internal.TransactionBuilder.Tx
 
@@ -57,19 +57,19 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
       <<0xFF>> => {1, <<>>},
       <<0xFF, 0xFF>> => {0, <<0xFF>>}
     })
-    |> Map.put(:shard_materializers, %{0 => %{"wkr_sys" => node_string()}, 1 => %{"wkr_user" => node_string()}})
-    |> Map.put(:prior_materializer_refs, %{})
+    |> Map.put(:seated_materializer_members, %{0 => %{"wkr_sys" => node_string()}, 1 => %{"wkr_user" => node_string()}})
+    |> Map.put(:prior_materializer_members, %{})
     |> Map.put(:pending_tx, accumulated_tx(node_string()))
     |> Map.put(:transaction_system_layout, mock_transaction_system_layout())
   end
 
   # What the phases ahead of persistence put in the attempt's Tx: the
-  # materializer bootstrap phase's fresh-cluster contribution — the layout
+  # system shard bootstrap phase's fresh-cluster contribution — the layout
   # it seeded, and the membership it decided against an empty prior.
   defp accumulated_tx(node_string) do
     Tx.new()
-    |> MaterializerBootstrapPhase.put_shard_keys(%{<<0xFF>> => {1, <<>>}, <<0xFF, 0xFF>> => {0, <<0xFF>>}})
-    |> MaterializerBootstrapPhase.put_materializer_members(
+    |> SystemShardBootstrapPhase.put_shard_keys(%{<<0xFF>> => {1, <<>>}, <<0xFF, 0xFF>> => {0, <<0xFF>>}})
+    |> SystemShardBootstrapPhase.put_materializer_members(
       %{0 => %{"wkr_sys" => node_string}, 1 => %{"wkr_user" => node_string}},
       %{}
     )
@@ -226,8 +226,8 @@ defmodule Bedrock.ControlPlane.Director.Recovery.PersistencePhaseTest do
 
       attempt =
         %RecoveryAttempt{cluster: nil, epoch: 4, attempt: 1}
-        |> Map.put(:shard_materializers, %{0 => %{"mat_sys" => "a@host"}})
-        |> Map.put(:prior_materializer_refs, %{})
+        |> Map.put(:seated_materializer_members, %{0 => %{"mat_sys" => "a@host"}})
+        |> Map.put(:prior_materializer_members, %{})
 
       # The config the director holds always came through the
       # coordinator's build_parameters/2, which fills every parameter

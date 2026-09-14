@@ -180,7 +180,7 @@ defmodule Bedrock.ControlPlane.Distributor.Recruitment do
   # its window of no CLIENT reads, upload a snapshot, delete its own
   # foreman entry and working directory, and exit — and the next
   # recovery stalls on a named system member it cannot reach
-  # (MaterializerBootstrapPhase's resolve_system_materializer/2, whose
+  # (SystemShardBootstrapPhase's resolve_system_materializer/2, whose
   # policy is deliberately stall-not-fallback). Tag 0 genuinely reaches
   # this site, so the exemption is stated here rather than assumed.
   @spec worker_params(Bedrock.range_tag(), context()) :: %{String.t() => term()}

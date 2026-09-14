@@ -49,7 +49,7 @@ defmodule Bedrock.Test.ControlPlane.RecoveryTestSupport do
       prior_core_state: prior_core_state,
       # Deterministic default for the bootstrap's durable-family read;
       # tests exercising the read path override it.
-      read_prior_refs_fn: fn _materializer_pid, _read_version -> {:ok, %{}} end,
+      read_prior_members_fn: fn _materializer_pid, _read_version -> {:ok, %{}} end,
       cluster_config: %{
         coordinators: [],
         parameters: %{

@@ -1,9 +1,9 @@
-defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
+defmodule Bedrock.ControlPlane.Director.Recovery.CoreStateValidationPhaseTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
+  alias Bedrock.ControlPlane.Director.Recovery.CoreStateValidationPhase
   alias Bedrock.ControlPlane.Director.Recovery.InitializationPhase
-  alias Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase
 
   describe "execute/2" do
     test "transitions to InitializationPhase when prior core state names no logs (fresh cluster)" do
@@ -18,7 +18,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
 
       context = %{prior_core_state: fresh_core_state}
 
-      {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
+      {result_attempt, next_phase} = CoreStateValidationPhase.execute(recovery_attempt, context)
 
       assert result_attempt == recovery_attempt
       assert next_phase == InitializationPhase
@@ -35,13 +35,13 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
 
       context = %{prior_core_state: existing_core_state}
 
-      {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
+      {result_attempt, next_phase} = CoreStateValidationPhase.execute(recovery_attempt, context)
 
       assert result_attempt == recovery_attempt
       assert next_phase == Bedrock.ControlPlane.Director.Recovery.LockingPhase
     end
 
-    test "stalls recovery when TSL validation fails with corrupted data" do
+    test "stalls recovery when core state validation fails with corrupted data" do
       recovery_attempt = %RecoveryAttempt{}
 
       # Invalid TSL with binary versions in logs (should be integers)
@@ -55,10 +55,10 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
 
       context = %{prior_core_state: invalid_tsl}
 
-      {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
+      {result_attempt, next_phase} = CoreStateValidationPhase.execute(recovery_attempt, context)
 
       assert result_attempt == recovery_attempt
-      assert {:stalled, {:corrupted_tsl, _validation_error}} = next_phase
+      assert {:stalled, {:corrupted_core_state, _validation_error}} = next_phase
     end
 
     test "transitions to InitializationPhase when context has no prior_core_state" do
@@ -67,7 +67,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
       # Context without prior_core_state
       context = %{}
 
-      {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
+      {result_attempt, next_phase} = CoreStateValidationPhase.execute(recovery_attempt, context)
 
       assert result_attempt == recovery_attempt
       assert next_phase == InitializationPhase
@@ -79,7 +79,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhaseTest do
       # Context with nil prior_core_state
       context = %{prior_core_state: nil}
 
-      {result_attempt, next_phase} = TSLValidationPhase.execute(recovery_attempt, context)
+      {result_attempt, next_phase} = CoreStateValidationPhase.execute(recovery_attempt, context)
 
       assert result_attempt == recovery_attempt
       assert next_phase == InitializationPhase

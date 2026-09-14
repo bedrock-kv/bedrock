@@ -8,7 +8,7 @@ Before attempting to recover a distributed system, the recovery orchestrator mus
 
 TSL validation performs comprehensive type checking and structural validation on all components that will participate in the recovered transaction system:
 
-**Type Safety Validation**: The `TSLTypeValidator.assert_type_safety!/1` function validates that all component types match expected interfaces—ensuring logs are properly structured, shard entries contain valid identifiers, and transaction components have correct process references.
+**Type Safety Validation**: The `TypeSafetyValidator.assert_type_safety!/1` function validates that all component types match expected interfaces—ensuring logs are properly structured, shard entries contain valid identifiers, and transaction components have correct process references.
 
 **Structural Integrity**: Validates that the transaction system layout contains all required fields with appropriate data types, preventing runtime errors during subsequent recovery phases.
 

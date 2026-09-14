@@ -3,7 +3,9 @@
   "blocked_by": [
     "bedrock-hve.5"
   ],
-  "blocks": [],
+  "blocks": [
+    "bedrock-hve.7"
+  ],
   "created": "2026-09-14T19:13:11Z",
   "description": "First actual chaos. Kills processes inside a running peer cluster while the workload runs.\n\nThe whole fault schedule must be a pure function of {seed, config}. A failure is then a seed somebody else can run. This is the single most important property in the harness -- without it, a chaos failure is an anecdote.\n\nFault catalog for this child, weighted (processes die often):\n- High: data-plane singletons -- commit proxy, resolver, sequencer, log server, materializer worker. These exercise the Director's monitor path, where any :DOWN other than the distributor is epoch-fatal and forces a fresh recovery.\n- High: foreman-managed workers, exercising foreman restart.\n- Medium: Director, non-leader Coordinator, Link.\n- Low: leader Coordinator, forcing a Raft election plus Director re-recruitment.\n\nBoth brutal kills and graceful shutdowns -- bedrock_ex's evidence was that plain SIGTERM alone already produced {:shutdown, {:component_failure, ...}} and orphaned workers, so the graceful path is not the safe one.\n\nAlongside: an append-only journal of every injected fault (timestamp, target role, pid, node, reason) interleaved with workload ops, flushed as it happens.\n\nNote the spike's caveat: the peer's cluster tree is currently held by a parked spawn, so nothing supervises the root. If this child needs to observe the root dying, that owner becomes a monitored process first.\n\nWhole-node faults are the next child; keep this one to in-node process kills.",
   "id": "bedrock-hve.6",

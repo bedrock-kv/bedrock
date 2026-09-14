@@ -1,6 +1,8 @@
 {
   "assignee": "",
-  "blocked_by": [],
+  "blocked_by": [
+    "bedrock-hve.6"
+  ],
   "blocks": [],
   "created": "2026-09-14T19:13:11Z",
   "description": "Extends the fault catalog to whole nodes, at low weight relative to process kills.\n\n- Node halt, abrupt and graceful.\n- Node halt followed by restart against the SAME data directory, which exercises recovery-from-disk rather than fresh bootstrap. bedrock_ex's dev.exs was configured specifically for this (a stable data_dir so restarts exercise recovery) and it is where cross-node worker init failures showed up.\n\nTwo things the spike established that this child must respect: object storage is shared across all nodes (per-node stores produce N isolated clusters that never converge, and it fails as a timeout rather than an error), and a restarted node must rejoin the existing cluster rather than fall back to a single-node descriptor -- which the descriptor fallback (bedrock-y3c) makes disturbingly easy to do silently.\n\nLiveness oracle earns its keep here: after faults stop, the cluster must serve transactions again within a bounded time. Wedged recovery and epoch thrash are the expected failure modes.",
@@ -11,5 +13,5 @@
   "status": "open",
   "title": "Node-level faults: halt and restart-from-disk",
   "type": "task",
-  "updated_at": "2026-09-14T19:13:11Z"
+  "updated_at": "2026-09-14T19:13:18Z"
 }

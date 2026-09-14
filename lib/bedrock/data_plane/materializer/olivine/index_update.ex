@@ -169,6 +169,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
   end
 
   defp apply_mutation({:clear_range, start_key, end_key}, _target_version, index_update) do
+    # Range discovery sees the base pages; staged inserts may extend beyond
+    # their old bounds and must be cleared before handling those pages.
+    index_update = %{
+      index_update
+      | pending_operations: clear_pending_keys_in_range(index_update.pending_operations, start_key, end_key)
+    }
+
     case collect_range_pages_via_chain_following(index_update.index, start_key, end_key) do
       [] ->
         index_update
@@ -238,11 +245,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
           length(first_keys_to_clear) + length(last_keys_to_clear) +
             middle_keys_count + length(page_0_keys_to_clear)
 
+        index_update = delete_pages(index_update, middle_page_ids_excluding_page_zero)
+
         %{
           index_update
-          | index: Index.delete_pages(index_update.index, middle_page_ids_excluding_page_zero),
-            id_allocator: IdAllocator.recycle_ids(index_update.id_allocator, middle_page_ids_excluding_page_zero),
-            pending_operations: final_operations,
+          | pending_operations: final_operations,
             keys_removed: index_update.keys_removed + total_keys_removed
         }
     end
@@ -272,6 +279,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
         database: database,
         keys_changed: index_update.keys_changed + 1
     }
+  end
+
+  defp clear_pending_keys_in_range(pending_operations, start_key, end_key) do
+    Map.new(pending_operations, fn {page_id, operations} ->
+      {page_id,
+       Map.new(operations, fn {key, operation} ->
+         {key, if(key >= start_key and key <= end_key, do: :clear, else: operation)}
+       end)}
+    end)
   end
 
   @spec collect_range_pages_via_chain_following(Index.t(), binary(), binary()) :: [Page.id()]
@@ -395,14 +411,34 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
       # Inline update_page logic - page 0 becoming empty doesn't change tree structure
       {_old_page, next_id} = Map.get(index_update.index.page_map, page_id)
       updated_page_map = Map.put(index_update.index.page_map, page_id, {updated_page, next_id})
-      %{index_update | index: %{index_update.index | page_map: updated_page_map}}
-    else
+
       %{
         index_update
-        | index: Index.delete_pages(index_update.index, [page_id]),
-          id_allocator: IdAllocator.recycle_id(index_update.id_allocator, page_id)
+        | index: %{index_update.index | page_map: updated_page_map},
+          modified_page_ids: MapSet.put(index_update.modified_page_ids, page_id)
       }
+    else
+      delete_pages(index_update, [page_id])
     end
+  end
+
+  defp delete_pages(index_update, []), do: index_update
+
+  defp delete_pages(index_update, page_ids) do
+    index = Index.delete_pages(index_update.index, page_ids)
+    # Recovery follows next pointers, so predecessor-only changes are durable
+    # mutations too. Deleted pages themselves need no tombstones.
+    modified_page_ids =
+      Enum.reduce(index.page_map, index_update.modified_page_ids, fn {id, page}, modified ->
+        if Map.get(index_update.index.page_map, id) == page, do: modified, else: MapSet.put(modified, id)
+      end)
+
+    %{
+      index_update
+      | index: index,
+        id_allocator: IdAllocator.recycle_ids(index_update.id_allocator, page_ids),
+        modified_page_ids: MapSet.difference(modified_page_ids, MapSet.new(page_ids))
+    }
   end
 
   defp handle_oversized_page_from_segments(index_update, page_id, original_page, segments, key_count, _rightmost_key) do
@@ -455,6 +491,22 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
 
   @spec get_current_value_for_atomic_op(t(), Bedrock.key(), Bedrock.version()) :: binary()
   defp get_current_value_for_atomic_op(index_update, key, _target_version) do
+    page_id = Tree.page_for_key(index_update.index.tree, key)
+
+    case index_update.pending_operations |> Map.get(page_id, %{}) |> Map.get(key) do
+      :clear ->
+        <<>>
+
+      {:set, locator} ->
+        {:ok, value} = Database.load_value(index_update.database, locator)
+        value
+
+      nil ->
+        get_indexed_value_for_atomic_op(index_update, key)
+    end
+  end
+
+  defp get_indexed_value_for_atomic_op(index_update, key) do
     case Index.locator_for_key(index_update.index, key) do
       {:ok, _page, locator} ->
         case Database.load_value(index_update.database, locator) do

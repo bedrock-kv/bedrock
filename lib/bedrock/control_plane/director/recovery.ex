@@ -177,21 +177,33 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
     |> Enum.reject(&MapSet.member?(referenced, &1))
   end
 
-  # The completed layout's statement of what exists: the new-generation
-  # logs and the active shard materializers — computed from the attempt
-  # (the TSL carries no membership map). Ghost pruning treats anything
-  # the completed recovery does not reference as a candidate ghost.
+  # What this epoch knows to exist: the new-generation logs, every
+  # materializer that ANSWERED the epoch's lock, and the tag-0
+  # materializer recovery seated (on a fresh cluster it was created here
+  # and never locked, so it is in neither of the others).
+  #
+  # Answering the lock is the load-bearing term. Recovery seats only tag
+  # 0 (bedrock-q67.21.13), so "recovery did not seat it" now describes
+  # every data-tag materializer in a healthy cluster — reading that as
+  # death would deregister the whole data plane on every recovery. It was
+  # already wrong for the replicas of a tag recovery did not pick.
+  #
+  # A ghost is a registration nothing answered for: a worker on a node
+  # that no longer exists under that name, which cannot deregister
+  # itself. The locking phase records only the workers that replied, so
+  # its key set is exactly that distinction, already computed.
   @spec layout_reference_ids(RecoveryAttempt.t()) :: MapSet.t(Worker.id())
   defp layout_reference_ids(completed_attempt) do
     log_ids = completed_attempt.logs |> Map.keys() |> MapSet.new()
+    answered_ids = completed_attempt.materializer_recovery_info_by_id |> Map.keys() |> MapSet.new()
 
-    materializer_ids =
+    seated_ids =
       for {_tag, members} <- completed_attempt.shard_materializers,
           {worker_id, _node} <- members,
           into: MapSet.new(),
           do: worker_id
 
-    MapSet.union(log_ids, materializer_ids)
+    log_ids |> MapSet.union(answered_ids) |> MapSet.union(seated_ids)
   end
 
   # The runtime wiring recruitment needs — the epoch's log refs and node

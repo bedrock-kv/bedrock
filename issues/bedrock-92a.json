@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:40:37Z",
+  "description": "`ChunkReader.max_version_from_key/1` (lib/bedrock/object_storage/chunk_reader.ex:163) assumes every filename in object storage parses:\n\n    def max_version_from_key(key) do\n      {:ok, version} = key |\u003e Path.basename() |\u003e Keys.key_to_version()\n      version\n    end\n\nTwo ways that blows up, both on attacker-free, ordinary-corruption inputs:\n\n1. **FunctionClauseError.** `Keys.key_to_version/1` calls `restore_version/1`, whose guard is `inverted \u003c= @max_version` (keys.ex:61). A 13-character base36 string can encode up to 36^13 ~= 1.7e20, which exceeds uint64 max 1.8e19. So a name that is the right shape and parses fine as base36 still falls off the guard and raises FunctionClauseError -- not the `{:error, :invalid_format}` the @spec advertises.\n2. **MatchError.** When `key_to_version/1` does return `{:error, :invalid_format}`, the `{:ok, version} =` match fails.\n\nWhy it matters: `max_version_from_key/1` is called from `covering_chunk_keys/2` (chunk_reader.ex:202) inside a `Stream.take_while` over names supplied by the filesystem or bucket listing. A single junk filename -- truncated write, stray file, foreign object, operator fat-finger -- therefore crashes replay for the whole shard rather than being skipped. `list_chunk_metadata/2` already supports `on_error: :skip`, so the tolerant behaviour exists elsewhere in the same module; this path just does not use it.\n\nFound while building bedrock-hve.1 (offline fsck). fsck routes around it by parsing defensively; the reader does not, so the production replay path is the exposed one.\n\nSecondary, same area: `Keys` accepts non-canonical names as valid versions -- uppercase base36 and widths other than 13 characters are parsed rather than rejected, so two distinct filenames can denote the same version. Worth deciding whether the parser should be strict about canonical form.",
+  "id": "bedrock-92a",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[BUG] One malformed chunk filename crashes replay: max_version_from_key/1 has no error path",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:40:37Z"
+}

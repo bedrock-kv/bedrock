@@ -45,6 +45,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
   alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.TSLTypeValidator
   alias Bedrock.ControlPlane.Director.Recovery.InitializationPhase
+  alias Bedrock.ControlPlane.Director.Recovery.LockingPhase
 
   @doc """
   Validates the prior core state's type safety.
@@ -78,7 +79,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery.TSLValidationPhase do
     if CoreState.fresh?(core_state) do
       InitializationPhase
     else
-      Bedrock.ControlPlane.Director.Recovery.LockingPhase
+      LockingPhase
     end
   end
 end

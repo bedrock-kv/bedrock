@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:24:53Z",
+  "description": "## Failure\n\nThree copies of \"find the object storage backend\" disagree about where it lives in node config:\n\n- `Coordinator.Server.get_object_storage_backend/1` and `PersistencePhase.get_object_storage_backend/1` read `node_config[:object_storage]` (TOP level), else derive `LocalFilesystem` at `\u003cfirst capability path\u003e/object_storage`.\n- `ClusterSupervisor.children_for_capabilities/3` -\u003e `ensure_object_storage/1` reads `object_storage` from the merged `log:`/`materializer:`/`worker:` sections, else derives from that section's path.\n\nConfiguring S3/MinIO the way a Foreman-centric reader would (`log: [path: ..., object_storage: s3]`) gives workers S3 while the coordinator and director silently read and write the cluster bootstrap on per-node local disk — each node gets its own bootstrap, and a multi-node cluster loses its cold-boot anchor. Configuring only top level gives the reverse. Found while building the ../bedrock_ex MinIO harness; the workaround there sets both. Present on origin/develop.\n\n## Expected\n\nOne resolution of the object storage backend from node config, used by all three sites, so no configuration can split the cluster's durable state across backends.",
+  "id": "bedrock-1cp",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "[BUG] object_storage config is read from two places: top level for coordinator/persistence, capability sections for Foreman",
+  "type": "bug",
+  "updated_at": "2026-09-14T19:24:53Z"
+}

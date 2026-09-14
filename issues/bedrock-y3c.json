@@ -1,0 +1,14 @@
+{
+  "assignee": "",
+  "blocked_by": [],
+  "blocks": [],
+  "created": "2026-09-14T19:09:08Z",
+  "description": "`ClusterSupervisor.child_spec/1` falls back to a default single-node descriptor when it cannot read the descriptor file, emitting only:\n\n    Logger.warning(\"Bedrock: Creating a default single-node configuration\")   # cluster_supervisor.ex:76\n\nThis is a silent correctness cliff. A multi-node deployment whose descriptor path is wrong, unreadable, or not yet provisioned does not fail -- every node happily bootstraps its own private one-node cluster. Each one then reports itself healthy, elects itself coordinator, and serves transactions. Writes committed on one node are simply invisible on the others, with nothing in the system flagging that the cluster was never formed.\n\nDiscovered in bedrock-80f: the peer-cluster harness had to add an explicit readiness gate requiring every node to agree on the full coordinator set, precisely because 'all nodes healthy' was true in the broken case and told us nothing. Any operator would hit the same trap, without a test to catch it.\n\nProposal: make the fallback opt-in rather than default. A cluster that was configured with a descriptor path and could not read it should refuse to start; only a genuinely unconfigured single-node dev cluster should get the default. Distinguishing 'no descriptor configured' from 'descriptor configured but unreadable' is most of the fix.\n\nRelevant to the chaos harness (bedrock-80f) but not blocking it -- the harness already works around this. Filing standalone since it is an operator-facing hazard in its own right.",
+  "id": "bedrock-y3c",
+  "labels": [],
+  "priority": 2,
+  "status": "open",
+  "title": "Descriptor fallback turns a misconfigured multi-node cluster into N healthy-looking single-node clusters",
+  "type": "task",
+  "updated_at": "2026-09-14T19:09:08Z"
+}

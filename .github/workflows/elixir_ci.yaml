@@ -44,6 +44,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Install Elixir and Erlang
+      id: beam
       uses: erlef/setup-beam@v1
       with:
         elixir-version: ${{ matrix.elixir }}
@@ -88,13 +89,18 @@ jobs:
       run: mix credo --strict
 
     # Define how to cache the `plts` directory. After the first run,
-    # this speeds up dialyzer runs a lot.
+    # this speeds up dialyzer runs a lot. Keyed on setup-beam's *resolved*
+    # otp-version/elixir-version outputs (not matrix.otp/matrix.elixir,
+    # which are the requested spec, e.g. "27.3") — a runner-image patch
+    # bump changes the resolved version and the PLT's on-disk format, so
+    # the key must change with it or dialyzer loads a PLT built by a
+    # different OTP patch and fails with "Old PLT file".
     - name: Cache PLTs
       id: cache-plts
       uses: actions/cache@v3
       with:
         path: plts
-        key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-v3-${{ hashFiles('**/mix.lock') }}
+        key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-plts-v4-${{ hashFiles('**/mix.lock') }}
 
     - name: Dialyzer
       run: mix dialyzer

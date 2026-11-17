@@ -32,6 +32,7 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
   alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.ControlPlane.Coordinator
+  alias Bedrock.ControlPlane.Director.Recovery.PersistencePhase
   alias Bedrock.ControlPlane.Director.State
   alias Bedrock.ControlPlane.Distributor
   alias Bedrock.Internal.Time.Interval
@@ -50,9 +51,16 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(%{state: :starting} = t) do
-    t
-    |> setup_for_initial_recovery()
-    |> do_recovery()
+    case read_prior_core_state(t) do
+      {:ok, prior_core_state} ->
+        %{t | prior_core_state: prior_core_state}
+        |> setup_for_initial_recovery()
+        |> do_recovery()
+
+      {:error, reason} ->
+        Logger.warning("Director cannot read the cluster bootstrap: #{inspect(reason)}; recovery waits for it")
+        t
+    end
   end
 
   @spec try_to_recover(State.t()) :: State.t()
@@ -64,6 +72,22 @@ defmodule Bedrock.ControlPlane.Director.Recovery do
 
   @spec try_to_recover(State.t()) :: State.t()
   def try_to_recover(t), do: t
+
+  # The prior state is the durable record as it stands when recovery
+  # starts, as FDB's recovery reads cstate before anything else
+  # (clusterRecoveryCore). The coordinator's copy is only what it loaded
+  # at boot or heard from its own directors since; a follower that wins
+  # leadership heard nothing. Only an ABSENT record means a fresh
+  # cluster — a failed read means nothing yet. Without object storage
+  # there is no durable record, and the coordinator's copy is all there is.
+  defp read_prior_core_state(t) do
+    case PersistencePhase.read_bootstrap(t.cluster) do
+      {:ok, bootstrap} -> {:ok, CoreState.from_bootstrap(bootstrap)}
+      {:error, :not_found} -> {:ok, nil}
+      {:error, :no_object_storage} -> {:ok, t.prior_core_state}
+      {:error, _reason} = error -> error
+    end
+  end
 
   @spec setup_for_initial_recovery(State.t()) :: State.t()
   def setup_for_initial_recovery(t) do

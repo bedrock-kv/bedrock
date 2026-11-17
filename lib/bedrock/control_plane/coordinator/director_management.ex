@@ -14,7 +14,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
     only: [
       trace_director_changed: 1,
       trace_director_failure_detected: 2,
-      trace_director_launch: 2,
+      trace_director_launch: 1,
       trace_director_shutdown: 2,
       trace_recovery_retry_attempt: 1,
       trace_recovery_failed: 1
@@ -31,7 +31,7 @@ defmodule Bedrock.ControlPlane.Coordinator.DirectorManagement do
   def try_to_start_director(t) when t.leader_node == t.my_node and t.director == :unavailable do
     t = maybe_put_default_config(t)
 
-    trace_director_launch(t.epoch, t.prior_core_state)
+    trace_director_launch(t.epoch)
 
     case start_director_with_monitoring(t) do
       {:ok, new_director} ->

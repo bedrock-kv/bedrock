@@ -36,7 +36,8 @@ defmodule Bedrock.ControlPlane.Coordinator.InitializationTest do
     assert {:ok, state, {:continue, :check_recovery_consensus}} =
              Server.init({TestCluster, TestCluster.otp_name(:coordinator)})
 
-    assert state.prior_core_state == %{logs: %{"old-log" => []}, system_materializers: %{}}
+    # The director reads the prior core state itself when it starts recovery.
+    assert state.prior_core_state == nil
     assert state.transaction_system_layout == nil
   end
 end

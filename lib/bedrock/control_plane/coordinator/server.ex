@@ -43,7 +43,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
 
   import Bedrock.Internal.GenServer.Replies
 
-  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.ControlPlane.Config.Parameters
   alias Bedrock.ControlPlane.Coordinator.Commands
   alias Bedrock.ControlPlane.Coordinator.DiskRaftLog
@@ -91,9 +90,10 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
     with {:ok, coordinator_nodes} <- cluster.fetch_coordinator_nodes(),
          true <- my_node in coordinator_nodes || {:error, :not_a_coordinator},
          {:ok, raft_log} <- init_raft_log(cluster) do
-      # Load config and the prior core state from object storage (the
-      # durable record; FDB reads its cstate at the same point)
-      {loaded_epoch, loaded_config, loaded_core_state} = load_state_from_object_storage(cluster)
+      # Load config from object storage. The prior core state is not
+      # loaded here: the director reads the durable record when it starts
+      # recovery (FDB reads its cstate there).
+      {loaded_epoch, loaded_config} = load_state_from_object_storage(cluster)
 
       {:ok,
        %State{
@@ -103,7 +103,6 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
          supervisor_otp_name: cluster.otp_name(:sup),
          epoch: loaded_epoch,
          config: loaded_config,
-         prior_core_state: loaded_core_state,
          transaction_system_layout: nil,
          raft:
            Raft.new(
@@ -455,21 +454,20 @@ defmodule Bedrock.ControlPlane.Coordinator.Server do
   # Object Storage loading functions
 
   @spec load_state_from_object_storage(module()) ::
-          {Bedrock.epoch() | nil, map() | nil, map() | nil}
+          {Bedrock.epoch() | nil, map() | nil}
   defp load_state_from_object_storage(cluster) do
     with {:ok, backend} <- get_object_storage_backend(cluster),
          {:ok, data} <- fetch_bootstrap_data(backend, cluster),
          {:ok, bootstrap} <- parse_bootstrap_data(data, cluster) do
       epoch = bootstrap.epoch
       config = build_config_from_bootstrap(bootstrap, cluster)
-      core_state = CoreState.from_bootstrap(bootstrap)
 
       Logger.info("Bedrock [#{cluster}]: Loaded cluster bootstrap from object storage (epoch: #{epoch})")
-      {epoch, config, core_state}
+      {epoch, config}
     else
-      {:error, :no_object_storage} -> {nil, nil, nil}
-      {:error, :not_found} -> {nil, nil, nil}
-      {:error, _reason} -> {nil, nil, nil}
+      {:error, :no_object_storage} -> {nil, nil}
+      {:error, :not_found} -> {nil, nil}
+      {:error, _reason} -> {nil, nil}
     end
   end
 

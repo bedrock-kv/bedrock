@@ -1,6 +1,5 @@
 defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
   @moduledoc false
-  alias Bedrock.ControlPlane.Config.CoreState
   alias Bedrock.Telemetry
 
   @spec trace_started(cluster :: module(), otp_name :: atom()) :: :ok
@@ -25,24 +24,11 @@ defmodule Bedrock.ControlPlane.Coordinator.Telemetry do
     })
   end
 
-  @spec trace_director_launch(
-          epoch :: non_neg_integer(),
-          prior_core_state :: CoreState.t() | nil
-        ) :: :ok
-  def trace_director_launch(epoch, prior_core_state) do
-    # The prior core state names logs and nothing else — no epoch, no
-    # layout. The epoch below is this launch's, which is the one an
-    # operator wants anyway; reading a nonexistent :epoch off the record
-    # printed an empty string.
-    config_summary =
-      if prior_core_state do
-        %{prior_logs_count: map_size(prior_core_state[:logs] || %{})}
-      end
-
-    Telemetry.execute([:bedrock, :control_plane, :coordinator, :director_launch], %{}, %{
-      epoch: epoch,
-      config_summary: config_summary
-    })
+  @spec trace_director_launch(epoch :: non_neg_integer()) :: :ok
+  def trace_director_launch(epoch) do
+    # No prior state here: the director reads it from the durable record
+    # when it starts recovery, so this coordinator's copy would mislead.
+    Telemetry.execute([:bedrock, :control_plane, :coordinator, :director_launch], %{}, %{epoch: epoch})
   end
 
   @spec trace_consensus_reached(transaction_id :: binary()) :: :ok

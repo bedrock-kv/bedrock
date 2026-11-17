@@ -137,15 +137,26 @@ jobs:
     - name: Install dependencies
       run: mix deps.get
 
-    # Compile before the download task: if the task invocation itself has to
-    # compile stale deps, each dep's compile prunes the VM code paths using
-    # that dep's app list, which can delete :inets out from under the
-    # download's :httpc call (http_util fails to lazy-load)
     - name: Compile
       run: mix compile
 
-    - name: Download MinIO test binary
-      run: MIX_ENV=test mix minio_server.download --arch linux-amd64 --version latest
+    # MinIO has archived its community releases (binaries return 410 Gone and
+    # the minio/minio image is no longer published), so run a MinIO-compatible
+    # server as a container. Bedrock.Test.Minio uses whatever already listens
+    # on 127.0.0.1:9000 with its credentials.
+    - name: Start S3-compatible server (RustFS)
+      run: |
+        docker run -d --name s3 -p 9000:9000 \
+          -e RUSTFS_ACCESS_KEY=minio_key \
+          -e RUSTFS_SECRET_KEY=minio_secret \
+          -e RUSTFS_CONSOLE_ENABLE=false \
+          rustfs/rustfs:1.0.6
+        for i in $(seq 60); do
+          curl -s -o /dev/null http://127.0.0.1:9000/ && exit 0
+          sleep 1
+        done
+        docker logs s3
+        exit 1
 
     - name: Run S3 integration tests
       run: mix test --include s3 --exclude distributed
@@ -182,15 +193,26 @@ jobs:
     - name: Install dependencies
       run: mix deps.get
 
-    # Compile before the download task: if the task invocation itself has to
-    # compile stale deps, each dep's compile prunes the VM code paths using
-    # that dep's app list, which can delete :inets out from under the
-    # download's :httpc call (http_util fails to lazy-load)
     - name: Compile
       run: mix compile
 
-    - name: Download MinIO test binary
-      run: MIX_ENV=test mix minio_server.download --arch linux-amd64 --version latest
+    # MinIO has archived its community releases (binaries return 410 Gone and
+    # the minio/minio image is no longer published), so run a MinIO-compatible
+    # server as a container. Bedrock.Test.Minio uses whatever already listens
+    # on 127.0.0.1:9000 with its credentials.
+    - name: Start S3-compatible server (RustFS)
+      run: |
+        docker run -d --name s3 -p 9000:9000 \
+          -e RUSTFS_ACCESS_KEY=minio_key \
+          -e RUSTFS_SECRET_KEY=minio_secret \
+          -e RUSTFS_CONSOLE_ENABLE=false \
+          rustfs/rustfs:1.0.6
+        for i in $(seq 60); do
+          curl -s -o /dev/null http://127.0.0.1:9000/ && exit 0
+          sleep 1
+        done
+        docker logs s3
+        exit 1
 
     - name: Run distributed durability suite
       run: mix test --include distributed test/bedrock/distributed/minio_durability_test.exs

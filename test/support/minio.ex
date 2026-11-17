@@ -1,7 +1,17 @@
 defmodule Bedrock.Test.Minio do
   @moduledoc false
 
+  # An S3-compatible server already listening on the configured port (CI
+  # runs one as a container, since MinIO no longer publishes binaries) is
+  # used as-is; otherwise launch the local MinIO binary.
   def start_link do
+    case wait_for_ready(0) do
+      :ok -> {:ok, :external}
+      {:error, :timeout} -> start_minio_server()
+    end
+  end
+
+  defp start_minio_server do
     cur = Process.flag(:trap_exit, true)
 
     System.put_env("MINIO_ROOT_USER", "minio_key")

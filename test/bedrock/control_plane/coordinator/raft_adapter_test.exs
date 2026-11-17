@@ -54,18 +54,43 @@ defmodule Bedrock.ControlPlane.Coordinator.RaftAdapterTest do
       cancel_fn = RaftAdapter.timer(:heartbeat)
 
       assert is_function(cancel_fn, 0)
-      # Timer cancel returns {:ok, :cancel} or false
-      result = cancel_fn.()
-      assert result == {:ok, :cancel} or result == false
+      assert :ok = cancel_fn.()
     end
 
     test "creates election timer with jitter" do
       cancel_fn = RaftAdapter.timer(:election)
 
       assert is_function(cancel_fn, 0)
-      # Timer cancel returns {:ok, :cancel} or false
-      result = cancel_fn.()
-      assert result == {:ok, :cancel} or result == false
+      assert :ok = cancel_fn.()
+    end
+
+    # The leader heartbeats a follower it heard from within heartbeat_ms only
+    # on alternate ticks, so a healthy follower can go 2 * heartbeat_ms
+    # between AppendEntries. Its election timeout must outlast at least one
+    # more such round, or ordinary scheduling latency starts elections.
+    test "election timer outlasts two of the leader's heartbeat rounds" do
+      cancel_fn = RaftAdapter.timer(:election)
+      Process.send_after(self(), :two_heartbeat_rounds_elapsed, 4 * RaftAdapter.heartbeat_ms())
+      assert_receive :two_heartbeat_rounds_elapsed, 1_000
+
+      refute_received {:raft, :timer, :election}
+      cancel_fn.()
+    end
+
+    # A coordinator busy for longer than a timer's interval finds the fired
+    # timer's message already queued when the protocol resets that timer
+    # (e.g. on AppendEntries). Delivered afterwards, the stale election
+    # timeout would start an election despite the leader's heartbeat.
+    test "cancelling a timer that already fired discards its queued message" do
+      cancel_fn = RaftAdapter.timer(:heartbeat)
+      Process.send_after(self(), :heartbeat_interval_elapsed, 2 * RaftAdapter.heartbeat_ms())
+      assert_receive :heartbeat_interval_elapsed, 1_000
+      {:messages, messages} = Process.info(self(), :messages)
+      assert {:raft, :timer, :heartbeat} in messages
+
+      cancel_fn.()
+
+      refute_received {:raft, :timer, :heartbeat}
     end
   end
 

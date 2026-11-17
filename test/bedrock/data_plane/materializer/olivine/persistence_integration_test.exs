@@ -156,9 +156,11 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PersistenceIntegrationTest do
       {index_manager_with_both, database_with_both} =
         IndexManager.apply_transactions(index_manager_with_old, [recent_transaction], database_with_old)
 
-      # Create many more transactions to fill the buffer tracking queue
+      # Create many more transactions to fill the buffer tracking queue.
+      # They continue above the recent transaction: the applied position
+      # only ever advances.
       buffer_fill_transactions =
-        for i <- 2..50 do
+        for i <- 1001..1049 do
           create_transaction([{:set, "key_#{i}", "value_#{i}"}], i)
         end
 

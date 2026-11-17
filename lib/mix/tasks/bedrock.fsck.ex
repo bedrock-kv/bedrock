@@ -24,6 +24,9 @@ defmodule Mix.Tasks.Bedrock.Fsck do
       catch every framing fault. Takes key containment with it.
     * `--skip-layout` - Do not replay the system shard to recover the shard
       layout, and skip the checks that need it
+    * `--skip-snapshots` - Do not open the newest snapshot bundle under each
+      `s/` prefix. That read has no ranged form, so it downloads a whole
+      bundle — the shard's entire materialized state — per shard
     * `--verbose` - List version gaps and every chunk, not just the faults
     * `--format FORMAT` - `text` (default) or `json`
 
@@ -50,6 +53,22 @@ defmodule Mix.Tasks.Bedrock.Fsck do
   store as a map. It is replayed out of the system shard's own chunks, so
   a store whose system shard is missing or structurally faulted reports
   `layout: unavailable` and skips those checks rather than guessing.
+
+  ## Snapshots
+
+  Each shard's NEWEST bundle is opened and its index record validated,
+  because that is the only bundle a cold start will ever read. A bundle
+  that fails here means the shard cannot be restored at all, or — worse,
+  and silently — restores as a nearly empty one.
+
+  What is NOT checked is whether the shard's chunks still cover everything
+  above the snapshot. Nothing in the store can answer that; see
+  `Bedrock.ObjectStorage.Fsck` for why, and for why a snapshot AHEAD of
+  its chunks is ordinary rather than alarming.
+
+  A clean run says the persisted bytes are coherent with each other. It
+  says nothing about whether the cluster kept a commit it acknowledged:
+  durable versions live in RAM and are never written to object storage.
   """
 
   use Mix.Task
@@ -63,6 +82,7 @@ defmodule Mix.Tasks.Bedrock.Fsck do
     shard: :keep,
     skip_transactions: :boolean,
     skip_layout: :boolean,
+    skip_snapshots: :boolean,
     verbose: :boolean,
     format: :string,
     help: :boolean
@@ -87,7 +107,8 @@ defmodule Mix.Tasks.Bedrock.Fsck do
     Fsck.check(backend,
       shards: shards(opts),
       check_transactions: !opts[:skip_transactions],
-      check_layout: !opts[:skip_layout]
+      check_layout: !opts[:skip_layout],
+      check_snapshots: !opts[:skip_snapshots]
     )
   rescue
     e in ObjectStorage.ListError ->
@@ -133,6 +154,7 @@ defmodule Mix.Tasks.Bedrock.Fsck do
     Enum.join(
       layout_lines(report.layout, verbose) ++
         shard_lines(report, verbose) ++
+        snapshot_lines(report, verbose) ++
         section("FAULTS", Enum.map(report.faults, &finding_line/1)) ++
         section("NOTES", note_lines(report, verbose)) ++
         [summary(report)],
@@ -173,6 +195,21 @@ defmodule Mix.Tasks.Bedrock.Fsck do
     "  #{chunk.key}  #{range(chunk.range)}  #{chunk.txn_count || "?"} txn, #{chunk.bytes} bytes"
   end
 
+  defp snapshot_lines(%{snapshots: []}, _verbose), do: []
+
+  defp snapshot_lines(report, verbose) do
+    ["" | Enum.map(report.snapshots, &snapshot_line(&1, verbose))]
+  end
+
+  # The bundle's OWN version is what a restored shard comes up at, so it
+  # is what gets printed; the key's is only interesting when they differ,
+  # and a fault already says so when they do.
+  defp snapshot_line(snapshot, verbose) do
+    "snapshot #{snapshot.shard_tag}: #{snapshot.count} bundle(s), newest at version " <>
+      "#{snapshot.durable_version || "?"}, chunks through #{snapshot.chunk_max_version || "none"}" <>
+      if(verbose, do: "\n  #{snapshot.key}  #{snapshot.bytes} bytes", else: "")
+  end
+
   defp note_lines(report, verbose) do
     report.notes
     |> Enum.reject(&(!verbose and &1.kind == :version_gap))
@@ -205,6 +242,7 @@ defmodule Mix.Tasks.Bedrock.Fsck do
         "chunk_count" => report.chunk_count,
         "layout" => json_layout(report.layout),
         "shards" => Enum.map(report.shards, &json_shard/1),
+        "snapshots" => Enum.map(report.snapshots, &json_snapshot/1),
         "faults" => Enum.map(report.faults, &json_finding/1),
         "notes" => Enum.map(report.notes, &json_finding/1)
       },
@@ -248,6 +286,19 @@ defmodule Mix.Tasks.Bedrock.Fsck do
             "fault_count" => length(chunk.faults)
           }
         end)
+    }
+  end
+
+  defp json_snapshot(snapshot) do
+    %{
+      "shard_tag" => snapshot.shard_tag,
+      "key" => snapshot.key,
+      "count" => snapshot.count,
+      "version" => snapshot.version,
+      "durable_version" => snapshot.durable_version,
+      "chunk_max_version" => snapshot.chunk_max_version,
+      "bytes" => snapshot.bytes,
+      "fault_count" => length(snapshot.faults)
     }
   end
 

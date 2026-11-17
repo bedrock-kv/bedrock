@@ -1,7 +1,9 @@
 defmodule Bedrock.ObjectStorage.FsckTest do
   use ExUnit.Case, async: true
 
+  alias Bedrock.DataPlane.Materializer.Olivine.IndexDatabase
   alias Bedrock.DataPlane.Transaction
+  alias Bedrock.DataPlane.Version
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.Chunk
   alias Bedrock.ObjectStorage.Fsck
@@ -929,16 +931,314 @@ defmodule Bedrock.ObjectStorage.FsckTest do
     end
   end
 
+  # ------------------------------------------------------- snapshot fixtures
+
+  # A well-formed bundle is built by the WRITER — `Database.compact/4`
+  # ends in exactly this call — so a change to the record format fails
+  # these tests instead of quietly agreeing with a stale hand-rolled copy.
+  defp index_record(version, pages_map \\ %{}) do
+    version |> Version.from_integer() |> IndexDatabase.build_snapshot_record(pages_map) |> IO.iodata_to_binary()
+  end
+
+  # `[data][index record]`, exactly the iodata `maybe_upload_snapshot/4`
+  # hands to `Snapshot.write/3`.
+  defp bundle(version, opts \\ []) do
+    data = Keyword.get(opts, :data, "compacted-page-data")
+    record = Keyword.get(opts, :record, index_record(version))
+    data <> record
+  end
+
+  # A record from a LIVE append chain rather than a compaction: its
+  # previous_version points at an older record, not at itself.
+  defp delta_record(version, previous_version, pages_map) do
+    payload = :erlang.term_to_binary({Version.from_integer(previous_version), pages_map})
+    size = byte_size(payload)
+    <<0x4F4C5644::unsigned-big-32, version::unsigned-big-64, size::unsigned-big-32>> <> payload <> <<size::32>>
+  end
+
+  defp put_snapshot(backend, shard_tag, version, opts \\ []) do
+    key = Keys.snapshot_path(shard_tag, version)
+    :ok = ObjectStorage.put(backend, key, bundle(version, opts))
+    key
+  end
+
+  # ---------------------------------------------------------- check_snapshot
+
+  describe "check_snapshot/2 on a well-formed bundle" do
+    test "reports no faults and recovers the embedded durable version" do
+      result = Fsck.check_snapshot(Keys.snapshot_path("a", 20), bundle(20))
+
+      assert result.faults == []
+      assert result.shard_tag == "a"
+      assert result.version == 20
+      assert result.durable_version == 20
+    end
+
+    test "an empty page map is a legitimately compacted empty shard" do
+      assert Fsck.check_snapshot(Keys.snapshot_path("a", 0), bundle(0, data: "")).faults == []
+    end
+  end
+
+  describe "check_snapshot/2 key checks" do
+    test "faults when the key is not s/{shard}/{version}" do
+      result = Fsck.check_snapshot("s/a", bundle(20))
+
+      assert :malformed_snapshot_key in kinds(result.faults)
+    end
+
+    test "faults when the basename is not the canonical encoding of its version" do
+      canonical = Path.basename(Keys.snapshot_path("a", 20))
+      result = Fsck.check_snapshot("s/a/" <> String.upcase(canonical), bundle(20))
+
+      assert :unparsable_snapshot_key in kinds(result.faults)
+    end
+
+    test "faults when the basename parses but is out of the uint64 range" do
+      assert :unparsable_snapshot_key in kinds(Fsck.check_snapshot("s/a/zzzzzzzzzzzzz", bundle(20)).faults)
+    end
+  end
+
+  describe "check_snapshot/2 index record checks" do
+    test "faults when the bundle is too short to hold an index record" do
+      result = Fsck.check_snapshot(Keys.snapshot_path("a", 20), "tiny")
+
+      assert [fault] = result.faults
+      assert fault.kind == :snapshot_index_record_invalid
+      assert fault.detail.reason == :invalid_bundle
+    end
+
+    test "faults when the index record's magic is wrong" do
+      record = index_record(20)
+      corrupt = splice(record, 0, 4, <<0::unsigned-big-32>>)
+
+      result = Fsck.check_snapshot(Keys.snapshot_path("a", 20), bundle(20, record: corrupt))
+
+      assert [fault] = result.faults
+      assert fault.kind == :snapshot_index_record_invalid
+      assert fault.detail.reason == :no_index_record
+    end
+
+    test "faults when the footer's payload size overruns the bundle" do
+      record = index_record(20)
+      overrun = splice(record, byte_size(record) - 4, 4, <<0xFFFFFF::unsigned-big-32>>)
+
+      result = Fsck.check_snapshot(Keys.snapshot_path("a", 20), bundle(20, record: overrun))
+
+      assert [fault] = result.faults
+      assert fault.kind == :snapshot_index_record_invalid
+      assert fault.detail.reason == :invalid_bundle
+    end
+
+    test "faults when the header and footer disagree about the payload size" do
+      # `find_index_boundary/1` trusts the footer and never looks at the
+      # header's copy, so a restore SUCCEEDS here — and then
+      # `IndexDatabase.read_durable_version/2` fails its own match and
+      # silently answers version zero, which loads no pages at all.
+      record = index_record(20)
+      header_lie = splice(record, 12, 4, <<7::unsigned-big-32>>)
+
+      result = Fsck.check_snapshot(Keys.snapshot_path("a", 20), bundle(20, record: header_lie))
+
+      assert [fault] = result.faults
+      assert fault.kind == :snapshot_index_size_disagreement
+      assert fault.detail.header_payload_size == 7
+    end
+
+    test "faults when the record's version is not the one the key names" do
+      result = Fsck.check_snapshot(Keys.snapshot_path("a", 20), bundle(20, record: index_record(30)))
+
+      assert [fault] = result.faults
+      assert fault.kind == :snapshot_version_mismatch
+      assert fault.detail == %{key_version: 20, record_version: 30}
+    end
+
+    test "faults when the index record is a delta rather than a compaction base" do
+      # The live idx file is a chain of per-window deltas. Uploading one
+      # raw gives the restored shard that single delta as its whole
+      # index: the chain walk stops at a record the bundle does not
+      # contain, and the shard comes up nearly empty.
+      record = delta_record(20, 10, %{1 => {<<>>, 0}})
+
+      result = Fsck.check_snapshot(Keys.snapshot_path("a", 20), bundle(20, record: record))
+
+      assert [fault] = result.faults
+      assert fault.kind == :snapshot_index_not_a_base
+      assert fault.detail.version == 20
+      assert fault.detail.previous_version == 10
+    end
+
+    test "faults when the payload will not decode as a page block" do
+      payload = "not a term"
+      size = byte_size(payload)
+      record = <<0x4F4C5644::unsigned-big-32, 20::unsigned-big-64, size::32>> <> payload <> <<size::32>>
+
+      result = Fsck.check_snapshot(Keys.snapshot_path("a", 20), bundle(20, record: record))
+
+      assert [fault] = result.faults
+      assert fault.kind == :snapshot_index_undecodable
+    end
+
+    test "faults when the payload decodes to something that is not a page block" do
+      payload = :erlang.term_to_binary({Version.from_integer(20), "not a page map"})
+      size = byte_size(payload)
+      record = <<0x4F4C5644::unsigned-big-32, 20::unsigned-big-64, size::32>> <> payload <> <<size::32>>
+
+      result = Fsck.check_snapshot(Keys.snapshot_path("a", 20), bundle(20, record: record))
+
+      assert kinds(result.faults) == [:snapshot_index_undecodable]
+    end
+  end
+
+  # ------------------------------------------------------------- check/2
+
   describe "check/2 snapshots" do
-    test "snapshot bundles are out of scope and are not read", %{backend: backend, root: root} do
+    test "a shard with a well-formed newest bundle is clean", %{backend: backend} do
       put_chunk(backend, "a", [10, 20])
-      File.mkdir_p!(Path.join([root, "s", "a"]))
-      File.write!(Path.join(root, Keys.snapshot_path("a", 20)), "not a chunk")
+      put_snapshot(backend, "a", 20)
 
       report = Fsck.check(backend)
 
       assert report.clean?
-      assert report.chunk_count == 1
+      assert [snapshot] = report.snapshots
+      assert snapshot.shard_tag == "a"
+      assert snapshot.count == 1
+      assert snapshot.durable_version == 20
+      assert snapshot.chunk_max_version == 20
+    end
+
+    test "faults on a corrupt newest bundle", %{backend: backend} do
+      put_chunk(backend, "a", [10, 20])
+      :ok = ObjectStorage.put(backend, Keys.snapshot_path("a", 20), "not a bundle")
+
+      report = Fsck.check(backend)
+
+      refute report.clean?
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :snapshot_index_record_invalid))
+      assert fault.shard_tag == "a"
+      assert fault.key == Keys.snapshot_path("a", 20)
+    end
+
+    test "only the newest bundle is checked: an older corrupt one is invisible", %{backend: backend} do
+      # `Snapshot.read_latest/1` takes the first key the listing yields
+      # and has no fallback to the next, so the newest bundle is the only
+      # one a cold start will ever open.
+      put_chunk(backend, "a", [10, 30])
+      :ok = ObjectStorage.put(backend, Keys.snapshot_path("a", 10), "not a bundle")
+      put_snapshot(backend, "a", 30)
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert [snapshot] = report.snapshots
+      assert snapshot.count == 2
+      assert snapshot.key == Keys.snapshot_path("a", 30)
+    end
+
+    test "faults on an unparsable name without fetching the object", %{backend: backend, root: root} do
+      # A name that sorts ahead of every canonical one is what
+      # `Snapshot.read_latest/1` picks up, and `Keys.extract_version/1`
+      # then fails it — bricking every cold start of this shard.
+      put_chunk(backend, "a", [10, 20])
+      put_snapshot(backend, "a", 20)
+      File.write!(Path.join([root, "s", "a", "!junk"]), "irrelevant")
+
+      report = Fsck.check(backend)
+
+      refute report.clean?
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :unparsable_snapshot_key))
+      assert fault.key == "s/a/!junk"
+    end
+
+    test "faults when the newest bundle cannot be read", %{backend: backend, root: root} do
+      # A bundle the listing turned up that is gone by the time it is
+      # opened is exactly what a cold start hits mid-incident.
+      key = put_snapshot(backend, "a", 20)
+
+      report = Fsck.check(ObjectStorage.backend(VanishingBackend, root: root))
+
+      refute report.clean?
+      assert [fault] = Enum.filter(report.faults, &(&1.kind == :snapshot_unreadable))
+      assert fault.key == key
+      assert fault.detail == %{reason: :not_found}
+    end
+
+    test "check_snapshots: false declines the whole pass", %{backend: backend} do
+      put_chunk(backend, "a", [10, 20])
+      :ok = ObjectStorage.put(backend, Keys.snapshot_path("a", 20), "not a bundle")
+
+      report = Fsck.check(backend, check_snapshots: false)
+
+      assert report.clean?
+      assert report.snapshots == []
+      assert Enum.filter(report.notes, &(&1.kind == :shard_without_snapshot)) == []
+    end
+
+    test "a shard filter scopes the snapshot pass", %{backend: backend} do
+      put_chunk(backend, "a", [10, 20])
+      :ok = ObjectStorage.put(backend, Keys.snapshot_path("b", 20), "not a bundle")
+
+      report = Fsck.check(backend, shards: ["a"])
+
+      assert report.clean?
+    end
+  end
+
+  describe "check/2 snapshot and chunk continuity" do
+    test "a snapshot ahead of the shard's chunks is a note, not a fault", %{backend: backend} do
+      # Olivine clamps its durable version to the KNOWN-COMMITTED
+      # version, not to the demux's last confirmed cut, so a materializer
+      # routinely persists a snapshot for versions the ShardServer still
+      # holds in its buffer. Ordinary operation, not a defect.
+      put_chunk(backend, "a", [10, 20])
+      put_snapshot(backend, "a", 40)
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert [note] = Enum.filter(report.notes, &(&1.kind == :snapshot_ahead_of_chunks))
+      assert note.shard_tag == "a"
+      assert note.detail == %{durable_version: 40, chunk_max_version: 20}
+    end
+
+    test "a snapshot at or below the chunk maximum raises no note", %{backend: backend} do
+      put_chunk(backend, "a", [10, 20, 30])
+      put_snapshot(backend, "a", 20)
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert Enum.filter(report.notes, &(&1.kind == :snapshot_ahead_of_chunks)) == []
+    end
+
+    test "a snapshot under a tag with no chunks at all is a note", %{backend: backend} do
+      put_snapshot(backend, "a", 20)
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert [note] = Enum.filter(report.notes, &(&1.kind == :snapshot_ahead_of_chunks))
+      assert note.detail == %{durable_version: 20, chunk_max_version: nil}
+    end
+
+    test "a shard with chunks and no snapshot is a note, not a fault", %{backend: backend} do
+      put_chunk(backend, "a", [10, 20])
+
+      report = Fsck.check(backend)
+
+      assert report.clean?
+      assert [note] = Enum.filter(report.notes, &(&1.kind == :shard_without_snapshot))
+      assert note.shard_tag == "a"
+    end
+
+    test "a shard whose newest bundle will not decode raises no continuity note", %{backend: backend} do
+      # The durable version could not be recovered, so there is nothing
+      # to compare against the chunks; the framing fault says it all.
+      put_chunk(backend, "a", [10, 20])
+      :ok = ObjectStorage.put(backend, Keys.snapshot_path("a", 20), "not a bundle")
+
+      report = Fsck.check(backend)
+
+      assert Enum.filter(report.notes, &(&1.kind == :snapshot_ahead_of_chunks)) == []
     end
   end
 end

@@ -40,6 +40,38 @@ defmodule Bedrock.ObjectStorage.Fsck do
     replay emit the same version twice, out of order, with no error
     anywhere.
 
+  Per snapshot bundle (`check_snapshot/2`), for the NEWEST bundle under
+  each `s/{shard}/` prefix — the only one a cold start will ever open,
+  since `Snapshot.read_latest/1` takes the first key its listing yields
+  and has no fallback to the next:
+
+  - the key is `s/{shard}/{inverted_version_base36}`, canonically
+    encoded. One object under the prefix whose name will not parse and
+    that sorts ahead of the real ones is enough to fail every cold start
+    of that shard: `read_latest/1` hands it to `Keys.extract_version/1`
+    and returns the error, and `maybe_load_snapshot/2` turns anything
+    other than `:not_found` into a hard failure rather than degrading to
+    a replay from the chunks;
+  - the bundle ends in an index record `find_index_boundary/1` accepts —
+    the same call `SnapshotBundle.split_in_place/3` makes on the restore
+    path, so a bundle that fails it is a bundle no shard can be restored
+    from;
+  - the record's header and footer agree about `payload_size`.
+    `find_index_boundary/1` sizes the record from the footer alone, so a
+    disagreement restores without complaint and then loses the shard
+    silently: `IndexDatabase` matches the two against each other, falls
+    through to `Version.zero()`, finds no page block for version zero,
+    and the shard comes up EMPTY;
+  - the version the record carries is the version the key names. They are
+    written from one value, and the NAME is what decides which bundle is
+    newest and what `SnapshotRetention` deletes;
+  - the record is a compaction base, not a delta. A compacted record
+    points at itself (`IndexDatabase.build_snapshot_record/2`), which
+    terminates the page chain. A record from a live append chain points
+    at an older record that is not in the bundle, and restoring from it
+    yields whatever pages that one delta held. `Snapshot.write/3` is
+    put-if-not-exists, so such a bundle is permanent.
+
   ## Recovering the layout
 
   A slice records no shard tag of its own (`Demux.MutationSlicer` encodes
@@ -129,16 +161,64 @@ defmodule Bedrock.ObjectStorage.Fsck do
   measuring against a fabrication. It is skipped, with a
   `:containment_undecidable` note.
 
+  **A snapshot ahead of its shard's chunks is not evidence of anything.**
+  Olivine clamps its durable version to the KNOWN-COMMITTED version
+  (`Logic.advance_window/1`), which the commit proxies report — not to the
+  demux's last confirmed cut, which is what decides when a chunk is
+  written. The two lag independently, so a materializer routinely persists
+  a snapshot covering versions the ShardServer still holds in its buffer,
+  and a shard with a snapshot and no chunks at all is an ordinary young
+  one. It is a `:snapshot_ahead_of_chunks` note, never a fault.
+
+  **Nor is a snapshot whose forward chunks appear to be missing.** The
+  question this pass was meant to answer — "could a cold start actually
+  catch up from here?" — turns out not to be decidable against today's
+  store, in either of its two halves. Chunks are never deleted, so
+  coverage above a snapshot cannot be lost to pruning; a chunk that is
+  absent was either never written (the lag above) or lost, and a lost
+  chunk is indistinguishable from a quiet shard for exactly the reason
+  version gaps are. And when chunks above the snapshot DO exist, forward
+  coverage follows from the checks above rather than needing one of its
+  own: `ChunkReader.read_from_version/3` takes the whole leading run of
+  the listing whose named max is at or above the target, so every
+  transaction newer than the snapshot is selected as long as the chunk
+  names are canonical and the ranges do not overlap. The relationship is
+  reported in `SnapshotResult.chunk_max_version` so a caller that knows
+  the expected stream can judge it; this becomes faultable here the day
+  chunk reclamation lands (bedrock-wxf.6.11) and gives the store a replay
+  floor to measure against.
+
+  **The cluster's own durability claim cannot be checked at all.** A
+  shard's durable version lives in RAM in `ShardServer` — rebuilt from
+  confirmed cuts, aggregated by `Demux.Durability.min_durable_version/1`,
+  and never written to object storage. So the highest version fsck can
+  derive for a shard is the highest its chunks HOLD, which is a lower
+  bound on nothing the cluster promised: it says what was persisted, not
+  what was acknowledged. A green run means the bytes in the store are
+  coherent with each other. It does not mean the cluster kept a
+  commit it confirmed, and nobody should read it that way.
+
   **There are no checksums.** The chunk format carries none, so integrity
   here rests on magic bytes plus structural completeness: bit rot inside a
   transaction payload is caught only to the extent the transaction's own
-  section CRCs catch it.
+  section CRCs catch it. Snapshot bundles carry none either, and the index
+  record's payload is `term_to_binary` output, so a flipped bit inside it
+  is caught only when it makes the term undecodable.
 
   ## What is legal
 
   Superseded and unreferenced chunks are not faults. Chunks are never
   deleted by design, so a shard that has snapshotted far past its oldest
   chunks still has all of them sitting there.
+
+  A shard with chunks and no snapshot at all is legal, and today it is the
+  ordinary case: nothing drives Olivine compaction (bedrock-947), so a
+  running cluster writes a bundle only on an idle spin-down. Such a shard
+  cold starts by replaying its whole history, which is slow and correct.
+  It is a `:shard_without_snapshot` note.
+
+  Superseded bundles are legal too, and so is a corrupt one that is not
+  the newest — nothing will ever open it. Only the newest is checked.
 
   `.bedrock-tmp.*` scratch files left behind by a killed writer are
   reported as `:scratch_debris` notes and never faulted; reclaiming them is
@@ -165,12 +245,18 @@ defmodule Bedrock.ObjectStorage.Fsck do
   alias Bedrock.ObjectStorage.ChunkReader
   alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.ObjectStorage.SnapshotBundle
   alias Bedrock.SystemKeys
   alias Bedrock.SystemKeys.Reader, as: SystemKeysReader
   alias Bedrock.SystemKeys.Values
 
   @max_uint64 0xFFFFFFFFFFFFFFFF
   @scratch_prefix ".bedrock-tmp."
+  # `IndexDatabase`'s record framing, inlined the way `SnapshotBundle`
+  # inlines it: a 16-byte header (magic, an 8-byte version, payload_size)
+  # and a 4-byte payload_size footer around the payload.
+  @index_header_size 16
+  @index_footer_size 4
   # `Bedrock.end_of_keyspace/0`, inlined the way the materializer inlines
   # it: the exclusive top of every shard's range, and the floor of the
   # privatized-notice space above it.
@@ -288,6 +374,40 @@ defmodule Bedrock.ObjectStorage.Fsck do
     defstruct [:status, :reason, shards: [], ranges_by_tag: %{}, containment: :decidable, faults: []]
   end
 
+  defmodule SnapshotResult do
+    @moduledoc """
+    The verdict on one shard's snapshot prefix.
+
+    Only the NEWEST bundle is opened, because it is the only one a cold
+    start will ever open: `Snapshot.read_latest/1` takes the first key the
+    listing yields and has no fallback to the next. `key`, `version`,
+    `durable_version` and `bytes` all describe that one bundle; `count` is
+    how many objects the prefix holds.
+
+    `version` is the version the KEY names and `durable_version` the one
+    the index record carries. They are written from the same value and
+    should agree; `durable_version` is `nil` when the record could not be
+    trusted to carry one.
+
+    `chunk_max_version` is the highest version this shard's chunks hold,
+    carried here so the two can be compared — see "What it cannot prove" in
+    the module doc for why that comparison is a note and not a fault.
+    """
+
+    @type t :: %__MODULE__{
+            shard_tag: String.t() | nil,
+            key: String.t(),
+            count: non_neg_integer(),
+            version: non_neg_integer() | nil,
+            durable_version: non_neg_integer() | nil,
+            chunk_max_version: non_neg_integer() | nil,
+            bytes: non_neg_integer(),
+            faults: [Fault.t()]
+          }
+
+    defstruct [:shard_tag, :key, :version, :durable_version, :chunk_max_version, count: 0, bytes: 0, faults: []]
+  end
+
   defmodule Report do
     @moduledoc """
     The verdict on a store. `clean?` is true exactly when `faults` is empty;
@@ -296,18 +416,23 @@ defmodule Bedrock.ObjectStorage.Fsck do
     `layout` is `nil` when layout recovery was not attempted (`check_layout:
     false`); otherwise it is a `LayoutResult`, which may still be
     `:unavailable`.
+
+    `snapshots` holds one `SnapshotResult` per shard tag that has a `s/`
+    prefix, and is empty when the snapshot pass was declined
+    (`check_snapshots: false`).
     """
 
     @type t :: %__MODULE__{
             clean?: boolean(),
             chunk_count: non_neg_integer(),
             shards: [ShardResult.t()],
+            snapshots: [SnapshotResult.t()],
             layout: LayoutResult.t() | nil,
             faults: [Fault.t()],
             notes: [Note.t()]
           }
 
-    defstruct [:clean?, :chunk_count, :layout, shards: [], faults: [], notes: []]
+    defstruct [:clean?, :chunk_count, :layout, shards: [], snapshots: [], faults: [], notes: []]
   end
 
   @doc """
@@ -326,6 +451,13 @@ defmodule Bedrock.ObjectStorage.Fsck do
   - `:check_layout` - replay the system shard to recover the shard layout,
     and check coverage, containment and tag correspondence against it
     (default: `true`)
+  - `:check_snapshots` - open the newest snapshot bundle under each `s/`
+    prefix and validate its index record (default: `true`). This is the
+    one pass that fetches an object whose size is not bounded by a chunk:
+    `ObjectStorage.get/2` has no ranged read, so reading the record at the
+    tail means downloading the whole bundle, which is the shard's entire
+    materialized state. Decline it on a large store where the chunk
+    structure is the question.
 
   Raises `ObjectStorage.ListError` if the store cannot be listed: a short
   listing would report chunks as absent without having looked for them,
@@ -344,17 +476,24 @@ defmodule Bedrock.ObjectStorage.Fsck do
       |> Enum.sort_by(fn {shard_tag, _} -> shard_tag end)
       |> Enum.map(fn {shard_tag, chunks} -> check_shard(shard_tag, chunks) end)
 
-    faults = layout_faults(layout) ++ Enum.flat_map(shard_results, &shard_faults/1)
+    snapshot_results = check_snapshots(backend, shard_results, opts)
+
+    faults =
+      layout_faults(layout) ++
+        Enum.flat_map(shard_results, &shard_faults/1) ++ Enum.flat_map(snapshot_results, & &1.faults)
 
     notes =
       debris_notes(backend, shards) ++
         Enum.flat_map(shard_results, &gap_notes/1) ++
-        layout_notes(layout) ++ correspondence_notes(layout, shard_results, shards)
+        layout_notes(layout) ++
+        correspondence_notes(layout, shard_results, shards) ++
+        snapshot_notes(snapshot_results, shard_results, opts)
 
     %Report{
       clean?: faults == [],
       chunk_count: shard_results |> Enum.map(&length(&1.chunks)) |> Enum.sum(),
       shards: shard_results,
+      snapshots: snapshot_results,
       layout: layout,
       faults: faults,
       notes: notes
@@ -393,6 +532,32 @@ defmodule Bedrock.ObjectStorage.Fsck do
     }
   end
 
+  @doc """
+  Checks one snapshot bundle: its key against its contents, and the index
+  record that terminates it against itself.
+
+  Takes the key and the raw object rather than a backend, for the same
+  reason `check_chunk/3` does — so every fault below is reachable from a
+  handwritten fixture. `count` is 1: the caller holds one bundle, not a
+  prefix.
+  """
+  @spec check_snapshot(String.t(), binary()) :: SnapshotResult.t()
+  def check_snapshot(key, binary) do
+    shard_tag = snapshot_tag_from_key(key)
+    {key_faults, key_version} = check_snapshot_key(key)
+    {record_faults, durable_version} = check_index_record(binary, key_version)
+
+    %SnapshotResult{
+      key: key,
+      shard_tag: shard_tag,
+      count: 1,
+      version: key_version,
+      durable_version: durable_version,
+      bytes: byte_size(binary),
+      faults: Enum.map(key_faults ++ record_faults, &%{&1 | key: key, shard_tag: shard_tag})
+    }
+  end
+
   # ------------------------------------------------------------------ store
 
   defp chunk_keys(backend, nil), do: ObjectStorage.list(backend, "c/")
@@ -428,18 +593,20 @@ defmodule Bedrock.ObjectStorage.Fsck do
   # point at a name that arrived from a filesystem.
   defp check_key(key) do
     case Path.split(key) do
-      ["c", _shard_tag, basename] -> check_basename(basename)
+      ["c", _shard_tag, basename] -> check_basename(basename, :unparsable_key)
       _ -> {[fault(:malformed_chunk_key, %{expected: "c/{shard}/{version}"})], nil}
     end
   end
 
-  defp check_basename(basename) do
+  # Shared with the snapshot namespace, which names its objects the same
+  # way and reads them back through the same `Keys.extract_version/1`.
+  defp check_basename(basename, kind) do
     with {:ok, inverted} <- Keys.parse_inverted_version(basename),
          true <- inverted <= @max_uint64,
          ^basename <- Keys.format_inverted_version(inverted) do
       {[], Keys.restore_version(inverted)}
     else
-      _ -> {[fault(:unparsable_key, %{basename: basename})], nil}
+      _ -> {[fault(kind, %{basename: basename})], nil}
     end
   end
 
@@ -994,6 +1161,241 @@ defmodule Bedrock.ObjectStorage.Fsck do
   defp gap_notes(shard) do
     Enum.map(shard.gaps, &%Note{kind: :version_gap, shard_tag: shard.shard_tag, key: &1.before_key, detail: &1})
   end
+
+  # -------------------------------------------------------------- snapshots
+
+  defp check_snapshots(backend, shard_results, opts) do
+    if Keyword.get(opts, :check_snapshots, true) do
+      backend
+      |> snapshot_keys(Keyword.get(opts, :shards))
+      |> Enum.group_by(&snapshot_tag_from_key/1)
+      |> Enum.sort_by(fn {shard_tag, _keys} -> shard_tag end)
+      |> Enum.map(&check_newest_snapshot(backend, &1, shard_results))
+    else
+      []
+    end
+  end
+
+  defp snapshot_keys(backend, nil), do: Enum.to_list(ObjectStorage.list(backend, "s/"))
+
+  defp snapshot_keys(backend, shards),
+    do: Enum.flat_map(shards, &Enum.to_list(ObjectStorage.list(backend, Keys.snapshots_prefix(&1))))
+
+  defp snapshot_tag_from_key(key) do
+    case Path.split(key) do
+      ["s", shard_tag, _basename] -> shard_tag
+      _ -> nil
+    end
+  end
+
+  # Only the newest bundle is opened. `Snapshot.read_latest/1` takes the
+  # first key its listing yields and has no fallback to the next, so the
+  # newest is the only bundle a cold start will ever open — and inverted
+  # names make lexicographically first mean newest. An older bundle that
+  # is corrupt is unreachable and therefore harmless; one that is fine is
+  # no help if the newest is not.
+  defp check_newest_snapshot(backend, {shard_tag, keys}, shard_results) do
+    key = keys |> Enum.sort() |> List.first()
+
+    %{
+      snapshot_result(backend, key)
+      | shard_tag: shard_tag,
+        count: length(keys),
+        chunk_max_version: chunk_max_version(shard_results, shard_tag)
+    }
+  end
+
+  # The key is judged before the object is fetched. A name that is not one
+  # of ours names an object of unknown size holding nothing this module
+  # could interpret, and the fault is already decided by the name.
+  defp snapshot_result(backend, key) do
+    case check_snapshot_key(key) do
+      {[], _version} ->
+        fetch_snapshot(backend, key)
+
+      {faults, _version} ->
+        shard_tag = snapshot_tag_from_key(key)
+        %SnapshotResult{key: key, shard_tag: shard_tag, count: 1, faults: stamp(faults, key, shard_tag)}
+    end
+  end
+
+  defp fetch_snapshot(backend, key) do
+    case ObjectStorage.get(backend, key) do
+      {:ok, binary} ->
+        check_snapshot(key, binary)
+
+      {:error, reason} ->
+        shard_tag = snapshot_tag_from_key(key)
+        fault = fault(:snapshot_unreadable, %{reason: reason})
+        %SnapshotResult{key: key, shard_tag: shard_tag, count: 1, faults: stamp([fault], key, shard_tag)}
+    end
+  end
+
+  defp check_snapshot_key(key) do
+    case Path.split(key) do
+      ["s", _shard_tag, basename] -> check_basename(basename, :unparsable_snapshot_key)
+      _ -> {[fault(:malformed_snapshot_key, %{expected: "s/{shard}/{version}"})], nil}
+    end
+  end
+
+  defp chunk_max_version(shard_results, shard_tag) do
+    Enum.find_value(shard_results, fn shard ->
+      if shard.shard_tag == shard_tag and shard.range, do: elem(shard.range, 1)
+    end)
+  end
+
+  # ---------------------------------------------------------- index record
+
+  # The bundle is `[data][index record]`, and the record is what
+  # `SnapshotBundle.split_in_place/3` peels off to become the restored
+  # shard's `idx` file. So it is validated first exactly the way the
+  # restore path finds it — through `find_index_boundary/1`, which trusts
+  # the footer's payload_size and the header's magic — and then the way
+  # `IndexDatabase` reads it back, which is stricter in ways the restore
+  # path never notices.
+  defp check_index_record(binary, key_version) do
+    case SnapshotBundle.find_index_boundary(binary) do
+      {:ok, data_end, idx_size} ->
+        check_record(binary, data_end, idx_size, key_version)
+
+      {:error, reason} ->
+        {[fault(:snapshot_index_record_invalid, %{reason: reason, bytes: byte_size(binary)})], nil}
+    end
+  end
+
+  defp check_record(binary, data_end, idx_size, key_version) do
+    <<_magic::unsigned-big-32, version::unsigned-big-64, header_payload_size::unsigned-big-32>> =
+      binary_part(binary, data_end, @index_header_size)
+
+    record = %{data_end: data_end, header_payload_size: header_payload_size, idx_size: idx_size, version: version}
+
+    {version_faults(version, key_version) ++ payload_faults(binary, record), version}
+  end
+
+  # The key and the record are written from ONE value — `Snapshot.write/3`
+  # is handed `Version.to_integer(durable_version)` and the record carries
+  # the same `durable_version` — so a disagreement is proof of corruption.
+  # It matters because the name, not the content, is the selection
+  # predicate: `read_latest/1` picks the lexicographically first key, and
+  # `SnapshotRetention` decides what to delete from key versions alone. A
+  # bundle named above its contents wins both, and can get the shard's
+  # real newest state pruned out from under it.
+  defp version_faults(_version, nil), do: []
+  defp version_faults(same, same), do: []
+
+  defp version_faults(version, key_version),
+    do: [fault(:snapshot_version_mismatch, %{key_version: key_version, record_version: version})]
+
+  # `find_index_boundary/1` sizes the record from the FOOTER's copy of
+  # payload_size and never looks at the header's, so a disagreement
+  # between them restores without complaint — and then
+  # `IndexDatabase.read_durable_version/2`, which matches the two against
+  # each other, falls through to `Version.zero()`. The shard opens at
+  # version zero, loads the page block for a version no record carries,
+  # gets none, and comes up EMPTY with nothing raised anywhere. Nothing
+  # below may read the payload through a length two sources disagree on.
+  defp payload_faults(binary, record) do
+    footer_payload_size = record.idx_size - @index_header_size - @index_footer_size
+
+    if record.header_payload_size == footer_payload_size do
+      base_faults(binary, record)
+    else
+      detail = %{header_payload_size: record.header_payload_size, footer_payload_size: footer_payload_size}
+      [fault(:snapshot_index_size_disagreement, detail)]
+    end
+  end
+
+  # A compaction's record points at ITSELF
+  # (`IndexDatabase.build_snapshot_record/2` passes the version as its own
+  # previous_version), and that self-loop is what terminates the page
+  # chain. A record that points anywhere else is a delta out of a LIVE
+  # append chain, where the rest of the chain is in the file it was taken
+  # from and not in this bundle: the restored shard walks back to a
+  # version no record here carries, stops, and serves the handful of pages
+  # the delta happened to hold. `Snapshot.write/3` is put-if-not-exists,
+  # so the poisoned bundle is permanent. This is the fault with the most
+  # teeth in the snapshot namespace — it is silent everywhere else.
+  defp base_faults(binary, record) do
+    binary
+    |> binary_part(record.data_end + @index_header_size, record.header_payload_size)
+    |> decode_page_block()
+    |> case do
+      {:ok, previous_version, _pages} when previous_version == record.version ->
+        []
+
+      {:ok, previous_version, pages} ->
+        [not_a_base(record.version, previous_version, pages)]
+
+      :error ->
+        [fault(:snapshot_index_undecodable, %{payload_size: record.header_payload_size})]
+    end
+  end
+
+  defp not_a_base(version, previous_version, pages),
+    do: fault(:snapshot_index_not_a_base, %{version: version, previous_version: previous_version, pages: pages})
+
+  # `:safe`, because these are bytes off a disk nobody is vouching for and
+  # an unbounded `binary_to_term/1` would let a corrupt object mint atoms
+  # in the process running fsck. A compacted page map is integers,
+  # binaries, tuples and maps — `Page.new/2` returns a binary — so nothing
+  # legitimate needs the unsafe form.
+  defp decode_page_block(payload) do
+    case :erlang.binary_to_term(payload, [:safe]) do
+      {<<previous_version::unsigned-big-64>>, pages_map} when is_map(pages_map) ->
+        {:ok, previous_version, map_size(pages_map)}
+
+      _other ->
+        :error
+    end
+  rescue
+    ArgumentError -> :error
+  end
+
+  # ---------------------------------------------------- snapshot continuity
+
+  defp snapshot_notes(snapshot_results, shard_results, opts) do
+    if Keyword.get(opts, :check_snapshots, true) do
+      Enum.flat_map(snapshot_results, &continuity_note/1) ++ missing_snapshot_notes(snapshot_results, shard_results)
+    else
+      []
+    end
+  end
+
+  # Nothing to compare: the record did not yield a version.
+  defp continuity_note(%SnapshotResult{durable_version: nil}), do: []
+
+  defp continuity_note(%SnapshotResult{durable_version: version, chunk_max_version: max})
+       when is_integer(max) and version <= max, do: []
+
+  # A snapshot AHEAD of its shard's chunks is ordinary operation, not a
+  # defect. Olivine clamps its durable version to the KNOWN-COMMITTED
+  # version (`Logic.advance_window/1`), which is what the commit proxies
+  # report — not to the demux's last confirmed cut, which is what decides
+  # when a chunk is written. The two lag independently, so a materializer
+  # routinely persists a snapshot covering versions the ShardServer still
+  # holds in its buffer. See "What it cannot prove" in the module doc for
+  # why the forward-coverage question is not decidable from here either.
+  defp continuity_note(result) do
+    detail = %{durable_version: result.durable_version, chunk_max_version: result.chunk_max_version}
+    [%Note{kind: :snapshot_ahead_of_chunks, shard_tag: result.shard_tag, key: result.key, detail: detail}]
+  end
+
+  # A shard with chunks and no snapshot cold starts by replaying its whole
+  # history. That is correct — chunks are never deleted, so the replay is
+  # always available — but it is slow, and today it is the NORMAL state:
+  # nothing drives Olivine compaction (bedrock-947), so a running cluster
+  # writes snapshots only on an idle spin-down.
+  defp missing_snapshot_notes(snapshot_results, shard_results) do
+    with_snapshots = MapSet.new(snapshot_results, & &1.shard_tag)
+
+    shard_results
+    |> Enum.map(& &1.shard_tag)
+    |> Enum.reject(&(is_nil(&1) or &1 in with_snapshots))
+    |> Enum.sort()
+    |> Enum.map(&%Note{kind: :shard_without_snapshot, shard_tag: &1, detail: %{}})
+  end
+
+  defp stamp(faults, key, shard_tag), do: Enum.map(faults, &%{&1 | key: key, shard_tag: shard_tag})
 
   # ----------------------------------------------------------------- debris
 

@@ -5,10 +5,13 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
 
   alias Bedrock.DataPlane.Materializer.Olivine.Database
   alias Bedrock.DataPlane.Materializer.Olivine.IdAllocator
+  alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
+  alias Bedrock.DataPlane.Materializer.Olivine.Index.Tree
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.KeySelector
   alias Bedrock.Test.Materializer.Olivine.IndexManagerTestHelpers
   alias Bedrock.Test.Materializer.Olivine.PageTestHelpers
 
@@ -834,8 +837,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
   end
 
   describe "KeySelector resolution algorithms" do
-    alias Bedrock.KeySelector
-
     setup do
       # Create index manager with test data
       manager = IndexManager.new()
@@ -971,6 +972,85 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexManagerTest do
       # key5 - 2 should be "key10", key5 + 2 should be "range:b"
       assert {:ok, {"key10", "range:b"}, pages} = result
       assert is_list(pages)
+    end
+  end
+
+  describe "KeySelector resolution follows FoundationDB semantics" do
+    # "b", "d" and "f" are absent, so the present-key and absent-key paths
+    # through the anchor arithmetic resolve differently.
+    setup do
+      {:ok, manager: index_manager_from_pages([{0, ~w(a c e g), 0}])}
+    end
+
+    test "the four constructors resolve against a key that is present", %{manager: manager} do
+      assert resolve(manager, KeySelector.first_greater_or_equal("c")) == "c"
+      assert resolve(manager, KeySelector.first_greater_than("c")) == "e"
+      assert resolve(manager, KeySelector.last_less_or_equal("c")) == "c"
+      assert resolve(manager, KeySelector.last_less_than("c")) == "a"
+    end
+
+    test "the four constructors resolve against a key that is absent", %{manager: manager} do
+      assert resolve(manager, KeySelector.first_greater_or_equal("d")) == "e"
+      assert resolve(manager, KeySelector.first_greater_than("d")) == "e"
+      assert resolve(manager, KeySelector.last_less_or_equal("d")) == "c"
+      assert resolve(manager, KeySelector.last_less_than("d")) == "c"
+    end
+
+    test "offsets step from the anchor in both directions", %{manager: manager} do
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("c"), 1)) == "e"
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("c"), -1)) == "a"
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("d"), 1)) == "g"
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("d"), -1)) == "c"
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_than("c"), 1)) == "g"
+      assert resolve(manager, KeySelector.add(KeySelector.last_less_or_equal("d"), -1)) == "a"
+    end
+
+    test "a target beyond either end of the index does not resolve", %{manager: manager} do
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("a"), -1)) == {:error, :not_found}
+      assert resolve(manager, KeySelector.last_less_than("a")) == {:error, :not_found}
+      assert resolve(manager, KeySelector.first_greater_than("g")) == {:error, :not_found}
+    end
+  end
+
+  describe "KeySelector resolution across pages" do
+    setup do
+      {:ok, manager: index_manager_from_pages([{0, ~w(a b), 1}, {1, ~w(c d), 2}, {2, ~w(e f), 0}])}
+    end
+
+    test "a forward target continues into the following pages", %{manager: manager} do
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("b"), 1)) == "c"
+      assert resolve(manager, KeySelector.first_greater_than("d")) == "e"
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("a"), 5)) == "f"
+    end
+
+    test "a backward target continues into the preceding pages", %{manager: manager} do
+      assert resolve(manager, KeySelector.add(KeySelector.last_less_or_equal("c"), -1)) == "b"
+      assert resolve(manager, KeySelector.last_less_than("e")) == "d"
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("f"), -5)) == "a"
+    end
+
+    test "a target beyond either end of the page chain does not resolve", %{manager: manager} do
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("a"), -1)) == {:error, :not_found}
+      assert resolve(manager, KeySelector.add(KeySelector.first_greater_or_equal("f"), 1)) == {:error, :not_found}
+    end
+  end
+
+  defp index_manager_from_pages(page_specs) do
+    version = Version.from_integer(1)
+
+    page_map =
+      Map.new(page_specs, fn {page_id, keys, next_id} ->
+        {page_id, {Page.new(page_id, Enum.map(keys, &{&1, version})), next_id}}
+      end)
+
+    index = %Index{tree: Tree.from_page_map(page_map), page_map: page_map}
+    %IndexManager{versions: [{version, {index, %{}}}], current_version: version}
+  end
+
+  defp resolve(manager, key_selector) do
+    case IndexManager.page_for_key(manager, key_selector, Version.from_integer(1)) do
+      {:ok, resolved_key, _page} -> resolved_key
+      {:error, reason} -> {:error, reason}
     end
   end
 end

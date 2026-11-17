@@ -5,13 +5,20 @@ defmodule Bedrock.KeySelector do
   KeySelectors leverage the lexicographically ordered nature of keys to find keys based on their
   positional relationships to other keys, without needing to know exact key values.
 
+  The encoding matches FoundationDB's `KeySelectorRef`: `key` anchors the selector at the last
+  key less than it — or less than *or equal to* it, when `or_equal` is set — and `offset` then
+  moves that many keys forward (or backward, when negative). Anchoring on `or_equal` rather than
+  on "the first key at or after `key`" is what makes the four constructors expressible with a
+  single additive offset, so `add/2` and `subtract/2` compose regardless of whether `key` is
+  present in the database.
+
   ## Examples
 
       iex> KeySelector.first_greater_or_equal("user:")
-      %KeySelector{key: "user:", or_equal: true, offset: 0}
-      
+      %KeySelector{key: "user:", or_equal: false, offset: 1}
+
       iex> KeySelector.first_greater_than("data") |> KeySelector.add(5)
-      %KeySelector{key: "data", or_equal: false, offset: 6}
+      %KeySelector{key: "data", or_equal: true, offset: 6}
   """
 
   @type t :: %__MODULE__{
@@ -20,14 +27,14 @@ defmodule Bedrock.KeySelector do
           offset: integer()
         }
 
-  defstruct key: <<>>, or_equal: true, offset: 0
+  defstruct key: <<>>, or_equal: false, offset: 0
 
   @doc """
   Creates a KeySelector that resolves to the lexicographically smallest key
   greater than or equal to the given key.
   """
   @spec first_greater_or_equal(binary()) :: t()
-  def first_greater_or_equal(key) when is_binary(key), do: %__MODULE__{key: key, or_equal: true, offset: 0}
+  def first_greater_or_equal(key) when is_binary(key), do: %__MODULE__{key: key, or_equal: false, offset: 1}
 
   @doc """
   Creates a KeySelector that resolves to the lexicographically smallest key
@@ -41,7 +48,7 @@ defmodule Bedrock.KeySelector do
   less than or equal to the given key.
   """
   @spec last_less_or_equal(binary()) :: t()
-  def last_less_or_equal(key) when is_binary(key), do: %__MODULE__{key: key, or_equal: true, offset: -1}
+  def last_less_or_equal(key) when is_binary(key), do: %__MODULE__{key: key, or_equal: true, offset: 0}
 
   @doc """
   Creates a KeySelector that resolves to the lexicographically largest key
@@ -57,10 +64,10 @@ defmodule Bedrock.KeySelector do
   ## Examples
 
       iex> KeySelector.first_greater_or_equal("a") |> KeySelector.add(3)
-      %KeySelector{key: "a", or_equal: true, offset: 3}
-      
+      %KeySelector{key: "a", or_equal: false, offset: 4}
+
       iex> KeySelector.first_greater_than("z") |> KeySelector.add(-2)
-      %KeySelector{key: "z", or_equal: false, offset: -1}
+      %KeySelector{key: "z", or_equal: true, offset: -1}
   """
   @spec add(t(), integer()) :: t()
   def add(%__MODULE__{} = selector, offset) when is_integer(offset), do: %{selector | offset: selector.offset + offset}
@@ -72,7 +79,7 @@ defmodule Bedrock.KeySelector do
   ## Examples
 
       iex> KeySelector.first_greater_or_equal("m") |> KeySelector.subtract(2)
-      %KeySelector{key: "m", or_equal: true, offset: -2}
+      %KeySelector{key: "m", or_equal: false, offset: -1}
   """
   @spec subtract(t(), integer()) :: t()
   def subtract(%__MODULE__{} = selector, offset) when is_integer(offset), do: add(selector, -offset)
@@ -113,7 +120,7 @@ defmodule Bedrock.KeySelector do
       "first_greater_than(\"data\") + 3"
   """
   @spec to_string(t()) :: String.t()
-  def to_string(%__MODULE__{key: key, or_equal: true, offset: 0}) do
+  def to_string(%__MODULE__{key: key, or_equal: false, offset: 1}) do
     ~s{first_greater_or_equal(#{inspect(key)})}
   end
 
@@ -121,7 +128,7 @@ defmodule Bedrock.KeySelector do
     ~s{first_greater_than(#{inspect(key)})}
   end
 
-  def to_string(%__MODULE__{key: key, or_equal: true, offset: -1}) do
+  def to_string(%__MODULE__{key: key, or_equal: true, offset: 0}) do
     ~s{last_less_or_equal(#{inspect(key)})}
   end
 
@@ -130,14 +137,22 @@ defmodule Bedrock.KeySelector do
   end
 
   def to_string(%__MODULE__{key: key, or_equal: or_equal, offset: offset}) do
-    # Always use first_greater_or_equal as canonical base and adjust offset
-    canonical_offset = if or_equal, do: offset, else: offset - 1
+    # Name the selector after the constructor sharing its anchor: the sign of
+    # the offset picks the direction, or_equal picks whether key itself counts.
+    {base_name, base_offset} =
+      case {or_equal, offset > 0} do
+        {false, true} -> {"first_greater_or_equal", offset - 1}
+        {true, true} -> {"first_greater_than", offset - 1}
+        {true, false} -> {"last_less_or_equal", offset}
+        {false, false} -> {"last_less_than", offset}
+      end
 
-    base_str = ~s{first_greater_or_equal(#{inspect(key)})}
+    base_str = ~s{#{base_name}(#{inspect(key)})}
 
+    # base_offset can't be zero here: those four selectors match above.
     cond do
-      canonical_offset > 0 -> "#{base_str} + #{canonical_offset}"
-      canonical_offset < 0 -> "#{base_str} - #{abs(canonical_offset)}"
+      base_offset > 0 -> "#{base_str} + #{base_offset}"
+      base_offset < 0 -> "#{base_str} - #{abs(base_offset)}"
     end
   end
 end

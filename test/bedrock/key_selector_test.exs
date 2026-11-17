@@ -7,7 +7,7 @@ defmodule Bedrock.KeySelectorTest do
     test "first_greater_or_equal/1 creates correct KeySelector" do
       selector = KeySelector.first_greater_or_equal("user:")
 
-      assert %KeySelector{key: "user:", or_equal: true, offset: 0} = selector
+      assert %KeySelector{key: "user:", or_equal: false, offset: 1} = selector
     end
 
     test "first_greater_than/1 creates correct KeySelector" do
@@ -19,7 +19,7 @@ defmodule Bedrock.KeySelectorTest do
     test "last_less_or_equal/1 creates correct KeySelector" do
       selector = KeySelector.last_less_or_equal("items")
 
-      assert %KeySelector{key: "items", or_equal: true, offset: -1} = selector
+      assert %KeySelector{key: "items", or_equal: true, offset: 0} = selector
     end
 
     test "last_less_than/1 creates correct KeySelector" do
@@ -52,7 +52,7 @@ defmodule Bedrock.KeySelectorTest do
       selector = KeySelector.first_greater_or_equal("base")
 
       result = KeySelector.add(selector, 5)
-      assert %KeySelector{key: "base", or_equal: true, offset: 5} = result
+      assert %KeySelector{key: "base", or_equal: false, offset: 6} = result
     end
 
     test "add/2 with negative number decreases offset" do
@@ -70,14 +70,14 @@ defmodule Bedrock.KeySelectorTest do
         |> KeySelector.add(2)
         |> KeySelector.add(-1)
 
-      assert %KeySelector{key: "base", or_equal: true, offset: 4} = selector
+      assert %KeySelector{key: "base", or_equal: false, offset: 5} = selector
     end
 
     test "subtract/2 decreases offset" do
       selector = KeySelector.first_greater_or_equal("base")
 
       result = KeySelector.subtract(selector, 3)
-      assert %KeySelector{key: "base", or_equal: true, offset: -3} = result
+      assert %KeySelector{key: "base", or_equal: false, offset: -2} = result
     end
 
     test "subtract/2 with negative number increases offset" do
@@ -102,30 +102,30 @@ defmodule Bedrock.KeySelectorTest do
 
   describe "offset predicates" do
     test "zero_offset?/1 correctly identifies zero offsets" do
-      assert "a" |> KeySelector.first_greater_or_equal() |> KeySelector.zero_offset?()
+      assert "a" |> KeySelector.last_less_or_equal() |> KeySelector.zero_offset?()
       assert "z" |> KeySelector.last_less_than() |> KeySelector.zero_offset?()
 
       refute "b" |> KeySelector.first_greater_than() |> KeySelector.zero_offset?()
-      refute "y" |> KeySelector.last_less_or_equal() |> KeySelector.zero_offset?()
+      refute "y" |> KeySelector.first_greater_or_equal() |> KeySelector.zero_offset?()
       refute "c" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1) |> KeySelector.zero_offset?()
     end
 
     test "positive_offset?/1 correctly identifies positive offsets" do
       assert "a" |> KeySelector.first_greater_than() |> KeySelector.positive_offset?()
-      assert "b" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1) |> KeySelector.positive_offset?()
+      assert "b" |> KeySelector.first_greater_or_equal() |> KeySelector.positive_offset?()
       assert "c" |> KeySelector.last_less_than() |> KeySelector.add(5) |> KeySelector.positive_offset?()
 
-      refute "d" |> KeySelector.first_greater_or_equal() |> KeySelector.positive_offset?()
+      refute "d" |> KeySelector.last_less_or_equal() |> KeySelector.positive_offset?()
       refute "e" |> KeySelector.last_less_than() |> KeySelector.positive_offset?()
       refute "f" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-1) |> KeySelector.positive_offset?()
     end
 
     test "negative_offset?/1 correctly identifies negative offsets" do
-      assert "a" |> KeySelector.last_less_or_equal() |> KeySelector.negative_offset?()
-      assert "b" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-1) |> KeySelector.negative_offset?()
+      assert "a" |> KeySelector.last_less_or_equal() |> KeySelector.add(-1) |> KeySelector.negative_offset?()
+      assert "b" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-2) |> KeySelector.negative_offset?()
       assert "c" |> KeySelector.first_greater_than() |> KeySelector.subtract(5) |> KeySelector.negative_offset?()
 
-      refute "d" |> KeySelector.first_greater_or_equal() |> KeySelector.negative_offset?()
+      refute "d" |> KeySelector.last_less_or_equal() |> KeySelector.negative_offset?()
       refute "e" |> KeySelector.first_greater_than() |> KeySelector.negative_offset?()
       refute "f" |> KeySelector.last_less_than() |> KeySelector.negative_offset?()
     end
@@ -151,7 +151,7 @@ defmodule Bedrock.KeySelectorTest do
       assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("base") + 3}
 
       selector = "data" |> KeySelector.first_greater_than() |> KeySelector.add(5)
-      assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("data") + 6}
+      assert KeySelector.to_string(selector) == ~s{first_greater_than("data") + 5}
 
       selector = "end" |> KeySelector.last_less_than() |> KeySelector.add(2)
       assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("end") + 1}
@@ -159,22 +159,23 @@ defmodule Bedrock.KeySelectorTest do
 
     test "to_string/1 for selectors with negative offsets" do
       selector = "base" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-2)
-      assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("base") - 2}
+      assert KeySelector.to_string(selector) == ~s{last_less_than("base") - 1}
 
       selector = "data" |> KeySelector.first_greater_than() |> KeySelector.add(-3)
-      assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("data") - 2}
+      assert KeySelector.to_string(selector) == ~s{last_less_or_equal("data") - 2}
 
       selector = "end" |> KeySelector.last_less_than() |> KeySelector.add(-1)
-      assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("end") - 2}
+      assert KeySelector.to_string(selector) == ~s{last_less_than("end") - 1}
     end
 
     test "to_string/1 handles complex offsets correctly" do
-      # last_less_or_equal is internally first_greater_or_equal with offset -1
+      # last_less_or_equal is the anchor itself, so a forward offset names the
+      # selector after first_greater_than and a backward one keeps the anchor
       selector = "test" |> KeySelector.last_less_or_equal() |> KeySelector.add(3)
-      assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("test") + 2}
+      assert KeySelector.to_string(selector) == ~s{first_greater_than("test") + 2}
 
       selector = "test" |> KeySelector.last_less_or_equal() |> KeySelector.subtract(2)
-      assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("test") - 3}
+      assert KeySelector.to_string(selector) == ~s{last_less_or_equal("test") - 2}
     end
 
     test "String.Chars protocol implementation" do
@@ -182,7 +183,7 @@ defmodule Bedrock.KeySelectorTest do
       assert to_string(selector) == ~s{first_greater_or_equal("test")}
 
       selector = "data" |> KeySelector.first_greater_than() |> KeySelector.add(2)
-      assert to_string(selector) == ~s{first_greater_or_equal("data") + 3}
+      assert to_string(selector) == ~s{first_greater_than("data") + 2}
     end
   end
 
@@ -195,14 +196,14 @@ defmodule Bedrock.KeySelectorTest do
         |> KeySelector.subtract(3)
         |> KeySelector.add(-2)
 
-      assert %KeySelector{key: "start", or_equal: true, offset: 5} = selector
+      assert %KeySelector{key: "start", or_equal: false, offset: 6} = selector
       assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("start") + 5}
     end
 
     test "edge case with empty key" do
       selector = KeySelector.first_greater_or_equal("")
 
-      assert %KeySelector{key: "", or_equal: true, offset: 0} = selector
+      assert %KeySelector{key: "", or_equal: false, offset: 1} = selector
       assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("")}
     end
 
@@ -218,15 +219,15 @@ defmodule Bedrock.KeySelectorTest do
     test "large offset values" do
       selector = "base" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1000)
 
-      assert %KeySelector{key: "base", or_equal: true, offset: 1000} = selector
+      assert %KeySelector{key: "base", or_equal: false, offset: 1001} = selector
       assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("base") + 1000}
     end
 
     test "very negative offset values" do
       selector = "base" |> KeySelector.first_greater_or_equal() |> KeySelector.add(-500)
 
-      assert %KeySelector{key: "base", or_equal: true, offset: -500} = selector
-      assert KeySelector.to_string(selector) == ~s{first_greater_or_equal("base") - 500}
+      assert %KeySelector{key: "base", or_equal: false, offset: -499} = selector
+      assert KeySelector.to_string(selector) == ~s{last_less_than("base") - 499}
     end
   end
 
@@ -256,14 +257,14 @@ defmodule Bedrock.KeySelectorTest do
   end
 
   describe "equivalence and comparison scenarios" do
-    test "different construction methods can produce equivalent KeySelectors" do
-      # These should be functionally equivalent
-      selector1 = KeySelector.first_greater_than("key")
-      selector2 = "key" |> KeySelector.first_greater_or_equal() |> KeySelector.add(1)
+    test "stepping one key past a backward selector gives its forward twin" do
+      # The anchor a selector resolves from is what or_equal picks, so each
+      # backward constructor is one step behind its forward counterpart.
+      assert "key" |> KeySelector.last_less_or_equal() |> KeySelector.add(1) ==
+               KeySelector.first_greater_than("key")
 
-      # They have different internal representations but same logical meaning
-      assert %KeySelector{key: key, offset: offset, or_equal: or_equal} = selector1
-      assert %KeySelector{key: ^key, offset: ^offset, or_equal: ^or_equal} = selector2
+      assert "key" |> KeySelector.last_less_than() |> KeySelector.add(1) ==
+               KeySelector.first_greater_or_equal("key")
     end
 
     test "offset manipulation creates predictable patterns" do

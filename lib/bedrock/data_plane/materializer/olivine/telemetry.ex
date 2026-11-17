@@ -10,17 +10,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Telemetry do
     Telemetry.trace_read_operation_complete(operation, key, opts)
   end
 
-  @spec trace_index_update_complete(non_neg_integer(), non_neg_integer(), non_neg_integer(), non_neg_integer()) :: :ok
-  def trace_index_update_complete(keys_added, keys_removed, keys_changed, total_keys) do
-    total_keys_affected = keys_added + keys_removed + keys_changed
-
+  @spec trace_index_update_complete(integer(), non_neg_integer()) :: :ok
+  def trace_index_update_complete(key_count_delta, total_keys) do
     Telemetry.emit_materializer_operation(
       :index_update_complete,
       %{
-        keys_added: keys_added,
-        keys_removed: keys_removed,
-        keys_changed: keys_changed,
-        total_keys_affected: total_keys_affected,
+        key_count_delta: key_count_delta,
         total_keys: total_keys
       },
       %{}

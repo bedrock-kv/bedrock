@@ -18,7 +18,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   alias Bedrock.DataPlane.Materializer.Telemetry
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
-  alias Bedrock.ObjectStorage.Config, as: ObjectStorageConfig
+  alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.Snapshot
   alias Bedrock.ObjectStorage.SnapshotBundle
@@ -31,13 +31,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
   @spec startup(otp_name :: atom(), foreman :: pid(), id :: Worker.id(), Path.t(), opts :: keyword()) ::
           {:ok, State.t()} | {:error, File.posix()} | {:error, term()}
   def startup(otp_name, foreman, id, path, opts \\ []) do
-    cluster = Keyword.get(opts, :cluster)
     {shard_tag, shard_num} = normalize_shard(Keyword.get(opts, :shard_id))
     idle_timeout = Keyword.get(opts, :idle_timeout, :infinity)
 
     snapshot_policy = Keyword.get(opts, :snapshot_policy, %SnapshotPolicy{})
     snapshot_retention = Keyword.get(opts, :snapshot_retention, %SnapshotRetention{})
-    snapshot = build_snapshot_handle(cluster, shard_tag)
+    snapshot = build_snapshot_handle(Keyword.get(opts, :object_storage), shard_tag)
 
     with :ok <- ensure_directory_exists(path),
          :ok <- maybe_load_snapshot(path, snapshot),
@@ -78,14 +77,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Logic do
     end
   end
 
-  @spec build_snapshot_handle(cluster :: module() | nil, shard_id :: String.t() | nil) :: Snapshot.t() | nil
+  @spec build_snapshot_handle(ObjectStorage.backend() | nil, shard_id :: String.t() | nil) :: Snapshot.t() | nil
   defp build_snapshot_handle(nil, _shard_id), do: nil
-  defp build_snapshot_handle(_cluster, nil), do: nil
-
-  defp build_snapshot_handle(_cluster, shard_id) do
-    backend = ObjectStorageConfig.backend()
-    Snapshot.new(backend, shard_id)
-  end
+  defp build_snapshot_handle(_object_storage, nil), do: nil
+  defp build_snapshot_handle(object_storage, shard_id), do: Snapshot.new(object_storage, shard_id)
 
   @doc """
   Checks if local database files exist. If not, attempts to discover and

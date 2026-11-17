@@ -41,7 +41,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
     foreman = opts[:foreman] || raise "Missing :foreman option"
     id = opts[:id] || raise "Missing :id option"
     path = opts[:path] || raise "Missing :path option"
-    startup_opts = startup_opts(opts[:cluster], opts[:params] || %{})
+    startup_opts = startup_opts(opts[:object_storage], opts[:params] || %{})
 
     %{
       id: {__MODULE__, id},
@@ -58,19 +58,20 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.Server do
   # Builds the opts handed to Logic.startup/5 from the worker's manifest
   # params. shard_id is ALWAYS threaded through (it identifies the
   # worker's shard assignment for info facts and re-adoption, and must
-  # never be gated on cluster presence); the ObjectStorage snapshot
-  # handle additionally requires a cluster, which Logic guards on. Idle
-  # spin-down is opt-in per worker (bedrock-q67.21.5): without an
-  # explicit positive idle_timeout the worker never spins down. That is
+  # never be gated on object storage presence); the snapshot handle
+  # additionally requires the backend the foreman hands every worker,
+  # which Logic guards on. Idle spin-down is opt-in per worker
+  # (bedrock-q67.21.5): without an explicit positive idle_timeout the
+  # worker never spins down. That is
   # what the system shard's exemption is built on — neither of the two
   # things that create a tag-0 materializer sends the param
   # (SystemShardBootstrapPhase, and Recruitment.worker_params/2). The
   # snapshot upload policy is opt-in the same way, one knob at a time
   # (bedrock-zi44), and so is snapshot retention (bedrock-s1zr).
-  @spec startup_opts(cluster :: module() | nil, params :: map()) :: keyword()
-  defp startup_opts(cluster, params) do
+  @spec startup_opts(object_storage :: term(), params :: map()) :: keyword()
+  defp startup_opts(object_storage, params) do
     base = [
-      cluster: cluster,
+      object_storage: object_storage,
       shard_id: params["shard_id"],
       snapshot_policy: SnapshotPolicy.from_params(params),
       snapshot_retention: SnapshotRetention.from_params(params)

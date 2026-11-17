@@ -21,10 +21,9 @@ defmodule Bedrock.Service.Foreman.StartingWorkers do
   end
 
   # Directories the foreman's path holds that belong to other components.
-  # The cluster supervisor derives object_storage/ from the same :path it
-  # hands the foreman; the coordinator's raft/ is a sibling by the
-  # convention every deployment config follows. Neither is a worker, and
-  # neither is news.
+  # object_storage/ may live under this path when the derived backend
+  # resolves here; the coordinator's raft/ does when its :path is shared
+  # with the foreman. Neither is a worker, and neither is news.
   @infrastructure_dirs ~w(object_storage raft)
 
   @doc """

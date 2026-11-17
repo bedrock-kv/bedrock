@@ -21,12 +21,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.Snapshot
 
-  # Test cluster module
-  defmodule TestCluster do
-    @moduledoc false
-    def name, do: "test-cluster"
-  end
-
   setup do
     test_id = :erlang.unique_integer([:positive])
     test_dir = Path.join(System.tmp_dir!(), "olivine_snapshot_loading_test_#{test_id}")
@@ -37,21 +31,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
     File.mkdir_p!(test_dir)
     File.mkdir_p!(object_storage_root)
 
-    # Configure ObjectStorage backend
+    # The backend a foreman hands its workers
     backend = ObjectStorage.backend(LocalFilesystem, root: object_storage_root)
 
-    # Store old backend config and set test backend
-    old_config = Application.get_env(:bedrock, ObjectStorage)
-    Application.put_env(:bedrock, ObjectStorage, backend: backend)
-
     on_exit(fn ->
-      # Restore old config
-      if old_config do
-        Application.put_env(:bedrock, ObjectStorage, old_config)
-      else
-        Application.delete_env(:bedrock, ObjectStorage)
-      end
-
       # Cleanup
       Enum.reduce_while(1..5, :error, fn attempt, _acc ->
         case File.rm_rf(test_dir) do
@@ -182,7 +165,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
             self(),
             "test-id",
             test_dir,
-            cluster: TestCluster,
+            object_storage: backend,
             shard_id: shard_id,
             pool_size: 1
           )
@@ -194,7 +177,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
       Logic.shutdown(state)
     end
 
-    test "cold start without snapshot starts fresh", %{test_dir: test_dir, shard_id: shard_id} do
+    test "cold start without snapshot starts fresh", %{test_dir: test_dir, backend: backend, shard_id: shard_id} do
       {result, logs} =
         with_log(fn ->
           Logic.startup(
@@ -202,7 +185,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
             self(),
             "test-id",
             test_dir,
-            cluster: TestCluster,
+            object_storage: backend,
             shard_id: shard_id,
             pool_size: 1
           )
@@ -231,7 +214,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
             self(),
             "test-id",
             test_dir,
-            cluster: TestCluster,
+            object_storage: backend,
             shard_id: shard_id,
             pool_size: 1
           )
@@ -248,7 +231,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
             self(),
             "test-id",
             test_dir,
-            cluster: TestCluster,
+            object_storage: backend,
             shard_id: shard_id,
             pool_size: 1
           )
@@ -262,7 +245,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
       Logic.shutdown(state2)
     end
 
-    test "startup without cluster/shard_id works (no snapshot loading)", %{test_dir: test_dir} do
+    test "startup without object_storage/shard_id works (no snapshot loading)", %{test_dir: test_dir} do
       {result, logs} =
         with_log(fn ->
           Logic.startup(
@@ -295,7 +278,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
           self(),
           "test-id",
           test_dir,
-          cluster: TestCluster,
+          object_storage: backend,
           shard_id: shard_id,
           pool_size: 1
         )
@@ -305,9 +288,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
   end
 
   describe "build_snapshot_handle/2" do
-    test "returns nil when cluster is nil" do
+    test "returns nil when object_storage is nil" do
       # Access the private function through the public API behavior
-      # When cluster is nil, startup should work but snapshot should be nil
+      # When object_storage is nil, startup should work but snapshot should be nil
 
       test_dir = Path.join(System.tmp_dir!(), "build_handle_test_#{:rand.uniform(100_000)}")
       File.mkdir_p!(test_dir)
@@ -325,7 +308,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
       Logic.shutdown(state)
     end
 
-    test "returns nil when shard_id is nil" do
+    test "returns nil when shard_id is nil", %{backend: backend} do
       test_dir = Path.join(System.tmp_dir!(), "build_handle_test2_#{:rand.uniform(100_000)}")
       File.mkdir_p!(test_dir)
 
@@ -333,7 +316,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.SnapshotLoadingTest do
 
       {result, _logs} =
         with_log(fn ->
-          Logic.startup(:test_nil_shard, self(), "id", test_dir, cluster: TestCluster, pool_size: 1)
+          Logic.startup(:test_nil_shard, self(), "id", test_dir, object_storage: backend, pool_size: 1)
         end)
 
       {:ok, state} = result

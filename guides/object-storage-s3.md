@@ -25,13 +25,13 @@ backend =
   )
 ```
 
-## Application Config
+## Node Config
 
-Set as the default object storage backend:
+Set the backend at the top level of the cluster's node config:
 
 ```elixir
-config :bedrock, Bedrock.ObjectStorage,
-  backend:
+config :my_app, MyApp.Cluster,
+  object_storage:
     {Bedrock.ObjectStorage.S3,
      [
        bucket: "bedrock",
@@ -49,8 +49,8 @@ config :bedrock, Bedrock.ObjectStorage,
 You can also use shorthand backend selection with top-level S3 options:
 
 ```elixir
-config :bedrock, Bedrock.ObjectStorage,
-  backend: :s3,
+config :my_app, MyApp.Cluster,
+  object_storage: :s3,
   s3: [
     bucket: "bedrock",
     access_key_id: "minio_key",
@@ -61,6 +61,13 @@ config :bedrock, Bedrock.ObjectStorage,
     port: 9000
   ]
 ```
+
+Workers, the director, and the coordinator all resolve the backend the same
+way: top-level `object_storage:`, else `<first role path>/object_storage`.
+`object_storage:` inside a role section (`log:`, `materializer:`, ...) and
+`config :bedrock, Bedrock.ObjectStorage, backend: ...` both fail startup. In a
+multi-node cluster every node must name the same shared store, or each node
+keeps its own bootstrap.
 
 ## Conditional Semantics
 

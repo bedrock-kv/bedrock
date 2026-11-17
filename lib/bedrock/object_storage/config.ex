@@ -5,26 +5,46 @@ defmodule Bedrock.ObjectStorage.Config do
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.S3
 
-  @spec backend() :: ObjectStorage.backend()
-  def backend do
-    app_config = config()
-    backend_config = Keyword.get_lazy(app_config, :backend, &default_backend/0)
+  @doc """
+  The backend a cluster's durable state lives in: worker chunks and
+  snapshots, and the bootstrap the director writes and the coordinator
+  cold-boots from. Every one of those resolves it here, so no config can
+  split that state across backends: `object_storage:` at the top level of
+  the node config (the `:s3` shorthand works too: `object_storage: :s3,
+  s3: [...]`), else a `LocalFilesystem` at `<first role path>/object_storage`.
+  Returns `nil` when neither applies.
 
-    normalize_backend(backend_config, app_config)
+  An application-config `:backend` is refused rather than consulted.
+  """
+  @spec cluster_backend(node_config :: keyword()) :: ObjectStorage.backend() | nil
+  def cluster_backend(node_config) do
+    if Keyword.has_key?(config(), :backend) do
+      raise "Bedrock: `config :bedrock, Bedrock.ObjectStorage, backend: ...` is no longer read; set " <>
+              "`object_storage:` at the top level of the node config instead. That setting reached only " <>
+              "materializer snapshots: the bootstrap and chunks were written to `<path>/object_storage`, " <>
+              "so relocate existing data deliberately before pointing the cluster at a different store."
+    end
+
+    cond do
+      Keyword.has_key?(node_config, :object_storage) ->
+        normalize_backend(Keyword.fetch!(node_config, :object_storage), node_config)
+
+      path = role_path(node_config) ->
+        ObjectStorage.backend(LocalFilesystem, root: Path.join(path, "object_storage"))
+
+      true ->
+        nil
+    end
   end
 
-  @spec bootstrap_key() :: String.t() | nil
-  def bootstrap_key, do: Keyword.get(config(), :bootstrap_key)
-
-  @spec bootstrap_key!() :: String.t()
-  def bootstrap_key! do
-    bootstrap_key() || raise "ObjectStorage bootstrap_key not configured"
+  defp role_path(node_config) do
+    Enum.find_value([:coordinator, :log, :storage, :materializer, :coordination, :worker], fn role ->
+      node_config |> Keyword.get(role, []) |> Keyword.get(:path)
+    end)
   end
 
   @spec config() :: keyword()
   def config, do: Application.get_env(:bedrock, ObjectStorage, [])
-
-  defp default_backend, do: {LocalFilesystem, root: Path.join(System.tmp_dir!(), "bedrock_objects")}
 
   defp normalize_backend({:s3, backend_config}, app_config) when is_list(backend_config) do
     normalize_backend({S3, backend_config}, app_config)

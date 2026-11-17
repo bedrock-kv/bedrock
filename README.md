@@ -134,11 +134,12 @@ story end to end, including what happens on restart.
 ## Object storage
 
 The local filesystem is the default backend. To point durable history at any
-S3-compatible store (AWS S3, MinIO, ...):
+S3-compatible store (AWS S3, MinIO, ...), set it at the top level of the
+cluster's node config:
 
 ```elixir
-config :bedrock, Bedrock.ObjectStorage,
-  backend: :s3,
+config :my_app, MyApp.Cluster,
+  object_storage: :s3,
   s3: [
     bucket: "bedrock",
     access_key_id: "...",

@@ -3,23 +3,8 @@ defmodule Bedrock.Docs.DurabilityFoundationExamplesTest do
 
   alias Bedrock.Durability
   alias Bedrock.Internal.ClusterSupervisor
-  alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.Config
   alias Bedrock.ObjectStorage.S3
-
-  setup do
-    original = Application.get_env(:bedrock, ObjectStorage)
-
-    on_exit(fn ->
-      if is_nil(original) do
-        Application.delete_env(:bedrock, ObjectStorage)
-      else
-        Application.put_env(:bedrock, ObjectStorage, original)
-      end
-    end)
-
-    :ok
-  end
 
   test "strict and relaxed profile examples behave as documented" do
     node_config = [
@@ -43,9 +28,9 @@ defmodule Bedrock.Docs.DurabilityFoundationExamplesTest do
     assert :relaxed == ClusterSupervisor.durability_mode(durability: [mode: :relaxed])
   end
 
-  test "s3 shorthand configuration example normalizes to S3 backend tuple" do
-    Application.put_env(:bedrock, ObjectStorage,
-      backend: :s3,
+  test "s3 shorthand node config example normalizes to S3 backend tuple" do
+    node_config = [
+      object_storage: :s3,
       s3: [
         bucket: "bedrock",
         access_key_id: "minio_key",
@@ -55,9 +40,9 @@ defmodule Bedrock.Docs.DurabilityFoundationExamplesTest do
         host: "127.0.0.1",
         port: 9000
       ]
-    )
+    ]
 
-    assert {S3, backend_config} = Config.backend()
+    assert {S3, backend_config} = Config.cluster_backend(node_config)
     assert backend_config[:bucket] == "bedrock"
     assert backend_config[:config][:access_key_id] == "minio_key"
     assert backend_config[:config][:secret_access_key] == "minio_secret"

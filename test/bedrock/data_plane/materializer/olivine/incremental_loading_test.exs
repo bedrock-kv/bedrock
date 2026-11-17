@@ -7,8 +7,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
   alias Bedrock.DataPlane.Materializer.Olivine.IndexDatabase
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.TestHelpers
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
 
   defp setup_tmp_dir(context, base_name) do
     tmp_dir =
@@ -22,20 +22,6 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
     end)
 
     {:ok, tmp_dir: tmp_dir}
-  end
-
-  defp create_transaction(mutations, version_int) do
-    transaction_map = %{
-      mutations: mutations,
-      read_conflicts: {nil, []},
-      write_conflicts: []
-    }
-
-    encoded = Transaction.encode(transaction_map)
-    version = Version.from_integer(version_int)
-
-    {:ok, with_version} = Transaction.add_commit_version(encoded, version)
-    with_version
   end
 
   defp data_size_in_bytes({data_db, _index_db}), do: data_db.file_offset
@@ -69,11 +55,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
 
       # Use timestamps outside the 5-second window (5_000_000 microseconds) to trigger eviction
       # 1 second
-      transaction_v1 = create_transaction(keys_for_page_splits, 1_000_000)
+      transaction_v1 = TransactionTestSupport.new_log_transaction_from_mutations(keys_for_page_splits, 1_000_000)
       # 10 seconds - update existing keys to maintain tree ordering
-      transaction_v2 = create_transaction([{:set, "key_00050", "updated_value"}], 10_000_000)
+      transaction_v2 =
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "key_00050", "updated_value"}], 10_000_000)
+
       # 20 seconds
-      transaction_v3 = create_transaction([{:set, "key_00100", "updated_value"}], 20_000_000)
+      transaction_v3 =
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "key_00100", "updated_value"}], 20_000_000)
 
       # Apply transactions to build version history
       index_manager = IndexManager.new()
@@ -200,15 +189,15 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
 
       # Version 1: Create a large set of keys that will create multiple pages (0,1,2,3,4,5)
       keys_v1 = for i <- 1..1000, do: {:set, "old_key_#{String.pad_leading("#{i}", 5, "0")}", "old_value_#{i}"}
-      transaction_v1 = create_transaction(keys_v1, 1_000_000)
+      transaction_v1 = TransactionTestSupport.new_log_transaction_from_mutations(keys_v1, 1_000_000)
 
       # Version 2: Modify some keys, creating new versions of some pages but leaving others unchanged
       keys_v2 = for i <- 1..200, do: {:set, "old_key_#{String.pad_leading("#{i}", 5, "0")}", "updated_value_#{i}"}
-      transaction_v2 = create_transaction(keys_v2, 2_000_000)
+      transaction_v2 = TransactionTestSupport.new_log_transaction_from_mutations(keys_v2, 2_000_000)
 
       # Version 3: Add entirely new keys that will create new pages and potentially modify page chain
       keys_v3 = for i <- 1..300, do: {:set, "new_key_#{String.pad_leading("#{i}", 5, "0")}", "new_value_#{i}"}
-      transaction_v3 = create_transaction(keys_v3, 3_000_000)
+      transaction_v3 = TransactionTestSupport.new_log_transaction_from_mutations(keys_v3, 3_000_000)
 
       # Apply transactions sequentially to build version history
       index_manager = IndexManager.new()
@@ -304,7 +293,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IncrementalLoadingTest do
       {:ok, database} = Database.open(:missing_test, file_path)
 
       # Create some data
-      transaction = create_transaction([{:set, "test_key", "test_value"}], 1_000_000)
+      transaction =
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "test_key", "test_value"}], 1_000_000)
+
       index_manager = IndexManager.new()
 
       {_final_index_manager, final_database} =

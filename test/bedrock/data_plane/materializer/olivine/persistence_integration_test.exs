@@ -5,24 +5,9 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PersistenceIntegrationTest do
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
   alias Bedrock.DataPlane.Materializer.Olivine.IndexManager
   alias Bedrock.DataPlane.Materializer.Olivine.Logic
-  alias Bedrock.DataPlane.Transaction
   alias Bedrock.DataPlane.Version
+  alias Bedrock.Test.DataPlane.TransactionTestSupport
   alias Bedrock.Test.Materializer.Olivine.PageTestHelpers
-
-  # Helper functions for cleaner test assertions
-  defp create_transaction(mutations, version_int) do
-    transaction_map = %{
-      mutations: mutations,
-      read_conflicts: {nil, []},
-      write_conflicts: []
-    }
-
-    encoded = Transaction.encode(transaction_map)
-    version = Version.from_integer(version_int)
-
-    {:ok, with_version} = Transaction.add_commit_version(encoded, version)
-    with_version
-  end
 
   defp setup_tmp_dir(context, base_name) do
     tmp_dir =
@@ -146,8 +131,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PersistenceIntegrationTest do
       index_manager = IndexManager.new()
 
       # Create transactions with different timestamps to test eviction
-      old_transaction = create_transaction([{:set, "old_key", "old_value"}], 1)
-      recent_transaction = create_transaction([{:set, "recent_key", "recent_value"}], 1000)
+      old_transaction = TransactionTestSupport.new_log_transaction_from_mutations([{:set, "old_key", "old_value"}], 1)
+
+      recent_transaction =
+        TransactionTestSupport.new_log_transaction_from_mutations([{:set, "recent_key", "recent_value"}], 1000)
 
       # Apply transactions to build up data in the IndexManager and Database
       {index_manager_with_old, database_with_old} =
@@ -159,7 +146,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.PersistenceIntegrationTest do
       # Create many more transactions to fill the buffer tracking queue
       buffer_fill_transactions =
         for i <- 2..50 do
-          create_transaction([{:set, "key_#{i}", "value_#{i}"}], i)
+          TransactionTestSupport.new_log_transaction_from_mutations([{:set, "key_#{i}", "value_#{i}"}], i)
         end
 
       {final_index_manager, final_database} =

@@ -190,26 +190,21 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
           |> Enum.map(&Page.key_count/1)
           |> Enum.sum()
 
+        # Page 0 is the chain head: `continue_to_next_page/5` and
+        # `include_page_and_continue/5` treat `next_id == 0` as the
+        # end-of-chain sentinel and stop without ever making 0 the current
+        # page, so 0 can only enter the collected list as `first_page_id`
+        # (via `Tree.page_for_key/2`), never as a middle or last page.
         final_operations =
-          if 0 in middle_page_ids do
-            page_0 = Index.get_page!(index_update.index, 0)
-            page_0_keys = extract_keys_in_range(page_0, start_key, end_key)
-
-            index_update.pending_operations
-            |> Map.drop(middle_page_ids_excluding_page_zero)
-            |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
-            |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
-            |> add_clear_operations_for_keys(0, page_0_keys)
-          else
-            index_update.pending_operations
-            |> Map.drop(middle_page_ids_excluding_page_zero)
-            |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
-            |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
-          end
+          index_update.pending_operations
+          |> Map.drop(middle_page_ids_excluding_page_zero)
+          |> add_clear_operations_for_keys(first_page_id, first_keys_to_clear)
+          |> add_clear_operations_for_keys(last_page_id, last_keys_to_clear)
 
         # Only the wholesale-deleted middle pages are accounted for here: the
-        # boundary (and page 0) keys become pending clears on pages that
-        # survive, and are counted when those pages are processed.
+        # boundary keys (first_page_id may be page 0) become pending clears
+        # on pages that survive, and are counted when those pages are
+        # processed.
         %{
           index_update
           | index: Index.delete_pages(index_update.index, middle_page_ids_excluding_page_zero),

@@ -181,19 +181,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
         first_page = Index.get_page!(index_update.index, first_page_id)
         last_page = Index.get_page!(index_update.index, last_page_id)
 
-        first_keys_to_clear =
-          extract_keys_in_range(
-            first_page,
-            max(start_key, Page.left_key(first_page) || <<>>),
-            min(end_key, Page.right_key(first_page) || @max_key)
-          )
-
-        last_keys_to_clear =
-          extract_keys_in_range(
-            last_page,
-            max(start_key, Page.left_key(last_page) || <<>>),
-            min(end_key, Page.right_key(last_page) || @max_key)
-          )
+        first_keys_to_clear = extract_keys_in_range(first_page, start_key, end_key)
+        last_keys_to_clear = extract_keys_in_range(last_page, start_key, end_key)
 
         middle_keys_count =
           middle_page_ids_excluding_page_zero
@@ -292,7 +281,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
   end
 
   defp page_entirely_after_range?(page_first_key, end_key) do
-    page_first_key != nil and page_first_key > end_key
+    page_first_key != nil and page_first_key >= end_key
   end
 
   defp continue_to_next_page(page_map, next_id, start_key, end_key, collected_page_ids) do
@@ -314,11 +303,12 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdate do
     end
   end
 
+  # `end_key` is exclusive, as it is everywhere else a key range is named.
   @spec extract_keys_in_range(Page.t(), Bedrock.key(), Bedrock.key()) :: [Bedrock.key()]
   defp extract_keys_in_range(page, start_key, end_key) do
     page
     |> Page.key_locators()
-    |> Enum.filter(fn {key, _version} -> key >= start_key and key <= end_key end)
+    |> Enum.filter(fn {key, _version} -> key >= start_key and key < end_key end)
     |> Enum.map(fn {key, _version} -> key end)
   end
 

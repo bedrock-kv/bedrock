@@ -135,15 +135,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
       # Boundary pages keep only their out-of-range keys
       assert final_index |> Index.get_page!(1) |> Page.keys() == ["a"]
-      assert final_index |> Index.get_page!(3) |> Page.keys() == ["i"]
-      assert all_keys(final_index) == ["a", "i"]
+      assert final_index |> Index.get_page!(3) |> Page.keys() == ["h", "i"]
+      assert all_keys(final_index) == ["a", "h", "i"]
 
       # Chain is repaired: page 1 now points past the deleted page to page 3
       {_page, next_id} = Index.get_page_with_next_id!(final_index, 1)
       assert next_id == 3
 
-      # The delta covers first-page (b, c), middle-page (d, e, f) and last-page (g, h) keys
-      assert update.key_count_delta == -7
+      # The delta covers first-page (b, c), middle-page (d, e, f) and last-page
+      # (g) keys; "h" is the exclusive end and survives
+      assert update.key_count_delta == -6
     end
 
     test "clear_range followed by sets of in-range keys in the same batch keeps only the re-set keys", %{
@@ -167,6 +168,51 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       assert all_keys(final_index) == ["b", "d"]
       assert {:ok, _page, locator} = Index.locator_for_key(final_index, "b")
       assert {:ok, "rewritten-b"} = Database.load_value(final_db, locator)
+    end
+  end
+
+  describe "clear_range end key is exclusive" do
+    test "the key at the range end survives a single-page clear", %{database: database} do
+      {index, allocator} = build_index([{0, ["a", "b", "c"]}])
+
+      update = run_mutations(index, allocator, database, [{:clear_range, "a", "c"}])
+      {final_index, _db, _allocator, _modified} = IndexUpdate.finish(update)
+
+      assert all_keys(final_index) == ["c"]
+      assert update.key_count_delta == -2
+    end
+
+    test "the key at the range end survives when it opens a later page", %{database: database} do
+      # "c" is the right key of the first page and lies strictly inside the
+      # range; "g" is the left key of the last page and sits exactly on the
+      # exclusive end.
+      {index, allocator} =
+        build_index([
+          {1, ["a", "b", "c"]},
+          {2, ["d", "e", "f"]},
+          {3, ["g", "h", "i"]}
+        ])
+
+      update = run_mutations(index, allocator, database, [{:clear_range, "c", "g"}])
+      {final_index, _db, final_allocator, _modified} = IndexUpdate.finish(update)
+
+      assert all_keys(final_index) == ["a", "b", "g", "h", "i"]
+      assert update.key_count_delta == -4
+
+      # Page 2 is emptied and recycled; page 3 is untouched
+      refute Map.has_key?(final_index.page_map, 2)
+      assert 2 in final_allocator.free_ids
+      assert final_index |> Index.get_page!(3) |> Page.keys() == ["g", "h", "i"]
+    end
+
+    test "an empty range clears nothing", %{database: database} do
+      {index, allocator} = build_index([{0, ["a", "b", "c"]}])
+
+      update = run_mutations(index, allocator, database, [{:clear_range, "b", "b"}])
+      {final_index, _db, _allocator, _modified} = IndexUpdate.finish(update)
+
+      assert all_keys(final_index) == ["a", "b", "c"]
+      assert update.key_count_delta == 0
     end
   end
 
@@ -194,14 +240,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       refute 0 in final_allocator.free_ids
       assert final_index |> Index.get_page!(0) |> Page.key_count() == 0
 
-      # The middle page is deleted and recycled; the last page keeps "f"
+      # Page 1 is emptied and recycled; page 2 keeps the exclusive end "e"
       refute Map.has_key?(final_index.page_map, 1)
       assert 1 in final_allocator.free_ids
-      assert final_index |> Index.get_page!(2) |> Page.keys() == ["f"]
-      assert all_keys(final_index) == ["f"]
+      assert final_index |> Index.get_page!(2) |> Page.keys() == ["e", "f"]
+      assert all_keys(final_index) == ["e", "f"]
 
-      # a, b from page 0 + c, d from the middle page + e from the last page
-      assert update.key_count_delta == -5
+      # a, b from page 0 + c, d from page 1
+      assert update.key_count_delta == -4
     end
   end
 

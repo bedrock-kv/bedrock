@@ -32,6 +32,12 @@ defmodule Bedrock.Internal.GenServer.Calls do
     :exit, {:normal, _} -> {:error, :unavailable}
     :exit, {:shutdown, _} -> {:error, :unavailable}
     :exit, {{:shutdown, _}, _} -> {:error, :unavailable}
+    # Any other exit reason means the callee died mid-call (e.g. a posix
+    # error like :enospc/:eacces, or a raised exception) rather than the
+    # caller doing something wrong — report unavailability, not the reason.
+    # :calling_self is excluded: it means the caller passed itself as the
+    # server, a caller-side bug that should still surface as a raise.
+    :exit, {reason, _} when reason != :calling_self -> {:error, :unavailable}
   end
 
   @spec call!(GenServer.server(), message :: term(), timeout()) :: term()

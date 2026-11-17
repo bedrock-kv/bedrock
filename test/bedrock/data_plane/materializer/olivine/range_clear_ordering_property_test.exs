@@ -5,10 +5,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.RangeClearOrderingPropertyTest 
   import Bedrock.Test.Materializer.Olivine.InvariantChecks
 
   alias Bedrock.DataPlane.Materializer.Olivine.Database
-  alias Bedrock.DataPlane.Materializer.Olivine.IdAllocator
-  alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
-  alias Bedrock.DataPlane.Materializer.Olivine.Index.Tree
   alias Bedrock.DataPlane.Materializer.Olivine.IndexUpdate
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.Materializer.Olivine.IndexTestHelpers
@@ -17,19 +14,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.RangeClearOrderingPropertyTest 
   @max_keys 300
 
   setup do
-    # Create temporary directory for test database
-    temp_dir = System.tmp_dir!() <> "/test_range_clear_#{System.unique_integer()}"
-    File.mkdir_p!(temp_dir)
-
-    db_file_path = Path.join(temp_dir, "range_clear_test.dets")
-    {:ok, database} = Database.open(:"test_db_#{System.unique_integer()}", db_file_path)
-
-    on_exit(fn ->
-      :ok = Database.close(database)
-      File.rm_rf!(temp_dir)
-    end)
-
-    {:ok, database: database}
+    {:ok, database: IndexTestHelpers.open_test_database("range_clear_test")}
   end
 
   describe "range clearing preserves key ordering invariants" do
@@ -180,50 +165,16 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.RangeClearOrderingPropertyTest 
   # Helper functions
 
   defp build_index_from_keys(keys) do
-    base_version = Version.zero()
+    # Split into chunks of max 200 keys per page to ensure multiple pages.
+    # The shared helper rebuilds the chain from tree order, so next_id here
+    # doesn't need to be computed by hand.
+    page_specs =
+      keys
+      |> Enum.chunk_every(200)
+      |> Enum.with_index(1)
+      |> Enum.map(fn {chunk, page_id} -> {page_id, chunk} end)
 
-    # Create key-version pairs
-    key_locators = Enum.map(keys, &{&1, base_version})
-
-    # Build pages with controlled size to ensure multiple pages
-    pages = build_pages_from_key_locators(key_locators, 1)
-
-    # Build index efficiently by constructing page_map and tree directly
-    initial_index = Index.new()
-
-    # Build page_map with all pages
-    page_map =
-      Enum.reduce(pages, initial_index.page_map, fn {page, next_id}, acc_map ->
-        Map.put(acc_map, Page.id(page), {page, next_id})
-      end)
-
-    # Build tree with all pages
-    tree =
-      Enum.reduce(pages, initial_index.tree, fn {page, _next_id}, acc_tree ->
-        Tree.add_page_to_tree(acc_tree, page)
-      end)
-
-    # Create temporary index and ensure chain consistency once at the end
-    temp_index = %{initial_index | tree: tree, page_map: page_map}
-    index = IndexTestHelpers.rebuild_page_chain_consistency(temp_index)
-
-    # Create allocator with next available ID
-    max_page_id = pages |> Enum.map(fn {page, _next_id} -> Page.id(page) end) |> Enum.max(fn -> 0 end)
-    allocator = IdAllocator.new(max_page_id, [])
-
-    {index, allocator}
-  end
-
-  defp build_pages_from_key_locators(key_locators, start_id) do
-    # Split into chunks of max 200 keys per page to ensure multiple pages
-    key_locators
-    |> Enum.chunk_every(200)
-    |> Enum.with_index(start_id)
-    |> Enum.map(fn {chunk, page_id} ->
-      next_id = if page_id == start_id + div(length(key_locators), 200), do: 0, else: page_id + 1
-      page = Page.new(page_id, chunk)
-      {page, next_id}
-    end)
+    IndexTestHelpers.build_index(page_specs)
   end
 
   defp apply_clear_ranges_with_checks(index, allocator, clear_ranges, database) do

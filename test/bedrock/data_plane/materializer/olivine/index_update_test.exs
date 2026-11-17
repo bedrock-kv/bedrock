@@ -7,57 +7,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
   use ExUnit.Case, async: true
 
   alias Bedrock.DataPlane.Materializer.Olivine.Database
-  alias Bedrock.DataPlane.Materializer.Olivine.IdAllocator
   alias Bedrock.DataPlane.Materializer.Olivine.Index
   alias Bedrock.DataPlane.Materializer.Olivine.Index.Page
-  alias Bedrock.DataPlane.Materializer.Olivine.Index.Tree
   alias Bedrock.DataPlane.Materializer.Olivine.IndexUpdate
   alias Bedrock.DataPlane.Version
   alias Bedrock.Test.Materializer.Olivine.IndexTestHelpers
 
   setup do
-    temp_dir = System.tmp_dir!() <> "/test_index_update_#{System.unique_integer()}"
-    File.mkdir_p!(temp_dir)
-
-    db_file_path = Path.join(temp_dir, "index_update_test.dets")
-    {:ok, database} = Database.open(:"test_db_#{System.unique_integer()}", db_file_path)
-
-    on_exit(fn ->
-      :ok = Database.close(database)
-      File.rm_rf!(temp_dir)
-    end)
-
-    {:ok, database: database}
-  end
-
-  # Builds an index from a page spec like [{1, ["a", "b"]}, {2, ["c", "d"]}].
-  # Page ids may include 0 to place keys directly on page 0. Pages are entered
-  # into the tree in key order and the chain is rebuilt for consistency.
-  defp build_index(page_specs) do
-    base_version = Version.zero()
-    initial_index = Index.new()
-
-    pages =
-      Enum.map(page_specs, fn {page_id, keys} ->
-        Page.new(page_id, Enum.map(keys, &{&1, base_version}))
-      end)
-
-    page_map =
-      Enum.reduce(pages, initial_index.page_map, fn page, acc ->
-        Map.put(acc, Page.id(page), {page, 0})
-      end)
-
-    tree =
-      Enum.reduce(pages, initial_index.tree, fn page, acc ->
-        Tree.add_page_to_tree(acc, page)
-      end)
-
-    index = IndexTestHelpers.rebuild_page_chain_consistency(%{initial_index | tree: tree, page_map: page_map})
-
-    max_page_id = page_specs |> Enum.map(&elem(&1, 0)) |> Enum.max(fn -> 0 end)
-    allocator = IdAllocator.new(max_page_id, [])
-
-    {index, allocator}
+    {:ok, database: IndexTestHelpers.open_test_database("index_update_test")}
   end
 
   defp new_update(index, allocator, database, opts \\ []) do
@@ -81,7 +38,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
   describe "pending-operation merging" do
     test "two clears targeting keys on the same page merge into one pending map", %{database: database} do
-      {index, allocator} = build_index([{0, ["a", "b", "c"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{0, ["a", "b", "c"]}])
 
       update =
         index
@@ -98,7 +55,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     end
 
     test "a set followed by a clear on the same page share one pending map", %{database: database} do
-      {index, allocator} = build_index([{0, ["a", "c"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{0, ["a", "c"]}])
 
       update =
         index
@@ -120,7 +77,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
   describe "clear_range across a multi-page chain" do
     test "middle pages are deleted and recycled while boundary pages keep out-of-range keys", %{database: database} do
       {index, allocator} =
-        build_index([
+        IndexTestHelpers.build_index([
           {1, ["a", "b", "c"]},
           {2, ["d", "e", "f"]},
           {3, ["g", "h", "i"]}
@@ -154,7 +111,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       # family, then re-writes the current entries. The re-set keys must
       # survive (set overwrites the pending :clear for the same key) and
       # subset keys that are not re-written must be gone.
-      {index, allocator} = build_index([{1, ["a", "b", "c"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{1, ["a", "b", "c"]}])
 
       update =
         run_mutations(index, allocator, database, [
@@ -173,7 +130,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
   describe "clear_range end key is exclusive" do
     test "the key at the range end survives a single-page clear", %{database: database} do
-      {index, allocator} = build_index([{0, ["a", "b", "c"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{0, ["a", "b", "c"]}])
 
       update = run_mutations(index, allocator, database, [{:clear_range, "a", "c"}])
       {final_index, _db, _allocator, _modified} = IndexUpdate.finish(update)
@@ -187,7 +144,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       # range; "g" is the left key of the last page and sits exactly on the
       # exclusive end.
       {index, allocator} =
-        build_index([
+        IndexTestHelpers.build_index([
           {1, ["a", "b", "c"]},
           {2, ["d", "e", "f"]},
           {3, ["g", "h", "i"]}
@@ -206,7 +163,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     end
 
     test "an empty range clears nothing", %{database: database} do
-      {index, allocator} = build_index([{0, ["a", "b", "c"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{0, ["a", "b", "c"]}])
 
       update = run_mutations(index, allocator, database, [{:clear_range, "b", "b"}])
       {final_index, _db, _allocator, _modified} = IndexUpdate.finish(update)
@@ -226,7 +183,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       database: database
     } do
       {index, allocator} =
-        build_index([
+        IndexTestHelpers.build_index([
           {0, ["a", "b"]},
           {1, ["c", "d"]},
           {2, ["e", "f"]}
@@ -256,7 +213,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
       # page_for_key falls back to page 0 (the empty head), so the chain walk
       # skips every real page as entirely-before-range until the chain ends.
       {index, allocator} =
-        build_index([
+        IndexTestHelpers.build_index([
           {1, ["a", "b"]},
           {2, ["d", "e"]}
         ])
@@ -273,7 +230,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     test "range extending past the end of the chain clears only existing keys", %{database: database} do
       # The chain ends (next_id == 0) before the range end is reached
       {index, allocator} =
-        build_index([
+        IndexTestHelpers.build_index([
           {1, ["a", "b"]},
           {2, ["d", "e"]}
         ])
@@ -291,7 +248,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
     test "range spanning from before the first key through the whole chain clears everything", %{database: database} do
       {index, allocator} =
-        build_index([
+        IndexTestHelpers.build_index([
           {1, ["b", "c"]},
           {2, ["d", "e"]},
           {3, ["f", "g"]}
@@ -311,7 +268,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
   describe "empty-page handling after processing" do
     test "clearing all keys of a non-zero page deletes it and recycles its id", %{database: database} do
-      {index, allocator} = build_index([{1, ["a", "b"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{1, ["a", "b"]}])
 
       update = run_mutations(index, allocator, database, [{:clear, "a"}, {:clear, "b"}])
       {final_index, _db, final_allocator, _modified} = IndexUpdate.finish(update)
@@ -325,7 +282,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     end
 
     test "clearing all keys of page 0 keeps page 0 in the index with zero keys", %{database: database} do
-      {index, allocator} = build_index([{0, ["a", "b"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{0, ["a", "b"]}])
 
       update = run_mutations(index, allocator, database, [{:clear, "a"}, {:clear, "b"}])
       {final_index, _db, final_allocator, _modified} = IndexUpdate.finish(update)
@@ -339,7 +296,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
   describe "key-count accounting" do
     test "only sets that introduce a key raise the count", %{database: database} do
-      {index, allocator} = build_index([{0, ["k1", "k2", "k3"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{0, ["k1", "k2", "k3"]}])
 
       update =
         run_mutations(index, allocator, database, [
@@ -357,7 +314,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     end
 
     test "a clear of a key that was never there costs nothing", %{database: database} do
-      {index, allocator} = build_index([{0, ["k1", "k2", "k3"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{0, ["k1", "k2", "k3"]}])
 
       update =
         run_mutations(index, allocator, database, [
@@ -373,7 +330,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     end
 
     test "sets and clears in the same batch net out", %{database: database} do
-      {index, allocator} = build_index([{0, ["k1", "k2", "k3"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{0, ["k1", "k2", "k3"]}])
 
       update =
         run_mutations(index, allocator, database, [
@@ -392,7 +349,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     # so the delta must still be the number of keys the batch introduced.
     test "a batch that splits a page counts the added keys once", %{database: database} do
       existing = for i <- 1..200, do: "k#{String.pad_leading(to_string(i), 4, "0")}"
-      {index, allocator} = build_index([{0, existing}])
+      {index, allocator} = IndexTestHelpers.build_index([{0, existing}])
 
       new_keys = for i <- 1..100, do: "n#{String.pad_leading(to_string(i), 4, "0")}"
       update = run_mutations(index, allocator, database, Enum.map(new_keys, &{:set, &1, "v"}))
@@ -405,7 +362,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     end
 
     test "emptying a non-zero page counts every key it held", %{database: database} do
-      {index, allocator} = build_index([{1, ["a", "b"]}])
+      {index, allocator} = IndexTestHelpers.build_index([{1, ["a", "b"]}])
 
       update = run_mutations(index, allocator, database, [{:clear, "a"}, {:clear, "b"}])
 
@@ -415,7 +372,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
 
   describe "atomic mutations" do
     test "atomic add on a missing key treats the current value as empty", %{database: database} do
-      {index, allocator} = build_index([])
+      {index, allocator} = IndexTestHelpers.build_index([])
 
       update = run_mutations(index, allocator, database, [{:atomic, :add, "counter", <<5>>}])
 
@@ -429,7 +386,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IndexUpdateTest do
     end
 
     test "atomic add on an existing key loads and combines the stored value", %{database: database} do
-      {index, allocator} = build_index([])
+      {index, allocator} = IndexTestHelpers.build_index([])
 
       # First round: establish an existing value through the public API
       first_update =

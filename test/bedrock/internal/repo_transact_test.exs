@@ -426,7 +426,21 @@ defmodule Bedrock.Internal.RepoTransactTest do
     defp spawn_stub_materializer(test_pid, answers \\ 1) do
       materializer = spawn(fn -> materializer_loop(test_pid, answers) end)
       Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
+      stop_on_exit(materializer)
       materializer
+    end
+
+    defp stop_on_exit(pid) do
+      on_exit(fn ->
+        ref = Process.monitor(pid)
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+        after
+          1_000 -> raise "registered materializer did not stop"
+        end
+      end)
     end
 
     defp materializer_loop(_test_pid, 0), do: :ok
@@ -644,7 +658,7 @@ defmodule Bedrock.Internal.RepoTransactTest do
       # traffic. A dead materializer surfaces as :unavailable, which does
       # evict.
       materializer = spawn(fn -> Process.sleep(:infinity) end)
-      on_exit(fn -> Process.exit(materializer, :kill) end)
+      stop_on_exit(materializer)
       Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
 
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}

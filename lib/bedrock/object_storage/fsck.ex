@@ -11,9 +11,11 @@ defmodule Bedrock.ObjectStorage.Fsck do
   ## What it can prove
 
   Object storage has no manifest and no index. The namespace is flat and
-  self-describing by listing alone, so there is no referential integrity to
-  check: validation is structural, per chunk, and then per shard across the
-  chunks a listing turns up.
+  self-describing by listing alone, so the only referential integrity
+  available is the one the store can recover for itself: the shard layout,
+  replayed out of the system shard's own chunks (see "Recovering the
+  layout" below). Everything else is structural, per chunk, and then per
+  shard across the chunks a listing turns up.
 
   Per chunk (`check_chunk/3`):
 
@@ -38,6 +40,32 @@ defmodule Bedrock.ObjectStorage.Fsck do
     replay emit the same version twice, out of order, with no error
     anywhere.
 
+  ## Recovering the layout
+
+  A slice records no shard tag of its own (`Demux.MutationSlicer` encodes
+  mutations and a commit version, nothing else), so which keys a chunk is
+  *entitled* to hold is decided entirely by the tag in its path. The
+  authority for that is the `\\xFF/system/shard_keys/` family — and that
+  family is not in object storage as a map, it is materialized from the
+  system shard's own chunks. So the check bootstraps: replay `c/0/`,
+  fold the `shard_keys/` set/clear mutations, hand the surviving entries
+  to `SystemKeys.Reader.shard_layout_from_entries/1`, and validate every
+  shard against the map that replay just recovered.
+
+  Two things follow from where the map comes from.
+
+  **The replay is only trusted when the system shard is structurally
+  clean.** Every fault above is a reason a replay silently returns the
+  wrong mutations — a chunk filed under the wrong version is skipped, an
+  unordered directory replays out of order, overlapping chunks replay
+  twice. So `check/2` checks `c/0/` first and, on any fault there,
+  abandons layout recovery entirely rather than deriving confident
+  nonsense from a broken map. The result is `status: :unavailable` with a
+  reason, a note, and no layout-derived faults at all.
+
+  **The replayed history, not just its last state, is the containment
+  domain.** See below.
+
   ## What it cannot prove
 
   **A gap between chunks is not evidence of anything.** Versions are commit
@@ -50,6 +78,56 @@ defmodule Bedrock.ObjectStorage.Fsck do
   notes) and never faulted. A caller that *does* know the expected stream —
   a chaos harness driving a known workload — can make the call this module
   cannot.
+
+  **A tag with no chunks, or chunks under a tag the layout does not name,
+  are not faults.** Both have ordinary explanations and object storage
+  cannot tell them from the alarming ones. Chunks appear only after a
+  flush, so a shard that was just recruited, or that has taken no writes,
+  legitimately has no `c/<tag>/` prefix yet — and the same lag runs the
+  other way, since the `shard_keys/` mutation naming a new shard reaches
+  `c/0/` on the system shard's flush schedule, not the new shard's. In the
+  other direction, chunks are never deleted, so a tag the layout has
+  stopped naming keeps its chunks forever. Both are `:shard_not_in_layout`
+  and `:layout_shard_without_chunks` notes.
+
+  **Containment is checked against every range the tag has ever held, not
+  against its current one.** A chunk written before a boundary moved holds
+  the keys the *then*-current layout routed to it, and it is still a
+  correct chunk; faulting it against today's map would report the normal
+  consequence of resharding as corruption. So the replay accumulates the
+  ranges from every `shard_keys/` entry it sees written, and a mutation is
+  contained if it falls in any of them. Today that set has one member per
+  tag — boundaries are written once at bootstrap and nothing moves them —
+  so the check is exactly as tight as a current-layout check would be,
+  and it stays sound when split and merge land. What it gives up is
+  catching a misroute *into a range the tag used to own*, which needs the
+  version-indexed layout history and is not worth its complexity while
+  there is no resharding to produce one.
+
+  Two kinds of key are exempt, because they are outside every shard's
+  range by design rather than by accident:
+
+  - anything at or above `Bedrock.end_of_keyspace/0`. The commit proxy
+    privatizes a membership clear by prefixing it past every boundary and
+    addressing it to an explicit tag
+    (`CommitProxy.Finalization.privatized_mutations/1`, FDB's
+    `ApplyMetadataMutation.cpp` `withPrefix(systemKeys.begin)`), precisely
+    so no materializer can store it. It rides the shard's stream and lands
+    in the shard's chunks all the same;
+  - a degenerate `clear_range` whose start is not below its end, which
+    names no keys.
+
+  A `clear_range` is checked whole: the proxy clamps each routed copy to
+  the owning shard's bounds, so a range that straddles a boundary in the
+  persisted slice was never clamped.
+
+  **A legacy `shard_keys/` family suspends containment.** Values written
+  before `SystemKeys.Values` carry a tag and no start key, and
+  `shard_layout_from_entries/1` reconstructs the missing starts by
+  adjacency over the final state alone. That gives a usable current map —
+  enough to check coverage — but no history, so containment would be
+  measuring against a fabrication. It is skipped, with a
+  `:containment_undecidable` note.
 
   **There are no checksums.** The chunk format carries none, so integrity
   here rests on magic bytes plus structural completeness: bit rot inside a
@@ -80,14 +158,23 @@ defmodule Bedrock.ObjectStorage.Fsck do
       #=> [:chunk_range_overlap]
   """
 
+  alias Bedrock.ControlPlane.Config.RecoveryAttempt
   alias Bedrock.DataPlane.Transaction
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.Chunk
+  alias Bedrock.ObjectStorage.ChunkReader
   alias Bedrock.ObjectStorage.Keys
   alias Bedrock.ObjectStorage.LocalFilesystem
+  alias Bedrock.SystemKeys
+  alias Bedrock.SystemKeys.Reader, as: SystemKeysReader
+  alias Bedrock.SystemKeys.Values
 
   @max_uint64 0xFFFFFFFFFFFFFFFF
   @scratch_prefix ".bedrock-tmp."
+  # `Bedrock.end_of_keyspace/0`, inlined the way the materializer inlines
+  # it: the exclusive top of every shard's range, and the floor of the
+  # privatized-notice space above it.
+  @end_of_keyspace <<0xFF, 0xFF>>
 
   defmodule Fault do
     @moduledoc """
@@ -165,21 +252,62 @@ defmodule Bedrock.ObjectStorage.Fsck do
     defstruct [:shard_tag, :range, :range_analysis, chunks: [], faults: [], gaps: []]
   end
 
+  defmodule LayoutResult do
+    @moduledoc """
+    The shard layout recovered by replaying the system shard's chunks, and
+    the verdict on it.
+
+    `status` is `:recovered` only when the system shard was structurally
+    clean, its `shard_keys/` family decoded, and it named at least one
+    shard. Otherwise it is `:unavailable` and `reason` says which of those
+    failed — every layout-derived check is then skipped rather than run
+    against a map nobody should trust.
+
+    `shards` is the recovered layout in ascending `start_key` order.
+    `ranges_by_tag` is the containment domain: for each shard tag, as its
+    object-storage path spells it, every `{start_key, end_key}` that tag
+    has held across the replayed history — which is what a chunk's
+    contents are actually judged against, not `shards`.
+
+    `containment` is `:undecidable` when the family carries legacy
+    values, whose start keys are reconstructed rather than recorded.
+    """
+
+    @type status :: :recovered | :unavailable
+    @type shard :: %{tag: term(), start_key: Bedrock.key(), end_key: Bedrock.key()}
+
+    @type t :: %__MODULE__{
+            status: status(),
+            reason: atom() | nil,
+            shards: [shard()],
+            ranges_by_tag: %{String.t() => [{Bedrock.key(), Bedrock.key()}]},
+            containment: :decidable | :undecidable,
+            faults: [Fault.t()]
+          }
+
+    defstruct [:status, :reason, shards: [], ranges_by_tag: %{}, containment: :decidable, faults: []]
+  end
+
   defmodule Report do
     @moduledoc """
     The verdict on a store. `clean?` is true exactly when `faults` is empty;
     notes never make a store unclean.
+
+    `layout` is `nil` when layout recovery was not attempted (`check_layout:
+    false`); otherwise it is a `LayoutResult`, which may still be
+    `:unavailable`.
     """
 
     @type t :: %__MODULE__{
             clean?: boolean(),
             chunk_count: non_neg_integer(),
             shards: [ShardResult.t()],
+            layout: LayoutResult.t() | nil,
             faults: [Fault.t()],
             notes: [Note.t()]
           }
 
-    defstruct [:clean?, :chunk_count, shards: [], faults: [], notes: []]
+    defstruct [:clean?, :chunk_count, :layout, shards: [], faults: [], notes: []]
   end
 
   @doc """
@@ -188,9 +316,16 @@ defmodule Bedrock.ObjectStorage.Fsck do
   ## Options
 
   - `:shards` - only check these shard tags (default: every shard the
-    listing turns up)
+    listing turns up). Layout recovery always reads the system shard, so
+    containment survives a filter; the tag/prefix correspondence notes do
+    not, and are skipped, because a filtered listing cannot tell a shard
+    that has no chunks from one that was not looked at.
   - `:check_transactions` - decode each transaction slice and compare its
-    commit version against its directory entry (default: `true`)
+    commit version against its directory entry (default: `true`). Key
+    containment needs the same decode and is skipped with it.
+  - `:check_layout` - replay the system shard to recover the shard layout,
+    and check coverage, containment and tag correspondence against it
+    (default: `true`)
 
   Raises `ObjectStorage.ListError` if the store cannot be listed: a short
   listing would report chunks as absent without having looked for them,
@@ -199,22 +334,28 @@ defmodule Bedrock.ObjectStorage.Fsck do
   @spec check(ObjectStorage.backend(), keyword()) :: Report.t()
   def check(backend, opts \\ []) do
     shards = Keyword.get(opts, :shards)
+    layout = recover_layout(backend, opts)
 
     shard_results =
       backend
       |> chunk_keys(shards)
-      |> Enum.map(&check_stored_chunk(backend, &1, opts))
+      |> Enum.map(&check_stored_chunk(backend, &1, chunk_opts(opts, layout)))
       |> Enum.group_by(& &1.shard_tag)
       |> Enum.sort_by(fn {shard_tag, _} -> shard_tag end)
       |> Enum.map(fn {shard_tag, chunks} -> check_shard(shard_tag, chunks) end)
 
-    faults = Enum.flat_map(shard_results, &shard_faults/1)
-    notes = debris_notes(backend, shards) ++ Enum.flat_map(shard_results, &gap_notes/1)
+    faults = layout_faults(layout) ++ Enum.flat_map(shard_results, &shard_faults/1)
+
+    notes =
+      debris_notes(backend, shards) ++
+        Enum.flat_map(shard_results, &gap_notes/1) ++
+        layout_notes(layout) ++ correspondence_notes(layout, shard_results, shards)
 
     %Report{
       clean?: faults == [],
       chunk_count: shard_results |> Enum.map(&length(&1.chunks)) |> Enum.sum(),
       shards: shard_results,
+      layout: layout,
       faults: faults,
       notes: notes
     }
@@ -231,12 +372,16 @@ defmodule Bedrock.ObjectStorage.Fsck do
   ## Options
 
   - `:check_transactions` - decode each transaction slice (default: `true`)
+  - `:layout_ranges` - `%{shard_tag => [{start_key, end_key}]}`, the ranges
+    each tag is entitled to hold. A tag absent from the map is not checked;
+    so is a `nil` map, which is what `check/2` passes when no layout could
+    be recovered.
   """
   @spec check_chunk(String.t(), binary(), keyword()) :: ChunkResult.t()
   def check_chunk(key, binary, opts \\ []) do
     shard_tag = shard_tag_from_key(key)
     {key_faults, key_version} = check_key(key)
-    {body_faults, range, txn_count} = check_body(binary, key_version, opts)
+    {body_faults, range, txn_count} = check_body(binary, key_version, containment_opts(opts, shard_tag))
 
     %ChunkResult{
       key: key,
@@ -480,7 +625,10 @@ defmodule Bedrock.ObjectStorage.Fsck do
 
   defp transaction_faults(directory, data, opts) do
     if Keyword.get(opts, :check_transactions, true) do
-      Enum.flat_map(directory, &transaction_fault(&1, binary_part(data, &1.offset, &1.length)))
+      slices = Enum.map(directory, &{&1, binary_part(data, &1.offset, &1.length)})
+
+      Enum.flat_map(slices, fn {entry, slice} -> transaction_fault(entry, slice) end) ++
+        containment_faults(slices, Keyword.get(opts, :shard_ranges))
     else
       []
     end
@@ -506,6 +654,272 @@ defmodule Bedrock.ObjectStorage.Fsck do
       [fault(:transaction_version_mismatch, %{entry_version: entry.version, commit_version: commit_version})]
     end
   end
+
+  # ------------------------------------------------------------ containment
+
+  # Resolves the per-store `:layout_ranges` map down to the one tag's
+  # ranges before descending, so nothing below this point has to know
+  # which shard it is looking at.
+  defp containment_opts(opts, shard_tag) do
+    case Keyword.get(opts, :layout_ranges) do
+      nil -> opts
+      by_tag -> Keyword.put(opts, :shard_ranges, Map.get(by_tag, shard_tag))
+    end
+  end
+
+  defp containment_faults(_slices, nil), do: []
+
+  # One fault per chunk, not per mutation: a misrouted shard produces
+  # offenders by the thousand, and the operator's question is answered by
+  # the first one plus a count.
+  defp containment_faults(slices, ranges) do
+    slices
+    |> Enum.flat_map(fn {entry, slice} -> escapees(entry.version, slice, ranges) end)
+    |> case do
+      [] ->
+        []
+
+      [{version, key_or_range} | _] = all ->
+        detail = %{version: version, key: key_or_range, count: length(all), shard_ranges: ranges}
+        [fault(:mutation_out_of_shard_range, detail)]
+    end
+  end
+
+  # A slice whose mutations section will not stream has nothing to place;
+  # `transaction_fault/2` has already faulted it if it is torn, and an
+  # absent section is an empty transaction.
+  defp escapees(version, slice, ranges) do
+    case Transaction.mutations(slice) do
+      {:ok, mutations} ->
+        mutations
+        |> Enum.reject(&contained?(&1, ranges))
+        |> Enum.map(&{version, mutation_key(&1)})
+
+      {:error, _reason} ->
+        []
+    end
+  end
+
+  # A range mutation is checked whole and must fit inside ONE range: the
+  # proxy clamps each routed copy to the owning shard's bounds, so a
+  # persisted range that straddles a boundary was never clamped. An empty
+  # range names no keys.
+  defp contained?({:clear_range, start_key, end_key}, ranges) do
+    start_key >= end_key or
+      Enum.any?(ranges, fn {range_start, range_end} -> range_start <= start_key and end_key <= range_end end)
+  end
+
+  # Anything past the end of the keyspace is a privatized notice:
+  # deliberately outside every shard's range so no materializer can store
+  # it, and addressed to a tag rather than routed by a boundary walk.
+  defp contained?({:set, key, _value}, ranges), do: holds?(ranges, key)
+  defp contained?({:clear, key}, ranges), do: holds?(ranges, key)
+  defp contained?({:atomic, _op, key, _value}, ranges), do: holds?(ranges, key)
+
+  # A mutation shape this module does not know is not evidence of a
+  # misroute; whatever introduced it teaches this function about it.
+  defp contained?(_mutation, _ranges), do: true
+
+  defp holds?(_ranges, key) when key >= @end_of_keyspace, do: true
+  defp holds?(ranges, key), do: Enum.any?(ranges, fn {start_key, end_key} -> start_key <= key and key < end_key end)
+
+  defp mutation_key({:clear_range, start_key, end_key}), do: {start_key, end_key}
+  defp mutation_key({:atomic, _op, key, _value}), do: key
+  defp mutation_key(mutation), do: elem(mutation, 1)
+
+  # ----------------------------------------------------------------- layout
+
+  defp chunk_opts(opts, %LayoutResult{status: :recovered, containment: :decidable, ranges_by_tag: by_tag}),
+    do: Keyword.put(opts, :layout_ranges, by_tag)
+
+  defp chunk_opts(opts, _layout), do: opts
+
+  defp recover_layout(backend, opts) do
+    if Keyword.get(opts, :check_layout, true) do
+      tag = system_shard_tag()
+
+      case system_shard_health(backend, tag) do
+        :ok -> replay_layout(backend, tag)
+        {:unavailable, reason} -> %LayoutResult{status: :unavailable, reason: reason}
+      end
+    end
+  end
+
+  defp system_shard_tag, do: Keys.shard_tag(RecoveryAttempt.system_shard_id())
+
+  # The system shard is read twice — once here for its verdict, once by
+  # the replay — and a third time by the main pass. It is the metadata
+  # shard, small by construction, and the alternative is trusting a
+  # replay whose ordering nothing has checked. The slice decode is forced
+  # on regardless of `:check_transactions`, for the same reason: this is
+  # the one shard whose contents are about to be believed.
+  defp system_shard_health(backend, tag) do
+    case Enum.to_list(ObjectStorage.list(backend, Keys.chunks_prefix(tag))) do
+      [] ->
+        {:unavailable, :no_system_shard_chunks}
+
+      keys ->
+        chunks = Enum.map(keys, &check_stored_chunk(backend, &1, check_transactions: true))
+
+        if tag |> check_shard(chunks) |> shard_faults() == [],
+          do: :ok,
+          else: {:unavailable, :system_shard_unhealthy}
+    end
+  end
+
+  defp replay_layout(backend, tag) do
+    {entries, history, legacy?} = replay_shard_keys(backend, tag)
+
+    if entries == %{} do
+      %LayoutResult{status: :unavailable, reason: :no_shard_keys_entries}
+    else
+      decode_layout(entries, history, legacy?, tag)
+    end
+  end
+
+  defp decode_layout(entries, history, legacy?, tag) do
+    case SystemKeysReader.shard_layout_from_entries(Map.to_list(entries)) do
+      {:ok, layout} ->
+        recovered_layout(layout, history, legacy?)
+
+      {:error, {:invalid_shard_value, key}} ->
+        fault = %Fault{kind: :layout_undecodable_entry, shard_tag: tag, key: key, detail: %{}}
+        %LayoutResult{status: :unavailable, reason: :undecodable_entry, faults: [fault]}
+    end
+  end
+
+  # Folds the `shard_keys/` family out of the system shard's own stream,
+  # oldest first, exactly as `RoutingData.apply_mutations/2` would. What
+  # survives is the family's final state; what accumulates alongside it is
+  # every range any entry ever named, which is the containment domain.
+  defp replay_shard_keys(backend, tag) do
+    backend
+    |> ChunkReader.new(tag)
+    |> ChunkReader.read_all_transactions()
+    |> Enum.reduce({%{}, MapSet.new(), false}, fn {_version, slice}, acc ->
+      case Transaction.mutations(slice) do
+        {:ok, mutations} -> Enum.reduce(mutations, acc, &apply_shard_key_mutation/2)
+        {:error, _reason} -> acc
+      end
+    end)
+  end
+
+  defp apply_shard_key_mutation({:set, key, value}, {entries, history, legacy?} = acc) do
+    case SystemKeys.parse_key(key) do
+      {:shard_key, end_key} ->
+        case Values.decode_shard_key_entry(value) do
+          {:ok, {tag, start_key}} ->
+            {Map.put(entries, key, value), MapSet.put(history, {tag, start_key, end_key}), legacy?}
+
+          {:error, _reason} ->
+            {Map.put(entries, key, value), history, true}
+        end
+
+      _not_a_shard_key ->
+        acc
+    end
+  end
+
+  # `entries` holds nothing but shard keys, so a clear that names anything
+  # else is already a no-op and needs no family test of its own.
+  defp apply_shard_key_mutation({:clear, key}, {entries, history, legacy?}),
+    do: {Map.delete(entries, key), history, legacy?}
+
+  defp apply_shard_key_mutation({:clear_range, start_key, end_key}, {entries, history, legacy?}) do
+    kept = Map.reject(entries, fn {key, _value} -> key >= start_key and key < end_key end)
+    {kept, history, legacy?}
+  end
+
+  defp apply_shard_key_mutation(_mutation, acc), do: acc
+
+  defp recovered_layout(layout, history, legacy?) do
+    shards =
+      layout
+      |> Enum.map(fn {end_key, {tag, start_key}} -> %{tag: tag, start_key: start_key, end_key: end_key} end)
+      |> Enum.sort_by(& &1.start_key)
+
+    %LayoutResult{
+      status: :recovered,
+      shards: shards,
+      ranges_by_tag: ranges_by_tag(history, shards),
+      containment: if(legacy?, do: :undecidable, else: :decidable),
+      faults: coverage_faults(shards)
+    }
+  end
+
+  # The current layout is folded in as well as the history: a store whose
+  # oldest system chunk postdates the bootstrap write has entries nobody
+  # saw written, and they are no less legitimate for it.
+  defp ranges_by_tag(history, shards) do
+    shards
+    |> Enum.reduce(history, fn shard, acc -> MapSet.put(acc, {shard.tag, shard.start_key, shard.end_key}) end)
+    |> Enum.flat_map(fn {tag, start_key, end_key} ->
+      case shard_prefix(tag) do
+        nil -> []
+        prefix -> [{prefix, {start_key, end_key}}]
+      end
+    end)
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+  end
+
+  # A tag that is not a shard id names no object-storage prefix, so there
+  # is no chunk it could be compared against. `decode_shard_key_entry/1`
+  # only guarantees an integer.
+  defp shard_prefix(tag) when is_integer(tag) and tag >= 0, do: Keys.shard_tag(tag)
+  defp shard_prefix(_tag), do: nil
+
+  # Walks the layout in ascending start order against the highest end seen
+  # so far, from the start of the keyspace through its end. Both a hole
+  # and a double claim leave a key that routing cannot resolve to exactly
+  # one owner, and the family is committed transactionally, so neither is
+  # a state the cluster passes through on its way to a good one.
+  defp coverage_faults(shards) do
+    {faults, covered} =
+      Enum.reduce(shards, {[], <<>>}, fn shard, {faults, covered} ->
+        {[coverage_fault(covered, shard) | faults], max(covered, shard.end_key)}
+      end)
+
+    [trailing_gap(covered) | faults] |> Enum.reject(&is_nil/1) |> Enum.reverse()
+  end
+
+  defp coverage_fault(covered, %{start_key: start_key}) when start_key > covered,
+    do: fault(:layout_gap, %{after_key: covered, before_key: start_key})
+
+  defp coverage_fault(covered, %{start_key: start_key, end_key: end_key}) when start_key < covered,
+    do: fault(:layout_overlap, %{covered_through: covered, start_key: start_key, end_key: end_key})
+
+  defp coverage_fault(_covered, _shard), do: nil
+
+  defp trailing_gap(covered) when covered < @end_of_keyspace,
+    do: fault(:layout_gap, %{after_key: covered, before_key: @end_of_keyspace})
+
+  defp trailing_gap(_covered), do: nil
+
+  defp layout_faults(%LayoutResult{faults: faults}), do: faults
+  defp layout_faults(_layout), do: []
+
+  defp layout_notes(%LayoutResult{status: :unavailable, reason: reason}),
+    do: [%Note{kind: :layout_unavailable, detail: %{reason: reason}}]
+
+  defp layout_notes(%LayoutResult{containment: :undecidable}),
+    do: [%Note{kind: :containment_undecidable, detail: %{reason: :legacy_shard_key_encoding}}]
+
+  defp layout_notes(_layout), do: []
+
+  # Skipped under a shard filter: the listing saw only what it was asked
+  # for, so every tag it did not look at would read as one with no chunks.
+  defp correspondence_notes(%LayoutResult{status: :recovered} = layout, shard_results, nil) do
+    stored = shard_results |> Enum.map(& &1.shard_tag) |> Enum.reject(&is_nil/1) |> MapSet.new()
+    named = layout.ranges_by_tag |> Map.keys() |> MapSet.new()
+
+    correspondence_note(:shard_not_in_layout, MapSet.difference(stored, named)) ++
+      correspondence_note(:layout_shard_without_chunks, MapSet.difference(named, stored))
+  end
+
+  defp correspondence_notes(_layout, _shard_results, _shards), do: []
+
+  defp correspondence_note(kind, tags),
+    do: tags |> Enum.sort() |> Enum.map(&%Note{kind: kind, shard_tag: &1, detail: %{}})
 
   # ------------------------------------------------------------------ shard
 

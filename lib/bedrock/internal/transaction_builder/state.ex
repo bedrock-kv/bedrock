@@ -17,6 +17,8 @@ defmodule Bedrock.Internal.TransactionBuilder.State do
           read_version: Bedrock.version() | nil,
           commit_version: Bedrock.version() | nil,
           #
+          max_read_key: Bedrock.key(),
+          #
           tx: Tx.t(),
           stack: [Tx.t()],
           fastest_storage_servers: %{Bedrock.key_range() => pid()},
@@ -29,6 +31,10 @@ defmodule Bedrock.Internal.TransactionBuilder.State do
             #
             read_version: nil,
             commit_version: nil,
+            # FDB's getMaxReadKey(): the exclusive bound every read address
+            # is checked against, widened to the end of the keyspace only
+            # for a transaction opened with read_system_keys: true.
+            max_read_key: Bedrock.end_of_user_keyspace(),
             #
             tx: Tx.new(),
             stack: [],

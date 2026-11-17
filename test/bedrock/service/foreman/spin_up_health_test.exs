@@ -1,8 +1,11 @@
 defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog, only: [with_log: 1]
+
   alias Bedrock.Service.Foreman.Impl
   alias Bedrock.Service.Foreman.State
+  alias Bedrock.Service.WorkerBehaviour
 
   # Spin-up is where a foreman learns what it has and starts it. If the
   # verdict is not recomputed there, the foreman keeps the :starting it
@@ -23,7 +26,7 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
 
   defmodule SpinUpTestWorker do
     @moduledoc false
-    use Bedrock.Service.WorkerBehaviour, kind: :log
+    use WorkerBehaviour, kind: :log
     use GenServer
 
     def child_spec(opts), do: %{id: {__MODULE__, opts[:id]}, start: {__MODULE__, :start_link, [opts]}}
@@ -33,14 +36,21 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
     def init(opts), do: {:ok, opts}
   end
 
-  defp write_worker(dir, id) do
+  defmodule SpinUpRaisingWorker do
+    @moduledoc false
+    use WorkerBehaviour, kind: :log
+
+    def child_spec(_opts), do: raise("this worker cannot be started")
+  end
+
+  defp write_worker(dir, id, worker \\ SpinUpTestWorker) do
     path = Path.join(dir, id)
     File.mkdir_p!(path)
 
     File.write!(
       Path.join(path, "manifest.json"),
       ~s({"id":"#{id}","cluster":"spin_up_test_cluster",) <>
-        ~s("worker":"Bedrock.Service.Foreman.SpinUpHealthTest.SpinUpTestWorker","params":{}})
+        ~s("worker":"#{inspect(worker)}","params":{}})
     )
   end
 
@@ -117,6 +127,28 @@ defmodule Bedrock.Service.Foreman.SpinUpHealthTest do
       assert %{health: health} = Impl.do_spin_up(base_state(dir))
 
       refute health == :ok, "a worker that cannot start must not be reported as healthy"
+    end
+
+    # Starting runs in a linked task, so a worker whose start RAISES used
+    # to reach the foreman as an exit signal: spin-up never returned, the
+    # foreman died, and — since it re-reads the same directory on restart
+    # — it did so again on every restart until the supervisor gave up and
+    # took the node's other workers with it. One bad manifest is one bad
+    # worker, and spin-up has to finish.
+    test "a worker whose start raises does not take its siblings down", %{tmp_dir: dir} do
+      start_supervised!(
+        {DynamicSupervisor, strategy: :one_for_one, name: SpinUpTestCluster.otp_name(:worker_supervisor)}
+      )
+
+      write_worker(dir, "aaaaaaaa")
+      write_worker(dir, "bbbbbbbb", SpinUpRaisingWorker)
+
+      {state, _log} = with_log(fn -> Impl.do_spin_up(base_state(dir)) end)
+
+      assert %{health: {:ok, pid}} = state.workers["aaaaaaaa"]
+      assert Process.alive?(pid)
+      assert %{health: {:failed_to_start, _reason}} = state.workers["bbbbbbbb"]
+      assert state.health == {:failed_to_start, :at_least_one_failed_to_start}
     end
   end
 end

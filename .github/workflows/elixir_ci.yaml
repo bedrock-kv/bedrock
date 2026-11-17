@@ -41,9 +41,10 @@ jobs:
     steps:
 
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Install Elixir and Erlang
+      id: beam
       uses: erlef/setup-beam@v1
       with:
         elixir-version: ${{ matrix.elixir }}
@@ -52,7 +53,7 @@ jobs:
         install-rebar: true
 
     - name: Restore deps and _build cache
-      uses: actions/cache@v3
+      uses: actions/cache@v6
       with:
         path: |
           deps
@@ -88,13 +89,16 @@ jobs:
       run: mix credo --strict
 
     # Define how to cache the `plts` directory. After the first run,
-    # this speeds up dialyzer runs a lot.
+    # this speeds up dialyzer runs a lot. Key on the versions setup-beam
+    # actually installed, not the matrix request: a matrix "27.3" can resolve
+    # to a newer patch release, and Dialyzer rejects a PLT built by another
+    # version ("Old PLT file") even though dialyxir reports it up to date.
     - name: Cache PLTs
       id: cache-plts
-      uses: actions/cache@v3
+      uses: actions/cache@v6
       with:
         path: plts
-        key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-plts-v3-${{ hashFiles('**/mix.lock') }}
+        key: ${{ runner.os }}-${{ steps.beam.outputs.elixir-version }}-${{ steps.beam.outputs.otp-version }}-plts-v4-${{ hashFiles('**/mix.lock') }}
 
     - name: Dialyzer
       run: mix dialyzer
@@ -110,7 +114,7 @@ jobs:
       MIX_ENV: test
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Install Elixir and Erlang
       uses: erlef/setup-beam@v1
@@ -121,7 +125,7 @@ jobs:
         install-rebar: true
 
     - name: Restore deps and _build cache
-      uses: actions/cache@v3
+      uses: actions/cache@v6
       with:
         path: |
           deps
@@ -155,7 +159,7 @@ jobs:
       BEDROCK_INCLUDE_DISTRIBUTED: "1"
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v7
 
     - name: Install Elixir and Erlang
       uses: erlef/setup-beam@v1
@@ -166,7 +170,7 @@ jobs:
         install-rebar: true
 
     - name: Restore deps and _build cache
-      uses: actions/cache@v3
+      uses: actions/cache@v6
       with:
         path: |
           deps

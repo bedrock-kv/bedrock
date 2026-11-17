@@ -149,6 +149,7 @@ jobs:
         docker run -d --name s3 -p 9000:9000 \
           -e RUSTFS_ACCESS_KEY=minio_key \
           -e RUSTFS_SECRET_KEY=minio_secret \
+          -e RUSTFS_REGION=local \
           -e RUSTFS_CONSOLE_ENABLE=false \
           rustfs/rustfs:1.0.6
         for i in $(seq 60); do
@@ -205,6 +206,7 @@ jobs:
         docker run -d --name s3 -p 9000:9000 \
           -e RUSTFS_ACCESS_KEY=minio_key \
           -e RUSTFS_SECRET_KEY=minio_secret \
+          -e RUSTFS_REGION=local \
           -e RUSTFS_CONSOLE_ENABLE=false \
           rustfs/rustfs:1.0.6
         for i in $(seq 60); do

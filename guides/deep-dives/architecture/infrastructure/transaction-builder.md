@@ -48,6 +48,14 @@ Transaction Builder solves this by maintaining a local cache of all writes made 
 
 This local caching also provides significant performance benefits. Repeated reads of the same key within a transaction only hit the network once, with subsequent reads served from the local cache. For workloads that read and modify the same keys multiple times, this can dramatically reduce network overhead.
 
+## Range Reads and Observed Absence
+
+Plain key ranges use a half-open interval `[start, end)`. The builder merges pending writes and clears even when a materializer returns no rows. It continues across empty shards and pages hidden by local clears until the visible page is filled or the requested interval is exhausted.
+
+Ordinary range reads record the interval actually consumed, including gaps where no keys exist. A truncated page records through the last returned key; an exhausted interval records through its exclusive endpoint. The resolver checks this range against newer point writes as well as range writes, so two transactions cannot both reserve different keys based on the same observed empty range. Snapshot reads still see local writes but add no read conflicts and preserve conflicts recorded by earlier ordinary reads.
+
+Pairs of `first_greater_or_equal` selectors use the same plain-range path. Arbitrary offset selectors retain the existing materializer resolution path; their cross-shard resolution and conflict envelopes remain a separate limitation tracked by `bedrock-mi1`.
+
 ## Materializer Selection and Performance Optimization
 
 Transaction Builder maintains knowledge about which materializers handle which [key ranges](../../../glossary.md#key-range), enabling it to route read requests efficiently. This mapping is derived from the [transaction system layout](../../../glossary.md#transaction-system-layout) and is kept current as the cluster configuration changes.

@@ -73,7 +73,7 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
 
   defp do_check_conflicts([{v, existing_points, tree} | rest], points, ranges, version, acc) when v > version do
     # Check points first (fast path)
-    if MapSet.disjoint?(points, existing_points) do
+    if MapSet.disjoint?(points, existing_points) and not points_overlap_ranges?(existing_points, ranges) do
       # No point conflict - accumulate tree and continue
       new_acc = if tree, do: [tree | acc], else: acc
       do_check_conflicts(rest, points, ranges, version, new_acc)
@@ -83,6 +83,14 @@ defmodule Bedrock.DataPlane.Resolver.Conflicts do
   end
 
   defp do_check_conflicts(_, points, ranges, _version, acc), do: check_accumulated_conflicts(acc, points, ranges)
+
+  defp points_overlap_ranges?(_points, []), do: false
+
+  defp points_overlap_ranges?(points, ranges) do
+    Enum.any?(points, fn point ->
+      Enum.any?(ranges, fn {start_key, end_key} -> start_key <= point and point < end_key end)
+    end)
+  end
 
   defp check_accumulated_conflicts([], _points, _ranges), do: :ok
 

@@ -515,6 +515,30 @@ defmodule Bedrock.Internal.TransactionBuilder.Tx do
   # Private Helper Functions - Storage Merging
   # =============================================================================
 
+  @doc false
+  @spec range_view(t(), [{key(), value()}], {key(), key()}) :: [{key(), value()}]
+  def range_view(tx, storage_results, {start_key, end_key}) do
+    clear_ranges = Enum.filter(tx.mutations, &match?({:clear_range, _, _}, &1))
+
+    # Surviving pending writes were made after any range clear covering them.
+    # Apply range clears to storage first so later local sets remain visible.
+    storage_results =
+      storage_results
+      |> Enum.filter(fn {key, _} -> key >= start_key and key < end_key end)
+      |> filter_cleared_keys(clear_ranges)
+
+    {reversed, _} =
+      merge_ordered_results_bounded(
+        storage_results,
+        :gb_trees.iterator_from(start_key, tx.writes),
+        [],
+        [],
+        end_key
+      )
+
+    reversed |> filter_cleared_keys([]) |> Enum.reverse()
+  end
+
   # Helper functions for the enhanced merge_storage_range_with_writes
 
   defp scan_pending_writes(tx, start_key, end_key) when start_key >= end_key do

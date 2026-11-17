@@ -424,9 +424,29 @@ defmodule Bedrock.Internal.RepoTransactTest do
     defp cached_entry({start_key, end_key, _tag, raw_ref}), do: {start_key, end_key, raw_ref}
 
     defp spawn_stub_materializer(test_pid, answers \\ 1) do
+      name = RoutingCluster.otp_name_for_worker("wkr1")
+      await_name_free(name)
       materializer = spawn(fn -> materializer_loop(test_pid, answers) end)
-      Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
+      Process.register(materializer, name)
       materializer
+    end
+
+    # Every test registers its stub under the same name, and a stub exits
+    # only after its last answer -- possibly after its test has finished.
+    # Retire any previous holder and wait until the name is released.
+    defp await_name_free(name) do
+      case Process.whereis(name) do
+        nil ->
+          :ok
+
+        stale ->
+          ref = Process.monitor(stale)
+          Process.exit(stale, :kill)
+
+          receive do
+            {:DOWN, ^ref, :process, ^stale, _} -> :ok
+          end
+      end
     end
 
     defp materializer_loop(_test_pid, 0), do: :ok

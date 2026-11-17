@@ -17,7 +17,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
 
   defp wait_for_health_report(worker_id, pid, timeout \\ 5000) do
     receive do
-      {:"$gen_cast", {:worker_health, ^worker_id, {:ok, ^pid}}} -> :ok
+      {:"$gen_cast", {:worker_health, ^worker_id, ^pid, {:ok, ^pid}}} -> :ok
     after
       timeout -> flunk("Did not receive health report within #{timeout}ms")
     end
@@ -136,7 +136,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       assert_receive {:DOWN, ^ref, :process, ^worker_pid, :killed}
 
       # Supervisor restarts worker - wait for new health report
-      assert_receive {:"$gen_cast", {:worker_health, ^worker_id, {:ok, new_worker_pid}}}, 1000
+      assert_receive {:"$gen_cast", {:worker_health, ^worker_id, new_worker_pid, {:ok, new_worker_pid}}}, 1000
 
       assert [{_child_id2, ^new_worker_pid, :worker, [GenServer]}] = Supervisor.which_children(supervisor_pid)
       assert new_worker_pid != worker_pid and Process.alive?(new_worker_pid)
@@ -206,7 +206,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
       mock_foreman =
         spawn_link(fn ->
           receive do
-            {:"$gen_cast", {:worker_health, worker_id, health}} ->
+            {:"$gen_cast", {:worker_health, worker_id, _reporter, health}} ->
               send(:test_coordinator, {:mock_foreman_received, worker_id, health})
               :timer.sleep(:infinity)
           end

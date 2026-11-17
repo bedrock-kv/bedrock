@@ -50,6 +50,14 @@ defmodule Bedrock.Service.Foreman.RecomputeHealthTest do
   end
 
   describe "do_remove_worker/2" do
+    setup do
+      start_supervised!(
+        {DynamicSupervisor, strategy: :one_for_one, name: RecomputeTestCluster.otp_name(:worker_supervisor)}
+      )
+
+      :ok
+    end
+
     test "removing the last failing worker makes the foreman healthy" do
       state = state_with([healthy_worker("aaaa"), failed_worker("bbbb")])
 
@@ -74,6 +82,14 @@ defmodule Bedrock.Service.Foreman.RecomputeHealthTest do
   end
 
   describe "do_remove_workers/2" do
+    setup do
+      start_supervised!(
+        {DynamicSupervisor, strategy: :one_for_one, name: RecomputeTestCluster.otp_name(:worker_supervisor)}
+      )
+
+      :ok
+    end
+
     test "a batch removal that clears every failure makes the foreman healthy" do
       state = state_with([healthy_worker("aaaa"), failed_worker("bbbb"), failed_worker("cccc")])
 

@@ -7,7 +7,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.IngestTest do
 
   defp wait_for_health_report(worker_id, pid, timeout \\ 5_000) do
     receive do
-      {:"$gen_cast", {:worker_health, ^worker_id, {:ok, ^pid}}} -> :ok
+      {:"$gen_cast", {:worker_health, ^worker_id, ^pid, {:ok, ^pid}}} -> :ok
     after
       timeout -> flunk("Did not receive health report within #{timeout}ms")
     end

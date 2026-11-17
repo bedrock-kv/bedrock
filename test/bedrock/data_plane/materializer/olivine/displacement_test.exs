@@ -62,7 +62,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
       assert {:stop, {:shutdown, :displaced}, _t} =
                Server.handle_info({:tsl_updated, tsl(3, [proxy])}, state([]))
 
-      assert_received {:"$gen_cast", {:worker_retired, "mat-1"}}
+      assert_received {:"$gen_cast", {:worker_retired, "mat-1", reporter}}
+      assert reporter == self()
     end)
   end
 
@@ -73,7 +74,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
       assert {:stop, {:shutdown, :displaced}, _t} =
                Server.handle_info({:tsl_updated, tsl(3, [proxy])}, state([]))
 
-      assert_received {:"$gen_cast", {:worker_retired, "mat-1"}}
+      assert_received {:"$gen_cast", {:worker_retired, "mat-1", reporter}}
+      assert reporter == self()
     end)
   end
 
@@ -81,14 +83,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
     {:ok, proxy} = StubProxy.start_link({:ok, %{"mat-1" => "node@host"}})
 
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(3, [proxy])}, state([]))
-    refute_received {:"$gen_cast", {:worker_retired, _}}
+    refute_received {:"$gen_cast", {:worker_retired, _, _}}
   end
 
   test "a locked proxy is not a verdict — revalidate on the next push" do
     {:ok, proxy} = StubProxy.start_link({:error, :locked})
 
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(3, [proxy])}, state([]))
-    refute_received {:"$gen_cast", {:worker_retired, _}}
+    refute_received {:"$gen_cast", {:worker_retired, _, _}}
   end
 
   test "an unreachable proxy is not a verdict" do
@@ -96,7 +98,7 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
     GenServer.stop(proxy)
 
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(3, [proxy])}, state([]))
-    refute_received {:"$gen_cast", {:worker_retired, _}}
+    refute_received {:"$gen_cast", {:worker_retired, _, _}}
   end
 
   test "the completing push of our own locked epoch validates — strays are judged, not immortal" do
@@ -110,13 +112,14 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
       assert {:stop, {:shutdown, :displaced}, _t} =
                Server.handle_info({:tsl_updated, tsl(2, [proxy])}, state([]))
 
-      assert_received {:"$gen_cast", {:worker_retired, "mat-1"}}
+      assert_received {:"$gen_cast", {:worker_retired, "mat-1", reporter}}
+      assert reporter == self()
     end)
   end
 
   test "a push older than our lock never validates — an in-flight recovery's past may not judge us" do
     assert {:noreply, _t} = Server.handle_info({:tsl_updated, tsl(1, [])}, state([]))
-    refute_received {:"$gen_cast", {:worker_retired, _}}
+    refute_received {:"$gen_cast", {:worker_retired, _, _}}
   end
 
   test "a never-locked resurrection is judged by any completed layout" do
@@ -126,7 +129,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
       assert {:stop, {:shutdown, :displaced}, _t} =
                Server.handle_info({:tsl_updated, tsl(1, [proxy])}, state(epoch: nil))
 
-      assert_received {:"$gen_cast", {:worker_retired, "mat-1"}}
+      assert_received {:"$gen_cast", {:worker_retired, "mat-1", reporter}}
+      assert reporter == self()
     end)
   end
 
@@ -159,7 +163,8 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.DisplacementTest do
 
       capture_log(fn ->
         assert {:stop, {:shutdown, :displaced}, _t} = Server.handle_continue(:process_transactions, t)
-        assert_received {:"$gen_cast", {:worker_retired, "mat-1"}}
+        assert_received {:"$gen_cast", {:worker_retired, "mat-1", reporter}}
+        assert reporter == self()
       end)
     end
 

@@ -3,6 +3,7 @@ defmodule Bedrock.ObjectStorage.ConfigTest do
 
   alias Bedrock.ObjectStorage
   alias Bedrock.ObjectStorage.Config
+  alias Bedrock.ObjectStorage.DiskCache
   alias Bedrock.ObjectStorage.LocalFilesystem
   alias Bedrock.ObjectStorage.S3
 
@@ -101,6 +102,26 @@ defmodule Bedrock.ObjectStorage.ConfigTest do
       )
 
       assert {LocalFilesystem, [root: "/tmp/bedrock-local"]} = Config.backend()
+    end
+
+    test "normalizes :disk_cache shorthand and the backend it wraps" do
+      Application.put_env(:bedrock, ObjectStorage,
+        backend: {:disk_cache, root: "/tmp/bedrock-cache", inner: :s3},
+        s3: [bucket: "bedrock", access_key_id: "minio_key"]
+      )
+
+      assert {DiskCache, backend_config} = Config.backend()
+      assert backend_config[:root] == "/tmp/bedrock-cache"
+
+      assert {S3, inner_config} = backend_config[:inner]
+      assert inner_config[:bucket] == "bedrock"
+      assert inner_config[:config][:access_key_id] == "minio_key"
+    end
+
+    test "a disk cache without an inner backend is a configuration error" do
+      Application.put_env(:bedrock, ObjectStorage, backend: {:disk_cache, root: "/tmp/bedrock-cache"})
+
+      assert_raise KeyError, fn -> Config.backend() end
     end
   end
 

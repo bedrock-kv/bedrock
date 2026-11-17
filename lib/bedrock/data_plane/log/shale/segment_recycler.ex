@@ -75,6 +75,12 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
   defmodule Logic do
     @moduledoc false
 
+    # A segment is preallocated under this name and published into the
+    # pool by rename, so it must match neither the pool's own glob nor
+    # `Segment.file_prefix()`, which is what `reload_segments_at_path/1`
+    # picks out of this same directory.
+    @scratch_prefix ".partial."
+
     @spec unused_file_prefix() :: String.t()
     def unused_file_prefix, do: "preallocated"
     @spec generate_unused_file_name(non_neg_integer()) :: String.t()
@@ -101,7 +107,13 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
           {:error, :path_is_not_a_directory}
 
         true ->
-          segments = find_existing_preallocated_files(path_to_dir)
+          discard_scratch_files(path_to_dir)
+
+          segments =
+            path_to_dir
+            |> find_existing_preallocated_files()
+            |> adopt_whole_segments(size)
+
           highest_id = find_highest_id(segments)
 
           {:ok,
@@ -135,6 +147,42 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
             [path_to_file :: String.t()]
     def find_existing_preallocated_files(path), do: Path.wildcard(Path.join(path, "#{unused_file_prefix()}.*"))
 
+    # Membership in the pool has to be provable, not inferred from the
+    # name — the same reasoning that makes a manifest, not a directory
+    # entry, the proof that a worker directory holds a worker.
+    # `check_out/2` renames a pooled file straight into service and
+    # `Writer.open/3` derives its write budget from `File.stat/1`, so a
+    # file that is not exactly one segment long would present as a
+    # healthy segment carrying a budget it cannot honour.
+    #
+    # Reachable from three directions, which is why both entrances to the
+    # pool check: a `preallocated.N` left short on disk by a version
+    # without the atomic publish below, a `segment_size` changed between
+    # incarnations, and a short segment handed back to `check_in/2`.
+    # Discard it and let the min-refill preallocate a real one in its
+    # place — the pool is a cache, so discarding is free.
+    @spec whole_segment?(String.t(), non_neg_integer()) :: boolean()
+    defp whole_segment?(path, size), do: match?({:ok, %{size: ^size}}, File.stat(path))
+
+    @spec adopt_whole_segments([String.t()], non_neg_integer()) :: [String.t()]
+    defp adopt_whole_segments(paths, size) do
+      {whole, wreckage} = Enum.split_with(paths, &whole_segment?(&1, size))
+      Enum.each(wreckage, &File.rm/1)
+      whole
+    end
+
+    # The pool directory has exactly one owner — the recycler of the log
+    # worker that owns the directory — so a scratch file present at
+    # startup is always wreckage from an incarnation that died mid
+    # allocation, never a live writer's.
+    @spec discard_scratch_files(dir_path :: binary()) :: :ok
+    defp discard_scratch_files(path) do
+      path
+      |> Path.join("#{@scratch_prefix}*")
+      |> Path.wildcard(match_dot: true)
+      |> Enum.each(&File.rm/1)
+    end
+
     @spec check_out(State.t(), new_name :: String.t()) ::
             {:ok, State.t()}
             | {:error, atom()}
@@ -161,11 +209,22 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       with :ok <- File.rm(path_to_file), do: {:ok, t}
     end
 
+    # Ordinarily every returned file came out of `check_out/2` and is
+    # still exactly `size` bytes. A log recovering over the wreckage a
+    # pre-atomic-publish version left behind is the exception: the
+    # 28-byte stub a zero-length pool file becomes once `Writer.open/3`
+    # has put a header on it loads as a segment, and
+    # `Recovery.discard_all_segments/1` checks it straight back in. Take
+    # the same exit as the cap: unlink it rather than pool it.
     def check_in(t, path_to_file) do
-      new_path_to_file = Path.join(t.path, generate_unused_file_name(t.next_id))
+      if whole_segment?(path_to_file, t.size) do
+        new_path_to_file = Path.join(t.path, generate_unused_file_name(t.next_id))
 
-      with :ok <- File.rename(path_to_file, new_path_to_file) do
-        {:ok, %{t | segments: [new_path_to_file | t.segments], next_id: t.next_id + 1}}
+        with :ok <- File.rename(path_to_file, new_path_to_file) do
+          {:ok, %{t | segments: [new_path_to_file | t.segments], next_id: t.next_id + 1}}
+        end
+      else
+        with :ok <- File.rm(path_to_file), do: {:ok, t}
       end
     end
 
@@ -199,19 +258,45 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
       |> Enum.max()
     end
 
+    # Preallocation is create-then-extend, so the file exists at zero
+    # length before it is a segment. Doing that under a scratch name and
+    # publishing by rename only once it is fully sized and synced keeps
+    # the partial state out of the pool: an :enospc, or a kill between
+    # the two steps, leaves a scratch file the next incarnation sweeps,
+    # never a `preallocated.N` the next incarnation adopts as a whole
+    # segment it does not have. Same publish-atomically shape as
+    # `LocalFilesystem.put/4`, and with the same caveat — the extent is
+    # synced but the parent directory entry cannot be from the BEAM, so
+    # a power loss can lose the rename and leave the pool short, which
+    # the min-refill already handles.
+    #
+    # The sync is what lets a pool file survive a power loss instead of
+    # being discarded and reallocated by the next incarnation's scan; it
+    # costs single-digit milliseconds of metadata, off the reply path.
+    #
+    # The scratch name is fixed rather than kernel-arbitrated the way
+    # `LocalFilesystem` needs — its root has many writers; this pool
+    # directory has exactly one — and a leftover would wedge the
+    # :exclusive open only until the stop-and-restart that any allocation
+    # failure already forces, whose scan sweeps it. Note the target is no
+    # longer opened :exclusive, so the publishing rename overwrites a
+    # `preallocated.N` the discard in `new/4` failed to remove, which is
+    # what we want from it.
     @spec allocate_file(String.t(), non_neg_integer()) :: {:ok, String.t()} | {:error, atom()}
     def allocate_file(path, size_in_bytes) do
-      case File.open(path, [:write, :binary, :raw, :exclusive]) do
+      scratch = scratch_path(path)
+
+      case File.open(scratch, [:write, :binary, :raw, :exclusive]) do
         {:ok, fd} ->
           # Ensure fd is always closed, even if allocate fails
-          try do
-            case :file.allocate(fd, 0, size_in_bytes) do
-              :ok -> {:ok, path}
-              {:error, reason} -> {:error, reason}
+          result =
+            try do
+              with :ok <- :file.allocate(fd, 0, size_in_bytes), do: :file.sync(fd)
+            after
+              File.close(fd)
             end
-          after
-            File.close(fd)
-          end
+
+          publish(result, scratch, path)
 
         {:error, :eisdir} ->
           raise "not implemented"
@@ -222,6 +307,25 @@ defmodule Bedrock.DataPlane.Log.Shale.SegmentRecycler do
         {:error, reason} ->
           {:error, reason}
       end
+    end
+
+    @spec scratch_path(String.t()) :: String.t()
+    defp scratch_path(path), do: Path.join(Path.dirname(path), "#{@scratch_prefix}#{Path.basename(path)}")
+
+    @spec publish(:ok | {:error, atom()}, String.t(), String.t()) :: {:ok, String.t()} | {:error, atom()}
+    defp publish(:ok, scratch, path) do
+      case File.rename(scratch, path) do
+        :ok -> {:ok, path}
+        {:error, reason} -> discard_scratch(scratch, reason)
+      end
+    end
+
+    defp publish({:error, reason}, scratch, _path), do: discard_scratch(scratch, reason)
+
+    @spec discard_scratch(String.t(), atom()) :: {:error, atom()}
+    defp discard_scratch(scratch, reason) do
+      _ = File.rm(scratch)
+      {:error, reason}
     end
   end
 

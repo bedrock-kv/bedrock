@@ -335,6 +335,10 @@ defmodule Bedrock.DataPlane.Materializer.Olivine.GenServerIntegrationTest do
 
       assert {:ok, %{kind: :materializer, id: ^worker_id, pid: ^pid, otp_name: ^otp_name}} =
                GenServer.call(pid, {:info, fact_names}, @timeout)
+
+      # An unsupported single fact surfaces as the bare error the @spec
+      # promises, not wrapped in an extra {:ok, ...}.
+      assert {:error, :unsupported_info} = GenServer.call(pid, {:info, :not_a_real_fact}, @timeout)
     end
 
     @tag :tmp_dir

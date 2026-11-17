@@ -16,7 +16,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
 
   @type t :: %__MODULE__{
           started_at: Bedrock.timestamp_in_ms(),
-          finalized_at: Bedrock.timestamp_in_ms() | nil,
           last_commit_version: Bedrock.version(),
           commit_version: Bedrock.version(),
           known_committed_version: Bedrock.version() | nil,
@@ -24,7 +23,6 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
           buffer: [{index :: non_neg_integer(), reply_fn(), Transaction.encoded(), commit_mode()}]
         }
   defstruct started_at: nil,
-            finalized_at: nil,
             last_commit_version: nil,
             commit_version: nil,
             known_committed_version: nil,
@@ -65,7 +63,4 @@ defmodule Bedrock.DataPlane.CommitProxy.Batch do
 
   @spec transaction_count(t()) :: non_neg_integer()
   def transaction_count(t), do: t.n_transactions
-
-  @spec set_finalized_at(t(), Bedrock.timestamp_in_ms()) :: t()
-  def set_finalized_at(t, finalized_at), do: %{t | finalized_at: finalized_at}
 end

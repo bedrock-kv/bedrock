@@ -155,7 +155,10 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
       send(pid, :timeout)
 
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+      # Relay-class: the process must be scheduled to handle :timeout and stop
+      # before the DOWN exists, so the default 100ms flakes under full-suite
+      # load (bedrock-s9x). 5_000ms is free when the message is prompt.
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
     end
 
     test "starts with custom configuration" do
@@ -248,7 +251,9 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
       GenServer.cast(pid, :rollback)
 
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+      # Relay-class (bedrock-s9x): the cast must be scheduled and processed
+      # before the DOWN exists.
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
     end
 
     test ":rollback cast with non-empty stack pops stack frame" do
@@ -300,7 +305,8 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
       GenServer.cast(pid, :unknown_cast)
 
-      assert_receive {:DOWN, ^ref, :process, ^pid, reason}, 1000
+      # Relay-class (bedrock-s9x): normalized to the class window (was 1_000).
+      assert_receive {:DOWN, ^ref, :process, ^pid, reason}, 5_000
       assert match?({:function_clause, _}, reason)
     end
   end
@@ -324,8 +330,11 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
       # Send unknown info message - will crash due to no catch-all clause
       send(pid, :unknown_message)
 
-      # Process should crash with FunctionClauseError
-      assert_receive {:DOWN, ^ref, :process, ^pid, reason}
+      # Process should crash with FunctionClauseError. Relay-class
+      # (bedrock-s9x): the process must be scheduled to receive and crash on
+      # the message before the DOWN exists, so the default 100ms flakes under
+      # full-suite load.
+      assert_receive {:DOWN, ^ref, :process, ^pid, reason}, 5_000
       assert match?({:function_clause, _}, reason)
     end
   end
@@ -459,7 +468,9 @@ defmodule Bedrock.Internal.TransactionBuilderTest do
 
       GenServer.cast(pid, :rollback)
 
-      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+      # Relay-class (bedrock-s9x): the cast must be scheduled and processed
+      # before the DOWN exists.
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 5_000
     end
   end
 

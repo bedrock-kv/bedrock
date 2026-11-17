@@ -418,35 +418,21 @@ defmodule Bedrock.Internal.RepoTransactTest do
 
     # A covering entry as the proxy serves it: shard bounds, tag, raw
     # string-encoded materializer ref.
-    defp covering_entry(worker_id \\ "wkr1"), do: {<<>>, <<0xFF, 0xFF>>, 0, {worker_id, Atom.to_string(node())}}
+    defp covering_entry(worker_id), do: {<<>>, <<0xFF, 0xFF>>, 0, {worker_id, Atom.to_string(node())}}
 
     # The shape the Link caches: {start, end, raw_ref}.
-    defp cached_entry({start_key, end_key, _tag, raw_ref}), do: {start_key, end_key, raw_ref}
-
-    defp spawn_stub_materializer(test_pid, answers \\ 1) do
-      name = RoutingCluster.otp_name_for_worker("wkr1")
-      await_name_free(name)
-      materializer = spawn(fn -> materializer_loop(test_pid, answers) end)
-      Process.register(materializer, name)
-      materializer
+    setup do
+      %{worker_id: "wkr#{System.unique_integer([:positive])}"}
     end
 
-    # Every test registers its stub under the same name, and a stub exits
-    # only after its last answer -- possibly after its test has finished.
-    # Retire any previous holder and wait until the name is released.
-    defp await_name_free(name) do
-      case Process.whereis(name) do
-        nil ->
-          :ok
+    defp cached_entry({start_key, end_key, _tag, raw_ref}), do: {start_key, end_key, raw_ref}
 
-        stale ->
-          ref = Process.monitor(stale)
-          Process.exit(stale, :kill)
-
-          receive do
-            {:DOWN, ^ref, :process, ^stale, _} -> :ok
-          end
-      end
+    # Each test routes to its own worker id, so its stub registers under a
+    # name no other test uses; linking ends the stub with its test.
+    defp spawn_stub_materializer(worker_id, test_pid, answers \\ 1) do
+      materializer = spawn_link(fn -> materializer_loop(test_pid, answers) end)
+      Process.register(materializer, RoutingCluster.otp_name_for_worker(worker_id))
+      materializer
     end
 
     defp materializer_loop(_test_pid, 0), do: :ok
@@ -493,10 +479,12 @@ defmodule Bedrock.Internal.RepoTransactTest do
       end
     end
 
-    test "a cache miss fetches the single covering entry from a proxy, caches it, and routes the read" do
+    test "a cache miss fetches the single covering entry from a proxy, caches it, and routes the read", %{
+      worker_id: worker_id
+    } do
       test_pid = self()
-      spawn_stub_materializer(test_pid)
-      entry = covering_entry()
+      spawn_stub_materializer(worker_id, test_pid)
+      entry = covering_entry(worker_id)
       expected_cached = cached_entry(entry)
 
       proxy =
@@ -524,14 +512,14 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert_receive {:routing_cached, ^expected_cached}
     end
 
-    test "a cache hit routes the read without touching any proxy" do
+    test "a cache hit routes the read without touching any proxy", %{worker_id: worker_id} do
       test_pid = self()
-      spawn_stub_materializer(test_pid)
+      spawn_stub_materializer(worker_id, test_pid)
 
       # No proxies at all: a proxy fetch would fail loudly.
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
-      table = seed_routing_cache(cached_entry(covering_entry()))
-      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry()), test_pid, table) end)
+      table = seed_routing_cache(cached_entry(covering_entry(worker_id)))
+      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry(worker_id)), test_pid, table) end)
       Process.put(:stub_link_pid, link)
 
       result = Repo.transact(RoutingCluster, TestRepo, fn -> Repo.get(TestRepo, "some_key") end, [])
@@ -541,16 +529,18 @@ defmodule Bedrock.Internal.RepoTransactTest do
       refute_received {:routing_cached, _}
     end
 
-    test "a routing-shaped read failure invalidates the cache exactly once, and the retry refetches" do
+    test "a routing-shaped read failure invalidates the cache exactly once, and the retry refetches", %{
+      worker_id: worker_id
+    } do
       test_pid = self()
-      spawn_stub_materializer(test_pid)
+      spawn_stub_materializer(worker_id, test_pid)
 
       # The cached entry routes to a worker that is not registered: the
       # read fails :unavailable (a dead ref IS what a stale snapshot
       # looks like). The retry must invalidate, refetch from the proxy -
       # whose fresh entry names the live worker - and succeed.
       stale = cached_entry(covering_entry("wkr_gone"))
-      fresh = covering_entry()
+      fresh = covering_entry(worker_id)
       expected_cached = cached_entry(fresh)
 
       proxy =
@@ -575,10 +565,10 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert_receive {:routing_cached, ^expected_cached}
     end
 
-    test "a second read in the same shard uses the builder-local entry — no re-ask" do
+    test "a second read in the same shard uses the builder-local entry — no re-ask", %{worker_id: worker_id} do
       test_pid = self()
-      spawn_stub_materializer(test_pid, 2)
-      entry = covering_entry()
+      spawn_stub_materializer(worker_id, test_pid, 2)
+      entry = covering_entry(worker_id)
 
       # The proxy answers exactly once and the Link never caches (always
       # :not_cached): a second resolve would hang on the dead proxy, so
@@ -622,10 +612,10 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert_received {:materializer_got, "key_two"}
     end
 
-    test "a locked proxy is a retry, not an error: the next attempt refetches and succeeds" do
+    test "a locked proxy is a retry, not an error: the next attempt refetches and succeeds", %{worker_id: worker_id} do
       test_pid = self()
-      spawn_stub_materializer(test_pid)
-      entry = covering_entry()
+      spawn_stub_materializer(worker_id, test_pid)
+      entry = covering_entry(worker_id)
 
       # First ask: the proxy is still locked (recovery in flight from the
       # client's view). :locked classifies as retryable AND routing-
@@ -653,7 +643,9 @@ defmodule Bedrock.Internal.RepoTransactTest do
       assert_receive :routing_invalidated
     end
 
-    test "a slow materializer retries without dropping the node's routing cache — slow is not stale" do
+    test "a slow materializer retries without dropping the node's routing cache — slow is not stale", %{
+      worker_id: worker_id
+    } do
       test_pid = self()
 
       # The materializer holds the call forever: the read times out. A
@@ -665,11 +657,11 @@ defmodule Bedrock.Internal.RepoTransactTest do
       # evict.
       materializer = spawn(fn -> Process.sleep(:infinity) end)
       on_exit(fn -> Process.exit(materializer, :kill) end)
-      Process.register(materializer, RoutingCluster.otp_name_for_worker("wkr1"))
+      Process.register(materializer, RoutingCluster.otp_name_for_worker(worker_id))
 
       tsl = %{epoch: 1, sequencer: spawn_stub_sequencer(), proxies: []}
-      table = seed_routing_cache(cached_entry(covering_entry()))
-      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry()), test_pid, table) end)
+      table = seed_routing_cache(cached_entry(covering_entry(worker_id)))
+      link = spawn(fn -> link_loop(tsl, cached_entry(covering_entry(worker_id)), test_pid, table) end)
       Process.put(:stub_link_pid, link)
 
       assert_raise RuntimeError, ~r/retry limit/, fn ->
